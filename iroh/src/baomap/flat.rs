@@ -2,6 +2,125 @@
 //!
 //! This is a simple database implementation that stores all data in the file system.
 //! It is used by the iroh binary.
+//!
+//! # File format
+//!
+//! The flat file database stores data and outboards in a directory structure.
+//! Partial and complete entries can be stored in the same directory, or in different
+//! directories. The purpose of a file in always clear from the file name.
+//!
+//! Currently a single directory is used to store all entries, but
+//! in the future we might want to use a directory tree for file systems that don't
+//! support a large number of files in a single directory.
+//!
+//! ## Files
+//!
+//! ### Complete data files
+//!
+//! Complete files have as name the hex encoded blake3 hash of the data, and the extension
+//! `.data`. There can only ever be one complete file for a given hash. If the file does
+//! not contain the data corresponding to the hash, this is considered an error that should
+//! be reported during validation.
+//!
+//! They will not *change* during the lifetime of the database, but might be deleted.
+//!
+//! These files can become quite large and make up the vast majority of the disk usage.
+//!
+//! ### Path files
+//!
+//! Path files have as name the hex encoded blake3 hash of the data, and the extension
+//! `.paths`. They contain a postcard serialized list of absolute paths to the data file.
+//! The paths are stored in sorted order and do not contain duplicates.
+//!
+//! Path files are used for when data is stored externally. If any of the files listed in
+//! the path file is missing, or does not contain exactly the data corresponding to the
+//! hash, this is considered an error that should be reported during validation.
+//!
+//! External storage will only be used for large files.
+//!
+//! Postcard encoding of strings is just adding a varint encoded length prefix, followed
+//! by the utf8 encoded string. See the [postcard wire format spec](https://postcard.jamesmunns.com/).
+//!
+//! ### Complete outboard files
+//!
+//! Complete outboard files have as name the hex encoded blake3 hash of the data, and the
+//! extension `.obao4`. `obao` stands for pre-order bao, and `4` describes the block size.
+//! So `obao4` means that the outboard data is stored in a pre-order bao tree with a block
+//! size of 1024*2^4=16384 bytes, which is the default block size for iroh.
+//!
+//! They will not *change* during the lifetime of the database, but might be deleted.
+//!
+//! The first 8 bytes of the file are the little endian encoded size of the data.
+//!
+//! In the future we might support other block sizes as well as in-order or post-order
+//! encoded trees. The file extension will then change accordingly. E.g. `obao` for
+//! pre-order outboard files with a block size of 1024*2^0=1024 bytes.
+//!
+//! For files that are smaller than the block size, the outboard file would just contain
+//! the size. Storing these outboard files is not necessary, and therefore they are not
+//! stored.
+//!
+//! ### Partial data files
+//!
+//! There can be multiple partial data files for a given hash. E.g. you could have one
+//! partial data file containing valid bytes 0..16384 of a file, and another containing
+//! valid bytes 32768..49152 of the same file.
+//!
+//! To allow for this, partial data files have as name the hex encoded blake3 hash of the
+//! complete data, followed by a -, followed by a hex encoded 16 byte random uuid, followed
+//! by the extension `.data`.
+//!
+//! ### Partial outboard files
+//!
+//! There can be multiple partial outboard files for a given hash. E.g. you could have one
+//! partial outboard file containing the outboard for blocks 0..2 of a file and a second
+//! partial outboard file containing the outboard for blocks 2..4 of the same file.
+//!
+//! To allow for this, partial outboard files have as name the hex encoded blake3 hash of
+//! the complete data, followed by a -, followed by a hex encoded 16 byte random uuid,
+//!
+//! Partial outboard files are not stored for small files, since the outboard is just the
+//! size of the data.
+//!
+//! Pairs of partial data and partial outboard files belong together, and are correlated
+//! by the uuid.
+//!
+//! It is unusual but not impossible to have multiple partial data files for the same
+//! hash. In that case the best partial data file should be chosen on startup.
+//!
+//! ### Temp files
+//!
+//! When copying data into the database, we first copy the data into a temporary file to
+//! ensure that the data is not modified while we compute the outboard. These files have
+//! just a hex encoded 16 byte random uuid as name, and the extension `.temp`.
+//!
+//! We don't know the hash of the data yet. These files are fully ephemeral, and can
+//! be deleted on restart.
+//!
+//! # File lifecycle
+//!
+//! ## Import from local storage
+//!
+//! When a file is imported from local storage in copy mode, the file in question is first
+//! copied to a temporary file. The temporary file is then used to compute the outboard.
+//!
+//! Once the outboard is computed, the temporary file is renamed to the final data file,
+//! and the outboard is written to the final outboard file.
+//!
+//! When importing in reference mode, the outboard is computed directly from the file in
+//! question. Once the outboard is computed, the file path is added to the paths file,
+//! and the outboard is written to the outboard file.
+//!
+//! ## Download from the network
+//!
+//! When a file is downloaded from the network, a pair of partial data and partial outboard
+//! files is created. The partial data file is filled with the downloaded data, and the
+//! partial outboard file is filled at the same time. Note that a partial data file is
+//! worthless without the corresponding partial outboard file, since only the outboard
+//! can be used to verify the downloaded parts of the data.
+//!
+//! Once the download is complete, the partial data and partial outboard files are renamed
+//! to the final partial data and partial outboard files.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, BufReader};
