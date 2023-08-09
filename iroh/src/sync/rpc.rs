@@ -11,7 +11,8 @@ use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
     DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
     DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-    DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult, ShareMode,
+    DocTicket, DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult,
+    ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -67,11 +68,14 @@ impl<S: Store> SyncEngine<S> {
         };
         let me = PeerSource::from_endpoint(&self.endpoint).await?;
         self.start_sync(replica.namespace(), vec![]).await?;
-        Ok(DocShareResponse { key, peer: me })
+        Ok(DocShareResponse(DocTicket {
+            key,
+            peers: vec![me],
+        }))
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest { key, peers } = req;
+        let DocImportRequest(DocTicket { key, peers }) = req;
         // TODO: support read-only docs
         // if let Ok(namespace) = match NamespaceId::from_bytes(&key) {};
         let namespace = Namespace::from_bytes(&key);
