@@ -15,12 +15,12 @@ use iroh_sync::store::{GetFilter, KeyFilter};
 use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
 use quic_rpc::{RpcClient, ServiceConnection};
 
+use crate::rpc_protocol::ProviderService;
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, DocGetRequest, DocImportRequest,
-    DocSetRequest, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocsCreateRequest,
-    DocsListRequest, ShareMode,
+    DocSetRequest, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocTicket,
+    DocsCreateRequest, DocsListRequest, ShareMode,
 };
-use crate::rpc_protocol::{KeyBytes, ProviderService};
 use crate::sync::PeerSource;
 
 /// Iroh client
@@ -55,8 +55,8 @@ where
         Ok(doc)
     }
 
-    pub async fn import_doc(&self, key: KeyBytes, peers: Vec<PeerSource>) -> Result<Doc<C>> {
-        let res = self.rpc.rpc(DocImportRequest { key, peers }).await??;
+    pub async fn import_doc(&self, ticket: DocTicket) -> Result<Doc<C>> {
+        let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
         let doc = Doc {
             id: res.doc_id,
             rpc: self.rpc.clone(),
