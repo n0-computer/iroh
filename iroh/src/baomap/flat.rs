@@ -7,7 +7,7 @@
 //!
 //! The flat file database stores data and outboards in a directory structure.
 //! Partial and complete entries can be stored in the same directory, or in different
-//! directories. The purpose of a file in always clear from the file name.
+//! directories. The purpose of a file is always clear from the file name.
 //!
 //! Currently a single directory is used to store all entries, but
 //! in the future we might want to use a directory tree for file systems that don't
