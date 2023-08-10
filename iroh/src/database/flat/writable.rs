@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -57,8 +56,9 @@ impl WritableFileDatabase {
         &self.db
     }
 
-    pub async fn save(&self) -> io::Result<()> {
-        self.db.save(&self.storage.db_path).await
+    pub async fn save(&self) -> anyhow::Result<()> {
+        self.db.save(&self.storage.db_path).await?;
+        Ok(())
     }
 
     pub async fn put_bytes(&self, data: Bytes) -> anyhow::Result<(Hash, u64)> {
@@ -69,12 +69,6 @@ impl WritableFileDatabase {
 
     pub async fn put_reader(&self, data: impl AsyncRead + Unpin) -> anyhow::Result<(Hash, u64)> {
         let (hash, size, entry) = self.storage.put_reader(data).await?;
-        self.db.union_with(HashMap::from_iter([(hash, entry)]));
-        Ok((hash, size))
-    }
-
-    pub async fn put_from_temp_file(&self, temp_path: &PathBuf) -> anyhow::Result<(Hash, u64)> {
-        let (hash, size, entry) = self.storage.move_to_blobs(temp_path).await?;
         self.db.union_with(HashMap::from_iter([(hash, entry)]));
         Ok((hash, size))
     }
@@ -111,17 +105,25 @@ impl WritableFileDatabase {
                     .create(true)
                     .open(path)
             })
-            .await?;
+            .await
+            .context("failed to create local tempfile")?;
 
-            let (curr, _size) = header.next().await?;
-            let _curr = curr.write_all(&mut data_file).await?;
+            let (curr, _size) = header.next().await.context("failed to read blob content")?;
+            let _curr = curr
+                .write_all(&mut data_file)
+                .await
+                .context("failed to write blob content to tempfile")?;
             // Flush the data file first, it is the only thing that matters at this point
-            data_file.sync().await?;
+            data_file.sync().await.context("fsync failed")?;
             temp_path
         };
 
         // 2. Insert into database
-        let (hash, size, entry) = self.storage.move_to_blobs(&temp_path).await?;
+        let (hash, size, entry) = self
+            .storage
+            .move_to_blobs(&temp_path)
+            .await
+            .context("failed to move to blobs dir")?;
         let entries = HashMap::from_iter([(hash, entry)]);
         self.db.union_with(entries);
         Ok(Some((hash, size)))

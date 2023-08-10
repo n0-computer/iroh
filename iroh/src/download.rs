@@ -181,7 +181,7 @@ impl DownloadActor {
     }
 
     fn on_peer_fail(&mut self, peer: &PeerId, err: anyhow::Error) {
-        warn!("download from {peer} failed: {err}");
+        warn!("download from {peer} failed: {err:?}");
         for hash in self.queue.on_peer_fail(peer) {
             self.reply(hash, None);
         }
