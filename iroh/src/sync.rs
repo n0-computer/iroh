@@ -178,7 +178,6 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
                         replica = Some(r);
                     }
                     None => {
-                        // TODO: this should be possible.
                         bail!("unable to synchronize unknown namespace: {}", namespace);
                     }
                 }
