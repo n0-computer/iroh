@@ -378,7 +378,7 @@ impl PartialMap for Store {
             .write()
             .unwrap()
             .partial
-            .insert(hash, (data.clone(), ob2.clone()));
+            .insert(hash, (data.clone(), ob2));
         Ok(PartialEntry {
             hash: hash.into(),
             outboard: PreOrderOutboard {

@@ -434,7 +434,7 @@ impl DocTicket {
         Ok(bytes)
     }
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        let slf = postcard::from_bytes(&bytes)?;
+        let slf = postcard::from_bytes(bytes)?;
         Ok(slf)
     }
 }
@@ -449,7 +449,7 @@ impl fmt::Display for DocTicket {
         write!(
             f,
             "{}",
-            base32::fmt(&self.to_bytes().expect("failed to serialize"))
+            base32::fmt(self.to_bytes().expect("failed to serialize"))
         )
     }
 }

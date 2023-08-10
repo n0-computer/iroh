@@ -298,7 +298,7 @@ impl PartialMapEntry<Store> for PartialEntry {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(path.clone())
+                .open(path)
         })
         .boxed()
     }
@@ -716,11 +716,7 @@ impl Store {
                     Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-                (
-                    hash,
-                    CompleteEntry::new_external(size, path.clone()),
-                    outboard,
-                )
+                (hash, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
                 let uuid = rand::thread_rng().gen::<[u8; 16]>();
