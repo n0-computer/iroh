@@ -30,12 +30,12 @@ use crate::sync::PeerSource;
 
 /// In-memory client to an iroh node running in the same process.
 ///
-/// This is obtained from [`iroh::node::Node::client`].
+/// This is obtained from [`crate::node::Node::client`].
 pub type IrohMemClient = Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>;
 
 /// In-memory document client to an iroh node running in the same process.
 ///
-/// This is obtained from [`iroh::node::Node::client`].
+/// This is obtained from [`crate::node::Node::client`].
 pub type DocMem = Doc<FlumeConnection<ProviderResponse, ProviderRequest>>;
 
 #[cfg(feature = "cli")]
