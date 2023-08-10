@@ -1,5 +1,5 @@
 use indicatif::HumanBytes;
-use iroh::{database::flat::writable::WritableFileDatabase, node::Node};
+use iroh::node::Node;
 use iroh_bytes::util::runtime;
 use iroh_sync::{
     store::{GetFilter, KeyFilter},
@@ -9,11 +9,10 @@ use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
     let rt = runtime::Handle::from_currrent(1)?;
-    let db = WritableFileDatabase::new(dir.path().into()).await?;
+    let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
-    let node = Node::builder(db.db().clone(), store, dir.path().into())
+    let node = Node::builder(db.clone(), store)
         .runtime(&rt)
         .spawn()
         .await?;

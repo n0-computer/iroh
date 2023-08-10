@@ -224,7 +224,7 @@ impl Doc {
                             )
                         }
                     }
-                        println!("");
+                    println!("");
                 }
             }
             Doc::List { old, prefix } => {
