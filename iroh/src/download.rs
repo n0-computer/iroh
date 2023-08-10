@@ -5,6 +5,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(feature = "metrics")]
+use std::time::Instant;
+
 use anyhow::anyhow;
 use futures::{
     future::{BoxFuture, LocalBoxFuture, Shared},
