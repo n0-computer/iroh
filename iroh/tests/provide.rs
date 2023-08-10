@@ -633,7 +633,8 @@ async fn test_custom_collection_parser() {
     let collection_bytes = postcard::to_allocvec(&collection).unwrap();
     let collection_hash = db.insert(collection_bytes.clone());
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = Node::builder(db)
+    let doc_store = iroh_sync::store::memory::Store::default();
+    let node = Node::builder(db, doc_store)
         .collection_parser(CollectionsAreJustLinks)
         .bind_addr(addr)
         .runtime(&rt)

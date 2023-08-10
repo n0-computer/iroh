@@ -82,14 +82,15 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 pub fn init_metrics_collection() {
     use iroh_metrics::core::Metric;
 
-    iroh_metrics::core::Core::init(|reg, metrics| {
+    iroh_metrics::core::Core::try_init(|reg, metrics| {
         metrics.insert(crate::metrics::Metrics::new(reg));
         metrics.insert(iroh_sync::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
         metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
-    });
+    })
+    .ok();
 }
 
 /// Builder for the [`Node`].
@@ -1352,8 +1353,9 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
         let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
+        let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
-        let node = Node::builder(db)
+        let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&rt)
             .spawn()
@@ -1370,7 +1372,8 @@ mod tests {
     async fn test_node_add_collection_event() -> Result<()> {
         let rt = runtime::Handle::from_currrent(1)?;
         let db = crate::baomap::mem::Store::new(rt);
-        let node = Node::builder(db)
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())
             .spawn()
