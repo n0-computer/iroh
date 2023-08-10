@@ -1689,6 +1689,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh-bytes",
+ "iroh-gossip",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",

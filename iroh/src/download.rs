@@ -16,8 +16,9 @@ use iroh_bytes::{
     baomap::{MapEntry, Store as BaoStore},
     util::{progress::IgnoreProgressSender, Hash},
 };
+use iroh_gossip::net::util::Dialer;
 use iroh_metrics::{inc, inc_by};
-use iroh_net::{dialer::Dialer, tls::PeerId, MagicEndpoint};
+use iroh_net::{tls::PeerId, MagicEndpoint};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
