@@ -5,7 +5,7 @@ use std::{net::SocketAddr, time::Duration};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use iroh::{
-    client::DocMem,
+    client::mem::Doc,
     collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
@@ -124,12 +124,12 @@ async fn sync_full_basic() -> Result<()> {
     Ok(())
 }
 
-async fn assert_latest(doc: &DocMem, key: &[u8], value: &[u8]) {
+async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());
 }
 
-async fn get_latest(doc: &DocMem, key: &[u8]) -> anyhow::Result<Vec<u8>> {
+async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
     let filter = GetFilter::new().with_key(key.to_vec());
     let entry = doc
         .get(filter)

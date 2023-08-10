@@ -4,12 +4,11 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
-use iroh::client::connect_raw;
+use iroh::client::quic::RpcClient;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::tls::{Keypair, PeerId};
-use quic_rpc::transport::quinn::QuinnConnection;
 
 use crate::config::Config;
 
@@ -27,10 +26,6 @@ pub mod list;
 pub mod provide;
 pub mod sync;
 pub mod validate;
-
-/// RPC client to an iroh node.
-pub type RpcClient =
-    quic_rpc::RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// Send data.
 ///
@@ -406,7 +401,7 @@ pub enum Commands {
 }
 
 pub async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
-    connect_raw(rpc_port).await
+    iroh::client::quic::connect_raw(rpc_port).await
 }
 
 #[cfg(feature = "metrics")]
