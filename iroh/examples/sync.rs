@@ -18,20 +18,19 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
 use iroh::{
-    database::flat::writable::WritableFileDatabase,
     download::Downloader,
     sync::{PeerSource, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
+use iroh_bytes::{
+    baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
+    util::progress::IgnoreProgressSender,
+};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
 };
 use iroh_io::AsyncSliceReaderExt;
-use iroh_metrics::{
-    core::{Counter, Metric},
-    struct_iterable::Iterable,
-};
 use iroh_net::{
     defaults::default_derp_map, derp::DerpMap, magic_endpoint::get_alpn, tls::Keypair,
     MagicEndpoint,
@@ -99,11 +98,7 @@ async fn main() -> anyhow::Result<()> {
 pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    iroh_metrics::core::Core::init(|reg, metrics| {
-        metrics.insert(iroh::sync::metrics::Metrics::new(reg));
-        metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
-    });
-
+    iroh::metrics::init_metrics_collection();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         return Some(tokio::spawn(async move {
@@ -214,7 +209,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         let name = format!("iroh-sync-{}", endpoint.peer_id());
         let dir = std::env::temp_dir().join(name);
         if !dir.exists() {
-            std::fs::create_dir(&dir).expect("failed to create temp dir");
+            std::fs::create_dir_all(&dir).expect("failed to create temp dir");
         }
         dir
     });
@@ -227,6 +222,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let author = Author::from(keypair.secret().clone());
     let docs_path = storage_path.join("docs.db");
     let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
+
+    // create a bao store for the iroh-bytes blobs
+    let blob_path = storage_path.join("blobs");
+    std::fs::create_dir_all(&blob_path)?;
+    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
 
     // create the live syncer
     let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
@@ -243,7 +243,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let state = Arc::new(State {
         gossip: gossip.clone(),
         docs: docs.clone(),
-        bytes: IrohBytesHandlers::new(rt.clone(), db.db().clone()),
+        bytes: IrohBytesHandlers::new(rt.clone(), db.clone()),
     });
 
     // spawn our endpoint loop that forwards incoming connections
@@ -307,9 +307,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     if let Err(err) = live_sync.shutdown().await {
         println!("> syncer closed with error: {err:?}");
     }
-    println!("> persisting document and blob database at {storage_path:?}");
-    db.save().await?;
-
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
         drop(metrics_fut);
@@ -324,15 +321,17 @@ async fn handle_command(
     store: &store::fs::Store,
     author: &Author,
     doc: &Doc,
-    db: &WritableFileDatabase,
+    db: &iroh::baomap::flat::Store,
     ticket: &Ticket,
     log_filter: &LogLevelReload,
     current_watch: &Arc<std::sync::Mutex<Option<String>>>,
 ) -> anyhow::Result<()> {
     match cmd {
         Cmd::Set { key, value } => {
-            let (hash, len) = db.put_bytes(value.into_bytes().into()).await?;
-            doc.insert(key, author, hash, len)?;
+            let value = value.into_bytes();
+            let len = value.len();
+            let hash = db.import_bytes(value.into()).await?;
+            doc.insert(key, author, hash, len as u64)?;
         }
         Cmd::Get {
             key,
@@ -413,10 +412,11 @@ async fn handle_command(
                         let author = author.clone();
                         let handle = rt.main().spawn(async move {
                             for i in 0..count {
-                                let value = String::from_utf8(bytes.clone()).unwrap();
+                                let value = String::from_utf8(bytes.clone()).unwrap().into_bytes();
+                                let len = value.len();
                                 let key = format!("{}/{}/{}", prefix, t, i);
-                                let (hash, len) = db.put_bytes(value.into_bytes().into()).await?;
-                                doc.insert(key, &author, hash, len)?;
+                                let hash = db.import_bytes(value.into()).await?;
+                                doc.insert(key, &author, hash, len as u64)?;
                             }
                             Ok(count)
                         });
@@ -467,15 +467,20 @@ async fn handle_command(
 async fn handle_fs_command(
     cmd: FsCmd,
     store: &store::fs::Store,
-    db: &WritableFileDatabase,
+    db: &iroh::baomap::flat::Store,
     doc: &Doc,
     author: &Author,
 ) -> anyhow::Result<()> {
     match cmd {
         FsCmd::ImportFile { file_path, key } => {
             let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-            let reader = tokio::fs::File::open(&file_path).await?;
-            let (hash, len) = db.put_reader(reader).await?;
+            let (hash, len) = db
+                .import(
+                    file_path.clone(),
+                    ImportMode::Copy,
+                    IgnoreProgressSender::default(),
+                )
+                .await?;
             doc.insert(key, author, hash, len)?;
             println!(
                 "> imported {file_path:?}: {} ({})",
@@ -502,8 +507,13 @@ async fn handle_fs_command(
                         continue;
                     }
                     let key = format!("{key_prefix}/{relative}");
-                    let reader = tokio::fs::File::open(file.path()).await?;
-                    let (hash, len) = db.put_reader(reader).await?;
+                    let (hash, len) = db
+                        .import(
+                            file.path().into(),
+                            ImportMode::Copy,
+                            IgnoreProgressSender::default(),
+                        )
+                        .await?;
                     doc.insert(key, author, hash, len)?;
                     println!(
                         "> imported {relative}: {} ({})",
@@ -529,7 +539,7 @@ async fn handle_fs_command(
                 let key = id.key();
                 let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                 let len = entry.entry().record().content_len();
-                let blob = db.db().get(entry.content_hash());
+                let blob = db.get(entry.content_hash());
                 if let Some(blob) = blob {
                     let mut reader = blob.data_reader().await?;
                     let path = root.join(&relative);
@@ -559,7 +569,6 @@ async fn handle_fs_command(
                 tokio::fs::create_dir_all(&parent).await?;
                 let mut file = tokio::fs::File::create(&path).await?;
                 let blob = db
-                    .db()
                     .get(entry.content_hash())
                     .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
                 let mut reader = blob.data_reader().await?;
@@ -775,27 +784,15 @@ fn repl_loop(cmd_tx: mpsc::Sender<(Cmd, oneshot::Sender<ToRepl>)>) -> anyhow::Re
 }
 
 fn get_stats() {
-    let core = iroh_metrics::core::Core::get().expect("Metrics core not initialized");
-    println!("# sync");
-    let metrics = core
-        .get_collector::<iroh::sync::metrics::Metrics>()
-        .unwrap();
-    fmt_metrics(metrics);
-    println!("# gossip");
-    let metrics = core
-        .get_collector::<iroh_gossip::metrics::Metrics>()
-        .unwrap();
-    fmt_metrics(metrics);
-}
-
-fn fmt_metrics(metrics: &impl Iterable) {
-    for (name, counter) in metrics.iter() {
-        if let Some(counter) = counter.downcast_ref::<Counter>() {
-            let value = counter.get();
-            println!("{name:23} : {value:>6}    ({})", counter.description);
-        } else {
-            println!("{name:23} : unsupported metric kind");
-        }
+    let Ok(stats) = iroh::metrics::get_metrics() else {
+        println!("metrics collection is disabled");
+        return;
+    };
+    for (name, details) in stats.iter() {
+        println!(
+            "{:23} : {:>6}    ({})",
+            name, details.value, details.description
+        );
     }
 }
 
@@ -865,7 +862,7 @@ async fn fmt_content_simple(_doc: &Doc, entry: &SignedEntry) -> String {
     format!("<{}>", HumanBytes(len))
 }
 
-async fn fmt_content(db: &WritableFileDatabase, entry: &SignedEntry) -> String {
+async fn fmt_content<B: BaoStore>(db: &B, entry: &SignedEntry) -> String {
     let len = entry.entry().record().content_len();
     if len > MAX_DISPLAY_CONTENT_LEN {
         format!("<{}>", HumanBytes(len))
@@ -880,9 +877,8 @@ async fn fmt_content(db: &WritableFileDatabase, entry: &SignedEntry) -> String {
     }
 }
 
-async fn read_content(db: &WritableFileDatabase, entry: &SignedEntry) -> anyhow::Result<Bytes> {
+async fn read_content<B: BaoStore>(db: &B, entry: &SignedEntry) -> anyhow::Result<Bytes> {
     let data = db
-        .db()
         .get(entry.content_hash())
         .ok_or_else(|| anyhow!("not found"))?
         .data_reader()
@@ -957,18 +953,18 @@ mod iroh_bytes_handlers {
         provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
     };
 
-    use iroh::{collection::IrohCollectionParser, database::flat::Database};
+    use iroh::collection::IrohCollectionParser;
 
     #[derive(Debug, Clone)]
     pub struct IrohBytesHandlers {
-        db: Database,
+        db: iroh::baomap::flat::Store,
         rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
         get_handler: Arc<NoopCustomGetHandler>,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
-        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: Database) -> Self {
+        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: iroh::baomap::flat::Store) -> Self {
             Self {
                 db,
                 rt,
