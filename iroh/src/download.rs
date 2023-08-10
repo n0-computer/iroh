@@ -6,6 +6,7 @@ use std::{
     time::Instant,
 };
 
+use anyhow::anyhow;
 use futures::{
     future::{BoxFuture, LocalBoxFuture, Shared},
     stream::FuturesUnordered,
@@ -13,7 +14,7 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{MapEntry, Store as BaoStore},
-    util::Hash,
+    util::{progress::IgnoreProgressSender, Hash},
 };
 use iroh_gossip::net::util::Dialer;
 use iroh_metrics::{inc, inc_by};
@@ -32,11 +33,11 @@ pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
 ///
 /// Spawns a background task that handles connecting to peers and performing get requests.
 ///
-/// TODO: Move to iroh-bytes or replace with corresponding feature from iroh-bytes once available
 /// TODO: Support retries and backoff - become a proper queue...
 /// TODO: Download requests send via synchronous flume::Sender::send. Investigate if we want async
 /// here. We currently use [`Downloader::push`] from [`iroh_sync::Replica::on_insert`] callbacks,
 /// which are sync, thus we need a sync method on the Downloader to push new download requests.
+/// TODO: Support collections, likely become generic over C: CollectionParser
 #[derive(Debug, Clone)]
 pub struct Downloader {
     pending_downloads: Arc<Mutex<HashMap<Hash, DownloadFuture>>>,
@@ -243,13 +244,18 @@ impl<B: BaoStore> DownloadActor<B> {
     }
 }
 
-// TODO: reimplement downloads
 async fn download_single<B: BaoStore>(
-    _store: B,
-    _conn: quinn::Connection,
-    _hash: Hash,
+    store: B,
+    conn: quinn::Connection,
+    hash: Hash,
 ) -> anyhow::Result<Option<(Hash, u64)>> {
-    todo!("Downloads not implemented")
+    // TODO: Make use of progress
+    let progress_sender = IgnoreProgressSender::default();
+    let _stats = crate::get::get_blob(&store, conn, &hash, progress_sender).await?;
+    let entry = store
+        .get(&hash)
+        .ok_or_else(|| anyhow!("downloaded blob is not in store"))?;
+    Ok(Some((hash, entry.size())))
 }
 
 #[derive(Debug, Default)]
