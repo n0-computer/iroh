@@ -83,18 +83,6 @@ impl From<[u8; 32]> for Hash {
     }
 }
 
-impl From<Hash> for [u8; 32] {
-    fn from(value: Hash) -> Self {
-        *value.as_bytes()
-    }
-}
-
-impl From<&[u8; 32]> for Hash {
-    fn from(value: &[u8; 32]) -> Self {
-        Hash(blake3::Hash::from(*value))
-    }
-}
-
 impl PartialOrd for Hash {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.0.as_bytes().cmp(other.0.as_bytes()))
@@ -211,12 +199,6 @@ impl fmt::Display for RpcError {
 impl From<anyhow::Error> for RpcError {
     fn from(e: anyhow::Error) -> Self {
         RpcError(serde_error::Error::new(&*e))
-    }
-}
-
-impl From<std::io::Error> for RpcError {
-    fn from(e: std::io::Error) -> Self {
-        RpcError(serde_error::Error::new(&e))
     }
 }
 
