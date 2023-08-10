@@ -2,17 +2,17 @@
 
 use anyhow::anyhow;
 use futures::Stream;
-use iroh_bytes::{util::RpcError, baomap::Store as BaoStore};
+use iroh_bytes::{baomap::Store as BaoStore, util::RpcError};
 use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
 use rand::rngs::OsRng;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-    DocGetRequest, DocGetResponse, DocImportRequest,
-    DocImportResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-    DocStartSyncRequest, DocStartSyncResponse, DocTicket, DocsCreateRequest, DocsCreateResponse,
-    DocsListRequest, DocsListResponse, RpcResult, ShareMode,
+    DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
+    DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
+    DocTicket, DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult,
+    ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -95,7 +95,11 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocStartSyncResponse {})
     }
 
-    pub async fn doc_set<B: BaoStore>(&self, bao_store: &B, req: DocSetRequest) -> RpcResult<DocSetResponse> {
+    pub async fn doc_set<B: BaoStore>(
+        &self,
+        bao_store: &B,
+        req: DocSetRequest,
+    ) -> RpcResult<DocSetResponse> {
         let DocSetRequest {
             doc_id,
             author_id,
