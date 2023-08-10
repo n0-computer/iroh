@@ -38,6 +38,16 @@ pub type IrohMemClient = Iroh<FlumeConnection<ProviderResponse, ProviderRequest>
 /// This is obtained from [`connect`].
 pub type IrohRpcClient = Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
+/// In-memory document client to an iroh node running in the same process.
+///
+/// This is obtained from [`iroh::node::Node::client`].
+pub type DocMem = Doc<FlumeConnection<ProviderResponse, ProviderRequest>>;
+
+/// RPC document client to an iroh node running in a seperate process.
+///
+/// This is obtained from [`connect`].
+pub type DocRpc = Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
+
 /// TODO: Change to "/iroh-rpc/1"
 pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
