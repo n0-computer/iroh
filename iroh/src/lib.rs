@@ -12,7 +12,6 @@ pub mod download;
 pub mod get;
 pub mod node;
 pub mod rpc_protocol;
-#[cfg(feature = "sync")]
 pub mod sync;
 pub mod util;
 
