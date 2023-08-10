@@ -359,7 +359,7 @@ impl<S: store::Store> Actor<S> {
     ) -> Result<()> {
         let namespace = replica.namespace();
         let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if !self.replicas.contains_key(&topic) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.replicas.entry(topic) {
             // setup replica insert notifications.
             let insert_entry_tx = self.insert_entry_tx.clone();
             let removal_token = replica.on_insert(Box::new(move |origin, entry| {
@@ -371,7 +371,7 @@ impl<S: store::Store> Actor<S> {
                     }
                 }
             }));
-            self.replicas.insert(topic, (replica, removal_token));
+            e.insert((replica, removal_token));
         }
 
         self.join_gossip_and_start_initial_sync(&namespace, peers)
