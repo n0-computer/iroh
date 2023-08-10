@@ -17,8 +17,8 @@ use crate::rpc_protocol::{
 
 use super::{engine::SyncEngine, PeerSource};
 
+#[allow(missing_docs)]
 impl<S: Store> SyncEngine<S> {
-    /// todo
     pub fn author_create(&self, _req: AuthorCreateRequest) -> RpcResult<AuthorCreateResponse> {
         // TODO: pass rng
         let author = self.store.new_author(&mut rand::rngs::OsRng {})?;
@@ -27,7 +27,6 @@ impl<S: Store> SyncEngine<S> {
         })
     }
 
-    /// todo
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
