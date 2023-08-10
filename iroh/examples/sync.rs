@@ -99,11 +99,6 @@ async fn main() -> anyhow::Result<()> {
 pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    iroh_metrics::core::Core::init(|reg, metrics| {
-        metrics.insert(iroh::sync::metrics::Metrics::new(reg));
-        metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
-    });
-
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         return Some(tokio::spawn(async move {
@@ -777,17 +772,18 @@ fn repl_loop(cmd_tx: mpsc::Sender<(Cmd, oneshot::Sender<ToRepl>)>) -> anyhow::Re
 }
 
 fn get_stats() {
-    let core = iroh_metrics::core::Core::get().expect("Metrics core not initialized");
-    println!("# sync");
-    let metrics = core
-        .get_collector::<iroh::sync::metrics::Metrics>()
-        .unwrap();
-    fmt_metrics(metrics);
-    println!("# gossip");
-    let metrics = core
-        .get_collector::<iroh_gossip::metrics::Metrics>()
-        .unwrap();
-    fmt_metrics(metrics);
+    todo!()
+    // let core = iroh_metrics::core::Core::get().expect("Metrics core not initialized");
+    // println!("# sync");
+    // let metrics = core
+    //     .get_collector::<iroh::sync::metrics::Metrics>()
+    //     .unwrap();
+    // fmt_metrics(metrics);
+    // println!("# gossip");
+    // let metrics = core
+    //     .get_collector::<iroh_gossip::metrics::Metrics>()
+    //     .unwrap();
+    // fmt_metrics(metrics);
 }
 
 fn fmt_metrics(metrics: &impl Iterable) {

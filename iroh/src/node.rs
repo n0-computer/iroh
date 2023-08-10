@@ -1027,6 +1027,12 @@ fn handle_rpc_request<
                 })
                 .await
             }
+            DocSubscribe(msg) => {
+                chan.server_streaming(msg, handler, |handler, req| {
+                    handler.inner.sync.doc_subscribe(req)
+                })
+                .await
+            }
             // TODO: make streaming
             BytesGet(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {

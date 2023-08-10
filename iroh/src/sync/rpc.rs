@@ -12,8 +12,9 @@ use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
     BytesGetRequest, BytesGetResponse, DocGetRequest, DocGetResponse, DocImportRequest,
     DocImportResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-    DocStartSyncRequest, DocStartSyncResponse, DocTicket, DocsCreateRequest, DocsCreateResponse,
-    DocsListRequest, DocsListResponse, RpcResult, ShareMode,
+    DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+    DocTicket, DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult,
+    ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -73,6 +74,20 @@ impl<S: Store> SyncEngine<S> {
             key,
             peers: vec![me],
         }))
+    }
+
+    pub fn doc_subscribe(
+        &self,
+        req: DocSubscribeRequest,
+    ) -> impl Stream<Item = DocSubscribeResponse> {
+        let (s, r) = flume::bounded(64);
+        self.live
+            .subscribe(req.doc_id, move |event| {
+                s.send(DocSubscribeResponse { event }).ok();
+            })
+            .unwrap(); // TODO: handle error
+
+        r.into_stream()
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {

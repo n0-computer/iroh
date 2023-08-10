@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use futures::stream::TryStreamExt;
+use futures::stream::{StreamExt, TryStreamExt};
 use iroh::{
     bytes::util::runtime::Handle,
     client::Doc as ClientDoc,
@@ -15,6 +15,7 @@ use quic_rpc::transport::flume::FlumeConnection;
 use crate::error::{IrohError as Error, Result};
 
 pub use iroh::rpc_protocol::CounterStats;
+pub use iroh::sync::LiveEvent;
 
 pub struct SignedEntry(iroh_sync::sync::SignedEntry);
 
@@ -56,7 +57,7 @@ impl Doc {
                     .try_collect::<Vec<_>>()
                     .await
             })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
         Ok(latest)
     }
 
@@ -65,7 +66,7 @@ impl Doc {
             .rt
             .main()
             .block_on(async { self.inner.share(ShareMode::Write).await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
 
         Ok(Arc::new(DocTicket(ticket)))
     }
@@ -75,7 +76,7 @@ impl Doc {
             .rt
             .main()
             .block_on(async { self.inner.share(ShareMode::Read).await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
 
         Ok(Arc::new(DocTicket(ticket)))
     }
@@ -90,7 +91,7 @@ impl Doc {
             .rt
             .main()
             .block_on(async { self.inner.set_bytes(author_id.0.clone(), key, value).await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
 
         Ok(Arc::new(SignedEntry(entry)))
     }
@@ -100,10 +101,36 @@ impl Doc {
             .rt
             .main()
             .block_on(async { self.inner.get_content_bytes(&entry.0).await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
 
         Ok(content.to_vec())
     }
+
+    pub fn subscribe(&self, cb: Box<dyn SubscribeCallback>) -> Result<()> {
+        let client = self.inner.clone();
+        self.rt.main().spawn(async move {
+            let mut sub = client.subscribe().await.unwrap();
+            while let Some(event) = sub.next().await {
+                println!("got event: {:?}", event);
+                match event {
+                    Ok(event) => {
+                        if let Err(err) = cb.event(event) {
+                            println!("cb error: {:?}", err);
+                        }
+                    }
+                    Err(err) => {
+                        println!("rpc error: {:?}", err);
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+}
+
+pub trait SubscribeCallback: Send + Sync + 'static {
+    fn event(&self, event: LiveEvent) -> Result<()>;
 }
 
 pub struct AuthorId(iroh_sync::sync::AuthorId);
@@ -121,7 +148,7 @@ impl DocTicket {
     pub fn from_string(content: String) -> Result<Self> {
         let ticket = content
             .parse::<iroh::rpc_protocol::DocTicket>()
-            .map_err(|e| Error::DocTicket(e.to_string()))?;
+            .map_err(Error::doc_ticket)?;
         Ok(DocTicket(ticket))
     }
 
@@ -144,15 +171,13 @@ impl IrohNode {
             .worker_threads(2)
             .enable_all()
             .build()
-            .map_err(|e| Error::Runtime(e.to_string()))?;
+            .map_err(Error::runtime)?;
 
         let tpc = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
         let rt = iroh::bytes::util::runtime::Handle::new(tokio_rt.handle().clone(), tpc);
 
         // TODO: pass in path
-        let path = tempfile::tempdir()
-            .map_err(|e| Error::NodeCreate(e.to_string()))?
-            .into_path();
+        let path = tempfile::tempdir().map_err(Error::node_create)?.into_path();
 
         let db = flat::Database::default();
 
@@ -173,7 +198,7 @@ impl IrohNode {
                     .spawn()
                     .await
             })
-            .map_err(|e| Error::NodeCreate(e.to_string()))?;
+            .map_err(Error::node_create)?;
 
         let sync_client = node.client();
 
@@ -194,7 +219,7 @@ impl IrohNode {
             .async_runtime
             .main()
             .block_on(async { self.sync_client.create_doc().await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
 
         Ok(Arc::new(Doc {
             inner: doc,
@@ -207,7 +232,7 @@ impl IrohNode {
             .async_runtime
             .main()
             .block_on(async { self.sync_client.create_author().await })
-            .map_err(|e| Error::Author(e.to_string()))?;
+            .map_err(Error::author)?;
 
         Ok(Arc::new(AuthorId(author)))
     }
@@ -217,7 +242,7 @@ impl IrohNode {
             .async_runtime
             .main()
             .block_on(async { self.sync_client.import_doc(ticket.0.clone()).await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
 
         Ok(Arc::new(Doc {
             inner: doc,
@@ -230,7 +255,7 @@ impl IrohNode {
             .async_runtime
             .main()
             .block_on(async { self.sync_client.stats().await })
-            .map_err(|e| Error::Doc(e.to_string()))?;
+            .map_err(Error::doc)?;
         Ok(stats)
     }
 }

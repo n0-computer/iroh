@@ -25,7 +25,7 @@ pub struct SyncEngine<S: Store> {
     pub(crate) db: WritableFileDatabase,
     pub(crate) endpoint: MagicEndpoint,
     downloader: Downloader,
-    live: LiveSync<S>,
+    pub(crate) live: LiveSync<S>,
     active: Arc<RwLock<HashMap<NamespaceId, RemovalToken>>>,
 }
 

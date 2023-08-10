@@ -27,6 +27,13 @@ interface Doc {
   bytes get_content_bytes(SignedEntry entry);
   [Throws=IrohError]
   sequence<SignedEntry> latest();
+  [Throws=IrohError]
+  void subscribe(SubscribeCallback cb);
+};
+
+callback interface SubscribeCallback {
+  [Throws=IrohError]
+  void event(LiveEvent event);
 };
 
 interface AuthorId {
@@ -49,7 +56,17 @@ dictionary CounterStats {
   string description;
 };
 
+enum LiveEvent {
+  "InsertLocal",
+  "InsertRemote"
+};
+
 [Error]
-enum IrohError {
-  "Runtime", "NodeCreate", "Doc", "Author", "DocTicket"
+interface IrohError {
+  Runtime(string description);
+  NodeCreate(string description);
+  Doc(string description);
+  Author(string description);
+  DocTicket(string description);
+  Uniffi(string description);
 };

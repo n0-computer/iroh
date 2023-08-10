@@ -151,6 +151,7 @@ pub enum Doc {
         #[clap(short, long)]
         old: bool,
         /// Optional key prefix (parsed as UTF-8 string)
+        #[clap(long)]
         prefix: Option<String>,
     },
 }
