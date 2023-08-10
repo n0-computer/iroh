@@ -18,6 +18,7 @@ pub type Iroh = iroh::client::Iroh<QuinnConnection<ProviderResponse, ProviderReq
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Parser)]
 pub enum Commands {
     Author {
