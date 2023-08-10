@@ -16,8 +16,6 @@ use super::{LiveSync, PeerSource};
 
 /// The SyncEngine combines the [`LiveSync`] actor with the Iroh bytes database and [`Downloader`].
 ///
-/// TODO: Replace the [`WritableFileDatabase`] with the real thing once
-/// https://github.com/n0-computer/iroh/pull/1320 is merged
 #[derive(Debug, Clone)]
 pub struct SyncEngine<S: Store> {
     pub(crate) rt: Handle,
