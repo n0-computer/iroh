@@ -3,7 +3,6 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
-    time::Instant,
 };
 
 use anyhow::anyhow;
