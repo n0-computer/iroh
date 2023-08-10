@@ -11,16 +11,16 @@ use iroh_sync::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// The ALPN identifier for the iroh-sync protocol
 pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 
-mod content;
+mod engine;
 mod live;
 pub mod metrics;
 
-pub use content::*;
+pub use engine::*;
 pub use live::*;
 
 /// Sync Protocol
@@ -81,7 +81,7 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
     // Sync message loop
 
     while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        debug!("read {}", read.len());
+        trace!("read {}", read.len());
         let msg = postcard::from_bytes(&read)?;
         match msg {
             Message::Init { .. } => {
@@ -106,9 +106,9 @@ pub async fn handle_connection<S: store::Store>(
     replica_store: S,
 ) -> Result<()> {
     let connection = connecting.await?;
-    debug!("> connection established!");
     let peer_id = get_peer_id(&connection).await?;
     let (mut send_stream, mut recv_stream) = connection.accept_bi().await?;
+    debug!(peer = ?peer_id, "incoming sync: start");
 
     run_bob(
         &mut send_stream,
@@ -119,7 +119,7 @@ pub async fn handle_connection<S: store::Store>(
     .await?;
     send_stream.finish().await?;
 
-    debug!("done");
+    debug!(peer = ?peer_id, "incoming sync: done");
 
     Ok(())
 }
@@ -136,14 +136,14 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
 
     let mut replica = None;
     while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        debug!("read {}", read.len());
+        trace!("read {}", read.len());
         let msg = postcard::from_bytes(&read)?;
 
         match msg {
             Message::Init { namespace, message } => {
                 ensure!(replica.is_none(), "double init message");
 
-                match replica_store.get_replica(&namespace)? {
+                match replica_store.open_replica(&namespace)? {
                     Some(r) => {
                         debug!("starting sync for {}", namespace);
                         if let Some(msg) =

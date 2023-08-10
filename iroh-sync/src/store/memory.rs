@@ -32,9 +32,13 @@ impl super::Store for Store {
     type GetLatestIter<'a> = GetLatestIter<'a>;
     type GetAllIter<'a> = GetAllIter<'a>;
 
-    fn get_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
+    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
         Ok(replicas.get(namespace).cloned())
+    }
+
+    fn list_replicas(&self) -> Result<Vec<NamespaceId>> {
+        Ok(self.replicas.read().keys().cloned().collect())
     }
 
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>> {
@@ -46,6 +50,10 @@ impl super::Store for Store {
         let author = Author::new(rng);
         self.authors.write().insert(author.id(), author.clone());
         Ok(author)
+    }
+
+    fn list_authors(&self) -> Result<Vec<Author>> {
+        Ok(self.authors.read().values().cloned().collect())
     }
 
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<ReplicaStoreInstance>> {

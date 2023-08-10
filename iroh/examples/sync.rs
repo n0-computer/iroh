@@ -13,17 +13,21 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
+use bytes::Bytes;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
-use iroh::sync::{
-    BlobStore, Doc as SyncDoc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN,
+use iroh::{
+    database::flat::writable::WritableFileDatabase,
+    download::Downloader,
+    sync::{PeerSource, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
 };
+use iroh_io::AsyncSliceReaderExt;
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
@@ -34,7 +38,7 @@ use iroh_net::{
 };
 use iroh_sync::{
     store::{self, Store as _},
-    sync::{Author, Namespace, SignedEntry},
+    sync::{Author, Namespace, Replica, SignedEntry},
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -51,7 +55,7 @@ use iroh_bytes_handlers::IrohBytesHandlers;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
-type Doc = SyncDoc<store::fs::Store>;
+type Doc = Replica<<store::fs::Store as store::Store>::Instance>;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -219,24 +223,29 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
     let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
 
-    // create a blob store (with a iroh-bytes database inside)
-    let blobs = BlobStore::new(rt.clone(), storage_path.join("blobs"), endpoint.clone()).await?;
-
     // create a doc store for the iroh-sync docs
     let author = Author::from(keypair.secret().clone());
-    let docs_path = storage_path.join("docs");
-    tokio::fs::create_dir_all(&docs_path).await?;
-    let docs = DocStore::new(blobs.clone(), author, docs_path)?;
+    let docs_path = storage_path.join("docs.db");
+    let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
 
     // create the live syncer
-    let live_sync = LiveSync::<store::fs::Store>::spawn(endpoint.clone(), gossip.clone());
+    let db = WritableFileDatabase::new(storage_path.join("blobs")).await?;
+    let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
+    let live_sync = SyncEngine::spawn(
+        rt.clone(),
+        endpoint.clone(),
+        gossip.clone(),
+        docs.clone(),
+        db.clone(),
+        downloader,
+    );
 
     // construct the state that is passed to the endpoint loop and from there cloned
     // into to the connection handler task for incoming connections.
     let state = Arc::new(State {
         gossip: gossip.clone(),
         docs: docs.clone(),
-        bytes: IrohBytesHandlers::new(rt.clone(), blobs.db().clone()),
+        bytes: IrohBytesHandlers::new(rt.clone(), db.db().clone()),
     });
 
     // spawn our endpoint loop that forwards incoming connections
@@ -245,8 +254,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // open our document and add to the live syncer
     let namespace = Namespace::from_bytes(topic.as_bytes());
     println!("> opening doc {}", fmt_hash(namespace.id().as_bytes()));
-    let doc: Doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
-    live_sync.add(doc.replica().clone(), peers.clone()).await?;
+    let doc = match docs.open_replica(&namespace.id()) {
+        Ok(Some(doc)) => doc,
+        Err(_) | Ok(None) => docs.new_replica(namespace)?,
+    };
+    live_sync.start_sync(doc.namespace(), peers.clone()).await?;
 
     // spawn an repl thread that reads stdin and parses each line as a `Cmd` command
     let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
@@ -285,7 +297,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 println!("> aborted");
             }
-            res = handle_command(cmd, &rt, docs.store(), &doc, &our_ticket, &log_filter, &current_watch) => if let Err(err) = res {
+            res = handle_command(cmd, &rt, &docs, &author, &doc, &db, &our_ticket, &log_filter, &current_watch) => if let Err(err) = res {
                 println!("> error: {err}");
             },
         };
@@ -294,11 +306,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
 
     // exit: cancel the sync and store blob database and document
-    if let Err(err) = live_sync.cancel().await {
+    if let Err(err) = live_sync.shutdown().await {
         println!("> syncer closed with error: {err:?}");
     }
     println!("> persisting document and blob database at {storage_path:?}");
-    blobs.save().await?;
+    db.save().await?;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
@@ -312,14 +324,17 @@ async fn handle_command(
     cmd: Cmd,
     rt: &runtime::Handle,
     store: &store::fs::Store,
+    author: &Author,
     doc: &Doc,
+    db: &WritableFileDatabase,
     ticket: &Ticket,
     log_filter: &LogLevelReload,
     current_watch: &Arc<std::sync::Mutex<Option<String>>>,
 ) -> anyhow::Result<()> {
     match cmd {
         Cmd::Set { key, value } => {
-            doc.insert_bytes(&key, value.into_bytes().into()).await?;
+            let (hash, len) = db.put_bytes(value.into_bytes().into()).await?;
+            doc.insert(key, author, hash, len)?;
         }
         Cmd::Get {
             key,
@@ -327,15 +342,15 @@ async fn handle_command(
             prefix,
         } => {
             let entries = if prefix {
-                store.get_all_by_prefix(doc.replica().namespace(), key.as_bytes())?
+                store.get_all_by_prefix(doc.namespace(), key.as_bytes())?
             } else {
-                store.get_all_by_key(doc.replica().namespace(), key.as_bytes())?
+                store.get_all_by_key(doc.namespace(), key.as_bytes())?
             };
             for entry in entries {
                 let (_id, entry) = entry?;
                 println!("{}", fmt_entry(&entry));
                 if print_content {
-                    println!("{}", fmt_content(doc, &entry).await);
+                    println!("{}", fmt_content(db, &entry).await);
                 }
             }
         }
@@ -353,10 +368,8 @@ async fn handle_command(
         },
         Cmd::Ls { prefix } => {
             let entries = match prefix {
-                None => store.get_all(doc.replica().namespace())?,
-                Some(prefix) => {
-                    store.get_all_by_prefix(doc.replica().namespace(), prefix.as_bytes())?
-                }
+                None => store.get_all(doc.namespace())?,
+                Some(prefix) => store.get_all_by_prefix(doc.namespace(), prefix.as_bytes())?,
             };
             let mut count = 0;
             for entry in entries {
@@ -374,7 +387,7 @@ async fn handle_command(
             log_filter.modify(|layer| *layer = next_filter)?;
         }
         Cmd::Stats => get_stats(),
-        Cmd::Fs(cmd) => handle_fs_command(cmd, store, doc).await?,
+        Cmd::Fs(cmd) => handle_fs_command(cmd, store, db, doc, author).await?,
         Cmd::Hammer {
             prefix,
             threads,
@@ -398,11 +411,14 @@ async fn handle_command(
                         let prefix = prefix.clone();
                         let doc = doc.clone();
                         let bytes = bytes.clone();
+                        let db = db.clone();
+                        let author = author.clone();
                         let handle = rt.main().spawn(async move {
                             for i in 0..count {
                                 let value = String::from_utf8(bytes.clone()).unwrap();
                                 let key = format!("{}/{}/{}", prefix, t, i);
-                                doc.insert_bytes(key, value.into_bytes().into()).await?;
+                                let (hash, len) = db.put_bytes(value.into_bytes().into()).await?;
+                                doc.insert(key, &author, hash, len)?;
                             }
                             Ok(count)
                         });
@@ -418,8 +434,8 @@ async fn handle_command(
                             let mut read = 0;
                             for i in 0..count {
                                 let key = format!("{}/{}/{}", prefix, t, i);
-                                let entries = store
-                                    .get_all_by_key(doc.replica().namespace(), key.as_bytes())?;
+                                let entries =
+                                    store.get_all_by_key(doc.namespace(), key.as_bytes())?;
                                 for entry in entries {
                                     let (_id, entry) = entry?;
                                     let _content = fmt_content_simple(&doc, &entry);
@@ -450,11 +466,19 @@ async fn handle_command(
     Ok(())
 }
 
-async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> anyhow::Result<()> {
+async fn handle_fs_command(
+    cmd: FsCmd,
+    store: &store::fs::Store,
+    db: &WritableFileDatabase,
+    doc: &Doc,
+    author: &Author,
+) -> anyhow::Result<()> {
     match cmd {
         FsCmd::ImportFile { file_path, key } => {
             let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-            let (hash, len) = doc.insert_from_file(&key, &file_path).await?;
+            let reader = tokio::fs::File::open(&file_path).await?;
+            let (hash, len) = db.put_reader(reader).await?;
+            doc.insert(key, author, hash, len)?;
             println!(
                 "> imported {file_path:?}: {} ({})",
                 fmt_hash(hash),
@@ -480,7 +504,9 @@ async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> a
                         continue;
                     }
                     let key = format!("{key_prefix}/{relative}");
-                    let (hash, len) = doc.insert_from_file(key, file.path()).await?;
+                    let reader = tokio::fs::File::open(file.path()).await?;
+                    let (hash, len) = db.put_reader(reader).await?;
+                    doc.insert(key, author, hash, len)?;
                     println!(
                         "> imported {relative}: {} ({})",
                         fmt_hash(hash),
@@ -498,15 +524,16 @@ async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> a
             }
             let root = canonicalize_path(&dir_path)?;
             println!("> exporting {key_prefix} to {root:?}");
-            let entries =
-                store.get_latest_by_prefix(doc.replica().namespace(), key_prefix.as_bytes())?;
+            let entries = store.get_latest_by_prefix(doc.namespace(), key_prefix.as_bytes())?;
             let mut checked_dirs = HashSet::new();
             for entry in entries {
                 let (id, entry) = entry?;
                 let key = id.key();
                 let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                 let len = entry.entry().record().content_len();
-                if let Some(mut reader) = doc.get_content_reader(&entry).await {
+                let blob = db.db().get(entry.content_hash());
+                if let Some(blob) = blob {
+                    let mut reader = blob.data_reader().await?;
                     let path = root.join(&relative);
                     let parent = path.parent().unwrap();
                     if !checked_dirs.contains(parent) {
@@ -526,19 +553,18 @@ async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> a
         FsCmd::ExportFile { key, file_path } => {
             let path = canonicalize_path(&file_path)?;
             // TODO: Fix
-            let entry = store
-                .get_latest_by_key(doc.replica().namespace(), &key)?
-                .next();
+            let entry = store.get_latest_by_key(doc.namespace(), &key)?.next();
             if let Some(entry) = entry {
                 let (_, entry) = entry?;
                 println!("> exporting {key} to {path:?}");
                 let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
                 tokio::fs::create_dir_all(&parent).await?;
                 let mut file = tokio::fs::File::create(&path).await?;
-                let mut reader = doc
-                    .get_content_reader(&entry)
-                    .await
+                let blob = db
+                    .db()
+                    .get(entry.content_hash())
                     .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
+                let mut reader = blob.data_reader().await?;
                 copy(&mut reader, &mut file).await?;
             } else {
                 println!("> key not found, abort");
@@ -683,7 +709,7 @@ impl FromStr for Cmd {
 #[derive(Debug)]
 struct State {
     gossip: Gossip,
-    docs: DocStore,
+    docs: iroh_sync::store::fs::Store,
     bytes: IrohBytesHandlers,
 }
 
@@ -704,7 +730,7 @@ async fn handle_connection(mut conn: quinn::Connecting, state: Arc<State>) -> an
     println!("> incoming connection with alpn {alpn}");
     match alpn.as_bytes() {
         GOSSIP_ALPN => state.gossip.handle_connection(conn.await?).await,
-        SYNC_ALPN => state.docs.handle_connection(conn).await,
+        SYNC_ALPN => iroh::sync::handle_connection(conn, state.docs.clone()).await,
         alpn if alpn == iroh_bytes::protocol::ALPN => state.bytes.handle_connection(conn).await,
         _ => bail!("ignoring connection: unsupported ALPN protocol"),
     }
@@ -841,19 +867,31 @@ async fn fmt_content_simple(_doc: &Doc, entry: &SignedEntry) -> String {
     format!("<{}>", HumanBytes(len))
 }
 
-async fn fmt_content(doc: &Doc, entry: &SignedEntry) -> String {
+async fn fmt_content(db: &WritableFileDatabase, entry: &SignedEntry) -> String {
     let len = entry.entry().record().content_len();
     if len > MAX_DISPLAY_CONTENT_LEN {
         format!("<{}>", HumanBytes(len))
     } else {
-        match doc.get_content_bytes(entry).await {
-            None => "<missing content>".to_string(),
-            Some(content) => match String::from_utf8(content.into()) {
+        match read_content(db, entry).await {
+            Err(err) => format!("<missing content: {err}>"),
+            Ok(content) => match String::from_utf8(content.into()) {
                 Ok(str) => str,
                 Err(_err) => format!("<invalid utf8 {}>", HumanBytes(len)),
             },
         }
     }
+}
+
+async fn read_content(db: &WritableFileDatabase, entry: &SignedEntry) -> anyhow::Result<Bytes> {
+    let data = db
+        .db()
+        .get(entry.content_hash())
+        .ok_or_else(|| anyhow!("not found"))?
+        .data_reader()
+        .await?
+        .read_to_end()
+        .await?;
+    Ok(data)
 }
 fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(hash.as_ref());

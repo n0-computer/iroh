@@ -1,9 +1,10 @@
 //! On disk storage for replicas.
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::Result;
 use ouroboros::self_referencing;
+use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
 use redb::{
     AccessGuard, Database, MultimapRange, MultimapTableDefinition, MultimapValue,
@@ -25,6 +26,7 @@ use self::ouroboros_impl_range_all_iterator::BorrowedMutFields;
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<Database>,
+    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<StoreInstance>>>>,
 }
 
 // Table Definitions
@@ -68,7 +70,10 @@ impl Store {
         }
         write_tx.commit()?;
 
-        Ok(Store { db: Arc::new(db) })
+        Ok(Store {
+            db: Arc::new(db),
+            replicas: Default::default(),
+        })
     }
     /// Stores a new namespace
     fn insert_namespace(&self, namespace: Namespace) -> Result<()> {
@@ -99,7 +104,11 @@ impl super::Store for Store {
     type GetAllIter<'a> = RangeAllIterator<'a>;
     type GetLatestIter<'a> = RangeLatestIterator<'a>;
 
-    fn get_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
+    fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
+        if let Some(replica) = self.replicas.read().get(namespace_id) {
+            return Ok(Some(replica.clone()));
+        }
+
         let read_tx = self.db.begin_read()?;
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
         let Some(namespace) = namespace_table.get(namespace_id.as_bytes())? else {
@@ -107,7 +116,19 @@ impl super::Store for Store {
         };
         let namespace = Namespace::from_bytes(namespace.value());
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
+        self.replicas.write().insert(*namespace_id, replica.clone());
         Ok(Some(replica))
+    }
+
+    // TODO: return iterator
+    fn list_replicas(&self) -> Result<Vec<NamespaceId>> {
+        let read_tx = self.db.begin_read()?;
+        let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
+        let namespaces = namespace_table
+            .iter()?
+            .filter_map(|entry| entry.ok())
+            .map(|(_key, value)| Namespace::from_bytes(value.value()).id());
+        Ok(namespaces.collect())
     }
 
     fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
@@ -128,12 +149,28 @@ impl super::Store for Store {
         Ok(author)
     }
 
+    /// Generates a new author, using the passed in randomness.
+    fn list_authors(&self) -> Result<Vec<Author>> {
+        let read_tx = self.db.begin_read()?;
+        let author_table = read_tx.open_table(AUTHORS_TABLE)?;
+
+        let mut authors = vec![];
+        let iter = author_table.iter()?;
+        for entry in iter {
+            let (_key, value) = entry?;
+            let author = Author::from_bytes(value.value());
+            authors.push(author);
+        }
+        Ok(authors)
+    }
+
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
         let id = namespace.id();
         self.insert_namespace(namespace.clone())?;
 
         let replica = Replica::new(namespace, StoreInstance::new(id, self.clone()));
 
+        self.replicas.write().insert(id, replica.clone());
         Ok(replica)
     }
 
@@ -669,7 +706,7 @@ mod tests {
         let namespace = Namespace::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
 
-        let replica_back = store.get_replica(&namespace.id())?.unwrap();
+        let replica_back = store.open_replica(&namespace.id())?.unwrap();
         assert_eq!(
             replica.namespace().as_bytes(),
             replica_back.namespace().as_bytes()

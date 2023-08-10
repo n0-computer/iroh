@@ -6,9 +6,10 @@
 
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     fmt::{Debug, Display},
     str::FromStr,
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
     time::SystemTime,
 };
 
@@ -130,6 +131,30 @@ impl FromStr for Author {
     }
 }
 
+impl FromStr for AuthorId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let pub_key: [u8; 32] = hex::decode(s)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("failed to parse: invalid key length"))?;
+        let pub_key = VerifyingKey::from_bytes(&pub_key)?;
+        Ok(AuthorId(pub_key))
+    }
+}
+
+impl FromStr for NamespaceId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let pub_key: [u8; 32] = hex::decode(s)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("failed to parse: invalid key length"))?;
+        let pub_key = VerifyingKey::from_bytes(&pub_key)?;
+        Ok(NamespaceId(pub_key))
+    }
+}
+
 impl From<SigningKey> for Author {
     fn from(priv_key: SigningKey) -> Self {
         Self { priv_key }
@@ -181,7 +206,7 @@ pub struct NamespaceId(VerifyingKey);
 
 impl Display for NamespaceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NamespaceId({})", hex::encode(self.0.as_bytes()))
+        write!(f, "{}", hex::encode(self.0.as_bytes()))
     }
 }
 
@@ -215,6 +240,9 @@ pub type OnInsertCallback = Box<dyn Fn(InsertOrigin, SignedEntry) + Send + Sync 
 pub type PeerIdBytes = [u8; 32];
 
 #[derive(Debug, Clone)]
+pub struct RemovalToken(u64);
+
+#[derive(Debug, Clone)]
 pub enum InsertOrigin {
     Local,
     Sync(Option<PeerIdBytes>),
@@ -224,7 +252,8 @@ pub enum InsertOrigin {
 pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
     inner: Arc<RwLock<InnerReplica<S>>>,
     #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
-    on_insert: Arc<RwLock<Vec<OnInsertCallback>>>,
+    on_insert: Arc<RwLock<HashMap<u64, OnInsertCallback>>>,
+    on_insert_removal_id: Arc<AtomicU64>,
 }
 
 #[derive(derive_more::Debug)]
@@ -248,12 +277,21 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
                 peer: Peer::from_store(store),
             })),
             on_insert: Default::default(),
+            on_insert_removal_id: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    pub fn on_insert(&self, callback: OnInsertCallback) {
+    pub fn on_insert(&self, callback: OnInsertCallback) -> RemovalToken {
         let mut on_insert = self.on_insert.write();
-        on_insert.push(callback);
+        let removal_id = self
+            .on_insert_removal_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        on_insert.insert(removal_id, callback);
+        RemovalToken(removal_id)
+    }
+
+    pub fn remove_on_insert(&self, token: RemovalToken) -> bool {
+        self.on_insert.write().remove(&token.0).is_some()
     }
 
     /// Inserts a new record at the given key.
@@ -275,7 +313,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         inner.peer.put(id, signed_entry.clone())?;
         drop(inner);
         let on_insert = self.on_insert.read();
-        for cb in &*on_insert {
+        for cb in on_insert.values() {
             cb(InsertOrigin::Local, signed_entry.clone());
         }
         Ok(())
@@ -313,7 +351,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         inner.peer.put(id, entry.clone()).map_err(Into::into)?;
         drop(inner);
         let on_insert = self.on_insert.read();
-        for cb in &*on_insert {
+        for cb in on_insert.values() {
             cb(InsertOrigin::Sync(received_from), entry.clone());
         }
         Ok(())
@@ -336,7 +374,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
             .peer
             .process_message(message, |_key, entry| {
                 let on_insert = self.on_insert.read();
-                for cb in &*on_insert {
+                for cb in on_insert.values() {
                     cb(InsertOrigin::Sync(from_peer), entry.clone());
                 }
             })?;
@@ -346,6 +384,10 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
 
     pub fn namespace(&self) -> NamespaceId {
         self.inner.read().namespace.id()
+    }
+
+    pub fn secret_key(&self) -> [u8; 32] {
+        self.inner.read().namespace.to_bytes()
     }
 }
 
@@ -381,6 +423,15 @@ impl SignedEntry {
 
     pub fn content_hash(&self) -> &Hash {
         self.entry().record().content_hash()
+    }
+    pub fn content_len(&self) -> u64 {
+        self.entry().record().content_len()
+    }
+    pub fn author(&self) -> AuthorId {
+        self.entry().id().author()
+    }
+    pub fn key(&self) -> &[u8] {
+        self.entry().id().key()
     }
 }
 
