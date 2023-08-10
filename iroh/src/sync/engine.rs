@@ -80,7 +80,8 @@ impl<S: Store> SyncEngine<S> {
     /// Stop syncing a document.
     pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
         let replica = self.get_replica(&namespace)?;
-        if let Some(token) = self.active.write().remove(&replica.namespace()) {
+        let token = self.active.write().remove(&replica.namespace());
+        if let Some(token) = token {
             replica.remove_on_insert(token);
             self.live.stop_sync(namespace).await?;
         }
