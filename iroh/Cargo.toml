@@ -22,6 +22,7 @@ futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
 iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
+# NOTE: should be removed once `Dialer` is moved to `iroh-net`
 iroh-gossip = { path = "../iroh-gossip" }
 iroh-io = { version = "0.2.2" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
@@ -58,7 +59,7 @@ url = { version = "2.4", features = ["serde"] }
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection"]
-metrics = ["iroh-metrics", "flat-db", "mem-db", "iroh-collection"]
+metrics = ["iroh-metrics"]
 mem-db = []
 flat-db = []
 iroh-collection = []
@@ -70,7 +71,9 @@ bytes = "1"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
 nix = "0.26.2"
+postcard = "1"
 proptest = "1.2.0"
+rand = "0.8"
 regex = { version = "1.7.1", features = ["std"] }
 tempfile = "3.4"
 testdir = "0.8"
