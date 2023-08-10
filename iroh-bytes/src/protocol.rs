@@ -172,7 +172,7 @@ impl GetRequest {
 }
 
 /// Write the given data to the provider sink, with a unsigned varint length prefix.
-pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
+pub(crate) async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
     ensure!(
         data.len() < MAX_MESSAGE_SIZE,
         "sending message is too large"
@@ -193,7 +193,7 @@ pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Res
 ///
 /// The message as raw bytes.  If the end of the stream is reached and there is no partial
 /// message, returns `None`.
-pub async fn read_lp(
+pub(crate) async fn read_lp(
     mut reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
 ) -> Result<Option<Bytes>> {
