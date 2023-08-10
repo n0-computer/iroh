@@ -1,5 +1,3 @@
-#![cfg(all(feature = "sync"))]
-
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
