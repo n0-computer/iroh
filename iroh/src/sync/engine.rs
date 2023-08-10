@@ -29,6 +29,14 @@ pub struct SyncEngine<S: Store> {
 }
 
 impl<S: Store> SyncEngine<S> {
+    /// Start the sync engine.
+    ///
+    /// This will spawn a background task for the [`LiveSync`]. When documents are added to the
+    /// engine with [`Self::start_sync`], then new entries inserted locally will be sent to peers
+    /// through iroh-gossip.
+    ///
+    /// The engine will also register [`Replica::on_insert`] callbacks to download content for new
+    /// entries from peers.
     pub fn spawn(
         rt: Handle,
         endpoint: MagicEndpoint,
@@ -47,6 +55,10 @@ impl<S: Store> SyncEngine<S> {
         }
     }
 
+    /// Start to sync a document.
+    ///
+    /// If `peers` is non-empty, it will both do an initial set-reconciliation sync with each peer,
+    /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
     pub async fn start_sync(
         &self,
         namespace: NamespaceId,
@@ -67,6 +79,7 @@ impl<S: Store> SyncEngine<S> {
         Ok(())
     }
 
+    /// Stop syncing a document.
     pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
         let replica = self.get_replica(&namespace)?;
         if let Some(token) = self.active.write().remove(&replica.namespace()) {
@@ -76,6 +89,7 @@ impl<S: Store> SyncEngine<S> {
         Ok(())
     }
 
+    /// Shutdown the sync engine.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         for (namespace, token) in self.active.write().drain() {
             if let Ok(Some(replica)) = self.store.open_replica(&namespace) {
@@ -86,12 +100,14 @@ impl<S: Store> SyncEngine<S> {
         Ok(())
     }
 
+    /// Get a [`Replica`] from the store, returning an error if the replica does not exist.
     pub fn get_replica(&self, id: &NamespaceId) -> anyhow::Result<Replica<S::Instance>> {
         self.store
             .open_replica(id)?
             .ok_or_else(|| anyhow!("doc not found"))
     }
 
+    /// Get an [`Author`] from the store, returning an error if the replica does not exist.
     pub fn get_author(&self, id: &AuthorId) -> anyhow::Result<Author> {
         self.store
             .get_author(id)?

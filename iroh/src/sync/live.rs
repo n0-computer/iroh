@@ -28,8 +28,11 @@ const CHANNEL_CAP: usize = 8;
 /// TODO: Make an enum and support DNS resolution
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeerSource {
+    /// The peer id (required)
     pub peer_id: PeerId,
+    /// Socket addresses for this peer (may be empty)
     pub addrs: Vec<SocketAddr>,
+    /// Derp region for this peer
     pub derp_region: Option<u16>,
 }
 
@@ -45,6 +48,7 @@ impl PeerSource {
     pub fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
     }
+    /// Create with information gathered from a [`MagicEndpoint`]
     pub async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
         Ok(Self {
             peer_id: endpoint.peer_id(),
@@ -80,8 +84,12 @@ impl FromStr for PeerSource {
     }
 }
 
+/// An iroh-sync operation
+///
+/// This is the message that is broadcast over iroh-gossip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
+    /// A new entry was inserted into the document.
     Put(SignedEntry),
 }
 
@@ -93,7 +101,7 @@ enum SyncState {
 }
 
 #[derive(Debug)]
-pub enum ToActor<S: store::Store> {
+enum ToActor<S: store::Store> {
     StartSync {
         replica: Replica<S::Instance>,
         peers: Vec<PeerSource>,
@@ -116,6 +124,10 @@ pub struct LiveSync<S: store::Store> {
 }
 
 impl<S: store::Store> LiveSync<S> {
+    /// Start the live sync.
+    ///
+    /// This spawn a background actor to handle gossip events and forward operations over broadcast
+    /// messages.
     pub fn spawn(rt: Handle, endpoint: MagicEndpoint, gossip: Gossip) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
         let mut actor = Actor::new(endpoint, gossip, to_actor_rx);
@@ -138,6 +150,8 @@ impl<S: store::Store> LiveSync<S> {
         Ok(())
     }
 
+    /// Start to sync a document with a set of peers, also joining the gossip swarm for that
+    /// document.
     pub async fn start_sync(
         &self,
         replica: Replica<S::Instance>,
@@ -149,6 +163,7 @@ impl<S: store::Store> LiveSync<S> {
         Ok(())
     }
 
+    /// Join and sync with a set of peers for a document that is already syncing.
     pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
         self.to_actor_tx
             .send(ToActor::<S>::JoinPeers { namespace, peers })
@@ -156,6 +171,9 @@ impl<S: store::Store> LiveSync<S> {
         Ok(())
     }
 
+    /// Stop the live sync for a document.
+    ///
+    /// This will leave the gossip swarm for this document.
     pub async fn stop_sync(&self, namespace: NamespaceId) -> Result<()> {
         self.to_actor_tx
             .send(ToActor::<S>::StopSync { namespace })
