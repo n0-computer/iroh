@@ -17,6 +17,7 @@ use iroh_bytes::{
     util::{progress::IgnoreProgressSender, Hash},
 };
 use iroh_gossip::net::util::Dialer;
+#[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use tokio::sync::oneshot;
