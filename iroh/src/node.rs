@@ -27,9 +27,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_bytes::baomap::{
-    ExportMode, Map, MapEntry, ReadableStore, Store, ValidateProgress,
-};
+use iroh_bytes::baomap::{ExportMode, Map, MapEntry, ReadableStore, Store, ValidateProgress};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::Stats;
 use iroh_bytes::protocol::GetRequest;

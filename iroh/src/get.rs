@@ -5,6 +5,7 @@ use std::io;
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkNum};
+use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     collection::CollectionParser,
@@ -22,7 +23,6 @@ use iroh_bytes::{
     IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
-use iroh_bytes::baomap::range_collections::{RangeSet2, range_set::RangeSetRange};
 use tracing::trace;
 
 use crate::util::progress::ProgressSliceWriter2;
