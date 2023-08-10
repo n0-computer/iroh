@@ -33,75 +33,76 @@ use crate::sync::PeerSource;
 /// This is obtained from [`iroh::node::Node::client`].
 pub type IrohMemClient = Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>;
 
-/// RPC client to an iroh node running in a seperate process.
-///
-/// This is obtained from [`connect`].
-#[cfg(feature = "cli")]
-pub type IrohRpcClient =
-    Iroh<quic_rpc::transport::quinn::QuinnConnection<ProviderResponse, ProviderRequest>>;
-
 /// In-memory document client to an iroh node running in the same process.
 ///
 /// This is obtained from [`iroh::node::Node::client`].
 pub type DocMem = Doc<FlumeConnection<ProviderResponse, ProviderRequest>>;
 
-/// RPC document client to an iroh node running in a seperate process.
-///
-/// This is obtained from [`connect`].
 #[cfg(feature = "cli")]
-pub type DocRpc =
-    Doc<quic_rpc::transport::quinn::QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub use quic::*;
 
-/// TODO: Change to "/iroh-rpc/1"
-pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
+#[cfg(feature = "cli")]
+mod quic {
+    //! Utility methods to create an RPC client for a node running in a seperate process
 
-/// Connect to an iroh node running on the same computer, but in a different process.
-#[cfg(feature = "cli")]
-pub async fn connect(rpc_port: u16) -> anyhow::Result<IrohRpcClient> {
-    let client = connect_raw(rpc_port).await?;
-    Ok(Iroh::new(client))
-}
+    use quic_rpc::transport::quinn::QuinnConnection;
 
-/// Create a raw RPC client to an iroh node running on the same computer, but in a different
-/// process.
-#[cfg(feature = "cli")]
-pub async fn connect_raw(
-    rpc_port: u16,
-) -> anyhow::Result<
-    quic_rpc::RpcClient<
-        ProviderService,
-        quic_rpc::transport::quinn::QuinnConnection<ProviderResponse, ProviderRequest>,
-    >,
-> {
-    use anyhow::Context;
-    let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
-    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
-    let server_name = "localhost".to_string();
-    let connection = quic_rpc::transport::quinn::QuinnConnection::new(endpoint, addr, server_name);
-    let client = RpcClient::new(connection);
-    // Do a version request to check if the server is running.
-    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
-        .await
-        .context("iroh server is not running")??;
-    Ok(client)
-}
-#[cfg(feature = "cli")]
-fn create_quinn_client(
-    bind_addr: SocketAddr,
-    alpn_protocols: Vec<Vec<u8>>,
-    keylog: bool,
-) -> Result<quinn::Endpoint> {
-    let keypair = iroh_net::tls::Keypair::generate();
-    let tls_client_config =
-        iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
-    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-    client_config.transport_config(Arc::new(transport_config));
-    endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+    use super::*;
+    /// RPC client to an iroh node running in a seperate process.
+    ///
+    /// This is obtained from [`connect`].
+    pub type IrohRpcClient = Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
+
+    /// RPC document client to an iroh node running in a seperate process.
+    ///
+    /// This is obtained from [`connect`].
+    pub type DocRpc = Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
+
+    /// TODO: Change to "/iroh-rpc/1"
+    pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
+
+    /// Connect to an iroh node running on the same computer, but in a different process.
+    pub async fn connect(rpc_port: u16) -> anyhow::Result<IrohRpcClient> {
+        let client = connect_raw(rpc_port).await?;
+        Ok(Iroh::new(client))
+    }
+
+    /// Create a raw RPC client to an iroh node running on the same computer, but in a different
+    /// process.
+    pub async fn connect_raw(
+        rpc_port: u16,
+    ) -> anyhow::Result<
+        quic_rpc::RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>,
+    > {
+        use anyhow::Context;
+        let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
+        let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
+        let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
+        let server_name = "localhost".to_string();
+        let connection = QuinnConnection::new(endpoint, addr, server_name);
+        let client = RpcClient::new(connection);
+        // Do a version request to check if the server is running.
+        let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
+            .await
+            .context("iroh server is not running")??;
+        Ok(client)
+    }
+    fn create_quinn_client(
+        bind_addr: SocketAddr,
+        alpn_protocols: Vec<Vec<u8>>,
+        keylog: bool,
+    ) -> Result<quinn::Endpoint> {
+        let keypair = iroh_net::tls::Keypair::generate();
+        let tls_client_config =
+            iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
+        let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+        let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+        client_config.transport_config(Arc::new(transport_config));
+        endpoint.set_default_client_config(client_config);
+        Ok(endpoint)
+    }
 }
 
 /// Iroh client
