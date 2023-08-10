@@ -8,14 +8,14 @@ use std::{
 
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
+    baomap::flat,
     collection::IrohCollectionParser,
-    database::flat::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
+use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
-use iroh_sync::store::Store;
+use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
@@ -40,7 +40,12 @@ pub struct ProvideOptions {
     pub derp_map: Option<DerpMap>,
 }
 
-pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptions) -> Result<()> {
+pub async fn run(
+    rt: &runtime::Handle,
+    path: Option<PathBuf>,
+    in_place: bool,
+    opts: ProvideOptions,
+) -> Result<()> {
     if let Some(ref path) = path {
         ensure!(
             path.exists(),
@@ -49,28 +54,25 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
         );
     }
 
-    let iroh_data_root = iroh_data_root()?;
-    let marker = iroh_data_root.join(FNAME_PATHS);
-    let db = {
-        if iroh_data_root.is_dir() && marker.exists() {
-            // try to load db
-            Database::load(&iroh_data_root).await.with_context(|| {
-                format!(
-                    "Failed to load iroh database from {}",
-                    iroh_data_root.display()
-                )
-            })?
-        } else {
-            // directory does not exist, create an empty db
-            Database::default()
-        }
-    };
+    let mut iroh_data_root = iroh_data_root()?;
+    if !iroh_data_root.is_absolute() {
+        iroh_data_root = std::env::current_dir()?.join(iroh_data_root);
+    }
+    tokio::fs::create_dir_all(&iroh_data_root).await?;
+    let db = flat::Store::load(&iroh_data_root, &iroh_data_root, rt)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to load iroh database from {}",
+                iroh_data_root.display()
+            )
+        })?;
+
     let store = iroh_sync::store::fs::Store::new(iroh_data_root.join(DOCS_PATH))?;
-    let blobs_path = iroh_data_root.join("blobstemp");
 
     let key = Some(iroh_data_root.join("keypair"));
     let token = opts.request_token.clone();
-    let provider = provide(db.clone(), store, blobs_path, rt, key, opts).await?;
+    let provider = provide(db.clone(), store, rt, key, opts).await?;
     let controller = provider.controller();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -97,12 +99,21 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let stream = controller.server_streaming(ProvideRequest { path }).await?;
-                let (hash, entries) = aggregate_add_response(stream).await?;
-                print_add_response(hash, entries);
-                let ticket = provider.ticket(hash).await?.with_token(token);
-                println!("All-in-one ticket: {ticket}");
-                anyhow::Ok(tmp_path)
+                let stream = controller
+                    .server_streaming(ProvideRequest { path, in_place })
+                    .await?;
+                match aggregate_add_response(stream).await {
+                    Ok((hash, entries)) => {
+                        print_add_response(hash, entries);
+                        let ticket = provider.ticket(hash).await?.with_token(token);
+                        println!("All-in-one ticket: {ticket}");
+                        anyhow::Ok(tmp_path)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to add data: {}", e);
+                        std::process::exit(-1);
+                    }
+                }
             }
             .instrument(info_span!("provider-add")),
         )
@@ -119,8 +130,6 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
             res?;
         }
     }
-    // persist the db to disk.
-    db.save(&iroh_data_root).await?;
 
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
@@ -130,17 +139,16 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
     Ok(())
 }
 
-async fn provide<D: BaoReadonlyDb, S: Store>(
-    db: D,
-    store: S,
-    writable_db_path: PathBuf,
+async fn provide<B: BaoStore, D: DocStore>(
+    bao_store: B,
+    doc_store: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
-) -> Result<Node<D, S>> {
+) -> Result<Node<B, D>> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = Node::builder(db, store, writable_db_path)
+    let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);

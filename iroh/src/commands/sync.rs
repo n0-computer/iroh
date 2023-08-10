@@ -16,6 +16,8 @@ use super::RpcClient;
 // TODO: It is a bit unfortunate that we have to drag the generics all through. Maybe box the conn?
 pub type Iroh = iroh::client::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
+const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, Parser)]
 pub enum Commands {
     Author {
@@ -143,7 +145,10 @@ pub enum Doc {
         /// shown.
         #[clap(short, long)]
         old: bool,
-        // TODO: get content?
+
+        /// Also print the content for each entry (but only if smaller than 1MB and valid UTf-8)
+        #[clap(short, long)]
+        content: bool,
     },
     List {
         /// If true, old entries will be included. By default only the latest value for each key is
@@ -151,7 +156,6 @@ pub enum Doc {
         #[clap(short, long)]
         old: bool,
         /// Optional key prefix (parsed as UTF-8 string)
-        #[clap(long)]
         prefix: Option<String>,
     },
 }
@@ -189,6 +193,7 @@ impl Doc {
                 prefix,
                 author,
                 old,
+                content,
             } => {
                 let key = key.as_bytes().to_vec();
                 let key = match prefix {
@@ -203,6 +208,23 @@ impl Doc {
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
+                    if content {
+                        if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
+                            match doc.get_content_bytes(&entry).await {
+                                Ok(content) => match String::from_utf8(content.into()) {
+                                    Ok(s) => println!("{s}"),
+                                    Err(_err) => println!("<invalid UTF-8>"),
+                                },
+                                Err(err) => println!("<failed to get content: {err}>"),
+                            }
+                        } else {
+                            println!(
+                                "<skipping content with len {}: too large to print>",
+                                HumanBytes(entry.content_len())
+                            )
+                        }
+                    }
+                    println!();
                 }
             }
             Doc::List { old, prefix } => {

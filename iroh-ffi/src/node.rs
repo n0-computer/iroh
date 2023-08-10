@@ -2,9 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::{StreamExt, TryStreamExt};
 use iroh::{
+    baomap::flat,
     bytes::util::runtime::Handle,
     client::Doc as ClientDoc,
-    database::flat,
     net::tls::Keypair,
     node::{Node, DEFAULT_BIND_ADDR},
     rpc_protocol::{ProviderRequest, ProviderResponse, ShareMode},
@@ -158,7 +158,7 @@ impl DocTicket {
 }
 
 pub struct IrohNode {
-    node: Node<flat::Database, iroh_sync::store::fs::Store>,
+    node: Node<flat::Store, iroh_sync::store::fs::Store>,
     async_runtime: Handle,
     sync_client: iroh::client::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>,
     tokio_rt: tokio::runtime::Runtime,
@@ -179,8 +179,6 @@ impl IrohNode {
         // TODO: pass in path
         let path = tempfile::tempdir().map_err(Error::node_create)?.into_path();
 
-        let db = flat::Database::default();
-
         // TODO: store and load keypair
         let keypair = Keypair::generate();
 
@@ -188,10 +186,15 @@ impl IrohNode {
         let node = rt
             .main()
             .block_on(async move {
-                let store = iroh_sync::store::fs::Store::new(path.join("sync.db"))?;
-                let path = path.join("blobs_dir");
+                let docs_path = path.join("docs.db");
+                let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
 
-                Node::builder(db, store, path)
+                // create a bao store for the iroh-bytes blobs
+                let blob_path = path.join("blobs");
+                tokio::fs::create_dir_all(&blob_path).await?;
+                let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt_inner).await?;
+
+                Node::builder(db, docs)
                     .bind_addr(DEFAULT_BIND_ADDR.into())
                     .keypair(keypair)
                     .runtime(&rt_inner)

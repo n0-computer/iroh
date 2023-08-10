@@ -7,6 +7,7 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::future::Future;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -14,23 +15,27 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::baomap::{
+    ExportMode, Map, MapEntry, ReadableStore, Store as BaoStore, ValidateProgress,
+};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
+use iroh_bytes::get::Stats;
 use iroh_bytes::protocol::GetRequest;
-use iroh_bytes::util::RpcResult;
+use iroh_bytes::provider::ShareProgress;
+use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
+use iroh_bytes::util::{RpcError, RpcResult};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
-    provider::{
-        BaoMap, BaoMapEntry, BaoReadonlyDb, CustomGetHandler, ProvideProgress,
-        RequestAuthorizationHandler, ValidateProgress,
-    },
+    provider::{CustomGetHandler, ProvideProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_io::AsyncSliceReaderExt;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
     config::Endpoint,
@@ -38,7 +43,7 @@ use iroh_net::{
     tls::{self, Keypair, PeerId},
     MagicEndpoint,
 };
-use iroh_sync::store::Store;
+use iroh_sync::store::Store as DocStore;
 use once_cell::sync::OnceCell;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
@@ -49,14 +54,15 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
-use crate::database::flat::writable::WritableFileDatabase;
 use crate::dial::Ticket;
 use crate::download::Downloader;
 use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
-    ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, StatsGetRequest, StatsGetResponse,
-    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    AddrsRequest, AddrsResponse, BytesGetRequest, BytesGetResponse, IdRequest, IdResponse,
+    ListBlobsRequest, ListBlobsResponse, ListCollectionsRequest, ListCollectionsResponse,
+    ListIncompleteBlobsRequest, ListIncompleteBlobsResponse, ProvideRequest, ProviderRequest,
+    ProviderResponse, ProviderService, ShareRequest, ShutdownRequest, StatsGetRequest,
+    StatsGetResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::sync::{SyncEngine, SYNC_ALPN};
 
@@ -76,20 +82,21 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 pub fn init_metrics_collection() {
     use iroh_metrics::core::Metric;
 
-    iroh_metrics::core::Core::init(|reg, metrics| {
+    iroh_metrics::core::Core::try_init(|reg, metrics| {
         metrics.insert(crate::metrics::Metrics::new(reg));
         metrics.insert(iroh_sync::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
         metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
-    });
+    })
+    .ok();
 }
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database. Various database implementations are available
-/// in [`crate::database`]. Everything else is optional.
+/// You must supply a blob store. Various store implementations are available
+/// in [`crate::baomap`]. Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
@@ -102,8 +109,8 @@ pub struct Builder<
     E = DummyServerEndpoint,
     C = NoCollectionParser,
 > where
-    D: BaoMap,
-    S: Store,
+    D: Map,
+    S: DocStore,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -117,7 +124,7 @@ pub struct Builder<
     derp_map: Option<DerpMap>,
     collection_parser: C,
     rt: Option<runtime::Handle>,
-    docs: (S, PathBuf),
+    docs: S,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -161,9 +168,9 @@ impl CustomGetHandler for NoopCustomGetHandler {
     }
 }
 
-impl<D: BaoMap, S: Store> Builder<D, S> {
+impl<D: Map, S: DocStore> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
-    fn with_db_and_store(db: D, store: S, blobs_path: PathBuf) -> Self {
+    fn with_db_and_store(db: D, docs: S) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
@@ -175,15 +182,15 @@ impl<D: BaoMap, S: Store> Builder<D, S> {
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: NoCollectionParser,
             rt: None,
-            docs: (store, blobs_path),
+            docs,
         }
     }
 }
 
 impl<D, S, E, C> Builder<D, S, E, C>
 where
-    D: BaoReadonlyDb,
-    S: Store,
+    D: BaoStore,
+    S: DocStore,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -327,7 +334,6 @@ where
             }))
             .bind(self.bind_addr.port())
             .await?;
-
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);
@@ -342,14 +348,12 @@ where
 
         // spawn the sync engine
         // TODO: Remove once persistence is merged
-        let db = WritableFileDatabase::new(self.docs.1).await?;
-        let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
+        let downloader = Downloader::new(rt.clone(), endpoint.clone(), self.db.clone());
         let sync = SyncEngine::spawn(
             rt.clone(),
             endpoint.clone(),
             gossip.clone(),
-            self.docs.0,
-            db,
+            self.docs,
             downloader,
         );
 
@@ -496,7 +500,7 @@ where
     }
 }
 
-async fn handle_connection<D: BaoReadonlyDb, S: Store, C: CollectionParser>(
+async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
     connecting: quinn::Connecting,
     alpn: String,
     node: Arc<NodeInner<D, S>>,
@@ -567,13 +571,13 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: BaoMap, S: Store> {
+pub struct Node<D: Map, S: DocStore> {
     inner: Arc<NodeInner<D, S>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct NodeInner<D, S: Store> {
+struct NodeInner<D, S: DocStore> {
     db: D,
     endpoint: MagicEndpoint,
     keypair: Keypair,
@@ -594,14 +598,14 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
+impl<D: ReadableStore, S: DocStore> Node<D, S> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
     ///
     /// TODO: remove blobs_path argument once peristence branch is merged
-    pub fn builder(db: D, store: S, writable_db_path: PathBuf) -> Builder<D, S> {
-        Builder::with_db_and_store(db, store, writable_db_path)
+    pub fn builder(bao_store: D, doc_store: S) -> Builder<D, S> {
+        Builder::with_db_and_store(bao_store, doc_store)
     }
 
     /// The address on which the node socket is bound.
@@ -626,27 +630,6 @@ impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
     /// Returns the [`PeerId`] of the node.
     pub fn peer_id(&self) -> PeerId {
         self.inner.keypair.public().into()
-    }
-
-    /// Dial a given peer
-    /// TODO(b5): I'd like to use this in iroh_ffi to have the node manage
-    /// a single endpoint, but I run into lifetime errors when trying to work
-    /// this way
-    // pub async fn dial(
-    //     &self,
-    //     alpn: &[u8],
-    //     peer_id: PeerId,
-    //     known_addrs: &Vec<SocketAddr>,
-    // ) -> Result<quinn::Connection> {
-    //     self.inner
-    //         .endpoint
-    //         .connect(peer_id, alpn, known_addrs)
-    //         .await
-    //         .context("failed to dial")
-    // }
-
-    pub fn keypair(&self) -> Keypair {
-        self.inner.keypair.clone()
     }
 
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
@@ -709,7 +692,7 @@ impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
     }
 }
 
-impl<D: BaoMap, S: Store> NodeInner<D, S> {
+impl<D: Map, S: DocStore> NodeInner<D, S> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -730,7 +713,7 @@ impl<D: BaoMap, S: Store> NodeInner<D, S> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: BaoMap, S: Store> Future for Node<D, S> {
+impl<D: Map, S: DocStore> Future for Node<D, S> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -739,12 +722,12 @@ impl<D: BaoMap, S: Store> Future for Node<D, S> {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler<D, S: Store, C> {
+struct RpcHandler<D, S: DocStore, C> {
     inner: Arc<NodeInner<D, S>>,
     collection_parser: C,
 }
 
-impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, C> {
+impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -765,6 +748,31 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
                 let path = "".to_owned();
                 Some(ListBlobsResponse { hash, size, path })
             }
+        })
+    }
+
+    fn list_incomplete_blobs(
+        self,
+        _msg: ListIncompleteBlobsRequest,
+    ) -> impl Stream<Item = ListIncompleteBlobsResponse> + Send + 'static {
+        let db = self.inner.db.clone();
+        let local = self.inner.rt.local_pool().clone();
+        futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
+            let db = db.clone();
+            let t = local.spawn_pinned(move || async move {
+                let Some(entry) = db.get_partial(&hash) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "no partial entry found",
+                    ));
+                };
+                io::Result::Ok(ListIncompleteBlobsResponse {
+                    hash,
+                    size: 0,
+                    expected_size: entry.size(),
+                })
+            });
+            async move { t.await.ok()?.ok() }
         })
     }
 
@@ -815,43 +823,227 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
     }
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
-        let (tx, rx) = mpsc::channel(1);
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
             if let Err(e) = self.provide0(msg, tx).await {
-                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
+                tx2.send_async(ProvideProgress::Abort(e.into())).await.ok();
             }
         });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+        rx.into_stream()
     }
 
-    #[cfg(feature = "flat-db")]
+    async fn get(
+        self,
+        conn: quinn::Connection,
+        hash: Hash,
+        recursive: bool,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<Stats> {
+        crate::get::get(
+            &self.inner.db,
+            &self.collection_parser,
+            conn,
+            hash,
+            recursive,
+            sender,
+        )
+        .await
+    }
+
+    async fn export(
+        self,
+        out: String,
+        hash: Hash,
+        recursive: bool,
+        stable: bool,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<()> {
+        let db = &self.inner.db;
+        let path = PathBuf::from(&out);
+        let mode = if stable {
+            ExportMode::TryReference
+        } else {
+            ExportMode::Copy
+        };
+        if recursive {
+            #[cfg(feature = "iroh-collection")]
+            {
+                use crate::collection::{Blob, Collection};
+                use crate::util::io::pathbuf_from_name;
+                tracing::trace!("exporting collection {} to {}", hash, path.display());
+                tokio::fs::create_dir_all(&path).await?;
+                let collection = db.get(&hash).context("collection not there")?;
+                let mut reader = collection.data_reader().await?;
+                let bytes: Bytes = reader.read_to_end().await?;
+                let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
+                for Blob { hash, name } in collection.blobs() {
+                    let path = path.join(pathbuf_from_name(name));
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tracing::trace!("exporting blob {} to {}", hash, path.display());
+                    let id = progress.new_id();
+                    let progress1 = progress.clone();
+                    db.export(*hash, path, mode, move |offset| {
+                        Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+                    })
+                    .await?;
+                }
+            }
+            #[cfg(not(feature = "iroh-collection"))]
+            anyhow::bail!("recursive export not supported without iroh-collection feature");
+        } else if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+            let id = progress.new_id();
+            let entry = db.get(&hash).context("entry not there")?;
+            progress
+                .send(ShareProgress::Export {
+                    id,
+                    hash,
+                    target: out,
+                    size: entry.size(),
+                })
+                .await?;
+            let progress1 = progress.clone();
+            db.export(hash, path, mode, move |offset| {
+                Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+            })
+            .await?;
+        }
+        anyhow::Ok(())
+    }
+
+    async fn share0(
+        self,
+        msg: ShareRequest,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<()> {
+        let local = self.inner.rt.local_pool().clone();
+        let hash = msg.hash;
+        tracing::info!("share: {:?}", msg);
+        let conn = self
+            .inner
+            .endpoint
+            .connect(
+                msg.peer,
+                &iroh_bytes::protocol::ALPN,
+                msg.derp_region,
+                &msg.addrs,
+            )
+            .await?;
+        progress.send(ShareProgress::Connected).await?;
+        let progress2 = progress.clone();
+        let progress3 = progress.clone();
+        let this = self.clone();
+        let download =
+            local.spawn_pinned(move || self.get(conn, msg.hash, msg.recursive, progress2));
+        let _export = local.spawn_pinned(move || async move {
+            let stats = download.await.unwrap()?;
+            progress
+                .send(ShareProgress::NetworkDone {
+                    bytes_written: stats.bytes_written,
+                    bytes_read: stats.bytes_read,
+                    elapsed: stats.elapsed,
+                })
+                .await?;
+            if let Some(out) = msg.out {
+                if let Err(cause) = this
+                    .export(out, hash, msg.recursive, msg.in_place, progress3)
+                    .await
+                {
+                    progress.send(ShareProgress::Abort(cause.into())).await?;
+                }
+            }
+            progress.send(ShareProgress::AllDone).await?;
+            anyhow::Ok(())
+        });
+        Ok(())
+    }
+
+    fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
+        async move {
+            let (sender, receiver) = flume::bounded(1024);
+            let sender = FlumeProgressSender::new(sender);
+            if let Err(cause) = self.share0(msg, sender.clone()).await {
+                sender
+                    .send(ShareProgress::Abort(cause.into()))
+                    .await
+                    .unwrap();
+            };
+            receiver.into_stream()
+        }
+        .flatten_stream()
+    }
+
+    #[cfg(feature = "iroh-collection")]
     async fn provide0(
         self,
         msg: ProvideRequest,
-        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+        progress: flume::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        use crate::database::flat::{create_collection_inner, create_data_sources, Database};
-        use crate::util::progress::Progress;
-        use std::any::Any;
+        use crate::collection::{Blob, Collection};
+        use futures::TryStreamExt;
+        use iroh_bytes::baomap::{ImportMode, ImportProgress};
+        use std::{collections::BTreeMap, sync::Mutex};
+
+        let progress = FlumeProgressSender::new(progress);
+        let names = Arc::new(Mutex::new(BTreeMap::new()));
+        // convert import progress to provide progress
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id, path, .. } => {
+                names.lock().unwrap().insert(id, path);
+                None
+            }
+            ImportProgress::Size { id, size } => {
+                let path = names.lock().unwrap().remove(&id)?;
+                Some(ProvideProgress::Found {
+                    id,
+                    name: path.display().to_string(),
+                    size,
+                })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(ProvideProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => Some(ProvideProgress::Done { hash, id }),
+            _ => None,
+        });
         let root = msg.path;
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = create_data_sources(root)?;
-        // create the collection
-        // todo: provide feedback for progress
-        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
-
-        // todo: generify this
-        // for now provide will only work if D is a Database
-        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-            current.union_with(db);
+        let data_sources = crate::util::fs::scan_path(root)?;
+        let mode = if msg.in_place {
+            ImportMode::TryReference
         } else {
-            anyhow::bail!("provide not supported yet for this database type");
-        }
+            ImportMode::Copy
+        };
+        const IO_PARALLELISM: usize = 4;
+        let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
+            .map(|source| {
+                let import_progress = import_progress.clone();
+                let db = self.inner.db.clone();
+                async move {
+                    let name = source.name().to_string();
+                    let (hash, size) = db
+                        .import(source.path().to_owned(), mode, import_progress)
+                        .await?;
+                    io::Result::Ok((Blob { hash, name }, size))
+                }
+            })
+            .buffered(IO_PARALLELISM)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let total_blobs_size = result.iter().map(|(_, size)| *size).sum();
+        let blobs = result.into_iter().map(|(blob, _)| blob).collect::<Vec<_>>();
+        let collection = Collection::new(blobs, total_blobs_size)?;
+        let data = collection.to_bytes()?;
+        let hash = self.inner.db.import_bytes(data.into()).await?;
+        progress.send(ProvideProgress::AllDone { hash }).await?;
 
         self.inner
             .callbacks
@@ -863,13 +1055,13 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
         Ok(())
     }
 
-    #[cfg(not(feature = "flat-db"))]
+    #[cfg(not(feature = "iroh-collection"))]
     async fn provide0(
         self,
         _msg: ProvideRequest,
-        _progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+        _progress: flume::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("provide not supported yet for this database type");
+        anyhow::bail!("collections not supported");
     }
 
     async fn stats(self, _req: StatsGetRequest) -> RpcResult<StatsGetResponse> {
@@ -930,11 +1122,36 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
             ))
         })
     }
+
+    // TODO: streaming
+    async fn bytes_get(self, req: BytesGetRequest) -> RpcResult<BytesGetResponse> {
+        let entry = self
+            .inner
+            .db
+            .get(&req.hash)
+            .ok_or_else(|| RpcError::from(anyhow!("not found")))?;
+        // TODO: size limit
+        // TODO: streaming
+        let data = self.inner.rt.local_pool().spawn_pinned(|| async move {
+            let data = entry
+                .data_reader()
+                .await
+                .map_err(anyhow::Error::from)?
+                .read_to_end()
+                .await
+                .map_err(anyhow::Error::from)?;
+            Result::<_, anyhow::Error>::Ok(data)
+        });
+        let data = data
+            .await
+            .map_err(|_err| anyhow::anyhow!("task failed to complete"))??;
+        Ok(BytesGetResponse { data })
+    }
 }
 
 fn handle_rpc_request<
-    D: BaoReadonlyDb,
-    S: Store,
+    D: BaoStore,
+    S: DocStore,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 >(
@@ -946,9 +1163,18 @@ fn handle_rpc_request<
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
+        tracing::info!(
+            "handling rpc request: {:?} {}",
+            msg,
+            std::any::type_name::<E>()
+        );
         match msg {
             ListBlobs(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::list_blobs)
+                    .await
+            }
+            ListIncompleteBlobs(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_incomplete_blobs)
                     .await
             }
             ListCollections(msg) => {
@@ -959,6 +1185,7 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await
             }
+            Share(msg) => chan.server_streaming(msg, handler, RpcHandler::share).await,
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
@@ -1006,8 +1233,9 @@ fn handle_rpc_request<
                 .await
             }
             DocSet(msg) => {
+                let bao_store = handler.inner.db.clone();
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_set(req).await
+                    handler.inner.sync.doc_set(&bao_store, req).await
                 })
                 .await
             }
@@ -1034,12 +1262,7 @@ fn handle_rpc_request<
                 .await
             }
             // TODO: make streaming
-            BytesGet(msg) => {
-                chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.bytes_get(req).await
-                })
-                .await
-            }
+            BytesGet(msg) => chan.rpc(msg, handler, RpcHandler::bytes_get).await,
         }
     });
 }
@@ -1121,7 +1344,6 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
-    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -1136,9 +1358,10 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::database::mem::Database::new([("test", b"hello")]);
+        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
+        let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
-        let node = Node::builder(db)
+        let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&rt)
             .spawn()
@@ -1150,11 +1373,13 @@ mod tests {
         assert!(!ticket.addrs().is_empty());
     }
 
-    #[cfg(feature = "flat-db")]
+    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::database::flat::Database::from(HashMap::new());
-        let node = Node::builder(db)
+        let rt = runtime::Handle::from_currrent(1)?;
+        let db = crate::baomap::mem::Store::new(rt);
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())
             .spawn()
@@ -1181,6 +1406,7 @@ mod tests {
                 .controller()
                 .server_streaming(ProvideRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                    in_place: false,
                 })
                 .await?;
 

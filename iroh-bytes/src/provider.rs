@@ -1,70 +1,24 @@
 //! The server side API
 use std::fmt::Debug;
-use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::blake3;
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
-use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
-use tokio::sync::mpsc;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
+use crate::baomap::*;
 use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::util::RpcError;
 use crate::Hash;
-
-/// An entry for one hash in a bao collection
-///
-/// The entry has the ability to provide you with an (outboard, data)
-/// reader pair. Creating the reader is async and may fail. The futures that
-/// create the readers must be `Send`, but the readers themselves don't have to
-/// be.
-pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
-    /// The hash of the entry
-    fn hash(&self) -> blake3::Hash;
-    /// A future that resolves to a reader that can be used to read the outboard
-    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
-    /// A future that resolves to a reader that can be used to read the data
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
-}
-
-/// A generic collection of blobs with precomputed outboards
-pub trait BaoMap: Clone + Send + Sync + 'static {
-    /// The outboard type. This can be an in memory outboard or an outboard that
-    /// retrieves the data asynchronously from a remote database.
-    type Outboard: bao_tree::io::fsm::Outboard;
-    /// The reader type.
-    type DataReader: AsyncSliceReader;
-    /// The entry type. An entry is a cheaply cloneable handle that can be used
-    /// to open readers for both the data and the outboard
-    type Entry: BaoMapEntry<Self>;
-    /// Get an entry for a hash.
-    ///
-    /// This can also be used for a membership test by just checking if there
-    /// is an entry. Creating an entry should be cheap, any expensive ops should
-    /// be deferred to the creation of the actual readers.
-    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
-}
-
-/// Extension of BaoMap to add misc methods used by the rpc calls
-pub trait BaoReadonlyDb: BaoMap {
-    /// list all blobs in the database. This should include collections, since
-    /// collections are blobs and can be requested as blobs.
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
-    /// list all roots (collections or other explicitly added things) in the database
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
-    /// Validate the database
-    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
-}
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -141,83 +95,112 @@ pub enum Event {
     },
 }
 
-/// Progress updates for the provide operation
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ValidateProgress {
-    /// started validating
-    Starting {
-        /// The total number of entries to validate
-        total: u64,
-    },
-    /// We started validating an entry
-    Entry {
-        /// a new unique id for this entry
-        id: u64,
-        /// the hash of the entry
-        hash: Hash,
-        /// location of the entry.
-        ///
-        /// In case of a file, this is the path to the file.
-        /// Otherwise it might be an url or something else to uniquely identify the entry.
-        path: Option<String>,
-        /// the size of the entry
-        size: u64,
-    },
-    /// We got progress ingesting item `id`
-    Progress {
-        /// the unique id of the entry
-        id: u64,
-        /// the offset of the progress, in bytes
-        offset: u64,
-    },
-    /// We are done with `id`
-    Done {
-        /// the unique id of the entry
-        id: u64,
-        /// an error if we failed to validate the entry
-        error: Option<String>,
-    },
-    /// We are done with the whole operation
-    AllDone,
-    /// We got an error and need to abort
-    Abort(RpcError),
-}
-
-/// Progress updates for the provide operation
+/// Progress updates for the provide operation.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ProvideProgress {
     /// An item was found with name `name`, from now on referred to via `id`
     Found {
-        /// a new unique id for this entry
+        /// A new unique id for this entry.
         id: u64,
-        /// the name of the entry
+        /// The name of the entry.
         name: String,
-        /// the size of the entry in bytes
+        /// The size of the entry in bytes.
         size: u64,
     },
-    /// We got progress ingesting item `id`
+    /// We got progress ingesting item `id`.
     Progress {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// the offset of the progress, in bytes
+        /// The offset of the progress, in bytes.
         offset: u64,
     },
-    /// We are done with `id`, and the hash is `hash`
+    /// We are done with `id`, and the hash is `hash`.
     Done {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// the hash of the entry
+        /// The hash of the entry.
         hash: Hash,
     },
-    /// We are done with the whole operation
+    /// We are done with the whole operation.
     AllDone {
-        /// the hash of the created collection
+        /// The hash of the created collection.
         hash: Hash,
     },
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
+}
+
+/// Progress updates for the provide operation.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ShareProgress {
+    /// A new connection was established.
+    Connected,
+    /// An item was found with hash `hash`, from now on referred to via `id`.
+    Found {
+        /// A new unique id for this entry.
+        id: u64,
+        /// The name of the entry.
+        hash: Hash,
+        /// The size of the entry in bytes.
+        size: u64,
+    },
+    /// An item was found with hash `hash`, from now on referred to via `id`.
+    FoundCollection {
+        /// The name of the entry.
+        hash: Hash,
+        /// Number of children in the collection, if known.
+        num_blobs: Option<u64>,
+        /// The size of the entry in bytes, if known.
+        total_blobs_size: Option<u64>,
+    },
+    /// We got progress ingesting item `id`.
+    Progress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done with `id`, and the hash is `hash`.
+    Done {
+        /// The unique id of the entry.
+        id: u64,
+    },
+    /// We are done with the network part - all data is local.
+    NetworkDone {
+        /// The number of bytes written.
+        bytes_written: u64,
+        /// The number of bytes read.
+        bytes_read: u64,
+        /// The time it took to transfer the data.
+        elapsed: Duration,
+    },
+    /// The download part is done for this id, we are now exporting the data
+    /// to the specified out path.
+    Export {
+        /// Unique id of the entry.
+        id: u64,
+        /// The hash of the entry.
+        hash: Hash,
+        /// The size of the entry in bytes.
+        size: u64,
+        /// The path to the file where the data is exported.
+        target: String,
+    },
+    /// We have made progress exporting the data.
+    ///
+    /// This is only sent for large blobs.
+    ExportProgress {
+        /// Unique id of the entry that is being exported.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We got an error and need to abort.
+    Abort(RpcError),
+    /// We are done with the whole operation.
+    AllDone,
 }
 
 /// hook into the request handling to process authorization by examining
@@ -273,9 +256,9 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>(
+pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     request: GetRequest,
-    // Database from which to fetch blobs.
+    // Store from which to fetch blobs.
     db: &D,
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
@@ -366,7 +349,7 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 }
 
 /// Handle a single connection.
-pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
+pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
@@ -424,7 +407,7 @@ pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
     .await
 }
 
-async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
+async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
@@ -461,7 +444,7 @@ async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
         }
     }
 }
-async fn handle_custom_get<E: EventSender, D: BaoMap, C: CollectionParser>(
+async fn handle_custom_get<E: EventSender, D: Map, C: CollectionParser>(
     db: D,
     request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
@@ -489,7 +472,7 @@ async fn handle_custom_get<E: EventSender, D: BaoMap, C: CollectionParser>(
 }
 
 /// Handle a single standard get request.
-pub async fn handle_get<D: BaoMap, E: EventSender, C: CollectionParser>(
+pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
     db: D,
     request: GetRequest,
     collection_parser: C,
@@ -592,7 +575,7 @@ pub enum SentStatus {
 }
 
 /// Send a
-pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
+pub async fn send_blob<D: Map, W: AsyncWrite + Unpin + Send + 'static>(
     db: &D,
     name: Hash,
     ranges: &RangeSpec,
@@ -616,7 +599,7 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
             Ok((SentStatus::Sent, size))
         }
         _ => {
-            debug!("blob not found {}", name);
+            debug!("blob not found {}", hex::encode(name));
             Ok((SentStatus::NotFound, 0))
         }
     }

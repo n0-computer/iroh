@@ -29,7 +29,7 @@ use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
 /// Stats about the transfer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Stats {
     /// The number of bytes written
     pub bytes_written: u64,
@@ -57,8 +57,11 @@ pub mod fsm {
 
     use super::*;
 
-    use bao_tree::io::fsm::{
-        ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+    use bao_tree::{
+        blake3,
+        io::fsm::{
+            OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+        },
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
@@ -386,30 +389,40 @@ pub mod fsm {
             Ok((done, res))
         }
 
-        /// Write the entire blob to a slice writer
+        /// Write the entire blob to a slice writer.
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
             data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(None, data).await
+            let (content, _size) = self.next().await?;
+            content.write_all(data).await
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// Write the entire blob to a slice writer and to an optional outboard.
+        ///
+        /// The outboard is only written to if the blob is larger than a single
+        /// chunk group.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            mut outboard: Option<O>,
+            outboard: Option<O>,
             data: D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
-            O: AsyncSliceWriter,
+            O: OutboardMut,
         {
-            let (content, size) = self.next().await?;
-            if let Some(o) = outboard.as_mut() {
-                o.write_at(0, &size.to_le_bytes()).await?;
-            }
+            let (content, _size) = self.next().await?;
             content.write_all_with_outboard(outboard, data).await
+        }
+
+        /// The hash of the blob we are reading.
+        pub fn hash(&self) -> Hash {
+            (*self.stream.hash()).into()
+        }
+
+        /// The ranges we have requested for the current hash.
+        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+            self.stream.ranges()
         }
     }
 
@@ -445,16 +458,20 @@ pub mod fsm {
             }
         }
 
-        /// Write the entire blob to a slice writer
-        pub async fn write_all<D: AsyncSliceWriter>(
-            self,
-            data: D,
-        ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(None, data).await
+        /// The geometry of the tree we are currently reading.
+        pub fn tree(&self) -> &bao_tree::BaoTree {
+            self.stream.tree()
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// The hash of the blob we are reading.
+        pub fn hash(&self) -> &blake3::Hash {
+            self.stream.hash()
+        }
+
+        /// Write the entire blob to a slice writer and to an optional outboard.
+        ///
+        /// The outboard is only written to if the blob is larger than a single
+        /// chunk group.
         pub async fn write_all_with_outboard<D, O>(
             self,
             mut outboard: Option<O>,
@@ -462,7 +479,7 @@ pub mod fsm {
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
-            O: AsyncSliceWriter,
+            O: OutboardMut,
         {
             let mut content = self;
             loop {
@@ -472,12 +489,33 @@ pub mod fsm {
                         match item? {
                             BaoContentItem::Parent(parent) => {
                                 if let Some(outboard) = outboard.as_mut() {
-                                    let offset = parent.node.post_order_offset() * 64 + 8;
-                                    let (l_hash, r_hash) = parent.pair;
-                                    outboard.write_at(offset, l_hash.as_bytes()).await?;
-                                    outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
+                                    outboard.save(parent.node, &parent.pair).await?;
                                 }
                             }
+                            BaoContentItem::Leaf(leaf) => {
+                                data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                            }
+                        }
+                    }
+                    BlobContentNext::Done(end) => {
+                        return Ok(end);
+                    }
+                }
+            }
+        }
+
+        /// Write the entire blob to a slice writer.
+        pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, DecodeError>
+        where
+            D: AsyncSliceWriter,
+        {
+            let mut content = self;
+            loop {
+                match content.next().await {
+                    BlobContentNext::More((content1, item)) => {
+                        content = content1;
+                        match item? {
+                            BaoContentItem::Parent(_) => {}
                             BaoContentItem::Leaf(leaf) => {
                                 data.write_bytes_at(leaf.offset.0, leaf.data).await?;
                             }

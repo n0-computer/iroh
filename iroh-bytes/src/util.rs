@@ -6,6 +6,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, result, str::FromStr};
 use thiserror::Error;
 pub mod io;
+pub mod progress;
 pub mod runtime;
 
 /// Hash type used throught.
@@ -210,6 +211,12 @@ impl fmt::Display for RpcError {
 impl From<anyhow::Error> for RpcError {
     fn from(e: anyhow::Error) -> Self {
         RpcError(serde_error::Error::new(&*e))
+    }
+}
+
+impl From<std::io::Error> for RpcError {
+    fn from(e: std::io::Error) -> Self {
+        RpcError(serde_error::Error::new(&e))
     }
 }
 

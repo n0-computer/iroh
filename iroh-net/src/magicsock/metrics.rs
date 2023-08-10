@@ -57,6 +57,18 @@ pub struct Metrics {
 
     // How many times our DERP home region DI has changed from non-zero to a different non-zero.
     pub derp_home_change: Counter,
+
+    /*
+     * Connection Metrics
+     */
+    /// The number of direct connections we have made to peers.
+    pub num_direct_conns_added: Counter,
+    /// The number of direct connections we have lost to peers.
+    pub num_direct_conns_removed: Counter,
+    /// The number of connections to peers we have added over relay.
+    pub num_relay_conns_added: Counter,
+    /// The number of connections to peers we have removed over relay.
+    pub num_relay_conns_removed: Counter,
 }
 
 impl Default for Metrics {
@@ -111,6 +123,17 @@ impl Default for Metrics {
 
             // How many times our DERP home region DI has changed from non-zero to a different non-zero.
             derp_home_change: Counter::new("derp_home_change"),
+
+            num_direct_conns_added: Counter::new(
+                "number of direct connections to a peer we have added",
+            ),
+            num_direct_conns_removed: Counter::new(
+                "number of direct connections to a peer we have removed",
+            ),
+            num_relay_conns_added: Counter::new("number of relay connections to a peer we rely on"),
+            num_relay_conns_removed: Counter::new(
+                "number of relay connections to a peer we no longer rely on",
+            ),
         }
     }
 }

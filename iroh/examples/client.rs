@@ -1,5 +1,5 @@
 use indicatif::HumanBytes;
-use iroh::{database::flat::writable::WritableFileDatabase, node::Node};
+use iroh::node::Node;
 use iroh_bytes::util::runtime;
 use iroh_sync::{
     store::{GetFilter, KeyFilter},
@@ -9,23 +9,19 @@ use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
     let rt = runtime::Handle::from_currrent(1)?;
-    let db = WritableFileDatabase::new(dir.path().into()).await?;
+    let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
-    let node = Node::builder(db.db().clone(), store, dir.path().into())
+    let node = Node::builder(db.clone(), store)
         .runtime(&rt)
         .spawn()
         .await?;
     let client = node.client();
     let doc = client.create_doc().await?;
     let author = client.create_author().await?;
-
-    for i in 0..10 {
-        let key = format!("hello {i}").to_vec();
-        let value = format!("world {i}").to_vec();
-        doc.set_bytes(author, key.clone(), value).await?;
-    }
+    let key = b"hello".to_vec();
+    let value = b"world".to_vec();
+    doc.set_bytes(author, key.clone(), value).await?;
     let mut stream = doc
         .get(GetFilter {
             latest: true,
@@ -38,11 +34,6 @@ async fn main() -> anyhow::Result<()> {
         let content = doc.get_content_bytes(&entry).await?;
         println!("  content {}", String::from_utf8(content.to_vec())?)
     }
-
-    let ticket = doc.share(iroh::rpc_protocol::ShareMode::Write).await?;
-    println!("join: {}", ticket);
-
-    tokio::signal::ctrl_c().await?;
 
     Ok(())
 }

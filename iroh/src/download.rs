@@ -1,18 +1,24 @@
 //! Download queue
 
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
-    time::Instant,
 };
 
+use anyhow::anyhow;
 use futures::{
     future::{BoxFuture, LocalBoxFuture, Shared},
     stream::FuturesUnordered,
     FutureExt,
 };
-use iroh_bytes::util::Hash;
+use iroh_bytes::{
+    baomap::{MapEntry, Store as BaoStore},
+    util::{progress::IgnoreProgressSender, Hash},
+};
 use iroh_gossip::net::util::Dialer;
+#[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use tokio::sync::oneshot;
@@ -21,9 +27,6 @@ use tracing::{debug, error, warn};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
-// TODO: Will be replaced by proper persistent DB once
-// https://github.com/n0-computer/iroh/pull/1320 is merged
-use crate::database::flat::writable::WritableFileDatabase;
 
 /// Future for the completion of a download request
 pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
@@ -32,11 +35,11 @@ pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
 ///
 /// Spawns a background task that handles connecting to peers and performing get requests.
 ///
-/// TODO: Move to iroh-bytes or replace with corresponding feature from iroh-bytes once available
 /// TODO: Support retries and backoff - become a proper queue...
 /// TODO: Download requests send via synchronous flume::Sender::send. Investigate if we want async
-/// here. We currently use [`Downloader::push`] from [`iroh_sync::Replica::on_insert`] callbacks,
+/// here. We currently use [`Downloader::push`] from [`iroh_sync::sync::Replica::on_insert`] callbacks,
 /// which are sync, thus we need a sync method on the Downloader to push new download requests.
+/// TODO: Support collections, likely become generic over C: CollectionParser
 #[derive(Debug, Clone)]
 pub struct Downloader {
     pending_downloads: Arc<Mutex<HashMap<Hash, DownloadFuture>>>,
@@ -45,10 +48,10 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new downloader
-    pub fn new(
+    pub fn new<B: BaoStore>(
         rt: iroh_bytes::util::runtime::Handle,
         endpoint: MagicEndpoint,
-        db: WritableFileDatabase,
+        db: B,
     ) -> Self {
         let (tx, rx) = flume::bounded(64);
         // spawn the actor on a local pool
@@ -108,7 +111,7 @@ impl Downloader {
 
 type DownloadReply = oneshot::Sender<Option<(Hash, u64)>>;
 type PendingDownloadsFutures =
-    FuturesUnordered<LocalBoxFuture<'static, (PeerId, Hash, anyhow::Result<Option<(Hash, u64)>>)>>;
+    FuturesUnordered<LocalBoxFuture<'static, (PeerId, Hash, anyhow::Result<Option<u64>>)>>;
 
 #[derive(Debug)]
 struct DownloadRequest {
@@ -118,21 +121,17 @@ struct DownloadRequest {
 }
 
 #[derive(Debug)]
-struct DownloadActor {
+struct DownloadActor<B> {
     dialer: Dialer,
-    db: WritableFileDatabase,
+    db: B,
     conns: HashMap<PeerId, quinn::Connection>,
     replies: HashMap<Hash, VecDeque<DownloadReply>>,
     pending_download_futs: PendingDownloadsFutures,
     queue: DownloadQueue,
     rx: flume::Receiver<DownloadRequest>,
 }
-impl DownloadActor {
-    fn new(
-        endpoint: MagicEndpoint,
-        db: WritableFileDatabase,
-        rx: flume::Receiver<DownloadRequest>,
-    ) -> Self {
+impl<B: BaoStore> DownloadActor<B> {
+    fn new(endpoint: MagicEndpoint, db: B, rx: flume::Receiver<DownloadRequest>) -> Self {
         Self {
             rx,
             db,
@@ -152,23 +151,37 @@ impl DownloadActor {
                 },
                 (peer, conn) = self.dialer.next() => match conn {
                     Ok(conn) => {
-                        debug!("connection to {peer} established");
+                        debug!(peer = ?peer, "connection established");
                         self.conns.insert(peer, conn);
                         self.on_peer_ready(peer);
                     },
                     Err(err) => self.on_peer_fail(&peer, err),
                 },
                 Some((peer, hash, res)) = self.pending_download_futs.next() => match res {
-                    Ok(Some((hash, size))) => {
+                    Ok(Some(size)) => {
                         self.queue.on_success(hash, peer);
                         self.reply(hash, Some((hash, size)));
                         self.on_peer_ready(peer);
                     }
                     Ok(None) => {
+                        // TODO: This case is currently never reached, because iroh::get::get_blob
+                        // doesn't return an option but only a result, with no way (AFAICS) to discern
+                        // between connection error and not found.
+                        // self.on_not_found(&peer, hash);
+                        // self.on_peer_ready(peer);
+                        unreachable!()
+                    }
+                    Err(_err) => {
                         self.on_not_found(&peer, hash);
                         self.on_peer_ready(peer);
+                        // TODO: In case of connection errors or similar we want to call
+                        // on_peer_fail to not continue downloading from this peer.
+                        // Currently however a "not found" is also an error, thus calling
+                        // on_peer_fail would stop trying to get other hashes from this peer.
+                        // This likely needs fixing in iroh::get::get to have a meaningful error to
+                        // see if the connection failed or if it's just a "not found".
+                        // self.on_peer_fail(&peer, err),
                     }
-                    Err(err) => self.on_peer_fail(&peer, err),
                 }
             }
         }
@@ -197,25 +210,40 @@ impl DownloadActor {
 
     fn on_peer_ready(&mut self, peer: PeerId) {
         if let Some(hash) = self.queue.try_next_for_peer(peer) {
+            debug!(peer = ?peer, hash = ?hash, "on_peer_ready: get next");
             self.start_download_unchecked(peer, hash);
         } else {
+            debug!(peer = ?peer, "on_peer_ready: nothing left, disconnect");
             self.conns.remove(&peer);
         }
     }
 
     fn start_download_unchecked(&mut self, peer: PeerId, hash: Hash) {
         let conn = self.conns.get(&peer).unwrap().clone();
-        let blobs = self.db.clone();
+        let db = self.db.clone();
+        let progress_sender = IgnoreProgressSender::default();
+
         let fut = async move {
+            debug!(peer = ?peer, hash = ?hash, "start download");
+
             #[cfg(feature = "metrics")]
             let start = Instant::now();
-            let res = blobs.download_single(conn, hash).await;
+
+            // TODO: None for not found instead of error
+            let res = crate::get::get_blob(&db, conn, &hash, progress_sender).await;
+            let res = res.and_then(|_stats| {
+                db.get(&hash)
+                    .ok_or_else(|| anyhow!("downloaded blob not found in store"))
+                    .map(|entry| Some(entry.size()))
+            });
+            debug!(peer = ?peer, hash = ?hash, "finish download: {res:?}");
+
             // record metrics
             #[cfg(feature = "metrics")]
             {
                 let elapsed = start.elapsed().as_millis();
                 match &res {
-                    Ok(Some((_hash, len))) => {
+                    Ok(Some(len)) => {
                         inc!(Metrics, downloads_success);
                         inc_by!(Metrics, download_bytes_total, *len);
                         inc_by!(Metrics, download_time_total, elapsed as u64);
@@ -224,6 +252,7 @@ impl DownloadActor {
                     Err(_) => inc!(Metrics, downloads_error),
                 }
             }
+
             (peer, hash, res)
         };
         self.pending_download_futs.push(fut.boxed_local());
@@ -231,13 +260,14 @@ impl DownloadActor {
 
     async fn on_download_request(&mut self, req: DownloadRequest) {
         let DownloadRequest { peers, hash, reply } = req;
-        if self.db.has(&hash) {
-            let size = self.db.get_size(&hash).await.unwrap();
+        if let Some(entry) = self.db.get(&hash) {
+            let size = entry.size();
             reply.send(Some((hash, size))).ok();
             return;
         }
         self.replies.entry(hash).or_default().push_back(reply);
         for peer in peers {
+            debug!(peer = ?peer, hash = ?hash, "queue download");
             self.queue.push_candidate(hash, peer);
             // TODO: Don't dial all peers instantly.
             if self.conns.get(&peer).is_none() && !self.dialer.is_pending(&peer) {
@@ -293,13 +323,22 @@ impl DownloadQueue {
         self.candidates_by_hash.get(hash).is_none() && self.running_by_hash.get(hash).is_none()
     }
 
-    pub fn on_success(&mut self, hash: Hash, peer: PeerId) -> Option<(PeerId, Hash)> {
+    /// Mark a download as successfull.
+    pub fn on_success(&mut self, hash: Hash, peer: PeerId) {
         let peer2 = self.running_by_hash.remove(&hash);
         debug_assert_eq!(peer2, Some(peer));
         self.running_by_peer.remove(&peer);
-        self.try_next_for_peer(peer).map(|hash| (peer, hash))
+        self.candidates_by_hash.remove(&hash);
+        for hashes in self.candidates_by_peer.values_mut() {
+            hashes.retain(|h| h != &hash);
+        }
+        self.ensure_no_empty(hash, peer);
     }
 
+    /// To be called when a peer failed (i.e. disconnected).
+    ///
+    /// Returns a list of hashes that have no other peers queue. Those hashes should thus be
+    /// considered failed.
     pub fn on_peer_fail(&mut self, peer: &PeerId) -> Vec<Hash> {
         let mut failed = vec![];
         for hash in self

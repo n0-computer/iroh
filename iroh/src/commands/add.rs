@@ -12,12 +12,15 @@ use iroh_bytes::{provider::ProvideProgress, Hash};
 
 use crate::commands::make_rpc_client;
 
-pub async fn run(path: PathBuf, rpc_port: u16) -> Result<()> {
+pub async fn run(path: PathBuf, in_place: bool, rpc_port: u16) -> Result<()> {
     let client = make_rpc_client(rpc_port).await?;
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
     let stream = client
-        .server_streaming(ProvideRequest { path: absolute })
+        .server_streaming(ProvideRequest {
+            path: absolute,
+            in_place,
+        })
         .await?;
     let (hash, entries) = aggregate_add_response(stream).await?;
     print_add_response(hash, entries);
@@ -28,6 +31,7 @@ pub async fn run(path: PathBuf, rpc_port: u16) -> Result<()> {
 pub struct ProvideResponseEntry {
     pub name: String,
     pub size: u64,
+    pub hash: Hash,
 }
 
 pub async fn aggregate_add_response<S, E>(
@@ -44,20 +48,20 @@ where
     while let Some(item) = stream.next().await {
         match item? {
             ProvideProgress::Found { name, id, size } => {
-                tracing::info!("Found({id},{name},{size})");
+                tracing::trace!("Found({id},{name},{size})");
                 if let Some(mp) = mp.as_mut() {
                     mp.found(name.clone(), id, size);
                 }
                 collections.insert(id, (name, size, None));
             }
             ProvideProgress::Progress { id, offset } => {
-                tracing::info!("Progress({id}, {offset})");
+                tracing::trace!("Progress({id}, {offset})");
                 if let Some(mp) = mp.as_mut() {
                     mp.progress(id, offset);
                 }
             }
             ProvideProgress::Done { hash, id } => {
-                tracing::info!("Done({id},{hash:?})");
+                tracing::trace!("Done({id},{hash:?})");
                 if let Some(mp) = mp.as_mut() {
                     mp.done(id, hash);
                 }
@@ -71,7 +75,7 @@ where
                 }
             }
             ProvideProgress::AllDone { hash } => {
-                tracing::info!("AllDone({hash:?})");
+                tracing::trace!("AllDone({hash:?})");
                 if let Some(mp) = mp.take() {
                     mp.all_done();
                 }
@@ -90,8 +94,8 @@ where
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
-            let _hash = hash.context(format!("Missing hash for {name}"))?;
-            Ok(ProvideResponseEntry { name, size })
+            let hash = hash.context(format!("Missing hash for {name}"))?;
+            Ok(ProvideResponseEntry { name, size, hash })
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((hash, entries))
@@ -99,9 +103,9 @@ where
 
 pub fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
-    for ProvideResponseEntry { name, size, .. } in entries {
+    for ProvideResponseEntry { name, size, hash } in entries {
         total_size += size;
-        println!("- {}: {}", name, HumanBytes(size));
+        println!("- {}: {} {:#}", name, HumanBytes(size), hash);
     }
     println!("Total: {}", HumanBytes(total_size));
     println!();

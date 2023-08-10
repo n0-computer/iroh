@@ -1,8 +1,6 @@
 //! Utilities for working with tokio io
-use anyhow::Context;
 use derive_more::Display;
-use range_collections::RangeSet2;
-use std::path::{Component, Path};
+use iroh_bytes::baomap::range_collections::RangeSet2;
 use std::{io::Write, path::PathBuf, result};
 use thiserror::Error;
 
@@ -74,40 +72,5 @@ impl<F: Fn(u64)> Write for DevNull<F> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
-    }
-}
-
-/// converts a canonicalized relative path to a string, returning an error if
-/// the path is not valid unicode
-///
-/// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
-/// or if the path components contain any windows or unix path separators
-pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
-    let parts = path
-        .as_ref()
-        .components()
-        .map(|c| {
-            let c = if let Component::Normal(x) = c {
-                x.to_str().context("invalid character in path")?
-            } else {
-                anyhow::bail!("invalid path component {:?}", c)
-            };
-            anyhow::ensure!(
-                !c.contains('/') && !c.contains('\\'),
-                "invalid path component {:?}",
-                c
-            );
-            Ok(c)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(parts.join("/"))
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_canonicalize_path() {
-        assert_eq!(super::canonicalize_path("foo/bar").unwrap(), "foo/bar");
     }
 }

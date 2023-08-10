@@ -2,25 +2,23 @@
 
 use anyhow::anyhow;
 use futures::Stream;
-use iroh_bytes::util::RpcError;
-use iroh_io::AsyncSliceReaderExt;
+use iroh_bytes::{baomap::Store as BaoStore, util::RpcError};
 use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
 use rand::rngs::OsRng;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-    BytesGetRequest, BytesGetResponse, DocGetRequest, DocGetResponse, DocImportRequest,
-    DocImportResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-    DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-    DocTicket, DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult,
-    ShareMode,
+    DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
+    DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
+    DocSubscribeRequest, DocSubscribeResponse, DocTicket, DocsCreateRequest, DocsCreateResponse,
+    DocsListRequest, DocsListResponse, RpcResult, ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
 
+#[allow(missing_docs)]
 impl<S: Store> SyncEngine<S> {
-    /// todo
     pub fn author_create(&self, _req: AuthorCreateRequest) -> RpcResult<AuthorCreateResponse> {
         // TODO: pass rng
         let author = self.store.new_author(&mut rand::rngs::OsRng {})?;
@@ -29,7 +27,6 @@ impl<S: Store> SyncEngine<S> {
         })
     }
 
-    /// todo
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
@@ -111,7 +108,11 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocStartSyncResponse {})
     }
 
-    pub async fn doc_set(&self, req: DocSetRequest) -> RpcResult<DocSetResponse> {
+    pub async fn doc_set<B: BaoStore>(
+        &self,
+        bao_store: &B,
+        req: DocSetRequest,
+    ) -> RpcResult<DocSetResponse> {
         let DocSetRequest {
             doc_id,
             author_id,
@@ -120,9 +121,10 @@ impl<S: Store> SyncEngine<S> {
         } = req;
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
-        let (hash, len) = self.db.put_bytes(value.into()).await?;
+        let len = value.len();
+        let hash = bao_store.import_bytes(value.into()).await?;
         replica
-            .insert(&key, &author, hash, len)
+            .insert(&key, &author, hash, len as u64)
             .map_err(Into::into)?;
         let entry = self
             .store
@@ -145,24 +147,6 @@ impl<S: Store> SyncEngine<S> {
             }
         });
         rx.into_stream()
-    }
-
-    // TODO: streaming
-    pub async fn bytes_get(&self, req: BytesGetRequest) -> RpcResult<BytesGetResponse> {
-        let entry = self
-            .db
-            .db()
-            .get(&req.hash)
-            .ok_or_else(|| RpcError::from(anyhow!("not found")))?;
-        // TODO: size limit
-        let data = entry
-            .data_reader()
-            .await
-            .map_err(anyhow::Error::from)?
-            .read_to_end()
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(BytesGetResponse { data })
     }
 }
 

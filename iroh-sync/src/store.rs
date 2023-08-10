@@ -104,6 +104,44 @@ pub struct GetFilter {
     pub key: KeyFilter,
 }
 
+impl Default for GetFilter {
+    fn default() -> Self {
+        Self {
+            latest: true,
+            author: None,
+            key: KeyFilter::All,
+        }
+    }
+}
+
+impl GetFilter {
+    /// Create a new get filter. Defaults to latest entries for all keys and authors.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Filter by exact key match.
+    pub fn with_key(mut self, key: Vec<u8>) -> Self {
+        self.key = KeyFilter::Key(key);
+        self
+    }
+    /// Filter by prefix key match.
+    pub fn with_prefix(mut self, prefix: Vec<u8>) -> Self {
+        self.key = KeyFilter::Prefix(prefix);
+        self
+    }
+    /// Filter by author.
+    pub fn with_author(mut self, author: AuthorId) -> Self {
+        self.author = Some(author);
+        self
+    }
+    /// Include not only latest entries but also all historical entries.
+    pub fn with_history(mut self) -> Self {
+        self.latest = false;
+        self
+    }
+}
+
 /// Filter the keys in a namespace
 #[derive(Debug, Serialize, Deserialize)]
 pub enum KeyFilter {
@@ -158,7 +196,7 @@ impl<'s, S: Store> GetIter<'s, S> {
                 (Key(key), Some(author)) => Self::Single(
                     store
                         .get_latest_by_key_and_author(namespace, author, key)?
-                        .map(|entry| Ok(entry))
+                        .map(Ok)
                         .into_iter(),
                 ),
                 (All, Some(_)) | (Prefix(_), Some(_)) => {

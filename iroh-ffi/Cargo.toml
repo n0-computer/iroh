@@ -28,7 +28,7 @@ anyhow = "1.0.69"
 blake3 = "1.3.3"
 bytes = "1"
 data-encoding = { version = "2.3.3" }
-iroh = { path = "../iroh", default-features = false, features = ["mem-db", "iroh-collection", "flat-db", "sync"] }
+iroh = { path = "../iroh", default-features = false, features = ["mem-db", "iroh-collection", "flat-db"] }
 iroh-io = { version = "0.2.1" }
 iroh-net = { path = "../iroh-net" }
 iroh-sync = { path = "../iroh-sync", features = ["fs-store"] }
