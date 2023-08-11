@@ -24,6 +24,7 @@ pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 pub const ENV_PREFIX: &str = "IROH";
 
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum IrohPaths {
     /// Path to the node's private key for the [`iroh_net::PeerId`].
     Keypair,
@@ -253,5 +254,21 @@ mod tests {
         let config = Config::load::<String, String>(&[][..], "__FOO", Default::default()).unwrap();
 
         assert_eq!(config.derp_regions.len(), 2);
+    }
+
+    #[test]
+    fn test_iroh_paths_parse_roundtrip() {
+        let kinds = [
+            IrohPaths::BaoFlatStoreComplete,
+            IrohPaths::BaoFlatStorePartial,
+            IrohPaths::Keypair,
+        ];
+        for iroh_path in &kinds {
+            let root = PathBuf::from("/tmp");
+            let path = root.join(iroh_path);
+            let fname = path.file_name().unwrap().to_str().unwrap();
+            let parsed = IrohPaths::from_str(fname).unwrap();
+            assert_eq!(*iroh_path, parsed);
+        }
     }
 }
