@@ -71,8 +71,8 @@ pub async fn get_blob<D: BaoStore>(
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
-                anyhow::bail!("expected StartRoot");
-            };
+            anyhow::bail!("expected StartRoot");
+        };
         // move to the header
         let header = start.next();
         // do the ceremony of getting the blob and adding it to the database
@@ -88,8 +88,8 @@ pub async fn get_blob<D: BaoStore>(
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
-                anyhow::bail!("expected StartRoot");
-            };
+            anyhow::bail!("expected StartRoot");
+        };
         // move to the header
         let header = start.next();
         // do the ceremony of getting the blob and adding it to the database
@@ -98,8 +98,8 @@ pub async fn get_blob<D: BaoStore>(
 
     // we have requested a single hash, so we must be at closing
     let EndBlobNext::Closing(end) = end.next() else {
-            anyhow::bail!("expected Closing");
-        };
+        anyhow::bail!("expected Closing");
+    };
     // this closes the bidi stream. Do something with the stats?
     let stats = end.next().await?;
     anyhow::Ok(stats)
@@ -321,8 +321,8 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         log!("connected");
         // we have not requested the root, so this must be StartChild
         let ConnectedNext::StartChild(start) = connected.next().await? else {
-                anyhow::bail!("expected StartChild");
-            };
+            anyhow::bail!("expected StartChild");
+        };
         let mut next = EndBlobNext::MoreChildren(start);
         // read all the children
         loop {
@@ -363,8 +363,8 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
-                anyhow::bail!("expected StartRoot");
-            };
+            anyhow::bail!("expected StartRoot");
+        };
         // move to the header
         let header = start.next();
         // read the blob and add it to the database
