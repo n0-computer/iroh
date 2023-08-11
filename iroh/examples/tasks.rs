@@ -6,6 +6,13 @@
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
+//!
+//!
+//! just need to figure out how to create an iroh node?
+//!
+//! create doc or import doc
+//!
+//! then you have a handle to a doc, you can just use that? do i need a store still?
 
 use std::collections::HashMap;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
