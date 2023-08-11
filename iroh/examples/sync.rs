@@ -278,6 +278,17 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     }));
 
+    let repl_state = ReplState {
+        rt,
+        store: docs,
+        author,
+        doc,
+        db,
+        ticket: our_ticket,
+        log_filter,
+        current_watch,
+    };
+
     loop {
         // wait for a command from the input repl thread
         let Some((cmd, to_repl_tx)) = cmd_rx.recv().await else {
@@ -295,7 +306,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 println!("> aborted");
             }
-            res = handle_command(cmd, &rt, &docs, &author, &doc, &db, &our_ticket, &log_filter, &current_watch) => if let Err(err) = res {
+            res = repl_state.handle_command(cmd) => if let Err(err) = res {
                 println!("> error: {err}");
             },
         };
@@ -315,271 +326,281 @@ async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_command(
-    cmd: Cmd,
-    rt: &runtime::Handle,
-    store: &store::fs::Store,
-    author: &Author,
-    doc: &Doc,
-    db: &iroh::baomap::flat::Store,
-    ticket: &Ticket,
-    log_filter: &LogLevelReload,
-    current_watch: &Arc<std::sync::Mutex<Option<String>>>,
-) -> anyhow::Result<()> {
-    match cmd {
-        Cmd::Set { key, value } => {
-            let value = value.into_bytes();
-            let len = value.len();
-            let hash = db.import_bytes(value.into()).await?;
-            doc.insert(key, author, hash, len as u64)?;
-        }
-        Cmd::Get {
-            key,
-            print_content,
-            prefix,
-        } => {
-            let entries = if prefix {
-                store.get_all_by_prefix(doc.namespace(), key.as_bytes())?
-            } else {
-                store.get_all_by_key(doc.namespace(), key.as_bytes())?
-            };
-            for entry in entries {
-                let (_id, entry) = entry?;
-                println!("{}", fmt_entry(&entry));
-                if print_content {
-                    println!("{}", fmt_content(db, &entry).await);
+struct ReplState {
+    rt: runtime::Handle,
+    store: store::fs::Store,
+    author: Author,
+    doc: Doc,
+    db: iroh::baomap::flat::Store,
+    ticket: Ticket,
+    log_filter: LogLevelReload,
+    current_watch: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl ReplState {
+    async fn handle_command(&self, cmd: Cmd) -> anyhow::Result<()> {
+        match cmd {
+            Cmd::Set { key, value } => {
+                let value = value.into_bytes();
+                let len = value.len();
+                let hash = self.db.import_bytes(value.into()).await?;
+                self.doc.insert(key, &self.author, hash, len as u64)?;
+            }
+            Cmd::Get {
+                key,
+                print_content,
+                prefix,
+            } => {
+                let entries = if prefix {
+                    self.store
+                        .get_all_by_prefix(self.doc.namespace(), key.as_bytes())?
+                } else {
+                    self.store
+                        .get_all_by_key(self.doc.namespace(), key.as_bytes())?
+                };
+                for entry in entries {
+                    let (_id, entry) = entry?;
+                    println!("{}", fmt_entry(&entry));
+                    if print_content {
+                        println!("{}", fmt_content(&self.db, &entry).await);
+                    }
                 }
             }
-        }
-        Cmd::Watch { key } => {
-            println!("watching key: '{key}'");
-            current_watch.lock().unwrap().replace(key);
-        }
-        Cmd::WatchCancel => match current_watch.lock().unwrap().take() {
-            Some(key) => {
-                println!("canceled watching key: '{key}'");
+            Cmd::Watch { key } => {
+                println!("watching key: '{key}'");
+                self.current_watch.lock().unwrap().replace(key);
             }
-            None => {
-                println!("no watch active");
+            Cmd::WatchCancel => match self.current_watch.lock().unwrap().take() {
+                Some(key) => {
+                    println!("canceled watching key: '{key}'");
+                }
+                None => {
+                    println!("no watch active");
+                }
+            },
+            Cmd::Ls { prefix } => {
+                let entries = match prefix {
+                    None => self.store.get_all(self.doc.namespace())?,
+                    Some(prefix) => self
+                        .store
+                        .get_all_by_prefix(self.doc.namespace(), prefix.as_bytes())?,
+                };
+                let mut count = 0;
+                for entry in entries {
+                    let (_id, entry) = entry?;
+                    count += 1;
+                    println!("{}", fmt_entry(&entry),);
+                }
+                println!("> {} entries", count);
             }
-        },
-        Cmd::Ls { prefix } => {
-            let entries = match prefix {
-                None => store.get_all(doc.namespace())?,
-                Some(prefix) => store.get_all_by_prefix(doc.namespace(), prefix.as_bytes())?,
-            };
-            let mut count = 0;
-            for entry in entries {
-                let (_id, entry) = entry?;
-                count += 1;
-                println!("{}", fmt_entry(&entry),);
+            Cmd::Ticket => {
+                println!("Ticket: {}", self.ticket);
             }
-            println!("> {} entries", count);
-        }
-        Cmd::Ticket => {
-            println!("Ticket: {ticket}");
-        }
-        Cmd::Log { directive } => {
-            let next_filter = EnvFilter::from_str(&directive)?;
-            log_filter.modify(|layer| *layer = next_filter)?;
-        }
-        Cmd::Stats => get_stats(),
-        Cmd::Fs(cmd) => handle_fs_command(cmd, store, db, doc, author).await?,
-        Cmd::Hammer {
-            prefix,
-            threads,
-            count,
-            size,
-            mode,
-        } => {
-            println!(
+            Cmd::Log { directive } => {
+                let next_filter = EnvFilter::from_str(&directive)?;
+                self.log_filter.modify(|layer| *layer = next_filter)?;
+            }
+            Cmd::Stats => get_stats(),
+            Cmd::Fs(cmd) => self.handle_fs_command(cmd).await?,
+            Cmd::Hammer {
+                prefix,
+                threads,
+                count,
+                size,
+                mode,
+            } => {
+                println!(
                 "> Hammering with prefix \"{prefix}\" for {threads} x {count} messages of size {size} bytes in {mode} mode",
                 mode = format!("{mode:?}").to_lowercase()
             );
-            let start = Instant::now();
-            let mut handles: Vec<JoinHandle<anyhow::Result<usize>>> = Vec::new();
-            match mode {
-                HammerMode::Set => {
-                    let mut bytes = vec![0; size];
-                    // TODO: Add a flag to fill content differently per entry to be able to
-                    // test downloading too
-                    bytes.fill(97);
-                    for t in 0..threads {
-                        let prefix = prefix.clone();
-                        let doc = doc.clone();
-                        let bytes = bytes.clone();
-                        let db = db.clone();
-                        let author = author.clone();
-                        let handle = rt.main().spawn(async move {
-                            for i in 0..count {
-                                let value = String::from_utf8(bytes.clone()).unwrap().into_bytes();
-                                let len = value.len();
-                                let key = format!("{}/{}/{}", prefix, t, i);
-                                let hash = db.import_bytes(value.into()).await?;
-                                doc.insert(key, &author, hash, len as u64)?;
-                            }
-                            Ok(count)
-                        });
-                        handles.push(handle);
-                    }
-                }
-                HammerMode::Get => {
-                    for t in 0..threads {
-                        let prefix = prefix.clone();
-                        let doc = doc.clone();
-                        let store = store.clone();
-                        let handle = rt.main().spawn(async move {
-                            let mut read = 0;
-                            for i in 0..count {
-                                let key = format!("{}/{}/{}", prefix, t, i);
-                                let entries =
-                                    store.get_all_by_key(doc.namespace(), key.as_bytes())?;
-                                for entry in entries {
-                                    let (_id, entry) = entry?;
-                                    let _content = fmt_content_simple(&doc, &entry);
-                                    read += 1;
+                let start = Instant::now();
+                let mut handles: Vec<JoinHandle<anyhow::Result<usize>>> = Vec::new();
+                match mode {
+                    HammerMode::Set => {
+                        let mut bytes = vec![0; size];
+                        // TODO: Add a flag to fill content differently per entry to be able to
+                        // test downloading too
+                        bytes.fill(97);
+                        for t in 0..threads {
+                            let prefix = prefix.clone();
+                            let doc = self.doc.clone();
+                            let bytes = bytes.clone();
+                            let db = self.db.clone();
+                            let author = self.author.clone();
+                            let handle = self.rt.main().spawn(async move {
+                                for i in 0..count {
+                                    let value =
+                                        String::from_utf8(bytes.clone()).unwrap().into_bytes();
+                                    let len = value.len();
+                                    let key = format!("{}/{}/{}", prefix, t, i);
+                                    let hash = db.import_bytes(value.into()).await?;
+                                    doc.insert(key, &author, hash, len as u64)?;
                                 }
-                            }
-                            Ok(read)
-                        });
-                        handles.push(handle);
+                                Ok(count)
+                            });
+                            handles.push(handle);
+                        }
+                    }
+                    HammerMode::Get => {
+                        for t in 0..threads {
+                            let prefix = prefix.clone();
+                            let doc = self.doc.clone();
+                            let store = self.store.clone();
+                            let handle = self.rt.main().spawn(async move {
+                                let mut read = 0;
+                                for i in 0..count {
+                                    let key = format!("{}/{}/{}", prefix, t, i);
+                                    let entries =
+                                        store.get_all_by_key(doc.namespace(), key.as_bytes())?;
+                                    for entry in entries {
+                                        let (_id, entry) = entry?;
+                                        let _content = fmt_content_simple(&doc, &entry);
+                                        read += 1;
+                                    }
+                                }
+                                Ok(read)
+                            });
+                            handles.push(handle);
+                        }
                     }
                 }
-            }
 
-            let mut total_count = 0;
-            for result in futures::future::join_all(handles).await {
-                // Check that no errors ocurred and count rows inserted/read
-                total_count += result??;
-            }
+                let mut total_count = 0;
+                for result in futures::future::join_all(handles).await {
+                    // Check that no errors ocurred and count rows inserted/read
+                    total_count += result??;
+                }
 
-            let diff = start.elapsed().as_secs_f64();
-            println!(
+                let diff = start.elapsed().as_secs_f64();
+                println!(
                 "> Hammering done in {diff:.2}s for {total_count} messages with total of {size}",
                 size = HumanBytes(total_count as u64 * size as u64),
             );
-        }
-        Cmd::Exit => {}
-    }
-    Ok(())
-}
-
-async fn handle_fs_command(
-    cmd: FsCmd,
-    store: &store::fs::Store,
-    db: &iroh::baomap::flat::Store,
-    doc: &Doc,
-    author: &Author,
-) -> anyhow::Result<()> {
-    match cmd {
-        FsCmd::ImportFile { file_path, key } => {
-            let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-            let (hash, len) = db
-                .import(
-                    file_path.clone(),
-                    ImportMode::Copy,
-                    IgnoreProgressSender::default(),
-                )
-                .await?;
-            doc.insert(key, author, hash, len)?;
-            println!(
-                "> imported {file_path:?}: {} ({})",
-                fmt_hash(hash),
-                HumanBytes(len)
-            );
-        }
-        FsCmd::ImportDir {
-            dir_path,
-            mut key_prefix,
-        } => {
-            if key_prefix.ends_with('/') {
-                key_prefix.pop();
             }
-            let root = canonicalize_path(&dir_path)?.canonicalize()?;
-            let files = walkdir::WalkDir::new(&root).into_iter();
-            // TODO: parallelize
-            for file in files {
-                let file = file?;
-                if file.file_type().is_file() {
-                    let relative = file.path().strip_prefix(&root)?.to_string_lossy();
-                    if relative.is_empty() {
-                        warn!("invalid file path: {:?}", file.path());
-                        continue;
+            Cmd::Exit => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_fs_command(&self, cmd: FsCmd) -> anyhow::Result<()> {
+        match cmd {
+            FsCmd::ImportFile { file_path, key } => {
+                let file_path = canonicalize_path(&file_path)?.canonicalize()?;
+                let (hash, len) = self
+                    .db
+                    .import(
+                        file_path.clone(),
+                        ImportMode::Copy,
+                        IgnoreProgressSender::default(),
+                    )
+                    .await?;
+                self.doc.insert(key, &self.author, hash, len)?;
+                println!(
+                    "> imported {file_path:?}: {} ({})",
+                    fmt_hash(hash),
+                    HumanBytes(len)
+                );
+            }
+            FsCmd::ImportDir {
+                dir_path,
+                mut key_prefix,
+            } => {
+                if key_prefix.ends_with('/') {
+                    key_prefix.pop();
+                }
+                let root = canonicalize_path(&dir_path)?.canonicalize()?;
+                let files = walkdir::WalkDir::new(&root).into_iter();
+                // TODO: parallelize
+                for file in files {
+                    let file = file?;
+                    if file.file_type().is_file() {
+                        let relative = file.path().strip_prefix(&root)?.to_string_lossy();
+                        if relative.is_empty() {
+                            warn!("invalid file path: {:?}", file.path());
+                            continue;
+                        }
+                        let key = format!("{key_prefix}/{relative}");
+                        let (hash, len) = self
+                            .db
+                            .import(
+                                file.path().into(),
+                                ImportMode::Copy,
+                                IgnoreProgressSender::default(),
+                            )
+                            .await?;
+                        self.doc.insert(key, &self.author, hash, len)?;
+                        println!(
+                            "> imported {relative}: {} ({})",
+                            fmt_hash(hash),
+                            HumanBytes(len)
+                        );
                     }
-                    let key = format!("{key_prefix}/{relative}");
-                    let (hash, len) = db
-                        .import(
-                            file.path().into(),
-                            ImportMode::Copy,
-                            IgnoreProgressSender::default(),
-                        )
-                        .await?;
-                    doc.insert(key, author, hash, len)?;
-                    println!(
-                        "> imported {relative}: {} ({})",
-                        fmt_hash(hash),
-                        HumanBytes(len)
-                    );
                 }
             }
-        }
-        FsCmd::ExportDir {
-            mut key_prefix,
-            dir_path,
-        } => {
-            if !key_prefix.ends_with('/') {
-                key_prefix.push('/');
-            }
-            let root = canonicalize_path(&dir_path)?;
-            println!("> exporting {key_prefix} to {root:?}");
-            let entries = store.get_latest_by_prefix(doc.namespace(), key_prefix.as_bytes())?;
-            let mut checked_dirs = HashSet::new();
-            for entry in entries {
-                let (id, entry) = entry?;
-                let key = id.key();
-                let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
-                let len = entry.entry().record().content_len();
-                let blob = db.get(entry.content_hash());
-                if let Some(blob) = blob {
-                    let mut reader = blob.data_reader().await?;
-                    let path = root.join(&relative);
-                    let parent = path.parent().unwrap();
-                    if !checked_dirs.contains(parent) {
-                        tokio::fs::create_dir_all(&parent).await?;
-                        checked_dirs.insert(parent.to_owned());
+            FsCmd::ExportDir {
+                mut key_prefix,
+                dir_path,
+            } => {
+                if !key_prefix.ends_with('/') {
+                    key_prefix.push('/');
+                }
+                let root = canonicalize_path(&dir_path)?;
+                println!("> exporting {key_prefix} to {root:?}");
+                let entries = self
+                    .store
+                    .get_latest_by_prefix(self.doc.namespace(), key_prefix.as_bytes())?;
+                let mut checked_dirs = HashSet::new();
+                for entry in entries {
+                    let (id, entry) = entry?;
+                    let key = id.key();
+                    let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
+                    let len = entry.entry().record().content_len();
+                    let blob = self.db.get(entry.content_hash());
+                    if let Some(blob) = blob {
+                        let mut reader = blob.data_reader().await?;
+                        let path = root.join(&relative);
+                        let parent = path.parent().unwrap();
+                        if !checked_dirs.contains(parent) {
+                            tokio::fs::create_dir_all(&parent).await?;
+                            checked_dirs.insert(parent.to_owned());
+                        }
+                        let mut file = tokio::fs::File::create(&path).await?;
+                        copy(&mut reader, &mut file).await?;
+                        println!(
+                            "> exported {} to {path:?} ({})",
+                            fmt_hash(entry.content_hash()),
+                            HumanBytes(len)
+                        );
                     }
+                }
+            }
+            FsCmd::ExportFile { key, file_path } => {
+                let path = canonicalize_path(&file_path)?;
+                // TODO: Fix
+                let entry = self
+                    .store
+                    .get_latest_by_key(self.doc.namespace(), &key)?
+                    .next();
+                if let Some(entry) = entry {
+                    let (_, entry) = entry?;
+                    println!("> exporting {key} to {path:?}");
+                    let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
+                    tokio::fs::create_dir_all(&parent).await?;
                     let mut file = tokio::fs::File::create(&path).await?;
+                    let blob = self
+                        .db
+                        .get(entry.content_hash())
+                        .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
+                    let mut reader = blob.data_reader().await?;
                     copy(&mut reader, &mut file).await?;
-                    println!(
-                        "> exported {} to {path:?} ({})",
-                        fmt_hash(entry.content_hash()),
-                        HumanBytes(len)
-                    );
+                } else {
+                    println!("> key not found, abort");
                 }
             }
         }
-        FsCmd::ExportFile { key, file_path } => {
-            let path = canonicalize_path(&file_path)?;
-            // TODO: Fix
-            let entry = store.get_latest_by_key(doc.namespace(), &key)?.next();
-            if let Some(entry) = entry {
-                let (_, entry) = entry?;
-                println!("> exporting {key} to {path:?}");
-                let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
-                tokio::fs::create_dir_all(&parent).await?;
-                let mut file = tokio::fs::File::create(&path).await?;
-                let blob = db
-                    .get(entry.content_hash())
-                    .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
-                let mut reader = blob.data_reader().await?;
-                copy(&mut reader, &mut file).await?;
-            } else {
-                println!("> key not found, abort");
-            }
-        }
-    }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[derive(Parser, Debug)]
