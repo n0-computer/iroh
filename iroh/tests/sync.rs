@@ -86,7 +86,7 @@ async fn sync_full_basic() -> Result<()> {
         let doc = iroh.import_doc(ticket.clone()).await?;
 
         // todo: events over rpc to not use sleep...
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         assert_latest(&doc, b"k1", b"v1").await;
 
         let key = b"k2";
@@ -94,7 +94,7 @@ async fn sync_full_basic() -> Result<()> {
         doc.set_bytes(author, key.to_vec(), value.to_vec()).await?;
         assert_latest(&doc, key, value).await;
         // todo: events
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         assert_latest(&doc1, key, value).await;
         doc
     };
@@ -106,7 +106,7 @@ async fn sync_full_basic() -> Result<()> {
         let doc = iroh.import_doc(ticket).await?;
 
         // todo: events
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;
         doc

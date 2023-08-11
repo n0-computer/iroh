@@ -436,9 +436,13 @@ where
         let cancel_token = handler.inner.cancel_token.clone();
 
         // forward our initial endpoints to the gossip protocol
+        // it may happen the the first endpoint update callback is missed because the gossip cell
+        // is only initialized once the endpoint is fully bound
         if let Ok(local_endpoints) = server.local_endpoints().await {
-            debug!(me = ?server.peer_id(), "gossip initial update: {local_endpoints:?}");
-            gossip.update_endpoints(&local_endpoints).ok();
+            if !local_endpoints.is_empty() {
+                debug!(me = ?server.peer_id(), "gossip initial update: {local_endpoints:?}");
+                gossip.update_endpoints(&local_endpoints).ok();
+            }
         }
 
         loop {
