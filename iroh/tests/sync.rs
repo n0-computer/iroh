@@ -1,3 +1,5 @@
+#![cfg(feature = "mem-db")]
+
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
