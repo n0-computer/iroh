@@ -93,7 +93,7 @@ fn cli_provide_tree() -> Result<()> {
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<()> {
     let src = src.as_ref();
     let dst = dst.as_ref();
-    std::fs::create_dir_all(&dst)?;
+    std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry.with_context(|| {
             format!(
