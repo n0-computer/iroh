@@ -100,7 +100,7 @@ enum SyncState {
     Failed(anyhow::Error),
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 enum ToActor<S: store::Store> {
     StartSync {
         replica: Replica<S::Instance>,
@@ -114,6 +114,20 @@ enum ToActor<S: store::Store> {
         namespace: NamespaceId,
     },
     Shutdown,
+    Subscribe {
+        namespace: NamespaceId,
+        #[debug("cb")]
+        cb: Box<dyn Fn(LiveEvent) + Send + Sync + 'static>,
+    },
+}
+
+/// Events informing about actions of the live sync progres.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum LiveEvent {
+    /// A local insertion.
+    InsertLocal,
+    /// Received a remote insert.
+    InsertRemote,
 }
 
 /// Handle to a running live sync actor
@@ -180,6 +194,19 @@ impl<S: store::Store> LiveSync<S> {
             .await?;
         Ok(())
     }
+
+    /// Subscribes `cb` to events on this `namespace`.
+    pub fn subscribe<F>(&self, namespace: NamespaceId, cb: F) -> Result<()>
+    where
+        F: Fn(LiveEvent) + Send + Sync + 'static,
+    {
+        self.to_actor_tx.try_send(ToActor::<S>::Subscribe {
+            namespace,
+            cb: Box::new(cb),
+        })?;
+
+        Ok(())
+    }
 }
 
 // TODO: Also add `handle_connection` to the replica and track incoming sync requests here too.
@@ -238,6 +265,7 @@ impl<S: store::Store> Actor<S> {
                         Some(ToActor::StartSync { replica, peers }) => self.start_sync(replica, peers).await?,
                         Some(ToActor::StopSync { namespace }) => self.stop_sync(&namespace).await?,
                         Some(ToActor::JoinPeers { namespace, peers }) => self.join_gossip_and_start_initial_sync(&namespace, peers).await?,
+                        Some(ToActor::Subscribe { namespace, cb }) => self.subscribe(&namespace, cb).await?,
                     }
                 }
                 // new gossip message
@@ -300,6 +328,22 @@ impl<S: store::Store> Actor<S> {
         for (topic, (replica, removal_token)) in self.replicas.drain() {
             replica.remove_on_insert(removal_token);
             self.gossip.quit(topic).await?;
+        }
+        Ok(())
+    }
+
+    async fn subscribe(
+        &mut self,
+        namespace: &NamespaceId,
+        cb: Box<dyn Fn(LiveEvent) + Send + Sync + 'static>,
+    ) -> anyhow::Result<()> {
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        if let Some((replica, tokens)) = self.replicas.get_mut(&topic) {
+            // TODO: handle unsubscribe
+            let token = replica.on_insert(Box::new(move |origin, entry| match origin {
+                InsertOrigin::Local => cb(LiveEvent::InsertLocal),
+                InsertOrigin::Sync(_) => cb(LiveEvent::InsertRemote),
+            }));
         }
         Ok(())
     }

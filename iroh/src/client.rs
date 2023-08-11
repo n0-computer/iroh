@@ -18,10 +18,10 @@ use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocGetRequest,
-    DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocTicket,
-    DocsCreateRequest, DocsListRequest, ProviderService, ShareMode, StatsGetRequest,
+    DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocSubscribeRequest,
+    DocTicket, DocsCreateRequest, DocsListRequest, ProviderService, ShareMode, StatsGetRequest,
 };
-use crate::sync::PeerSource;
+use crate::sync::{LiveEvent, PeerSource};
 
 pub mod mem;
 #[cfg(feature = "cli")]
@@ -180,6 +180,14 @@ where
     }
 
     // TODO: add stop_sync
+
+    pub async fn subscribe(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<LiveEvent>>> {
+        let stream = self
+            .rpc
+            .server_streaming(DocSubscribeRequest { doc_id: self.id })
+            .await?;
+        Ok(stream.map_ok(|res| res.event).map_err(Into::into))
+    }
 }
 
 fn flatten<T, E1, E2>(
