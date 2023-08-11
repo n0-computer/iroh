@@ -60,6 +60,7 @@ typedef struct RustCallStatus {
 #endif // def UNIFFI_SHARED_H
 
 // Callbacks for UniFFI Futures
+typedef void (*UniFfiFutureCallbackUInt8)(const void * _Nonnull, uint8_t, RustCallStatus);
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
@@ -97,6 +98,8 @@ RustBuffer uniffi_iroh_fn_method_doc_get_content_bytes(void*_Nonnull ptr, void*_
 );
 RustBuffer uniffi_iroh_fn_method_doc_latest(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
+void uniffi_iroh_fn_method_doc_subscribe(void*_Nonnull ptr, uint64_t cb, RustCallStatus *_Nonnull out_status
+);
 void uniffi_iroh_fn_free_authorid(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_iroh_fn_method_authorid_to_string(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -112,6 +115,8 @@ void uniffi_iroh_fn_free_docticket(void*_Nonnull ptr, RustCallStatus *_Nonnull o
 void*_Nonnull uniffi_iroh_fn_constructor_docticket_from_string(RustBuffer content, RustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_iroh_fn_method_docticket_to_string(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+void uniffi_iroh_fn_init_callback_subscribecallback(ForeignCallback _Nonnull callback_stub, RustCallStatus *_Nonnull out_status
 );
 RustBuffer ffi_iroh_rustbuffer_alloc(int32_t size, RustCallStatus *_Nonnull out_status
 );
@@ -152,6 +157,9 @@ uint16_t uniffi_iroh_checksum_method_doc_get_content_bytes(void
     
 );
 uint16_t uniffi_iroh_checksum_method_doc_latest(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_doc_subscribe(void
     
 );
 uint16_t uniffi_iroh_checksum_method_authorid_to_string(void

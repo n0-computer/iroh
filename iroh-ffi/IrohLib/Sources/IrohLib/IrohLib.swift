@@ -433,6 +433,7 @@ public protocol DocProtocol {
     func setBytes(author: AuthorId, key: Data, value: Data) throws -> SignedEntry
     func getContentBytes(entry: SignedEntry) throws -> Data
     func latest() throws -> [SignedEntry]
+    func subscribe(cb: SubscribeCallback) throws
 }
 
 public class Doc: DocProtocol {
@@ -500,6 +501,14 @@ public class Doc: DocProtocol {
                 uniffi_iroh_fn_method_doc_latest(self.pointer, $0)
             }
         )
+    }
+
+    public func subscribe(cb: SubscribeCallback) throws {
+        try
+            rustCallWithError(FfiConverterTypeIrohError.lift) {
+                uniffi_iroh_fn_method_doc_subscribe(self.pointer,
+                                                    FfiConverterCallbackInterfaceSubscribeCallback.lower(cb), $0)
+            }
     }
 }
 
@@ -852,20 +861,12 @@ public func FfiConverterTypeCounterStats_lower(_ value: CounterStats) -> RustBuf
 }
 
 public enum IrohError {
-    // Simple error enums only carry a message
-    case Runtime(message: String)
-
-    // Simple error enums only carry a message
-    case NodeCreate(message: String)
-
-    // Simple error enums only carry a message
-    case Doc(message: String)
-
-    // Simple error enums only carry a message
-    case Author(message: String)
-
-    // Simple error enums only carry a message
-    case DocTicket(message: String)
+    case Runtime(description: String)
+    case NodeCreate(description: String)
+    case Doc(description: String)
+    case Author(description: String)
+    case DocTicket(description: String)
+    case Uniffi(description: String)
 
     fileprivate static func uniffiErrorHandler(_ error: RustBuffer) throws -> Error {
         return try FfiConverterTypeIrohError.lift(error)
@@ -879,23 +880,22 @@ public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         case 1: return try .Runtime(
-                message: FfiConverterString.read(from: &buf)
+                description: FfiConverterString.read(from: &buf)
             )
-
         case 2: return try .NodeCreate(
-                message: FfiConverterString.read(from: &buf)
+                description: FfiConverterString.read(from: &buf)
             )
-
         case 3: return try .Doc(
-                message: FfiConverterString.read(from: &buf)
+                description: FfiConverterString.read(from: &buf)
             )
-
         case 4: return try .Author(
-                message: FfiConverterString.read(from: &buf)
+                description: FfiConverterString.read(from: &buf)
             )
-
         case 5: return try .DocTicket(
-                message: FfiConverterString.read(from: &buf)
+                description: FfiConverterString.read(from: &buf)
+            )
+        case 6: return try .Uniffi(
+                description: FfiConverterString.read(from: &buf)
             )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -904,16 +904,29 @@ public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
 
     public static func write(_ value: IrohError, into buf: inout [UInt8]) {
         switch value {
-        case let .Runtime(message):
+        case let .Runtime(description):
             writeInt(&buf, Int32(1))
-        case let .NodeCreate(message):
+            FfiConverterString.write(description, into: &buf)
+
+        case let .NodeCreate(description):
             writeInt(&buf, Int32(2))
-        case let .Doc(message):
+            FfiConverterString.write(description, into: &buf)
+
+        case let .Doc(description):
             writeInt(&buf, Int32(3))
-        case let .Author(message):
+            FfiConverterString.write(description, into: &buf)
+
+        case let .Author(description):
             writeInt(&buf, Int32(4))
-        case let .DocTicket(message):
+            FfiConverterString.write(description, into: &buf)
+
+        case let .DocTicket(description):
             writeInt(&buf, Int32(5))
+            FfiConverterString.write(description, into: &buf)
+
+        case let .Uniffi(description):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(description, into: &buf)
         }
     }
 }
@@ -921,6 +934,220 @@ public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
 extension IrohError: Equatable, Hashable {}
 
 extension IrohError: Error {}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+public enum LiveEvent {
+    case insertLocal
+    case insertRemote
+}
+
+public struct FfiConverterTypeLiveEvent: FfiConverterRustBuffer {
+    typealias SwiftType = LiveEvent
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LiveEvent {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        case 1: return .insertLocal
+
+        case 2: return .insertRemote
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LiveEvent, into buf: inout [UInt8]) {
+        switch value {
+        case .insertLocal:
+            writeInt(&buf, Int32(1))
+
+        case .insertRemote:
+            writeInt(&buf, Int32(2))
+        }
+    }
+}
+
+public func FfiConverterTypeLiveEvent_lift(_ buf: RustBuffer) throws -> LiveEvent {
+    return try FfiConverterTypeLiveEvent.lift(buf)
+}
+
+public func FfiConverterTypeLiveEvent_lower(_ value: LiveEvent) -> RustBuffer {
+    return FfiConverterTypeLiveEvent.lower(value)
+}
+
+extension LiveEvent: Equatable, Hashable {}
+
+private extension NSLock {
+    func withLock<T>(f: () throws -> T) rethrows -> T {
+        lock()
+        defer { self.unlock() }
+        return try f()
+    }
+}
+
+private typealias UniFFICallbackHandle = UInt64
+private class UniFFICallbackHandleMap<T> {
+    private var leftMap: [UniFFICallbackHandle: T] = [:]
+    private var counter: [UniFFICallbackHandle: UInt64] = [:]
+    private var rightMap: [ObjectIdentifier: UniFFICallbackHandle] = [:]
+
+    private let lock = NSLock()
+    private var currentHandle: UniFFICallbackHandle = 0
+    private let stride: UniFFICallbackHandle = 1
+
+    func insert(obj: T) -> UniFFICallbackHandle {
+        lock.withLock {
+            let id = ObjectIdentifier(obj as AnyObject)
+            let handle = rightMap[id] ?? {
+                currentHandle += stride
+                let handle = currentHandle
+                leftMap[handle] = obj
+                rightMap[id] = handle
+                return handle
+            }()
+            counter[handle] = (counter[handle] ?? 0) + 1
+            return handle
+        }
+    }
+
+    func get(handle: UniFFICallbackHandle) -> T? {
+        lock.withLock {
+            leftMap[handle]
+        }
+    }
+
+    func delete(handle: UniFFICallbackHandle) {
+        remove(handle: handle)
+    }
+
+    @discardableResult
+    func remove(handle: UniFFICallbackHandle) -> T? {
+        lock.withLock {
+            defer { counter[handle] = (counter[handle] ?? 1) - 1 }
+            guard counter[handle] == 1 else { return leftMap[handle] }
+            let obj = leftMap.removeValue(forKey: handle)
+            if let obj = obj {
+                rightMap.removeValue(forKey: ObjectIdentifier(obj as AnyObject))
+            }
+            return obj
+        }
+    }
+}
+
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
+
+// Declaration and FfiConverters for SubscribeCallback Callback Interface
+
+public protocol SubscribeCallback: AnyObject {
+    func event(event: LiveEvent) throws
+}
+
+// The ForeignCallback that is passed to Rust.
+private let foreignCallbackCallbackInterfaceSubscribeCallback: ForeignCallback =
+    { (handle: UniFFICallbackHandle, method: Int32, argsData: UnsafePointer<UInt8>, argsLen: Int32, out_buf: UnsafeMutablePointer<RustBuffer>) -> Int32 in
+
+        func invokeEvent(_ swiftCallbackInterface: SubscribeCallback, _ argsData: UnsafePointer<UInt8>, _ argsLen: Int32, _ out_buf: UnsafeMutablePointer<RustBuffer>) throws -> Int32 {
+            var reader = createReader(data: Data(bytes: argsData, count: Int(argsLen)))
+            func makeCall() throws -> Int32 {
+                try swiftCallbackInterface.event(
+                    event: FfiConverterTypeLiveEvent.read(from: &reader)
+                )
+                return UNIFFI_CALLBACK_SUCCESS
+            }
+            do {
+                return try makeCall()
+            } catch let error as IrohError {
+                out_buf.pointee = FfiConverterTypeIrohError.lower(error)
+                return UNIFFI_CALLBACK_ERROR
+            }
+        }
+
+        switch method {
+        case IDX_CALLBACK_FREE:
+            FfiConverterCallbackInterfaceSubscribeCallback.drop(handle: handle)
+            // Sucessful return
+            // See docs of ForeignCallback in `uniffi_core/src/ffi/foreigncallbacks.rs`
+            return UNIFFI_CALLBACK_SUCCESS
+        case 1:
+            let cb: SubscribeCallback
+            do {
+                cb = try FfiConverterCallbackInterfaceSubscribeCallback.lift(handle)
+            } catch {
+                out_buf.pointee = FfiConverterString.lower("SubscribeCallback: Invalid handle")
+                return UNIFFI_CALLBACK_UNEXPECTED_ERROR
+            }
+            do {
+                return try invokeEvent(cb, argsData, argsLen, out_buf)
+            } catch {
+                out_buf.pointee = FfiConverterString.lower(String(describing: error))
+                return UNIFFI_CALLBACK_UNEXPECTED_ERROR
+            }
+
+        // This should never happen, because an out of bounds method index won't
+        // ever be used. Once we can catch errors, we should return an InternalError.
+        // https://github.com/mozilla/uniffi-rs/issues/351
+        default:
+            // An unexpected error happened.
+            // See docs of ForeignCallback in `uniffi_core/src/ffi/foreigncallbacks.rs`
+            return UNIFFI_CALLBACK_UNEXPECTED_ERROR
+        }
+    }
+
+// FfiConverter protocol for callback interfaces
+private enum FfiConverterCallbackInterfaceSubscribeCallback {
+    private static let initCallbackOnce: () = {
+        // Swift ensures this initializer code will once run once, even when accessed by multiple threads.
+        try! rustCall { (err: UnsafeMutablePointer<RustCallStatus>) in
+            uniffi_iroh_fn_init_callback_subscribecallback(foreignCallbackCallbackInterfaceSubscribeCallback, err)
+        }
+    }()
+
+    private static func ensureCallbackinitialized() {
+        _ = initCallbackOnce
+    }
+
+    static func drop(handle: UniFFICallbackHandle) {
+        handleMap.remove(handle: handle)
+    }
+
+    private static var handleMap = UniFFICallbackHandleMap<SubscribeCallback>()
+}
+
+extension FfiConverterCallbackInterfaceSubscribeCallback: FfiConverter {
+    typealias SwiftType = SubscribeCallback
+    // We can use Handle as the FfiType because it's a typealias to UInt64
+    typealias FfiType = UniFFICallbackHandle
+
+    public static func lift(_ handle: UniFFICallbackHandle) throws -> SwiftType {
+        ensureCallbackinitialized()
+        guard let callback = handleMap.get(handle: handle) else {
+            throw UniffiInternalError.unexpectedStaleHandle
+        }
+        return callback
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        ensureCallbackinitialized()
+        let handle: UniFFICallbackHandle = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func lower(_ v: SwiftType) -> UniFFICallbackHandle {
+        ensureCallbackinitialized()
+        return handleMap.insert(obj: v)
+    }
+
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        ensureCallbackinitialized()
+        writeInt(&buf, lower(v))
+    }
+}
 
 private struct FfiConverterSequenceTypeSignedEntry: FfiConverterRustBuffer {
     typealias SwiftType = [SignedEntry]
@@ -1014,6 +1241,9 @@ private var initializationResult: InitializationResult {
         return InitializationResult.apiChecksumMismatch
     }
     if uniffi_iroh_checksum_method_doc_latest() != 41807 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_iroh_checksum_method_doc_subscribe() != 17522 {
         return InitializationResult.apiChecksumMismatch
     }
     if uniffi_iroh_checksum_method_authorid_to_string() != 61926 {

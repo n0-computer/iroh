@@ -1,6 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use futures::stream::{StreamExt, TryStreamExt};
+use futures::{
+    stream::{StreamExt, TryStreamExt},
+    Future,
+};
 use iroh::{
     baomap::flat,
     bytes::util::runtime::Handle,
@@ -40,45 +43,46 @@ impl Doc {
     }
 
     pub fn latest(&self) -> Result<Vec<Arc<SignedEntry>>> {
-        let latest = self
-            .rt
-            .main()
-            .block_on(async {
-                let get_result = self
-                    .inner
-                    .get(GetFilter {
-                        latest: true,
-                        author: None,
-                        key: KeyFilter::All,
-                    })
-                    .await?;
-                get_result
-                    .map_ok(|e| Arc::new(SignedEntry(e)))
-                    .try_collect::<Vec<_>>()
-                    .await
-            })
-            .map_err(Error::doc)?;
+        let latest = block_on(&self.rt, async {
+            let get_result = self
+                .inner
+                .get(GetFilter {
+                    latest: true,
+                    author: None,
+                    key: KeyFilter::All,
+                })
+                .await?;
+            get_result
+                .map_ok(|e| Arc::new(SignedEntry(e)))
+                .try_collect::<Vec<_>>()
+                .await
+        })
+        .map_err(Error::doc)?;
         Ok(latest)
     }
 
     pub fn share_write(&self) -> Result<Arc<DocTicket>> {
-        let ticket = self
-            .rt
-            .main()
-            .block_on(async { self.inner.share(ShareMode::Write).await })
-            .map_err(Error::doc)?;
+        block_on(&self.rt, async {
+            let ticket = self
+                .inner
+                .share(ShareMode::Write)
+                .await
+                .map_err(Error::doc)?;
 
-        Ok(Arc::new(DocTicket(ticket)))
+            Ok(Arc::new(DocTicket(ticket)))
+        })
     }
 
     pub fn share_read(&self) -> Result<Arc<DocTicket>> {
-        let ticket = self
-            .rt
-            .main()
-            .block_on(async { self.inner.share(ShareMode::Read).await })
-            .map_err(Error::doc)?;
+        block_on(&self.rt, async {
+            let ticket = self
+                .inner
+                .share(ShareMode::Read)
+                .await
+                .map_err(Error::doc)?;
 
-        Ok(Arc::new(DocTicket(ticket)))
+            Ok(Arc::new(DocTicket(ticket)))
+        })
     }
 
     pub fn set_bytes(
@@ -87,23 +91,26 @@ impl Doc {
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> Result<Arc<SignedEntry>> {
-        let entry = self
-            .rt
-            .main()
-            .block_on(async { self.inner.set_bytes(author_id.0.clone(), key, value).await })
-            .map_err(Error::doc)?;
-
-        Ok(Arc::new(SignedEntry(entry)))
+        block_on(&self.rt, async {
+            let entry = self
+                .inner
+                .set_bytes(author_id.0.clone(), key, value)
+                .await
+                .map_err(Error::doc)?;
+            Ok(Arc::new(SignedEntry(entry)))
+        })
     }
 
     pub fn get_content_bytes(&self, entry: Arc<SignedEntry>) -> Result<Vec<u8>> {
-        let content = self
-            .rt
-            .main()
-            .block_on(async { self.inner.get_content_bytes(&entry.0).await })
-            .map_err(Error::doc)?;
+        block_on(&self.rt, async {
+            let content = self
+                .inner
+                .get_content_bytes(&entry.0)
+                .await
+                .map_err(Error::doc)?;
 
-        Ok(content.to_vec())
+            Ok(content.to_vec())
+        })
     }
 
     pub fn subscribe(&self, cb: Box<dyn SubscribeCallback>) -> Result<()> {
@@ -183,25 +190,23 @@ impl IrohNode {
         let keypair = Keypair::generate();
 
         let rt_inner = rt.clone();
-        let node = rt
-            .main()
-            .block_on(async move {
-                let docs_path = path.join("docs.db");
-                let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
+        let node = block_on(&rt, async move {
+            let docs_path = path.join("docs.db");
+            let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
 
-                // create a bao store for the iroh-bytes blobs
-                let blob_path = path.join("blobs");
-                tokio::fs::create_dir_all(&blob_path).await?;
-                let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt_inner).await?;
+            // create a bao store for the iroh-bytes blobs
+            let blob_path = path.join("blobs");
+            tokio::fs::create_dir_all(&blob_path).await?;
+            let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt_inner).await?;
 
-                Node::builder(db, docs)
-                    .bind_addr(DEFAULT_BIND_ADDR.into())
-                    .keypair(keypair)
-                    .runtime(&rt_inner)
-                    .spawn()
-                    .await
-            })
-            .map_err(Error::node_create)?;
+            Node::builder(db, docs)
+                .bind_addr(DEFAULT_BIND_ADDR.into())
+                .keypair(keypair)
+                .runtime(&rt_inner)
+                .spawn()
+                .await
+        })
+        .map_err(Error::node_create)?;
 
         let sync_client = node.client();
 
@@ -218,49 +223,56 @@ impl IrohNode {
     }
 
     pub fn create_doc(&self) -> Result<Arc<Doc>> {
-        let doc = self
-            .async_runtime
-            .main()
-            .block_on(async { self.sync_client.create_doc().await })
-            .map_err(Error::doc)?;
+        block_on(&self.async_runtime, async {
+            let doc = self.sync_client.create_doc().await.map_err(Error::doc)?;
 
-        Ok(Arc::new(Doc {
-            inner: doc,
-            rt: self.async_runtime.clone(),
-        }))
+            Ok(Arc::new(Doc {
+                inner: doc,
+                rt: self.async_runtime.clone(),
+            }))
+        })
     }
 
     pub fn create_author(&self) -> Result<Arc<AuthorId>> {
-        let author = self
-            .async_runtime
-            .main()
-            .block_on(async { self.sync_client.create_author().await })
-            .map_err(Error::author)?;
+        block_on(&self.async_runtime, async {
+            let author = self
+                .sync_client
+                .create_author()
+                .await
+                .map_err(Error::author)?;
 
-        Ok(Arc::new(AuthorId(author)))
+            Ok(Arc::new(AuthorId(author)))
+        })
     }
 
     pub fn import_doc(&self, ticket: Arc<DocTicket>) -> Result<Arc<Doc>> {
-        let doc = self
-            .async_runtime
-            .main()
-            .block_on(async { self.sync_client.import_doc(ticket.0.clone()).await })
-            .map_err(Error::doc)?;
+        block_on(&self.async_runtime, async {
+            let doc = self
+                .sync_client
+                .import_doc(ticket.0.clone())
+                .await
+                .map_err(Error::doc)?;
 
-        Ok(Arc::new(Doc {
-            inner: doc,
-            rt: self.async_runtime.clone(),
-        }))
+            Ok(Arc::new(Doc {
+                inner: doc,
+                rt: self.async_runtime.clone(),
+            }))
+        })
     }
 
     pub fn stats(&self) -> Result<HashMap<String, CounterStats>> {
-        let stats = self
-            .async_runtime
-            .main()
-            .block_on(async { self.sync_client.stats().await })
-            .map_err(Error::doc)?;
-        Ok(stats)
+        block_on(&self.async_runtime, async {
+            let stats = self.sync_client.stats().await.map_err(Error::doc)?;
+            Ok(stats)
+        })
     }
+}
+
+fn block_on<F: Future<Output = T>, T>(rt: &Handle, fut: F) -> T {
+    tokio::task::block_in_place(move || match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle.block_on(fut),
+        Err(_) => rt.main().block_on(fut),
+    })
 }
 
 #[cfg(test)]

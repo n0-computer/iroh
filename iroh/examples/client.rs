@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_bytes::util::runtime;
@@ -19,9 +21,11 @@ async fn main() -> anyhow::Result<()> {
     let client = node.client();
     let doc = client.create_doc().await?;
     let author = client.create_author().await?;
-    let key = b"hello".to_vec();
-    let value = b"world".to_vec();
-    doc.set_bytes(author, key.clone(), value).await?;
+    for i in 0..5 {
+        let key = format!("hello {i}").as_bytes().to_vec();
+        let value = format!("world {i}").as_bytes().to_vec();
+        doc.set_bytes(author, key.clone(), value).await?;
+    }
     let mut stream = doc
         .get(GetFilter {
             latest: true,
@@ -35,6 +39,21 @@ async fn main() -> anyhow::Result<()> {
         println!("  content {}", String::from_utf8(content.to_vec())?)
     }
 
+    let ticket = doc.share(iroh::rpc_protocol::ShareMode::Write).await?;
+    println!("ticket: {}", ticket);
+
+    let mut counter = 0;
+    loop {
+        counter += 1;
+        for i in 0..5 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let key = format!("hello {i}");
+            println!("updating {key}");
+            let key = key.as_bytes().to_vec();
+            let value = format!("world {counter}").as_bytes().to_vec();
+            doc.set_bytes(author, key.clone(), value).await?;
+        }
+    }
     Ok(())
 }
 
