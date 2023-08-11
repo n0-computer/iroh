@@ -19,7 +19,7 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::config::iroh_data_root;
+use crate::config::IrohPaths;
 
 use super::{
     add::{aggregate_add_response, print_add_response},
@@ -49,20 +49,12 @@ pub async fn run(
         );
     }
 
-    let mut iroh_data_root = iroh_data_root()?;
-    if !iroh_data_root.is_absolute() {
-        iroh_data_root = std::env::current_dir()?.join(iroh_data_root);
-    }
-    tokio::fs::create_dir_all(&iroh_data_root).await?;
-    let db = flat::Store::load(&iroh_data_root, &iroh_data_root, rt)
+    let blob_dir = IrohPaths::BaoFlatStore.env_path()?;
+    tokio::fs::create_dir_all(&blob_dir).await?;
+    let db = flat::Store::load(&blob_dir, &blob_dir, rt)
         .await
-        .with_context(|| {
-            format!(
-                "Failed to load iroh database from {}",
-                iroh_data_root.display()
-            )
-        })?;
-    let key = Some(iroh_data_root.join("keypair"));
+        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+    let key = Some(IrohPaths::Keypair.env_path()?);
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), rt, key, opts).await?;
     let controller = provider.controller();

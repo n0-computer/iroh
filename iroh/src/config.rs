@@ -2,11 +2,12 @@
 
 use std::{
     collections::HashMap,
-    env,
+    env, fmt,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use config::{Environment, File, Value};
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
@@ -21,6 +22,55 @@ pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 /// environment variables
 /// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
 pub const ENV_PREFIX: &str = "IROH";
+
+/// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
+pub enum IrohPaths {
+    /// Path to the node's private key for the [`crate::net::PeerId`]
+    Keypair,
+    /// Path to the node's flat-file bao blob store ([`crate::baomap::flat`])
+    BaoFlatStore,
+}
+impl From<&IrohPaths> for &'static str {
+    fn from(value: &IrohPaths) -> Self {
+        match value {
+            IrohPaths::Keypair => "keypair",
+            IrohPaths::BaoFlatStore => "blobs.v0",
+        }
+    }
+}
+impl FromStr for IrohPaths {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s {
+            "keypair" => Self::Keypair,
+            "blobs.v0" => Self::BaoFlatStore,
+            _ => bail!("unknown file or directory"),
+        })
+    }
+}
+impl fmt::Display for IrohPaths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = self.into();
+        write!(f, "{s}")
+    }
+}
+impl AsRef<Path> for IrohPaths {
+    fn as_ref(&self) -> &Path {
+        let s: &str = self.into();
+        Path::new(s)
+    }
+}
+impl IrohPaths {
+    /// Get the path for this [`IrohPath`] by joining the name to `IROH_DATA_DIR` environment variable.
+    pub fn env_path(self) -> Result<PathBuf> {
+        let mut root = iroh_data_root()?;
+        if !root.is_absolute() {
+            root = std::env::current_dir()?.join(root);
+        }
+        let path = root.join(self);
+        Ok(path)
+    }
+}
 
 /// The configuration for the iroh cli.
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
