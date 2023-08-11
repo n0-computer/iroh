@@ -645,19 +645,13 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     }
 
     /// Returns a handle that can be used to do RPC calls to the node internally.
-    ///
-    /// TODO: remove and replace with client?
-    pub fn controller(
-        &self,
-    ) -> RpcClient<ProviderService, FlumeConnection<ProviderResponse, ProviderRequest>> {
+    pub fn controller(&self) -> crate::client::mem::RpcClient {
         RpcClient::new(self.inner.controller.clone())
     }
 
     /// Return a client to control this node over an in-memory channel.
-    pub fn client(
-        &self,
-    ) -> super::client::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>> {
-        super::client::Iroh::new(self.controller())
+    pub fn client(&self) -> crate::client::mem::Iroh {
+        crate::client::Iroh::new(self.controller())
     }
 
     /// Return a single token containing everything needed to get a hash.

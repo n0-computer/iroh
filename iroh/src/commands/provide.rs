@@ -9,6 +9,7 @@ use std::{
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     baomap::flat,
+    client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
@@ -24,7 +25,7 @@ use crate::config::IrohPaths;
 
 use super::{
     add::{aggregate_add_response, print_add_response},
-    MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS, RPC_ALPN,
+    MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
 };
 
 #[derive(Debug)]

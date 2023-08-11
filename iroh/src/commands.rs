@@ -15,7 +15,6 @@ use crate::config::Config;
 use self::provide::{ProvideOptions, ProviderRpcPort};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
-const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
