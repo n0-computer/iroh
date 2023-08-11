@@ -25,16 +25,19 @@ pub const ENV_PREFIX: &str = "IROH";
 
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
 pub enum IrohPaths {
-    /// Path to the node's private key for the [`crate::net::PeerId`]
+    /// Path to the node's private key for the [`iroh_net::PeerId`].
     Keypair,
-    /// Path to the node's flat-file bao blob store ([`crate::baomap::flat`])
-    BaoFlatStore,
+    /// Path to the node's [flat-file store](iroh::baomap::flat) for complete blobs.
+    BaoFlatStoreComplete,
+    /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
+    BaoFlatStorePartial,
 }
 impl From<&IrohPaths> for &'static str {
     fn from(value: &IrohPaths) -> Self {
         match value {
             IrohPaths::Keypair => "keypair",
-            IrohPaths::BaoFlatStore => "blobs.v0",
+            IrohPaths::BaoFlatStoreComplete => "blobs.v0",
+            IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
         }
     }
 }
@@ -43,7 +46,8 @@ impl FromStr for IrohPaths {
     fn from_str(s: &str) -> Result<Self> {
         Ok(match s {
             "keypair" => Self::Keypair,
-            "blobs.v0" => Self::BaoFlatStore,
+            "blobs.v0" => Self::BaoFlatStoreComplete,
+            "blobs-partial.v0" => Self::BaoFlatStorePartial,
             _ => bail!("unknown file or directory"),
         })
     }
@@ -62,13 +66,18 @@ impl AsRef<Path> for IrohPaths {
 }
 impl IrohPaths {
     /// Get the path for this [`IrohPath`] by joining the name to `IROH_DATA_DIR` environment variable.
-    pub fn env_path(self) -> Result<PathBuf> {
+    pub fn with_env(self) -> Result<PathBuf> {
         let mut root = iroh_data_root()?;
         if !root.is_absolute() {
             root = std::env::current_dir()?.join(root);
         }
-        let path = root.join(self);
-        Ok(path)
+        Ok(self.with_root(root))
+    }
+
+    /// Get the path for this [`IrohPath`] by joining the name to a root directory.
+    pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
+        let path = root.as_ref().join(self);
+        path
     }
 }
 

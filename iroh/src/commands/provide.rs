@@ -49,12 +49,14 @@ pub async fn run(
         );
     }
 
-    let blob_dir = IrohPaths::BaoFlatStore.env_path()?;
+    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
+    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
     tokio::fs::create_dir_all(&blob_dir).await?;
-    let db = flat::Store::load(&blob_dir, &blob_dir, rt)
+    tokio::fs::create_dir_all(&partial_blob_dir).await?;
+    let db = flat::Store::load(&blob_dir, &partial_blob_dir, rt)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let key = Some(IrohPaths::Keypair.env_path()?);
+    let key = Some(IrohPaths::Keypair.with_env()?);
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), rt, key, opts).await?;
     let controller = provider.controller();

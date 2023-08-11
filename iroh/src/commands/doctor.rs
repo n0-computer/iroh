@@ -778,7 +778,7 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
             SecretKey::from(bytes)
         }
         PrivateKey::Local => {
-            let path = IrohPaths::Keypair.env_path()?;
+            let path = IrohPaths::Keypair.with_env()?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
                 let keypair = Keypair::try_from_openssh(bytes)?;
