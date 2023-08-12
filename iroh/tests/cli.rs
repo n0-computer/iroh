@@ -19,6 +19,7 @@ use walkdir::WalkDir;
 
 const ADDR: &str = "127.0.0.1:0";
 const RPC_PORT: &str = "4999";
+const BAO_DIR: &str = "blobs.v0";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     let mut content = vec![0u8; size];
@@ -206,6 +207,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     make_rand_file(5000, &file3)?;
     // leave the provider running for the entire test
     let provider = make_provider_in(&src_iroh_data_dir, &src, Input::Path, None, None)?;
+    let src_db_dir = src_iroh_data_dir.join(BAO_DIR);
     let count = count_input_files(&src);
     let ticket = match_provide_output(&provider, count)?;
     // first test - empty work dir
@@ -221,7 +223,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     // second test - full work dir
     {
-        copy_dir_all(&src_iroh_data_dir, &tgt_work_dir)?;
+        copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         let get = make_get_cmd(&ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -233,7 +235,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     // third test - partial work dir - remove some large files
     {
-        copy_dir_all(&src_iroh_data_dir, &tgt_work_dir)?;
+        copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         make_partial(&tgt_work_dir, |_hash, size| {
             if size == 100000 {
                 MakePartialResult::Remove
@@ -252,7 +254,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     // fourth test - partial work dir - truncate some large files
     {
-        copy_dir_all(&src_iroh_data_dir, &tgt_work_dir)?;
+        copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         make_partial(tgt_work_dir, |_hash, size| {
             if size == 100000 {
                 MakePartialResult::Truncate(1024 * 32)
@@ -344,13 +346,14 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
         tokio_util::task::LocalPoolHandle::new(1),
     );
     // should have some data now
-    let db = Store::load_blocking(&iroh_data_dir, &iroh_data_dir, &rt)?;
+    let db_path = iroh_data_dir.join(BAO_DIR);
+    let db = Store::load_blocking(&db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 2);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Store::load_blocking(&iroh_data_dir, &iroh_data_dir, &rt)?;
+    let db = Store::load_blocking(&db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 4);
 

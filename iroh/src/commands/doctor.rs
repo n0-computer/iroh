@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::config::{iroh_config_path, iroh_data_root, Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use crate::config::{iroh_config_path, Config, IrohPaths, CONFIG_FILE_NAME, ENV_PREFIX};
 
 use anyhow::Context;
 use clap::Subcommand;
@@ -778,8 +778,7 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
             SecretKey::from(bytes)
         }
         PrivateKey::Local => {
-            let iroh_data_root = iroh_data_root()?;
-            let path = iroh_data_root.join("keypair");
+            let path = IrohPaths::Keypair.with_env()?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
                 let keypair = Keypair::try_from_openssh(bytes)?;
