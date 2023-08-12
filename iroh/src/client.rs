@@ -13,7 +13,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
 use iroh_sync::store::{GetFilter, KeyFilter};
-use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
+use iroh_sync::sync::{AuthorId, NamespaceId, OnInsertCallback, SignedEntry};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
@@ -148,6 +148,29 @@ where
         Ok(entry)
     }
 
+    pub async fn get_all_keys_latest(&self) -> Result<impl Stream<Item = Result<SignedEntry>>> {
+        let filter = GetFilter {
+            key: KeyFilter::All,
+            author: None,
+            latest: true,
+        };
+        self.get(filter).await
+    }
+
+    pub async fn get_latest_by_key(&self, key: Vec<u8>) -> Result<SignedEntry> {
+        let filter = GetFilter {
+            key: KeyFilter::Key(key),
+            author: None,
+            latest: true,
+        };
+        let mut stream = self.get(filter).await?;
+        let entry = stream
+            .next()
+            .await
+            .unwrap_or_else(|| Err(anyhow!("not found")))?;
+        Ok(entry)
+    }
+
     pub async fn get(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<SignedEntry>>> {
         let stream = self
             .rpc
@@ -180,7 +203,6 @@ where
             .await??;
         Ok(())
     }
-
     // TODO: add stop_sync
 
     pub async fn subscribe(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<LiveEvent>>> {

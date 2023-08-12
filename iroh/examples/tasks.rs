@@ -22,37 +22,27 @@ use bytes::Bytes;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use comfy_table::{presets::UTF8_FULL, Cell, CellAlignment, Table};
 use ed25519_dalek::SigningKey;
-use iroh::sync::{
-    BlobStore, Doc as SyncDoc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN,
-};
-use iroh_gossip::{
-    net::{GossipHandle, GOSSIP_ALPN},
-    proto::TopicId,
-};
+use futures::StreamExt;
+use iroh::client::{Doc, Iroh};
+use iroh::rpc_protocol::{DocTicket, ProviderRequest, ProviderResponse, ShareMode};
+use iroh::sync::PeerSource;
+use iroh_gossip::proto::TopicId;
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
 use iroh_net::{
-    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
+    defaults::DEFAULT_DERP_STUN_PORT,
     derp::{DerpMap, UseIpv4, UseIpv6},
-    magic_endpoint::get_alpn,
     tls::Keypair,
-    MagicEndpoint,
 };
-use iroh_sync::{
-    store::{self, Store as _},
-    sync::{Author, Namespace, OnInsertCallback, SignedEntry},
-};
-use once_cell::sync::OnceCell;
+use iroh_sync::sync::SignedEntry;
+use iroh_sync::sync::{AuthorId, NamespaceId};
+use quic_rpc::transport::quinn::QuinnConnection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing_subscriber::{EnvFilter, Registry};
 use url::Url;
-
-use iroh_bytes_handlers::IrohBytesHandlers;
-
-type Doc = SyncDoc<store::fs::Store>;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -83,7 +73,8 @@ pub struct Args {
 
 #[derive(Parser, Debug)]
 enum Command {
-    Open { doc_name: String },
+    Create,
+    Open { key: String },
     Join { ticket: String },
 }
 
@@ -97,7 +88,7 @@ pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     iroh_metrics::core::Core::init(|reg, metrics| {
-        metrics.insert(iroh::sync::metrics::Metrics::new(reg));
+        metrics.insert(iroh_sync::metrics::Metrics::new(reg));
         metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
     });
 
@@ -117,18 +108,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // setup logging
     let log_filter = init_logging();
 
-    let (send, recv) = mpsc::channel(32);
-    let tasks = Tasks::new(
-        args,
-        Some(Box::new(move |_origin, _entry| {
-            println!("GOT ENTRY");
-            send.try_send(()).expect("receiver dropped");
-        })),
-    )
-    .await?;
+    let tasks = Tasks::new(args).await?;
     println!("> ticket: {}", tasks.ticket());
 
-    let (mut tasks_app, mut update_error) = TasksApp::new(tasks, recv).await?;
+    let (mut tasks_app, mut update_error) = TasksApp::new(tasks).await?;
 
     // spawn an repl thread that reads stdin and parses each line as a `Cmd` command
     let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
@@ -195,7 +178,7 @@ async fn handle_command(
     Ok(())
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 /// Task in a list of tasks
 pub struct Task {
     /// Description of the task
@@ -227,6 +210,12 @@ impl Task {
         Ok(buf.freeze())
     }
 
+    fn as_vec(self) -> anyhow::Result<Vec<u8>> {
+        let mut buf = Vec::with_capacity(MAX_TASK_SIZE);
+        postcard::to_slice(&self, &mut buf)?;
+        Ok(buf)
+    }
+
     fn missing_task(id: String) -> Self {
         Self {
             label: String::from("Missing Content"),
@@ -240,16 +229,15 @@ impl Task {
 
 /// List of tasks, including completed tasks that have not been archived
 pub struct Tasks {
-    doc: Doc,
-    store: DocStore,
-    ticket: Ticket,
-    live_sync: LiveSync<store::fs::Store>,
-    blob_store: BlobStore,
+    doc: Doc<QuinnConnection<ProviderResponse, ProviderRequest>>,
+    iroh: Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>,
+    ticket: DocTicket,
+    author_id: AuthorId,
     metrics_fut: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Tasks {
-    pub async fn new(args: Args, on_insert: Option<OnInsertCallback>) -> anyhow::Result<Self> {
+    pub async fn new(args: Args) -> anyhow::Result<Self> {
         let metrics_fut = init_metrics_collection(args.metrics_addr);
 
         // parse or generate our keypair
@@ -259,142 +247,56 @@ impl Tasks {
         };
 
         // configure our derp map
-        let derp_map = match (args.no_derp, args.derp) {
-            (false, None) => Some(default_derp_map()),
-            (false, Some(url)) => Some(derp_map_from_url(url)?),
-            (true, None) => None,
-            (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
-        };
+        // let derp_map = match (args.no_derp, args.derp) {
+        //     (false, None) => Some(default_derp_map()),
+        //     (false, Some(url)) => Some(derp_map_from_url(url)?),
+        //     (true, None) => None,
+        //     (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
+        // };
 
-        // build our magic endpoint and the gossip protocol
-        let (endpoint, gossip, initial_endpoints) = {
-            // init a cell that will hold our gossip handle to be used in endpoint callbacks
-            let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
-            // init a channel that will emit once the initial endpoints of our local node are discovered
-            let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
-            // build the magic endpoint
-            let endpoint = MagicEndpoint::builder()
-                .keypair(keypair.clone())
-                .alpns(vec![
-                    GOSSIP_ALPN.to_vec(),
-                    SYNC_ALPN.to_vec(),
-                    iroh_bytes::protocol::ALPN.to_vec(),
-                ])
-                .derp_map(derp_map)
-                .on_endpoints({
-                    let gossip_cell = gossip_cell.clone();
-                    Box::new(move |endpoints| {
-                        // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
-                        if let Some(gossip) = gossip_cell.get() {
-                            gossip.update_endpoints(endpoints).ok();
-                        }
-                        // trigger oneshot on the first endpoint update
-                        initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
-                    })
-                })
-                .bind(args.bind_port)
-                .await?;
+        let author_id = AuthorId::from_bytes(&keypair.to_bytes())?;
 
-            // initialize the gossip protocol
-            let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
-            // insert into the gossip cell to be used in the endpoint callbacks above
-            gossip_cell.set(gossip.clone()).unwrap();
+        let rpc_port = 1000;
+        let iroh = iroh::client::quic::connect(rpc_port).await?;
 
-            // wait for a first endpoint update so that we know about at least one of our addrs
-            let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
-            // pass our initial endpoints to the gossip protocol so that they can be announced to peers
-            gossip.update_endpoints(&initial_endpoints)?;
-            (endpoint, gossip, initial_endpoints)
-        };
-
-        let (topic, peers) = match &args.command {
-            Command::Open { doc_name } => {
-                let topic: TopicId = blake3::hash(doc_name.as_bytes()).into();
+        let doc = match &args.command {
+            Command::Create => {
+                let doc = iroh.create_doc().await?;
                 println!(
-                    "> opening document {doc_name} as namespace {} and waiting for peers to join us...",
-                    fmt_hash(topic.as_bytes())
+                    "> creating document with namespace {} and waiting for peers to join us...",
+                    doc.id()
                 );
-                (topic, vec![])
+                doc
+            }
+            Command::Open { key } => {
+                let id = NamespaceId::from_str(&key)?;
+                println!(
+                    "> opening document {key} as namespace {id:?} and waiting for peers to join us...",
+                );
+                iroh.get_doc(id)?
             }
             Command::Join { ticket } => {
-                let Ticket { topic, peers } = Ticket::from_str(ticket)?;
-                println!("> joining topic {topic} and connecting to {peers:?}",);
-                (topic, peers)
+                let ticket = DocTicket::from_str(ticket)?;
+                println!(
+                    "> joining topic {:?} and connecting to {:?}",
+                    ticket.key, ticket.peers
+                );
+                iroh.import_doc(ticket).await?
             }
         };
 
-        let our_ticket = {
-            // add our local endpoints to the ticket and print it for others to join
-            let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
-            let mut peers = peers.clone();
-            peers.push(PeerSource {
-                peer_id: endpoint.peer_id(),
-                addrs,
-                derp_region: endpoint.my_derp().await,
-            });
-            Ticket { peers, topic }
-        };
+        let ticket = doc.share(ShareMode::Write).await?;
 
-        // unwrap our storage path or default to temp
-        let storage_path = args.storage_path.unwrap_or_else(|| {
-            let name = format!("iroh-todo-{}", endpoint.peer_id());
-            let dir = std::env::temp_dir().join(name);
-            if !dir.exists() {
-                std::fs::create_dir(&dir).expect("failed to create temp dir");
-            }
-            dir
-        });
-
-        // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
-        let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
-
-        // create a blob store (with a iroh-bytes database inside)
-        let blobs =
-            BlobStore::new(rt.clone(), storage_path.join("blobs"), endpoint.clone()).await?;
-
-        // create a doc store for the iroh-sync docs
-        let author = Author::from(keypair.secret().clone());
-        let docs_path = storage_path.join("docs");
-        tokio::fs::create_dir_all(&docs_path).await?;
-        let docs = DocStore::new(blobs.clone(), author, docs_path)?;
-
-        // create the live syncer
-        let live_sync = LiveSync::<store::fs::Store>::spawn(endpoint.clone(), gossip.clone());
-
-        // construct the state that is passed to the endpoint loop and from there cloned
-        // into to the connection handler task for incoming connections.
-        let state = Arc::new(State {
-            gossip: gossip.clone(),
-            docs: docs.clone(),
-            bytes: IrohBytesHandlers::new(rt.clone(), blobs.db().clone()),
-        });
-
-        // spawn our endpoint loop that forwards incoming connections
-        tokio::spawn(endpoint_loop(endpoint.clone(), state));
-
-        // open our document and add to the live syncer
-        let namespace = Namespace::from_bytes(topic.as_bytes());
-        let doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
-        live_sync.add(doc.replica().clone(), peers.clone()).await?;
-
-        if let Some(on_insert) = on_insert {
-            doc.on_insert(on_insert);
-        }
         Ok(Tasks {
+            author_id,
             doc,
-            store: docs,
-            ticket: our_ticket,
-            live_sync,
-            blob_store: blobs,
+            ticket,
+            iroh,
             metrics_fut,
         })
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        // exit: cancel the sync and store blob database and document
-        self.live_sync.cancel().await?;
-        self.blob_store.save().await?;
-
         if let Some(metrics_fut) = &self.metrics_fut {
             metrics_fut.abort();
             drop(metrics_fut);
@@ -421,7 +323,7 @@ impl Tasks {
             is_delete: false,
             id: id.clone(),
         };
-        self.insert_bytes(id.as_bytes(), task.as_bytes()?).await
+        self.insert_bytes(id.as_bytes(), task.as_vec()?).await
     }
     pub async fn toggle_done(&mut self, id: String) -> anyhow::Result<()> {
         let mut task = self.get_task(id.clone()).await?;
@@ -437,16 +339,14 @@ impl Tasks {
     }
 
     pub async fn get_tasks(&self) -> anyhow::Result<Vec<Task>> {
-        let entries = self
-            .store
-            .store()
-            .get_latest(self.doc.replica().namespace())?;
+        let mut entries = self.doc.get_all_keys_latest().await?;
         let mut hash_entries: HashMap<Vec<u8>, SignedEntry> = HashMap::new();
 
         // only get most recent entry for the key
         // wish this had an easier api -> get_latest_for_each_key?
-        for entry in entries {
-            let (id, entry) = entry?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            let id = entry.entry().id();
             if let Some(other_entry) = hash_entries.get(id.key()) {
                 let other_timestamp = other_entry.entry().record().timestamp();
                 let this_timestamp = entry.entry().record().timestamp();
@@ -469,38 +369,28 @@ impl Tasks {
         Ok(tasks)
     }
 
-    async fn insert_bytes(&self, key: impl AsRef<[u8]>, content: Bytes) -> anyhow::Result<()> {
-        self.doc.insert_bytes(key, content).await?;
+    async fn insert_bytes(&self, key: impl AsRef<[u8]>, content: Vec<u8>) -> anyhow::Result<()> {
+        self.doc
+            .set_bytes(self.author_id, key.as_ref().to_vec(), content)
+            .await?;
         Ok(())
     }
 
     async fn update_task(&mut self, key: impl AsRef<[u8]>, task: Task) -> anyhow::Result<()> {
-        let content = task.as_bytes()?;
+        let content = task.as_vec()?;
         self.insert_bytes(key, content).await
     }
 
     async fn get_task(&self, id: String) -> anyhow::Result<Task> {
-        match self
-            .store
-            .store()
-            .get_latest_by_key(self.doc.replica().namespace(), id.as_bytes())?
-            .next()
-        {
-            Some(entry) => {
-                let (_, entry) = entry?;
-                self.task_from_entry(&entry).await
-            }
-            None => {
-                bail!("key not found")
-            }
-        }
+        let entry = self.doc.get_latest_by_key(id.as_bytes().to_vec()).await?;
+        self.task_from_entry(&entry).await
     }
 
     async fn task_from_entry(&self, entry: &SignedEntry) -> anyhow::Result<Task> {
         let id = String::from_utf8(entry.entry().id().key().to_owned())?;
         match self.doc.get_content_bytes(entry).await {
-            Some(b) => Task::from_bytes(b),
-            None => Ok(Task::missing_task(id.clone())),
+            Ok(b) => Task::from_bytes(b),
+            Err(_) => Ok(Task::missing_task(id.clone())),
         }
     }
 }
@@ -531,6 +421,7 @@ fn fmt_tasks(tasks: &Vec<Task>) -> String {
 pub enum UpdateError {
     NoMoreUpdates,
     GetTasksError,
+    Error(String),
 }
 
 /// Allows the user to interact with the tasks using the "indexes"
@@ -542,16 +433,14 @@ struct TasksApp {
 }
 
 impl TasksApp {
-    async fn new(
-        tasks: Tasks,
-        mut updates: mpsc::Receiver<()>,
-    ) -> anyhow::Result<(Self, oneshot::Receiver<UpdateError>)> {
+    async fn new(tasks: Tasks) -> anyhow::Result<(Self, oneshot::Receiver<UpdateError>)> {
         let order: Vec<String> = tasks
             .get_tasks()
             .await?
             .iter()
             .map(|t| t.id.to_string())
             .collect();
+        let mut updates = tasks.doc.updates().await?;
         let order = Arc::new(Mutex::new(order));
         let tasks = Arc::new(Mutex::new(tasks));
         let (sender, recv) = oneshot::channel();
@@ -564,9 +453,9 @@ impl TasksApp {
                     _ = tokio::signal::ctrl_c() => {
                         return;
                     }
-                    res = updates.recv() => {
+                    res = updates.next() => {
                         match res {
-                            Some(()) => {
+                            Some(Ok(_)) => {
                                 let t = updates_tasks.lock().await;
                                 let tasks = match t.get_tasks().await {
                                     Ok(tasks) => tasks,
@@ -580,6 +469,10 @@ impl TasksApp {
                                 let table = fmt_tasks(&tasks);
                                 println!("\n{table}");
                             },
+                            Some(Err(e)) => {
+                                let _ = sender.send(UpdateError::Error(e.to_string()));
+                                return;
+                            }
                             None => {
                                 let _ = sender.send(UpdateError::NoMoreUpdates);
                                 return;
@@ -701,36 +594,6 @@ impl FromStr for Cmd {
 }
 
 #[derive(Debug)]
-struct State {
-    gossip: GossipHandle,
-    docs: DocStore,
-    bytes: IrohBytesHandlers,
-}
-
-async fn endpoint_loop(endpoint: MagicEndpoint, state: Arc<State>) -> anyhow::Result<()> {
-    while let Some(conn) = endpoint.accept().await {
-        let state = state.clone();
-        tokio::spawn(async move {
-            if let Err(err) = handle_connection(conn, state).await {
-                println!("> connection closed, reason: {err}");
-            }
-        });
-    }
-    Ok(())
-}
-
-async fn handle_connection(mut conn: quinn::Connecting, state: Arc<State>) -> anyhow::Result<()> {
-    let alpn = get_alpn(&mut conn).await?;
-    println!("> incoming connection with alpn {alpn}");
-    match alpn.as_bytes() {
-        GOSSIP_ALPN => state.gossip.handle_connection(conn.await?).await,
-        SYNC_ALPN => state.docs.handle_connection(conn).await,
-        alpn if alpn == iroh_bytes::protocol::ALPN => state.bytes.handle_connection(conn).await,
-        _ => bail!("ignoring connection: unsupported ALPN protocol"),
-    }
-}
-
-#[derive(Debug)]
 enum ToRepl {
     Continue,
     Exit,
@@ -773,9 +636,7 @@ fn repl_loop(cmd_tx: mpsc::Sender<(Cmd, oneshot::Sender<ToRepl>)>) -> anyhow::Re
 fn get_stats() {
     let core = iroh_metrics::core::Core::get().expect("Metrics core not initialized");
     println!("# sync");
-    let metrics = core
-        .get_collector::<iroh::sync::metrics::Metrics>()
-        .unwrap();
+    let metrics = core.get_collector::<iroh_sync::metrics::Metrics>().unwrap();
     fmt_metrics(metrics);
     println!("# gossip");
     let metrics = core
@@ -866,90 +727,4 @@ fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
         UseIpv6::TryDns,
         0,
     ))
-}
-
-/// handlers for iroh_bytes connections
-mod iroh_bytes_handlers {
-    use std::sync::Arc;
-
-    use bytes::Bytes;
-    use futures::{future::BoxFuture, FutureExt};
-    use iroh_bytes::{
-        protocol::{GetRequest, RequestToken},
-        provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
-    };
-
-    use iroh::{collection::IrohCollectionParser, database::flat::Database};
-
-    #[derive(Debug, Clone)]
-    pub struct IrohBytesHandlers {
-        db: Database,
-        rt: iroh_bytes::util::runtime::Handle,
-        event_sender: NoopEventSender,
-        get_handler: Arc<NoopCustomGetHandler>,
-        auth_handler: Arc<NoopRequestAuthorizationHandler>,
-    }
-    impl IrohBytesHandlers {
-        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: Database) -> Self {
-            Self {
-                db,
-                rt,
-                event_sender: NoopEventSender,
-                get_handler: Arc::new(NoopCustomGetHandler),
-                auth_handler: Arc::new(NoopRequestAuthorizationHandler),
-            }
-        }
-        pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
-            iroh_bytes::provider::handle_connection(
-                conn,
-                self.db.clone(),
-                self.event_sender.clone(),
-                IrohCollectionParser,
-                self.get_handler.clone(),
-                self.auth_handler.clone(),
-                self.rt.clone(),
-            )
-            .await;
-            Ok(())
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct NoopEventSender;
-    impl EventSender for NoopEventSender {
-        fn send(&self, _event: iroh_bytes::provider::Event) -> BoxFuture<()> {
-            async {}.boxed()
-        }
-    }
-    #[derive(Debug)]
-    struct NoopCustomGetHandler;
-    impl CustomGetHandler for NoopCustomGetHandler {
-        fn handle(
-            &self,
-            _token: Option<RequestToken>,
-            _request: Bytes,
-        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
-        }
-    }
-    #[derive(Debug)]
-    struct NoopRequestAuthorizationHandler;
-    impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
-        fn authorize(
-            &self,
-            token: Option<RequestToken>,
-            _request: &iroh_bytes::protocol::Request,
-        ) -> BoxFuture<'static, anyhow::Result<()>> {
-            async move {
-                if let Some(token) = token {
-                    anyhow::bail!(
-                        "no authorization handler defined, but token was provided: {:?}",
-                        token
-                    );
-                }
-                Ok(())
-            }
-            .boxed()
-        }
-    }
 }

@@ -74,8 +74,7 @@ flat-db = []
 iroh-collection = []
 test = []
 example-sync = ["cli", "ed25519-dalek", "shell-words", "shellexpand", "rustyline"]
-tasks = ["cli", "ed25519-dalek", "once_cell", "shell-words", "shellexpand",
-"sync", "rustyline", "comfy-table", "uuid"]
+tasks = ["cli", "ed25519-dalek", "shell-words", "shellexpand", "rustyline", "comfy-table", "uuid"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
