@@ -23,22 +23,23 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use comfy_table::{presets::UTF8_FULL, Cell, CellAlignment, Table};
 use ed25519_dalek::SigningKey;
 use futures::StreamExt;
-use iroh::client::{Doc, Iroh};
+use iroh::client::Doc;
 use iroh::rpc_protocol::{DocTicket, ProviderRequest, ProviderResponse, ShareMode};
-use iroh::sync::PeerSource;
+use iroh::sync::{LiveEvent, PeerSource};
 use iroh_gossip::proto::TopicId;
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
+use iroh_net::defaults::default_derp_map;
 use iroh_net::{
     defaults::DEFAULT_DERP_STUN_PORT,
     derp::{DerpMap, UseIpv4, UseIpv6},
     tls::Keypair,
 };
-use iroh_sync::sync::SignedEntry;
-use iroh_sync::sync::{AuthorId, NamespaceId};
-use quic_rpc::transport::quinn::QuinnConnection;
+use iroh_sync::sync::{Author, NamespaceId};
+use iroh_sync::sync::{AuthorId, SignedEntry};
+use quic_rpc::transport::flume::FlumeConnection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing_subscriber::{EnvFilter, Registry};
@@ -58,9 +59,6 @@ pub struct Args {
     /// Disable DERP completeley
     #[clap(long)]
     no_derp: bool,
-    /// Set your nickname
-    #[clap(short, long)]
-    name: Option<String>,
     /// Set the bind port for our socket. By default, a random port will be used.
     #[clap(short, long, default_value = "0")]
     bind_port: u16,
@@ -72,7 +70,7 @@ pub struct Args {
 }
 
 #[derive(Parser, Debug)]
-enum Command {
+pub enum Command {
     Create,
     Open { key: String },
     Join { ticket: String },
@@ -104,11 +102,155 @@ pub fn init_metrics_collection(
     None
 }
 
+mod iroh_node {
+    use anyhow::{Context, Result};
+    use iroh::baomap::{flat::Store as BaoFileStore, mem::Store as BaoMemStore};
+    use iroh::node::Node;
+    use iroh_bytes::{baomap::Store as BaoStore, util::runtime};
+    use iroh_net::derp::DerpMap;
+    use iroh_net::tls::Keypair;
+    use iroh_sync::store::fs::Store as DocFileStore;
+    use iroh_sync::store::memory::Store as DocMemStore;
+    use iroh_sync::store::Store as DocStore;
+    use std::net::SocketAddr;
+    use std::path::PathBuf;
+
+    const DOCS_PATH: &str = "docs";
+
+    pub enum Iroh {
+        FileStore(Node<BaoFileStore, DocFileStore>),
+        MemStore(Node<BaoMemStore, DocMemStore>),
+    }
+
+    impl Iroh {
+        pub async fn new(
+            rt: runtime::Handle,
+            keypair: Keypair,
+            derp_map: Option<DerpMap>,
+            bind_addr: SocketAddr,
+            data_root: Option<PathBuf>,
+        ) -> Result<Self> {
+            match data_root {
+                Some(path) => Ok(Iroh::FileStore(
+                    create_iroh_node_file_store(&rt, keypair, derp_map, bind_addr, path).await?,
+                )),
+                None => Ok(Iroh::MemStore(
+                    create_iroh_node_mem_store(rt, keypair, derp_map, bind_addr).await?,
+                )),
+            }
+        }
+
+        pub fn client(&self) -> iroh::client::mem::Iroh {
+            match self {
+                Iroh::FileStore(node) => node.client(),
+                Iroh::MemStore(node) => node.client(),
+            }
+        }
+
+        pub fn shutdown(self) {
+            match self {
+                Iroh::FileStore(node) => node.shutdown(),
+                Iroh::MemStore(node) => node.shutdown(),
+            }
+        }
+    }
+
+    pub async fn create_iroh_node_mem_store(
+        rt: runtime::Handle,
+        keypair: Keypair,
+        derp_map: Option<DerpMap>,
+        bind_addr: SocketAddr,
+    ) -> Result<Node<BaoMemStore, DocMemStore>> {
+        let rt_handle = rt.clone();
+        create_iroh_node(
+            BaoMemStore::new(rt),
+            DocMemStore::default(),
+            &rt_handle,
+            keypair,
+            derp_map,
+            bind_addr,
+        )
+        .await
+    }
+
+    pub async fn create_iroh_node_file_store(
+        rt: &runtime::Handle,
+        keypair: Keypair,
+        derp_map: Option<DerpMap>,
+        bind_addr: SocketAddr,
+        data_root: PathBuf,
+    ) -> Result<Node<BaoFileStore, DocFileStore>> {
+        let path = {
+            if data_root.is_absolute() {
+                data_root
+            } else {
+                std::env::current_dir()?.join(data_root)
+            }
+        };
+        let bao_store = {
+            tokio::fs::create_dir_all(&path).await?;
+            BaoFileStore::load(&path, &path, &rt)
+                .await
+                .with_context(|| format!("Failed to load tasks database from {}", path.display()))?
+        };
+        let doc_store = {
+            let path = path.join(DOCS_PATH);
+            DocFileStore::new(path.clone()).with_context(|| {
+                format!("Failed to load docs database from {:?}", path.display())
+            })?
+        };
+
+        create_iroh_node(bao_store, doc_store, rt, keypair, derp_map, bind_addr).await
+    }
+
+    pub async fn create_iroh_node<B: BaoStore, D: DocStore>(
+        bao_store: B,
+        doc_store: D,
+        rt: &runtime::Handle,
+        keypair: Keypair,
+        derp_map: Option<DerpMap>,
+        bind_addr: SocketAddr,
+    ) -> Result<Node<B, D>> {
+        let mut builder = Node::builder(bao_store, doc_store);
+        if let Some(dm) = derp_map {
+            builder = builder.derp_map(dm);
+        }
+        builder
+            .bind_addr(bind_addr)
+            .runtime(rt)
+            .keypair(keypair)
+            .spawn()
+            .await
+    }
+}
+
 async fn run(args: Args) -> anyhow::Result<()> {
-    // setup logging
     let log_filter = init_logging();
 
-    let tasks = Tasks::new(args).await?;
+    let metrics_fut = init_metrics_collection(args.metrics_addr);
+
+    // parse or generate our keypair
+    let keypair = match args.private_key {
+        None => Keypair::generate(),
+        Some(key) => parse_keypair(&key)?,
+    };
+
+    println!("> our private key: {}", fmt_secret(&keypair));
+
+    // configure our derp map
+    let derp_map = match (args.no_derp, args.derp) {
+        (false, None) => Some(default_derp_map()),
+        (false, Some(url)) => Some(derp_map_from_url(url)?),
+        (true, None) => None,
+        (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
+    };
+    // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
+    let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
+
+    let bind_addr: SocketAddr = format!("0.0.0.0:{}", args.bind_port).parse().unwrap();
+    let iroh = iroh_node::Iroh::new(rt, keypair, derp_map, bind_addr, args.storage_path).await?;
+
+    let tasks = Tasks::new(iroh.client(), args.command).await?;
     println!("> ticket: {}", tasks.ticket());
 
     let (mut tasks_app, mut update_error) = TasksApp::new(tasks).await?;
@@ -149,7 +291,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
         // notify to the repl that we want to get the next command
         to_repl_tx.send(ToRepl::Continue).ok();
     }
-
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
+        drop(metrics_fut);
+    }
+    iroh.shutdown();
     tasks_app.shutdown().await
 }
 
@@ -211,9 +357,8 @@ impl Task {
     }
 
     fn as_vec(self) -> anyhow::Result<Vec<u8>> {
-        let mut buf = Vec::with_capacity(MAX_TASK_SIZE);
-        postcard::to_slice(&self, &mut buf)?;
-        Ok(buf)
+        let buf = self.as_bytes()?;
+        Ok(buf[..].to_vec())
     }
 
     fn missing_task(id: String) -> Self {
@@ -229,37 +374,17 @@ impl Task {
 
 /// List of tasks, including completed tasks that have not been archived
 pub struct Tasks {
-    doc: Doc<QuinnConnection<ProviderResponse, ProviderRequest>>,
-    iroh: Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>,
+    doc: Doc<FlumeConnection<ProviderResponse, ProviderRequest>>,
+    iroh: iroh::client::mem::Iroh,
     ticket: DocTicket,
-    author_id: AuthorId,
-    metrics_fut: Option<tokio::task::JoinHandle<()>>,
+    author: AuthorId,
 }
 
 impl Tasks {
-    pub async fn new(args: Args) -> anyhow::Result<Self> {
-        let metrics_fut = init_metrics_collection(args.metrics_addr);
+    pub async fn new(iroh: iroh::client::mem::Iroh, command: Command) -> anyhow::Result<Self> {
+        let author = iroh.create_author().await?;
 
-        // parse or generate our keypair
-        let keypair = match args.private_key {
-            None => Keypair::generate(),
-            Some(key) => parse_keypair(&key)?,
-        };
-
-        // configure our derp map
-        // let derp_map = match (args.no_derp, args.derp) {
-        //     (false, None) => Some(default_derp_map()),
-        //     (false, Some(url)) => Some(derp_map_from_url(url)?),
-        //     (true, None) => None,
-        //     (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
-        // };
-
-        let author_id = AuthorId::from_bytes(&keypair.to_bytes())?;
-
-        let rpc_port = 1000;
-        let iroh = iroh::client::quic::connect(rpc_port).await?;
-
-        let doc = match &args.command {
+        let doc = match &command {
             Command::Create => {
                 let doc = iroh.create_doc().await?;
                 println!(
@@ -288,20 +413,11 @@ impl Tasks {
         let ticket = doc.share(ShareMode::Write).await?;
 
         Ok(Tasks {
-            author_id,
+            author,
             doc,
             ticket,
             iroh,
-            metrics_fut,
         })
-    }
-
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        if let Some(metrics_fut) = &self.metrics_fut {
-            metrics_fut.abort();
-            drop(metrics_fut);
-        }
-        Ok(())
     }
 
     pub fn ticket(&self) -> String {
@@ -371,7 +487,7 @@ impl Tasks {
 
     async fn insert_bytes(&self, key: impl AsRef<[u8]>, content: Vec<u8>) -> anyhow::Result<()> {
         self.doc
-            .set_bytes(self.author_id, key.as_ref().to_vec(), content)
+            .set_bytes(self.author, key.as_ref().to_vec(), content)
             .await?;
         Ok(())
     }
@@ -440,12 +556,12 @@ impl TasksApp {
             .iter()
             .map(|t| t.id.to_string())
             .collect();
-        let mut updates = tasks.doc.updates().await?;
+        let mut events = tasks.doc.subscribe().await?;
         let order = Arc::new(Mutex::new(order));
         let tasks = Arc::new(Mutex::new(tasks));
         let (sender, recv) = oneshot::channel();
-        let updates_tasks = Arc::clone(&tasks);
-        let updates_order = Arc::clone(&order);
+        let update_tasks = Arc::clone(&tasks);
+        let update_order = Arc::clone(&order);
         let update_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -453,10 +569,10 @@ impl TasksApp {
                     _ = tokio::signal::ctrl_c() => {
                         return;
                     }
-                    res = updates.next() => {
+                    res = events.next() => {
                         match res {
-                            Some(Ok(_)) => {
-                                let t = updates_tasks.lock().await;
+                            Some(Ok(event)) => {
+                                let t = update_tasks.lock().await;
                                 let tasks = match t.get_tasks().await {
                                     Ok(tasks) => tasks,
                                     Err(_) => {
@@ -464,8 +580,16 @@ impl TasksApp {
                                         return;
                                     }
                                 };
-                                let mut order = updates_order.lock().await;
+                                let mut order = update_order.lock().await;
                                 *order = tasks.iter().map(|t| t.id.clone()).collect();
+                                match event {
+                                    LiveEvent::InsertLocal => {},
+                                    LiveEvent::InsertRemote => {
+                                        // TODO: need an `on_download` or an event stream that
+                                        // notifies for downloads rather than entry insertions
+                                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    },
+                                }
                                 let table = fmt_tasks(&tasks);
                                 println!("\n{table}");
                             },
@@ -498,8 +622,6 @@ impl TasksApp {
     }
 
     async fn shutdown(self) -> anyhow::Result<()> {
-        let tasks = self.tasks.lock().await;
-        tasks.shutdown().await?;
         self.update_handle.abort();
         Ok(())
     }
@@ -706,6 +828,11 @@ fn init_logging() -> LogLevelReload {
 }
 
 // helpers
+fn fmt_secret(keypair: &Keypair) -> String {
+    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
+    text.make_ascii_lowercase();
+    text
+}
 fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(hash.as_ref());
     text.make_ascii_lowercase();

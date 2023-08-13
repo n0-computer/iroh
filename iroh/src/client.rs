@@ -13,7 +13,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
 use iroh_sync::store::{GetFilter, KeyFilter};
-use iroh_sync::sync::{AuthorId, NamespaceId, OnInsertCallback, SignedEntry};
+use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
