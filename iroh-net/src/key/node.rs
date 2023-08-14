@@ -106,7 +106,7 @@ pub struct SecretKey(crypto_box::SecretKey);
 
 impl From<crate::tls::SecretKey> for SecretKey {
     fn from(key: crate::tls::SecretKey) -> Self {
-        SecretKey(crypto_box::SecretKey::from(key.to_scalar_bytes()))
+        SecretKey(crypto_box::SecretKey::from(key.to_scalar()))
     }
 }
 
