@@ -94,7 +94,6 @@ async fn sync_full_basic() -> Result<()> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc, b"k1", b"v1").await;
 
-
         // setup event channel on on doc1
         let mut events = doc1.subscribe().await?;
 
