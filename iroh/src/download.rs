@@ -36,9 +36,6 @@ pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
 /// Spawns a background task that handles connecting to peers and performing get requests.
 ///
 /// TODO: Support retries and backoff - become a proper queue...
-/// TODO: Download requests send via synchronous flume::Sender::send. Investigate if we want async
-/// here. We currently use [`Downloader::push`] from [`iroh_sync::sync::Replica::on_insert`] callbacks,
-/// which are sync, thus we need a sync method on the Downloader to push new download requests.
 /// TODO: Support collections, likely become generic over C: CollectionParser
 #[derive(Debug, Clone)]
 pub struct Downloader {

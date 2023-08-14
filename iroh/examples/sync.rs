@@ -277,7 +277,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             if let Some(matcher) = &*matcher {
                 let key = entry.id().key();
                 if key.starts_with(matcher.as_bytes()) {
-                    println!("change: {}", fmt_entry(&entry));
+                    println!("change: {}", fmt_entry(entry));
                 }
             }
         }
