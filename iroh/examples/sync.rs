@@ -235,6 +235,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         endpoint.clone(),
         gossip.clone(),
         docs.clone(),
+        db.clone(),
         downloader,
     );
 
