@@ -2,53 +2,39 @@ use anyhow::Result;
 use clap::Subcommand;
 use futures::StreamExt;
 use indicatif::HumanBytes;
-use iroh::rpc_protocol::{ListBlobsRequest, ListCollectionsRequest, ListIncompleteBlobsRequest};
-
-use super::{make_rpc_client, DEFAULT_RPC_PORT};
+use iroh::{
+    client::quic::RpcClient,
+    rpc_protocol::{ListBlobsRequest, ListCollectionsRequest, ListIncompleteBlobsRequest},
+};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// List the available blobs on the running provider.
-    Blobs {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
+    Blobs,
     /// List the available blobs on the running provider.
-    IncompleteBlobs {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
+    IncompleteBlobs,
     /// List the available collections on the running provider.
-    Collections {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
+    Collections,
 }
 
 impl Commands {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, client: RpcClient) -> Result<()> {
         match self {
-            Commands::Blobs { rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
+            Commands::Blobs => {
                 let mut response = client.server_streaming(ListBlobsRequest).await?;
                 while let Some(item) = response.next().await {
                     let item = item?;
                     println!("{} {} ({})", item.path, item.hash, HumanBytes(item.size),);
                 }
             }
-            Commands::IncompleteBlobs { rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
+            Commands::IncompleteBlobs => {
                 let mut response = client.server_streaming(ListIncompleteBlobsRequest).await?;
                 while let Some(item) = response.next().await {
                     let item = item?;
                     println!("{} {}", item.hash, item.size);
                 }
             }
-            Commands::Collections { rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
+            Commands::Collections => {
                 let mut response = client.server_streaming(ListCollectionsRequest).await?;
                 while let Some(collection) = response.next().await {
                     let collection = collection?;

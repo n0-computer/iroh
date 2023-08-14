@@ -23,6 +23,11 @@ pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 /// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
 pub const ENV_PREFIX: &str = "IROH";
 
+/// Fetches the environment variable `IROH_<key>` from the current process.
+pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
+    env::var(&format!("{ENV_PREFIX}_{key}"))
+}
+
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum IrohPaths {
