@@ -4,13 +4,10 @@ use anyhow::Result;
 use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use iroh::rpc_protocol::ValidateRequest;
+use iroh::{client::quic::RpcClient, rpc_protocol::ValidateRequest};
 use iroh_bytes::{baomap::ValidateProgress, Hash};
 
-use super::make_rpc_client;
-
-pub async fn run(rpc_port: u16, repair: bool) -> Result<()> {
-    let client = make_rpc_client(rpc_port).await?;
+pub async fn run(client: RpcClient, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
     let mut response = client.server_streaming(ValidateRequest { repair }).await?;
 

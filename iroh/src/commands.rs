@@ -23,6 +23,7 @@ pub mod doctor;
 pub mod get;
 pub mod list;
 pub mod provide;
+pub mod repl;
 pub mod sync;
 pub mod validate;
 
@@ -42,7 +43,7 @@ pub mod validate;
 #[clap(version)]
 pub struct Cli {
     #[clap(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
     /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
     #[clap(long)]
     pub keylog: bool,
@@ -52,183 +53,37 @@ pub struct Cli {
     pub metrics_addr: Option<SocketAddr>,
     #[clap(long)]
     pub cfg: Option<PathBuf>,
+    /// RPC port of the Iroh node
+    #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+    rpc_port: u16,
 }
 
 impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
-            Commands::Share {
-                hash,
-                recursive,
-                rpc_port,
-                peer,
-                addr,
-                token,
-                ticket,
-                derp_region,
-                mut out,
-                stable: in_place,
-            } => {
-                if let Some(out) = out.as_mut() {
-                    tracing::info!("canonicalizing output path");
-                    let absolute = std::env::current_dir()?.join(&out);
-                    tracing::info!("output path is {} -> {}", out.display(), absolute.display());
-                    *out = absolute;
-                }
-                let client = make_rpc_client(rpc_port).await?;
-                let (peer, addr, token, derp_region, hash, recursive) =
-                    if let Some(ticket) = ticket.as_ref() {
-                        (
-                            ticket.peer(),
-                            ticket.addrs().to_vec(),
-                            ticket.token(),
-                            ticket.derp_region(),
-                            ticket.hash(),
-                            ticket.recursive(),
-                        )
-                    } else {
-                        (
-                            peer.unwrap(),
-                            addr,
-                            token.as_ref(),
-                            derp_region,
-                            hash.unwrap(),
-                            recursive.unwrap_or_default(),
-                        )
-                    };
-                let mut stream = client
-                    .server_streaming(ShareRequest {
-                        hash,
-                        recursive,
-                        peer,
-                        addrs: addr,
-                        derp_region,
-                        token: token.cloned(),
-                        out: out.map(|x| x.display().to_string()),
-                        in_place,
-                    })
-                    .await?;
-                while let Some(item) = stream.next().await {
-                    let item = item?;
-                    println!("{:?}", item);
-                }
-                Ok(())
+            None => {
+                let client = iroh::client::quic::connect_raw(self.rpc_port).await?;
+                repl::run(client).await
             }
-            Commands::Get {
-                hash,
-                peer,
-                addrs,
-                region,
-                ticket,
-                token,
-                out,
-                single,
-            } => {
-                let get = if let Some(ticket) = ticket {
-                    self::get::GetInteractive {
-                        rt: rt.clone(),
-                        hash: ticket.hash(),
-                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
-                        token: ticket.token().cloned(),
-                        single: !ticket.recursive(),
-                    }
-                } else if let (Some(peer), Some(hash)) = (peer, hash) {
-                    self::get::GetInteractive {
-                        rt: rt.clone(),
-                        hash,
-                        opts: iroh::dial::Options {
-                            addrs,
-                            peer_id: peer,
-                            keylog: self.keylog,
-                            derp_region: region,
-                            derp_map: config.derp_map(),
-                            keypair: Keypair::generate(),
-                        },
-                        token,
-                        single,
-                    }
-                } else {
-                    anyhow::bail!("Either ticket or hash and peer must be specified")
-                };
-                tokio::select! {
-                    biased;
-                    res = get.get_interactive(out) => res,
-                    _ = tokio::signal::ctrl_c() => {
-                        println!("Ending transfer early...");
-                        Ok(())
-                    }
-                }
-            }
-            Commands::Provide {
-                path,
-                addr,
-                rpc_port,
-                request_token,
-                in_place,
-            } => {
-                let request_token = match request_token {
-                    Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
-                    Some(RequestTokenOptions::Token(token)) => Some(token),
-                    None => None,
-                };
-                self::provide::run(
-                    rt,
-                    path,
-                    in_place,
-                    ProvideOptions {
-                        addr,
-                        rpc_port,
-                        keylog: self.keylog,
-                        request_token,
-                        derp_map: config.derp_map(),
-                    },
-                )
-                .await
-            }
-            Commands::List(cmd) => cmd.run().await,
-            Commands::Validate { rpc_port, repair } => self::validate::run(rpc_port, repair).await,
-            Commands::Shutdown { force, rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
-                client.rpc(ShutdownRequest { force }).await?;
-                Ok(())
-            }
-            Commands::Id { rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
-                let response = client.rpc(IdRequest).await?;
-
-                println!("Listening address: {:#?}", response.listen_addrs);
-                println!("PeerID: {}", response.peer_id);
-                Ok(())
-            }
-            Commands::Add {
-                path,
-                rpc_port,
-                in_place,
-            } => self::add::run(path, in_place, rpc_port).await,
-            Commands::Addresses { rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
-                let response = client.rpc(AddrsRequest).await?;
-                println!("Listening addresses: {:?}", response.addrs);
-                Ok(())
-            }
-            Commands::Doctor { command } => self::doctor::run(command, config).await,
-            Commands::Sync { command, rpc_port } => {
-                let client = make_rpc_client(rpc_port).await?;
+            Some(Commands::Rpc(command)) => {
+                let client = iroh::client::quic::connect_raw(self.rpc_port).await?;
                 command.run(client).await
             }
+            Some(Commands::Full(command)) => command.run(rt, config, self.keylog).await,
         }
     }
 }
-#[derive(Subcommand, Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum Commands {
-    /// Diagnostic commands for the derp relay protocol.
-    Doctor {
-        /// Commands for doctor - defined in the mod
-        #[clap(subcommand)]
-        command: self::doctor::Commands,
-    },
 
+#[derive(Parser, Debug, Clone)]
+pub enum Commands {
+    #[clap(flatten)]
+    Full(#[clap(subcommand)] FullCommands),
+    #[clap(flatten)]
+    Rpc(#[clap(subcommands)] RpcCommand),
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum FullCommands {
     /// Serve data from the given path.
     ///
     /// If PATH is a folder all files in that folder will be served.  If no PATH is
@@ -254,50 +109,6 @@ pub enum Commands {
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
-    },
-    /// List availble content on the provider.
-    #[clap(subcommand)]
-    List(self::list::Commands),
-    /// Validate hashes on the running provider.
-    Validate {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-        /// Repair the store by removing invalid data
-        #[clap(long, default_value_t = false)]
-        repair: bool,
-    },
-    /// Shutdown provider.
-    Shutdown {
-        /// Shutdown mode.
-        ///
-        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
-        /// for all connections to close.
-        #[clap(long, default_value_t = false)]
-        force: bool,
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    /// Identify the running provider.
-    Id {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    /// Add data from PATH to the running provider's database.
-    Add {
-        /// The path to the file or folder to add
-        path: PathBuf,
-        /// Add in place
-        ///
-        /// Set this to true only if you are sure that the data in its current location
-        /// will not change.
-        #[clap(long, default_value_t = false)]
-        in_place: bool,
-        /// RPC port
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
     },
     /// Fetch the data identified by HASH from a provider
     Get {
@@ -337,6 +148,127 @@ pub enum Commands {
         /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
+    },
+    /// Diagnostic commands for the derp relay protocol.
+    Doctor {
+        /// Commands for doctor - defined in the mod
+        #[clap(subcommand)]
+        command: self::doctor::Commands,
+    },
+}
+
+impl FullCommands {
+    pub async fn run(self, rt: &runtime::Handle, config: &Config, keylog: bool) -> Result<()> {
+        match self {
+            FullCommands::Provide {
+                path,
+                in_place,
+                addr,
+                rpc_port,
+                request_token,
+            } => {
+                let request_token = match request_token {
+                    Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
+                    Some(RequestTokenOptions::Token(token)) => Some(token),
+                    None => None,
+                };
+                self::provide::run(
+                    rt,
+                    path,
+                    in_place,
+                    ProvideOptions {
+                        addr,
+                        rpc_port,
+                        keylog,
+                        request_token,
+                        derp_map: config.derp_map(),
+                    },
+                )
+                .await
+            }
+            FullCommands::Get {
+                hash,
+                peer,
+                addrs,
+                region,
+                ticket,
+                token,
+                out,
+                single,
+            } => {
+                let get = if let Some(ticket) = ticket {
+                    self::get::GetInteractive {
+                        rt: rt.clone(),
+                        hash: ticket.hash(),
+                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
+                        token: ticket.token().cloned(),
+                        single: !ticket.recursive(),
+                    }
+                } else if let (Some(peer), Some(hash)) = (peer, hash) {
+                    self::get::GetInteractive {
+                        rt: rt.clone(),
+                        hash,
+                        opts: iroh::dial::Options {
+                            addrs,
+                            peer_id: peer,
+                            keylog,
+                            derp_region: region,
+                            derp_map: config.derp_map(),
+                            keypair: Keypair::generate(),
+                        },
+                        token,
+                        single,
+                    }
+                } else {
+                    anyhow::bail!("Either ticket or hash and peer must be specified")
+                };
+                tokio::select! {
+                    biased;
+                    res = get.get_interactive(out) => res,
+                    _ = tokio::signal::ctrl_c() => {
+                        println!("Ending transfer early...");
+                        Ok(())
+                    }
+                }
+            }
+            FullCommands::Doctor { command } => self::doctor::run(command, config).await,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum RpcCommand {
+    /// List availble content on the provider.
+    #[clap(subcommand)]
+    List(self::list::Commands),
+    /// Validate hashes on the running provider.
+    Validate {
+        /// Repair the store by removing invalid data
+        #[clap(long, default_value_t = false)]
+        repair: bool,
+    },
+    /// Shutdown provider.
+    Shutdown {
+        /// Shutdown mode.
+        ///
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
+        /// for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Identify the running provider.
+    Id,
+    /// Add data from PATH to the running provider's database.
+    Add {
+        /// The path to the file or folder to add
+        path: PathBuf,
+        /// Add in place
+        ///
+        /// Set this to true only if you are sure that the data in its current location
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        in_place: bool,
     },
     /// Download data to the running provider's database and provide it.
     ///
@@ -380,27 +312,93 @@ pub enum Commands {
         /// and iroh will assume that it will not change.
         #[clap(long, default_value_t = false)]
         stable: bool,
-        /// RPC port
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
     },
     /// List listening addresses of the provider.
-    Addresses {
-        /// RPC port
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    Sync {
-        /// RPC port
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-        #[clap(subcommand)]
-        command: sync::Commands,
-    },
+    Addresses,
+    #[clap(flatten)]
+    Sync(#[clap(subcommand)] sync::Commands),
 }
 
-pub async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
-    iroh::client::quic::connect_raw(rpc_port).await
+impl RpcCommand {
+    pub async fn run(self, client: RpcClient) -> Result<()> {
+        match self {
+            RpcCommand::Share {
+                hash,
+                recursive,
+                peer,
+                addr,
+                token,
+                ticket,
+                derp_region,
+                mut out,
+                stable: in_place,
+            } => {
+                if let Some(out) = out.as_mut() {
+                    tracing::info!("canonicalizing output path");
+                    let absolute = std::env::current_dir()?.join(&out);
+                    tracing::info!("output path is {} -> {}", out.display(), absolute.display());
+                    *out = absolute;
+                }
+                let (peer, addr, token, derp_region, hash, recursive) =
+                    if let Some(ticket) = ticket.as_ref() {
+                        (
+                            ticket.peer(),
+                            ticket.addrs().to_vec(),
+                            ticket.token(),
+                            ticket.derp_region(),
+                            ticket.hash(),
+                            ticket.recursive(),
+                        )
+                    } else {
+                        (
+                            peer.unwrap(),
+                            addr,
+                            token.as_ref(),
+                            derp_region,
+                            hash.unwrap(),
+                            recursive.unwrap_or_default(),
+                        )
+                    };
+                let mut stream = client
+                    .server_streaming(ShareRequest {
+                        hash,
+                        recursive,
+                        peer,
+                        addrs: addr,
+                        derp_region,
+                        token: token.cloned(),
+                        out: out.map(|x| x.display().to_string()),
+                        in_place,
+                    })
+                    .await?;
+                while let Some(item) = stream.next().await {
+                    let item = item?;
+                    println!("{:?}", item);
+                }
+                Ok(())
+            }
+            RpcCommand::List(cmd) => cmd.run(client).await,
+            RpcCommand::Validate { repair } => self::validate::run(client, repair).await,
+            RpcCommand::Shutdown { force } => {
+                client.rpc(ShutdownRequest { force }).await?;
+                Ok(())
+            }
+            RpcCommand::Id {} => {
+                let response = client.rpc(IdRequest).await?;
+
+                println!("Listening address: {:#?}", response.listen_addrs);
+                println!("PeerID: {}", response.peer_id);
+                Ok(())
+            }
+            RpcCommand::Add { path, in_place } => self::add::run(client, path, in_place).await,
+            RpcCommand::Addresses {} => {
+                let response = client.rpc(AddrsRequest).await?;
+                println!("Listening addresses: {:?}", response.addrs);
+                Ok(())
+            }
+            RpcCommand::Sync(command) => command.run(client).await,
+        }
+    }
 }
 
 #[cfg(feature = "metrics")]

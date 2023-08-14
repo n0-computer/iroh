@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
@@ -11,6 +14,8 @@ use iroh_sync::{
 };
 use quic_rpc::transport::quinn::QuinnConnection;
 
+use crate::config::env_var;
+
 use super::RpcClient;
 
 // TODO: It is a bit unfortunate that we have to drag the generics all through. Maybe box the conn?
@@ -21,14 +26,17 @@ const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Parser)]
 pub enum Commands {
+    /// Manage document authors
     Author {
         #[clap(subcommand)]
         command: Author,
     },
+    /// Manage documents
     Docs {
         #[clap(subcommand)]
         command: Docs,
     },
+    /// Manage a single document
     Doc {
         id: NamespaceId,
         #[clap(subcommand)]
@@ -37,24 +45,30 @@ pub enum Commands {
 }
 
 impl Commands {
-    pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
+    pub async fn run(self, client: RpcClient) -> Result<()> {
         let iroh = Iroh::new(client);
         match self {
-            Commands::Author { command } => command.run(iroh).await,
-            Commands::Docs { command } => command.run(iroh).await,
-            Commands::Doc { command, id } => command.run(iroh, id).await,
+            Commands::Author { command } => command.run(&iroh).await,
+            Commands::Docs { command } => command.run(&iroh).await,
+            Commands::Doc { command, id } => {
+                let doc_env = DocEnv::from_env()?;
+                command.run(&iroh, id, doc_env).await
+            }
         }
     }
 }
 
 #[derive(Debug, Clone, Parser)]
 pub enum Author {
+    /// List authors
+    #[clap(alias = "ls")]
     List,
+    /// Create a new author
     Create,
 }
 
 impl Author {
-    pub async fn run(self, iroh: Iroh) -> anyhow::Result<()> {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Author::List => {
                 let mut stream = iroh.list_authors().await?;
@@ -73,31 +87,22 @@ impl Author {
 
 #[derive(Debug, Clone, Parser)]
 pub enum Docs {
+    /// List documents
+    #[clap(alias = "ls")]
     List,
+    /// Create a new document
     Create,
-    // Import {
-    //     key: String,
-    //     #[clap(short, long)]
-    //     peers: Vec<PeerSource>,
-    // },
+    /// Import a document from peers
     Import { ticket: DocTicket },
 }
 
 impl Docs {
-    pub async fn run(self, iroh: Iroh) -> anyhow::Result<()> {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Docs::Create => {
                 let doc = iroh.create_doc().await?;
                 println!("created {}", doc.id());
             }
-            // Docs::Import { key, peers } => {
-            //     let key = hex::decode(key)?
-            //         .try_into()
-            //         .map_err(|_| anyhow!("invalid length"))?;
-            //     let ticket = DocTicket::new(key, peers);
-            //     let doc = iroh.import_doc(ticket).await?;
-            //     println!("imported {}", doc.id());
-            // }
             Docs::Import { ticket } => {
                 let doc = iroh.import_doc(ticket).await?;
                 println!("imported {}", doc.id());
@@ -113,18 +118,41 @@ impl Docs {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DocEnv {
+    pub author: Option<AuthorId>,
+}
+
+impl DocEnv {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let author = if let Some(author) = env_var("AUTHOR").ok() {
+            Some(AuthorId::from_str(&author)?)
+        } else {
+            None
+        };
+        Ok(Self { author })
+    }
+
+    pub fn author(&self, arg: Option<AuthorId>) -> Result<AuthorId> {
+        arg.or(self.author.clone())
+            .ok_or_else(|| anyhow!("Author is required but not set"))
+    }
+}
+
 #[derive(Debug, Clone, Parser)]
 pub enum Doc {
-    StartSync {
-        peers: Vec<PeerSource>,
-    },
-    Share {
-        mode: ShareMode,
-    },
+    /// Start to synchronize a document with peers
+    StartSync { peers: Vec<PeerSource> },
+    /// Share a document and print a ticket to share with peers
+    Share { mode: ShareMode },
     /// Set an entry
     Set {
         /// Author of this entry.
-        author: AuthorId,
+        ///
+        /// Required unless the author is set through the REPL environment or the IROH_AUTHOR
+        /// environment variable.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
         /// Content to store for this entry (parsed as UTF-8 string)
@@ -151,6 +179,8 @@ pub enum Doc {
         #[clap(short, long)]
         content: bool,
     },
+    /// List all entries in the document
+    #[clap(alias = "ls")]
     List {
         /// If true, old entries will be included. By default only the latest value for each key is
         /// shown.
@@ -162,7 +192,7 @@ pub enum Doc {
 }
 
 impl Doc {
-    pub async fn run(self, iroh: Iroh, doc_id: NamespaceId) -> anyhow::Result<()> {
+    pub async fn run(self, iroh: &Iroh, doc_id: NamespaceId, env: DocEnv) -> Result<()> {
         let doc = iroh.get_doc(doc_id)?;
         match self {
             Doc::StartSync { peers } => {
@@ -186,6 +216,7 @@ impl Doc {
             Doc::Set { author, key, value } => {
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
+                let author = env.author(author)?;
                 let entry = doc.set_bytes(author, key, value).await?;
                 println!("{}", fmt_entry(&entry));
             }
