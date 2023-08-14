@@ -37,7 +37,7 @@ use iroh_net::{
     derp::{DerpMap, UseIpv4, UseIpv6},
     tls::Keypair,
 };
-use iroh_sync::sync::{Author, NamespaceId};
+use iroh_sync::sync::NamespaceId;
 use iroh_sync::sync::{AuthorId, SignedEntry};
 use quic_rpc::transport::flume::FlumeConnection;
 use serde::{Deserialize, Serialize};
