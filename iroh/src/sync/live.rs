@@ -6,14 +6,14 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use crate::sync::connect_and_sync;
+use crate::{download::Downloader, sync::connect_and_sync};
 use anyhow::{anyhow, bail, Result};
 use futures::{
     future::{BoxFuture, Shared},
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt, TryFutureExt,
 };
-use iroh_bytes::util::runtime::Handle;
+use iroh_bytes::{baomap, util::runtime::Handle, Hash};
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -154,7 +154,24 @@ pub enum LiveEvent {
         from: Option<PeerId>,
         /// The inserted entry.
         entry: Entry,
+        /// If the content is available at the local node
+        content_status: ContentStatus,
     },
+    /// The content of an entry was downloaded and is now available at the local node
+    ContentReady {
+        /// The content hash of the newly available entry content
+        hash: Hash,
+    },
+}
+
+/// Availability status of an entry's content bytes
+// TODO: Add NotRequested or similar
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ContentStatus {
+    /// The content is available on the local node
+    Ready,
+    /// The content is not yet available on the local node
+    Pending,
 }
 
 /// Handle to a running live sync actor
@@ -169,9 +186,15 @@ impl<S: store::Store> LiveSync<S> {
     ///
     /// This spawn a background actor to handle gossip events and forward operations over broadcast
     /// messages.
-    pub fn spawn(rt: Handle, endpoint: MagicEndpoint, gossip: Gossip) -> Self {
+    pub fn spawn<B: baomap::Store>(
+        rt: Handle,
+        endpoint: MagicEndpoint,
+        gossip: Gossip,
+        bao_store: B,
+        downloader: Downloader,
+    ) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
-        let mut actor = Actor::new(endpoint, gossip, to_actor_rx);
+        let mut actor = Actor::new(endpoint, gossip, bao_store, downloader, to_actor_rx);
         let task = rt.main().spawn(async move {
             if let Err(err) = actor.run().await {
                 error!("live sync failed: {err:?}");
@@ -257,9 +280,11 @@ impl<S: store::Store> LiveSync<S> {
 
 // TODO: Also add `handle_connection` to the replica and track incoming sync requests here too.
 // Currently peers might double-sync in both directions.
-struct Actor<S: store::Store> {
+struct Actor<S: store::Store, B: baomap::Store> {
     endpoint: MagicEndpoint,
     gossip: Gossip,
+    bao_store: B,
+    downloader: Downloader,
 
     replicas: HashMap<TopicId, Replica<S::Instance>>,
     replicas_subscription: futures::stream::SelectAll<
@@ -275,16 +300,20 @@ struct Actor<S: store::Store> {
 
     event_subscriptions: HashMap<TopicId, HashMap<u64, OnLiveEventCallback>>,
     event_removal_id: AtomicU64,
+
+    pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(TopicId, Hash)>>>,
 }
 
 /// Token needed to remove inserted callbacks.
 #[derive(Debug, Clone)]
 pub struct RemovalToken(u64);
 
-impl<S: store::Store> Actor<S> {
+impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     pub fn new(
         endpoint: MagicEndpoint,
         gossip: Gossip,
+        bao_store: B,
+        downloader: Downloader,
         to_actor_rx: mpsc::Receiver<ToActor<S>>,
     ) -> Self {
         let sub = gossip.clone().subscribe_all().boxed();
@@ -292,6 +321,8 @@ impl<S: store::Store> Actor<S> {
         Self {
             gossip,
             endpoint,
+            bao_store,
+            downloader,
             to_actor_rx,
             sync_state: Default::default(),
             pending_syncs: Default::default(),
@@ -301,6 +332,7 @@ impl<S: store::Store> Actor<S> {
             subscription: sub,
             event_subscriptions: Default::default(),
             event_removal_id: Default::default(),
+            pending_downloads: Default::default(),
         }
     }
 
@@ -351,6 +383,15 @@ impl<S: store::Store> Actor<S> {
                         info!("joined sync topic {topic:?}");
                     }
                     // TODO: maintain some join state
+                }
+                Some(res) = self.pending_downloads.next() => {
+                    if let Some((topic, hash)) = res {
+                        if let Some(subs) = self.event_subscriptions.get(&topic) {
+                            let event = LiveEvent::ContentReady { hash };
+                            notify_all(&subs, event).await;
+                        }
+                    }
+
                 }
             }
         }
@@ -544,29 +585,52 @@ impl<S: store::Store> Actor<S> {
                 debug!(topic = ?topic, "broadcast new entry");
                 self.gossip.broadcast(topic, message).await?;
 
+                // Notify subscribers about the event
                 if let Some(subs) = subs {
-                    futures::future::join_all(subs.values().map(|sub| {
-                        sub(LiveEvent::InsertLocal {
-                            entry: entry.clone(),
-                        })
-                    }))
-                    .await;
+                    let event = LiveEvent::InsertLocal {
+                        entry: entry.clone(),
+                    };
+                    notify_all(&subs, event).await;
                 }
             }
             InsertOrigin::Sync(peer_id) => {
+                let from = peer_id.and_then(|id| PeerId::from_bytes(&id).ok());
+                let entry = signed_entry.entry();
+                let hash = *entry.record().content_hash();
+
+                // A new entry was inserted from initial sync or gossip. Queue downloading the
+                // content.
+                let content_status = if let Some(_bao_entry) = self.bao_store.get(&hash) {
+                    ContentStatus::Ready
+                } else {
+                    if let Some(from) = from {
+                        self.downloader.push(hash, vec![from]).await;
+                        let fut = self.downloader.finished(&hash).await;
+                        let fut = fut
+                            .map(move |res| res.map(move |(hash, _len)| (topic, hash)))
+                            .boxed();
+                        self.pending_downloads.push(fut);
+                    }
+                    ContentStatus::Pending
+                };
+
+                // Notify subscribers about the event
                 if let Some(subs) = subs {
                     let from = peer_id.and_then(|id| PeerId::from_bytes(&id).ok());
-                    futures::future::join_all(subs.values().map(|sub| {
-                        sub(LiveEvent::InsertRemote {
-                            from,
-                            entry: signed_entry.entry().clone(),
-                        })
-                    }))
-                    .await;
+                    let event = LiveEvent::InsertRemote {
+                        from,
+                        entry: entry.clone(),
+                        content_status,
+                    };
+                    notify_all(&subs, event).await;
                 }
             }
         }
 
         Ok(())
     }
+}
+
+async fn notify_all(subs: &HashMap<u64, OnLiveEventCallback>, event: LiveEvent) {
+    futures::future::join_all(subs.values().map(|sub| sub(event.clone()))).await;
 }

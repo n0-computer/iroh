@@ -1,8 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::anyhow;
-use futures::FutureExt;
-use iroh_bytes::util::runtime::Handle;
+use iroh_bytes::{baomap::Store as BaoStore, util::runtime::Handle};
 use iroh_gossip::net::Gossip;
 use iroh_net::MagicEndpoint;
 use iroh_sync::{
@@ -13,7 +12,7 @@ use parking_lot::RwLock;
 
 use crate::download::Downloader;
 
-use super::{LiveEvent, LiveSync, OnLiveEventCallback, PeerSource, RemovalToken};
+use super::{LiveSync, PeerSource};
 
 /// The SyncEngine combines the [`LiveSync`] actor with the Iroh bytes database and [`Downloader`].
 ///
@@ -22,9 +21,8 @@ pub struct SyncEngine<S: Store> {
     pub(crate) rt: Handle,
     pub(crate) store: S,
     pub(crate) endpoint: MagicEndpoint,
-    downloader: Downloader,
     pub(crate) live: LiveSync<S>,
-    active: Arc<RwLock<HashMap<NamespaceId, RemovalToken>>>,
+    active: Arc<RwLock<HashSet<NamespaceId>>>,
 }
 
 impl<S: Store> SyncEngine<S> {
@@ -36,17 +34,17 @@ impl<S: Store> SyncEngine<S> {
     ///
     /// The engine will also register for [`Replica::subscribe`] events to download content for new
     /// entries from peers.
-    pub fn spawn(
+    pub fn spawn<B: BaoStore>(
         rt: Handle,
         endpoint: MagicEndpoint,
         gossip: Gossip,
         store: S,
+        bao_store: B,
         downloader: Downloader,
     ) -> Self {
-        let live = LiveSync::spawn(rt.clone(), endpoint.clone(), gossip);
+        let live = LiveSync::spawn(rt.clone(), endpoint.clone(), gossip, bao_store, downloader);
         Self {
             live,
-            downloader,
             store,
             rt,
             endpoint,
@@ -63,17 +61,10 @@ impl<S: Store> SyncEngine<S> {
         namespace: NamespaceId,
         peers: Vec<PeerSource>,
     ) -> anyhow::Result<()> {
-        let replica = self.get_replica(&namespace)?;
-        if !self.active.read().contains_key(&namespace) {
-            // start to gossip updates
+        if !self.active.read().contains(&namespace) {
+            let replica = self.get_replica(&namespace)?;
             self.live.start_sync(replica, peers).await?;
-            // add download listener
-            let removal_token = self
-                .live
-                .subscribe(namespace, on_insert_download(self.downloader.clone()))
-                .await?;
-
-            self.active.write().insert(namespace, removal_token);
+            self.active.write().insert(namespace);
         } else if !peers.is_empty() {
             self.live.join_peers(namespace, peers).await?;
         }
@@ -84,9 +75,7 @@ impl<S: Store> SyncEngine<S> {
     pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
         let replica = self.get_replica(&namespace)?;
         self.active.write().remove(&replica.namespace());
-        // `stop_sync` removes all callback listeners automatically
         self.live.stop_sync(namespace).await?;
-
         Ok(())
     }
 
@@ -109,21 +98,4 @@ impl<S: Store> SyncEngine<S> {
             .get_author(id)?
             .ok_or_else(|| anyhow!("author not found"))
     }
-}
-
-fn on_insert_download(downloader: Downloader) -> OnLiveEventCallback {
-    Box::new(move |event: LiveEvent| {
-        let downloader = downloader.clone();
-        async move {
-            if let LiveEvent::InsertRemote {
-                from: Some(peer_id),
-                entry,
-            } = event
-            {
-                let hash = *entry.record().content_hash();
-                downloader.push(hash, vec![peer_id]).await;
-            }
-        }
-        .boxed()
-    })
 }

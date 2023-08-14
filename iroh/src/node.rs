@@ -354,6 +354,7 @@ where
             endpoint.clone(),
             gossip.clone(),
             self.docs,
+            self.db.clone(),
             downloader,
         );
 

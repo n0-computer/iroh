@@ -1,6 +1,6 @@
 #![cfg(feature = "mem-db")]
 
-use std::{net::SocketAddr, time::Duration};
+use std::net::SocketAddr;
 
 use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryStreamExt};
@@ -90,8 +90,9 @@ async fn sync_full_basic() -> Result<()> {
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
-        // TODO: emit event when download is complete instead of having a timeout
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+
         assert_latest(&doc, b"k1", b"v1").await;
 
         // setup event channel on on doc1
@@ -105,8 +106,9 @@ async fn sync_full_basic() -> Result<()> {
         // wait for remote insert on doc1
         let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
-        // TODO: emit event when download is complete instead of having a timeout
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+
         assert_latest(&doc1, key, value).await;
         doc
     };
@@ -122,9 +124,11 @@ async fn sync_full_basic() -> Result<()> {
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
         let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::ContentReady { .. }));
 
-        // TODO: emit event when download is complete instead of having a timeout
-        tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;
         doc
