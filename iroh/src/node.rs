@@ -1255,7 +1255,7 @@ fn handle_rpc_request<
             }
             DocSubscribe(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
-                    handler.inner.sync.doc_subscribe(req)
+                    async move { handler.inner.sync.doc_subscribe(req).await }.flatten_stream()
                 })
                 .await
             }

@@ -37,7 +37,7 @@ use iroh_net::{
 };
 use iroh_sync::{
     store::{self, GetFilter, Store as _},
-    sync::{Author, Namespace, Replica, SignedEntry},
+    sync::{Author, Entry, Namespace, Replica, SignedEntry},
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -265,18 +265,23 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> ready to accept commands");
     println!("> type `help` for a list of commands");
 
-    let current_watch: Arc<std::sync::Mutex<Option<String>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let current_watch: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+
     let watch = current_watch.clone();
-    doc.on_insert(Box::new(move |_origin, entry| {
-        let matcher = watch.lock().unwrap();
-        if let Some(matcher) = &*matcher {
-            let key = entry.entry().id().key();
-            if key.starts_with(matcher.as_bytes()) {
-                println!("change: {}", fmt_entry(&entry));
+    let doc_events = doc.subscribe().expect("already subscribed");
+    rt.main().spawn(async move {
+        while let Ok((_origin, entry)) = doc_events.recv_async().await {
+            let entry = entry.entry();
+            let matcher = watch.lock().await;
+            if let Some(matcher) = &*matcher {
+                let key = entry.id().key();
+                if key.starts_with(matcher.as_bytes()) {
+                    println!("change: {}", fmt_entry(&entry));
+                }
             }
         }
-    }));
+    });
 
     let repl_state = ReplState {
         rt,
@@ -334,7 +339,7 @@ struct ReplState {
     db: iroh::baomap::flat::Store,
     ticket: Ticket,
     log_filter: LogLevelReload,
-    current_watch: Arc<std::sync::Mutex<Option<String>>>,
+    current_watch: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 impl ReplState {
@@ -360,7 +365,7 @@ impl ReplState {
                 };
                 for entry in entries {
                     let entry = entry?;
-                    println!("{}", fmt_entry(&entry));
+                    println!("{}", fmt_entry(entry.entry()));
                     if print_content {
                         println!("{}", fmt_content(&self.db, &entry).await);
                     }
@@ -368,9 +373,9 @@ impl ReplState {
             }
             Cmd::Watch { key } => {
                 println!("watching key: '{key}'");
-                self.current_watch.lock().unwrap().replace(key);
+                self.current_watch.lock().await.replace(key);
             }
-            Cmd::WatchCancel => match self.current_watch.lock().unwrap().take() {
+            Cmd::WatchCancel => match self.current_watch.lock().await.take() {
                 Some(key) => {
                     println!("canceled watching key: '{key}'");
                 }
@@ -389,7 +394,7 @@ impl ReplState {
                 for entry in entries {
                     let entry = entry?;
                     count += 1;
-                    println!("{}", fmt_entry(&entry),);
+                    println!("{}", fmt_entry(entry.entry()),);
                 }
                 println!("> {} entries", count);
             }
@@ -869,13 +874,13 @@ fn init_logging() -> LogLevelReload {
 
 // helpers
 
-fn fmt_entry(entry: &SignedEntry) -> String {
-    let id = entry.entry().id();
+fn fmt_entry(entry: &Entry) -> String {
+    let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
     let author = fmt_hash(id.author().as_bytes());
-    let hash = entry.entry().record().content_hash();
+    let hash = entry.record().content_hash();
     let hash = fmt_hash(hash.as_bytes());
-    let len = HumanBytes(entry.entry().record().content_len());
+    let len = HumanBytes(entry.record().content_len());
     format!("@{author}: {key} = {hash} ({len})",)
 }
 

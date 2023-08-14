@@ -4,7 +4,7 @@
 use std::time::Instant;
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use anyhow::anyhow;
@@ -21,7 +21,7 @@ use iroh_gossip::net::util::Dialer;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
@@ -74,25 +74,24 @@ impl Downloader {
     /// Note: This method takes only [`PeerId`]s and will attempt to connect to those peers. For
     /// this to succeed, you need to add addresses for these peers to the magic endpoint's
     /// addressbook yourself. See [`MagicEndpoint::add_known_addrs`].
-    pub fn push(&self, hash: Hash, peers: Vec<PeerId>) {
+    pub async fn push(&self, hash: Hash, peers: Vec<PeerId>) {
         let (reply, reply_rx) = oneshot::channel();
         let req = DownloadRequest { hash, peers, reply };
 
-        // TODO: this is potentially blocking inside an async call. figure out a better solution
-        if let Err(err) = self.to_actor_tx.send(req) {
+        if let Err(err) = self.to_actor_tx.send_async(req).await {
             warn!("download actor dropped: {err}");
         }
 
-        if self.pending_downloads.lock().unwrap().get(&hash).is_none() {
+        if self.pending_downloads.lock().await.get(&hash).is_none() {
             let pending_downloads = self.pending_downloads.clone();
             let fut = async move {
                 let res = reply_rx.await;
-                pending_downloads.lock().unwrap().remove(&hash);
+                pending_downloads.lock().await.remove(&hash);
                 res.ok().flatten()
             };
             self.pending_downloads
                 .lock()
-                .unwrap()
+                .await
                 .insert(hash, fut.boxed().shared());
         }
     }
@@ -101,8 +100,8 @@ impl Downloader {
     /// requests for that blob have failed.
     ///
     /// NOTE: This does not start the download itself. Use [`Self::push`] for that.
-    pub fn finished(&self, hash: &Hash) -> DownloadFuture {
-        match self.pending_downloads.lock().unwrap().get(hash) {
+    pub async fn finished(&self, hash: &Hash) -> DownloadFuture {
+        match self.pending_downloads.lock().await.get(hash) {
             Some(fut) => fut.clone(),
             None => futures::future::ready(None).boxed().shared(),
         }

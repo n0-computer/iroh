@@ -640,7 +640,7 @@ pub enum ProviderRequest {
 }
 
 /// The response enum, listing all possible responses.
-#[allow(missing_docs)]
+#[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
     Watch(WatchResponse),

@@ -1,7 +1,13 @@
-use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::SocketAddr,
+    str::FromStr,
+    sync::{atomic::AtomicU64, Arc},
+};
 
 use crate::sync::connect_and_sync;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use futures::{
     future::{BoxFuture, Shared},
     stream::{BoxStream, FuturesUnordered, StreamExt},
@@ -15,10 +21,13 @@ use iroh_gossip::{
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::{
     store,
-    sync::{InsertOrigin, NamespaceId, RemovalToken, Replica, SignedEntry},
+    sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
 };
 use serde::{Deserialize, Serialize};
-use tokio::{sync::mpsc, task::JoinError};
+use tokio::{
+    sync::{self, mpsc},
+    task::JoinError,
+};
 use tracing::{debug, error, info, warn};
 
 const CHANNEL_CAP: usize = 8;
@@ -117,17 +126,35 @@ enum ToActor<S: store::Store> {
     Subscribe {
         namespace: NamespaceId,
         #[debug("cb")]
-        cb: Box<dyn Fn(LiveEvent) + Send + Sync + 'static>,
+        cb: OnLiveEventCallback,
+        s: sync::oneshot::Sender<Result<RemovalToken>>,
+    },
+    Unsubscribe {
+        namespace: NamespaceId,
+        token: RemovalToken,
+        s: sync::oneshot::Sender<bool>,
     },
 }
+
+/// Callback used for tracking [`LiveEvent`]s.
+pub type OnLiveEventCallback =
+    Box<dyn Fn(LiveEvent) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
 
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum LiveEvent {
     /// A local insertion.
-    InsertLocal,
+    InsertLocal {
+        /// The inserted entry.
+        entry: Entry,
+    },
     /// Received a remote insert.
-    InsertRemote,
+    InsertRemote {
+        /// The peer that sent us the entry.
+        from: Option<PeerId>,
+        /// The inserted entry.
+        entry: Entry,
+    },
 }
 
 /// Handle to a running live sync actor
@@ -196,16 +223,35 @@ impl<S: store::Store> LiveSync<S> {
     }
 
     /// Subscribes `cb` to events on this `namespace`.
-    pub fn subscribe<F>(&self, namespace: NamespaceId, cb: F) -> Result<()>
+    pub async fn subscribe<F>(&self, namespace: NamespaceId, cb: F) -> Result<RemovalToken>
     where
-        F: Fn(LiveEvent) + Send + Sync + 'static,
+        F: Fn(LiveEvent) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
-        self.to_actor_tx.try_send(ToActor::<S>::Subscribe {
-            namespace,
-            cb: Box::new(cb),
-        })?;
+        let (s, r) = sync::oneshot::channel();
+        self.to_actor_tx
+            .send(ToActor::<S>::Subscribe {
+                namespace,
+                cb: Box::new(cb),
+                s,
+            })
+            .await?;
+        let token = r.await??;
+        Ok(token)
+    }
 
-        Ok(())
+    /// Unsubscribes `token` to events on this `namespace`.
+    /// Returns `true` if a callback was found
+    pub async fn unsubscribe(&self, namespace: NamespaceId, token: RemovalToken) -> Result<bool> {
+        let (s, r) = sync::oneshot::channel();
+        self.to_actor_tx
+            .send(ToActor::<S>::Unsubscribe {
+                namespace,
+                token,
+                s,
+            })
+            .await?;
+        let token = r.await?;
+        Ok(token)
     }
 }
 
@@ -215,17 +261,25 @@ struct Actor<S: store::Store> {
     endpoint: MagicEndpoint,
     gossip: Gossip,
 
-    replicas: HashMap<TopicId, (Replica<S::Instance>, RemovalToken)>,
+    replicas: HashMap<TopicId, Replica<S::Instance>>,
+    replicas_subscription: futures::stream::SelectAll<
+        flume::r#async::RecvStream<'static, (InsertOrigin, SignedEntry)>,
+    >,
     subscription: BoxStream<'static, Result<(TopicId, Event)>>,
     sync_state: HashMap<(TopicId, PeerId), SyncState>,
 
     to_actor_rx: mpsc::Receiver<ToActor<S>>,
-    insert_entry_tx: flume::Sender<(TopicId, SignedEntry)>,
-    insert_entry_rx: flume::Receiver<(TopicId, SignedEntry)>,
 
     pending_syncs: FuturesUnordered<BoxFuture<'static, (TopicId, PeerId, Result<()>)>>,
     pending_joins: FuturesUnordered<BoxFuture<'static, (TopicId, Result<()>)>>,
+
+    event_subscriptions: HashMap<TopicId, HashMap<u64, OnLiveEventCallback>>,
+    event_removal_id: AtomicU64,
 }
+
+/// Token needed to remove inserted callbacks.
+#[derive(Debug, Clone)]
+pub struct RemovalToken(u64);
 
 impl<S: store::Store> Actor<S> {
     pub fn new(
@@ -233,20 +287,20 @@ impl<S: store::Store> Actor<S> {
         gossip: Gossip,
         to_actor_rx: mpsc::Receiver<ToActor<S>>,
     ) -> Self {
-        let (insert_entry_tx, insert_entry_rx) = flume::bounded(64);
         let sub = gossip.clone().subscribe_all().boxed();
 
         Self {
             gossip,
             endpoint,
-            insert_entry_rx,
-            insert_entry_tx,
             to_actor_rx,
             sync_state: Default::default(),
             pending_syncs: Default::default(),
             pending_joins: Default::default(),
             replicas: Default::default(),
+            replicas_subscription: Default::default(),
             subscription: sub,
+            event_subscriptions: Default::default(),
+            event_removal_id: Default::default(),
         }
     }
 
@@ -265,7 +319,14 @@ impl<S: store::Store> Actor<S> {
                         Some(ToActor::StartSync { replica, peers }) => self.start_sync(replica, peers).await?,
                         Some(ToActor::StopSync { namespace }) => self.stop_sync(&namespace).await?,
                         Some(ToActor::JoinPeers { namespace, peers }) => self.join_gossip_and_start_initial_sync(&namespace, peers).await?,
-                        Some(ToActor::Subscribe { namespace, cb }) => self.subscribe(&namespace, cb).await?,
+                        Some(ToActor::Subscribe { namespace, cb, s }) => {
+                            let subscribe_result = self.subscribe(&namespace, cb).await;
+                            s.send(subscribe_result).ok();
+                        },
+                        Some(ToActor::Unsubscribe { namespace, token, s }) => {
+                            let result = self.unsubscribe(&namespace, token).await;
+                            s.send(result).ok();
+                        },
                     }
                 }
                 // new gossip message
@@ -275,9 +336,8 @@ impl<S: store::Store> Actor<S> {
                         error!("Failed to process gossip event: {err:?}");
                     }
                 },
-                entry = self.insert_entry_rx.recv_async() => {
-                    let (topic, entry) = entry?;
-                    self.on_insert_entry(topic, entry).await?;
+                Some((origin, entry))  = self.replicas_subscription.next() => {
+                    self.on_replica_event(origin, entry).await?;
                 }
                 Some((topic, peer, res)) = self.pending_syncs.next() => {
                     // let (topic, peer, res) = res.context("task sync_with_peer paniced")?;
@@ -298,7 +358,7 @@ impl<S: store::Store> Actor<S> {
     }
 
     fn sync_with_peer(&mut self, topic: TopicId, peer: PeerId) {
-        let Some((replica, _token)) = self.replicas.get(&topic) else {
+        let Some(replica) = self.replicas.get(&topic) else {
             return;
         };
         // Check if we synced and only start sync if not yet synced
@@ -325,33 +385,47 @@ impl<S: store::Store> Actor<S> {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for (topic, (replica, removal_token)) in self.replicas.drain() {
-            replica.remove_on_insert(removal_token);
+        for (topic, _replica) in self.replicas.drain() {
+            self.event_subscriptions.remove(&topic);
             self.gossip.quit(topic).await?;
         }
+
         Ok(())
     }
 
     async fn subscribe(
         &mut self,
         namespace: &NamespaceId,
-        cb: Box<dyn Fn(LiveEvent) + Send + Sync + 'static>,
-    ) -> anyhow::Result<()> {
+        cb: OnLiveEventCallback,
+    ) -> anyhow::Result<RemovalToken> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if let Some((replica, _token)) = self.replicas.get_mut(&topic) {
-            // TODO: handle unsubscribe
-            let _token = replica.on_insert(Box::new(move |origin, _entry| match origin {
-                InsertOrigin::Local => cb(LiveEvent::InsertLocal),
-                InsertOrigin::Sync(_) => cb(LiveEvent::InsertRemote),
-            }));
+        if self.replicas.contains_key(&topic) {
+            let subs = self.event_subscriptions.entry(topic).or_default();
+            let removal_id = self
+                .event_removal_id
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            subs.insert(removal_id, cb);
+            let token = RemovalToken(removal_id);
+            Ok(token)
+        } else {
+            bail!("cannot subscribe to unknown replica: {}", namespace);
         }
-        Ok(())
+    }
+
+    /// Returns `true` if a callback was found and removed
+    async fn unsubscribe(&mut self, namespace: &NamespaceId, token: RemovalToken) -> bool {
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        if let Some(subs) = self.event_subscriptions.get_mut(&topic) {
+            return subs.remove(&token.0).is_some();
+        }
+
+        false
     }
 
     async fn stop_sync(&mut self, namespace: &NamespaceId) -> anyhow::Result<()> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if let Some((replica, removal_token)) = self.replicas.remove(&topic) {
-            replica.remove_on_insert(removal_token);
+        if let Some(_replica) = self.replicas.remove(&topic) {
+            self.event_subscriptions.remove(&topic);
             self.gossip.quit(topic).await?;
         }
         Ok(())
@@ -405,17 +479,11 @@ impl<S: store::Store> Actor<S> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
         if let std::collections::hash_map::Entry::Vacant(e) = self.replicas.entry(topic) {
             // setup replica insert notifications.
-            let insert_entry_tx = self.insert_entry_tx.clone();
-            let removal_token = replica.on_insert(Box::new(move |origin, entry| {
-                // only care for local inserts, otherwise we'd do endless gossip loops
-                if let InsertOrigin::Local = origin {
-                    // TODO: this is potentially blocking inside an async call. figure out a better solution
-                    if let Err(err) = insert_entry_tx.send((topic, entry)) {
-                        warn!("on_insert forward failed: {err} - LiveSync actor dropped");
-                    }
-                }
-            }));
-            e.insert((replica, removal_token));
+            let events = replica
+                .subscribe()
+                .ok_or_else(|| anyhow::anyhow!("trying to subscribe twice to the same replica"))?;
+            self.replicas_subscription.push(events.into_stream());
+            e.insert(replica);
         }
 
         self.join_gossip_and_start_initial_sync(&namespace, peers)
@@ -433,7 +501,7 @@ impl<S: store::Store> Actor<S> {
     }
 
     fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
-        let Some((replica, _token)) = self.replicas.get(&topic) else {
+        let Some(replica) = self.replicas.get(&topic) else {
             return Err(anyhow!("Missing doc for {topic:?}"));
         };
         match event {
@@ -459,12 +527,46 @@ impl<S: store::Store> Actor<S> {
         Ok(())
     }
 
-    /// A new entry was inserted locally. Broadcast a gossip message.
-    async fn on_insert_entry(&mut self, topic: TopicId, entry: SignedEntry) -> Result<()> {
-        let op = Op::Put(entry);
-        let message = postcard::to_stdvec(&op)?.into();
-        debug!(topic = ?topic, "broadcast new entry");
-        self.gossip.broadcast(topic, message).await?;
+    async fn on_replica_event(
+        &mut self,
+        origin: InsertOrigin,
+        signed_entry: SignedEntry,
+    ) -> Result<()> {
+        let topic = TopicId::from_bytes(*signed_entry.entry().namespace().as_bytes());
+        let subs = self.event_subscriptions.get(&topic);
+        match origin {
+            InsertOrigin::Local => {
+                let entry = signed_entry.entry().clone();
+
+                // A new entry was inserted locally. Broadcast a gossip message.
+                let op = Op::Put(signed_entry);
+                let message = postcard::to_stdvec(&op)?.into();
+                debug!(topic = ?topic, "broadcast new entry");
+                self.gossip.broadcast(topic, message).await?;
+
+                if let Some(subs) = subs {
+                    futures::future::join_all(subs.values().map(|sub| {
+                        sub(LiveEvent::InsertLocal {
+                            entry: entry.clone(),
+                        })
+                    }))
+                    .await;
+                }
+            }
+            InsertOrigin::Sync(peer_id) => {
+                if let Some(subs) = subs {
+                    let from = peer_id.and_then(|id| PeerId::from_bytes(&id).ok());
+                    futures::future::join_all(subs.values().map(|sub| {
+                        sub(LiveEvent::InsertRemote {
+                            from,
+                            entry: signed_entry.entry().clone(),
+                        })
+                    }))
+                    .await;
+                }
+            }
+        }
+
         Ok(())
     }
 }

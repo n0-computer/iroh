@@ -1,7 +1,7 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::Stream;
+use futures::{FutureExt, Stream};
 use iroh_bytes::{baomap::Store as BaoStore, util::RpcError};
 use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
@@ -73,15 +73,20 @@ impl<S: Store> SyncEngine<S> {
         }))
     }
 
-    pub fn doc_subscribe(
+    pub async fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = DocSubscribeResponse> {
         let (s, r) = flume::bounded(64);
         self.live
             .subscribe(req.doc_id, move |event| {
-                s.send(DocSubscribeResponse { event }).ok();
+                let s = s.clone();
+                async move {
+                    s.send_async(DocSubscribeResponse { event }).await.ok();
+                }
+                .boxed()
             })
+            .await
             .unwrap(); // TODO: handle error
 
         r.into_stream()

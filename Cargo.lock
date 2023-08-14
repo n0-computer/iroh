@@ -1961,6 +1961,7 @@ dependencies = [
  "crossbeam",
  "derive_more",
  "ed25519-dalek",
+ "flume",
  "hex",
  "iroh-blake3",
  "iroh-bytes",

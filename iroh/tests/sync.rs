@@ -89,7 +89,7 @@ async fn sync_full_basic() -> Result<()> {
         // wait for remote insert on doc2
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote));
+        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
         // TODO: emit event when download is complete instead of having a timeout
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc, b"k1", b"v1").await;
@@ -104,7 +104,7 @@ async fn sync_full_basic() -> Result<()> {
 
         // wait for remote insert on doc1
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote));
+        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
         // TODO: emit event when download is complete instead of having a timeout
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc1, key, value).await;
@@ -119,9 +119,9 @@ async fn sync_full_basic() -> Result<()> {
         // wait for 2 remote inserts
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote));
+        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote));
+        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
 
         // TODO: emit event when download is complete instead of having a timeout
         tokio::time::sleep(Duration::from_secs(1)).await;

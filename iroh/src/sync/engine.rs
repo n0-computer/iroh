@@ -1,18 +1,19 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
+use futures::FutureExt;
 use iroh_bytes::util::runtime::Handle;
 use iroh_gossip::net::Gossip;
-use iroh_net::{tls::PeerId, MagicEndpoint};
+use iroh_net::MagicEndpoint;
 use iroh_sync::{
     store::Store,
-    sync::{Author, AuthorId, InsertOrigin, NamespaceId, OnInsertCallback, RemovalToken, Replica},
+    sync::{Author, AuthorId, NamespaceId, Replica},
 };
 use parking_lot::RwLock;
 
 use crate::download::Downloader;
 
-use super::{LiveSync, PeerSource};
+use super::{LiveEvent, LiveSync, OnLiveEventCallback, PeerSource, RemovalToken};
 
 /// The SyncEngine combines the [`LiveSync`] actor with the Iroh bytes database and [`Downloader`].
 ///
@@ -64,13 +65,15 @@ impl<S: Store> SyncEngine<S> {
     ) -> anyhow::Result<()> {
         let replica = self.get_replica(&namespace)?;
         if !self.active.read().contains_key(&namespace) {
-            // add download listener
-            let removal_token = replica.on_insert(on_insert_download(self.downloader.clone()));
-            self.active
-                .write()
-                .insert(replica.namespace(), removal_token);
             // start to gossip updates
-            self.live.start_sync(replica.clone(), peers).await?;
+            self.live.start_sync(replica, peers).await?;
+            // add download listener
+            let removal_token = self
+                .live
+                .subscribe(namespace, on_insert_download(self.downloader.clone()))
+                .await?;
+
+            self.active.write().insert(namespace, removal_token);
         } else if !peers.is_empty() {
             self.live.join_peers(namespace, peers).await?;
         }
@@ -80,21 +83,15 @@ impl<S: Store> SyncEngine<S> {
     /// Stop syncing a document.
     pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
         let replica = self.get_replica(&namespace)?;
-        let token = self.active.write().remove(&replica.namespace());
-        if let Some(token) = token {
-            replica.remove_on_insert(token);
-            self.live.stop_sync(namespace).await?;
-        }
+        self.active.write().remove(&replica.namespace());
+        // `stop_sync` removes all callback listeners automatically
+        self.live.stop_sync(namespace).await?;
+
         Ok(())
     }
 
     /// Shutdown the sync engine.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        for (namespace, token) in self.active.write().drain() {
-            if let Ok(Some(replica)) = self.store.open_replica(&namespace) {
-                replica.remove_on_insert(token);
-            }
-        }
         self.live.shutdown().await?;
         Ok(())
     }
@@ -114,12 +111,19 @@ impl<S: Store> SyncEngine<S> {
     }
 }
 
-fn on_insert_download(downloader: Downloader) -> OnInsertCallback {
-    Box::new(move |origin, entry| {
-        if let InsertOrigin::Sync(Some(peer_id)) = origin {
-            let peer_id = PeerId::from_bytes(&peer_id).unwrap();
-            let hash = *entry.entry().record().content_hash();
-            downloader.push(hash, vec![peer_id]);
+fn on_insert_download(downloader: Downloader) -> OnLiveEventCallback {
+    Box::new(move |event: LiveEvent| {
+        let downloader = downloader.clone();
+        async move {
+            if let LiveEvent::InsertRemote {
+                from: Some(peer_id),
+                entry,
+            } = event
+            {
+                let hash = *entry.record().content_hash();
+                downloader.push(hash, vec![peer_id]).await;
+            }
         }
+        .boxed()
     })
 }

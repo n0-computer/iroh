@@ -6,10 +6,9 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     fmt::{Debug, Display},
     str::FromStr,
-    sync::{atomic::AtomicU64, Arc},
+    sync::Arc,
     time::SystemTime,
 };
 
@@ -18,7 +17,7 @@ use crate::metrics::Metrics;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey};
 use iroh_bytes::Hash;
@@ -235,17 +234,8 @@ impl NamespaceId {
     }
 }
 
-/// TODO: Would potentially nice to pass a `&SignedEntry` reference, however that would make
-/// everything `!Send`.
-/// TODO: Not sure if the `Sync` requirement will be a problem for implementers. It comes from
-/// [parking_lot::RwLock] requiring `Sync`.
-pub type OnInsertCallback = Box<dyn Fn(InsertOrigin, SignedEntry) + Send + Sync + 'static>;
-
 /// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
-
-#[derive(Debug, Clone)]
-pub struct RemovalToken(u64);
 
 #[derive(Debug, Clone)]
 pub enum InsertOrigin {
@@ -256,9 +246,9 @@ pub enum InsertOrigin {
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
     inner: Arc<RwLock<InnerReplica<S>>>,
-    #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
-    on_insert: Arc<RwLock<HashMap<u64, OnInsertCallback>>>,
-    on_insert_removal_id: Arc<AtomicU64>,
+    on_insert_sender: flume::Sender<(InsertOrigin, SignedEntry)>,
+    #[allow(clippy::type_complexity)]
+    on_insert_receiver: Arc<Mutex<Option<flume::Receiver<(InsertOrigin, SignedEntry)>>>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -276,27 +266,20 @@ struct ReplicaData {
 impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     // TODO: check that read only replicas are possible
     pub fn new(namespace: Namespace, store: S) -> Self {
+        let (s, r) = flume::bounded(16); // TODO: should this be configurable?
         Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
                 namespace,
                 peer: Peer::from_store(store),
             })),
-            on_insert: Default::default(),
-            on_insert_removal_id: Arc::new(AtomicU64::new(0)),
+            on_insert_sender: s,
+            on_insert_receiver: Arc::new(Mutex::new(Some(r))),
         }
     }
 
-    pub fn on_insert(&self, callback: OnInsertCallback) -> RemovalToken {
-        let mut on_insert = self.on_insert.write();
-        let removal_id = self
-            .on_insert_removal_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        on_insert.insert(removal_id, callback);
-        RemovalToken(removal_id)
-    }
-
-    pub fn remove_on_insert(&self, token: RemovalToken) -> bool {
-        self.on_insert.write().remove(&token.0).is_some()
+    /// Subscribes to the events. Only one subscription can be active at a time.
+    pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
+        self.on_insert_receiver.lock().take()
     }
 
     /// Inserts a new record at the given key.
@@ -317,10 +300,10 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         let signed_entry = entry.sign(&inner.namespace, author);
         inner.peer.put(id, signed_entry.clone())?;
         drop(inner);
-        let on_insert = self.on_insert.read();
-        for cb in on_insert.values() {
-            cb(InsertOrigin::Local, signed_entry.clone());
-        }
+
+        self.on_insert_sender
+            .send((InsertOrigin::Local, signed_entry))
+            .ok();
 
         #[cfg(feature = "metrics")]
         {
@@ -362,10 +345,10 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         let id = entry.entry.id.clone();
         inner.peer.put(id, entry.clone()).map_err(Into::into)?;
         drop(inner);
-        let on_insert = self.on_insert.read();
-        for cb in on_insert.values() {
-            cb(InsertOrigin::Sync(received_from), entry.clone());
-        }
+        self.on_insert_sender
+            .send((InsertOrigin::Sync(received_from), entry.clone()))
+            .ok();
+
         #[cfg(feature = "metrics")]
         {
             inc!(Metrics, new_entries_remote);
@@ -391,10 +374,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
             .write()
             .peer
             .process_message(message, |_key, entry| {
-                let on_insert = self.on_insert.read();
-                for cb in on_insert.values() {
-                    cb(InsertOrigin::Sync(from_peer), entry.clone());
-                }
+                self.on_insert_sender
+                    .send((InsertOrigin::Sync(from_peer), entry))
+                    .ok();
             })?;
 
         Ok(reply)
@@ -520,6 +502,10 @@ impl Entry {
 
     pub fn id(&self) -> &RecordIdentifier {
         &self.id
+    }
+
+    pub fn namespace(&self) -> NamespaceId {
+        self.id.namespace()
     }
 
     pub fn record(&self) -> &Record {
