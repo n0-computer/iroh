@@ -36,7 +36,7 @@ use iroh_net::{
     MagicEndpoint,
 };
 use iroh_sync::{
-    store::{self, Store as _},
+    store::{self, GetFilter, Store as _},
     sync::{Author, Namespace, Replica, SignedEntry},
 };
 use once_cell::sync::OnceCell;
@@ -353,13 +353,13 @@ impl ReplState {
             } => {
                 let entries = if prefix {
                     self.store
-                        .get_all_by_prefix(self.doc.namespace(), key.as_bytes())?
+                        .get(self.doc.namespace(), GetFilter::all().with_prefix(key))?
                 } else {
                     self.store
-                        .get_all_by_key(self.doc.namespace(), key.as_bytes())?
+                        .get(self.doc.namespace(), GetFilter::all().with_key(key))?
                 };
                 for entry in entries {
-                    let (_id, entry) = entry?;
+                    let entry = entry?;
                     println!("{}", fmt_entry(&entry));
                     if print_content {
                         println!("{}", fmt_content(&self.db, &entry).await);
@@ -380,14 +380,14 @@ impl ReplState {
             },
             Cmd::Ls { prefix } => {
                 let entries = match prefix {
-                    None => self.store.get_all(self.doc.namespace())?,
+                    None => self.store.get(self.doc.namespace(), GetFilter::all())?,
                     Some(prefix) => self
                         .store
-                        .get_all_by_prefix(self.doc.namespace(), prefix.as_bytes())?,
+                        .get(self.doc.namespace(), GetFilter::all().with_prefix(prefix))?,
                 };
                 let mut count = 0;
                 for entry in entries {
-                    let (_id, entry) = entry?;
+                    let entry = entry?;
                     count += 1;
                     println!("{}", fmt_entry(&entry),);
                 }
@@ -450,10 +450,10 @@ impl ReplState {
                                 let mut read = 0;
                                 for i in 0..count {
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let entries =
-                                        store.get_all_by_key(doc.namespace(), key.as_bytes())?;
+                                    let entries = store
+                                        .get(doc.namespace(), GetFilter::all().with_key(key))?;
                                     for entry in entries {
-                                        let (_id, entry) = entry?;
+                                        let entry = entry?;
                                         let _content = fmt_content_simple(&doc, &entry);
                                         read += 1;
                                     }
@@ -546,13 +546,14 @@ impl ReplState {
                 }
                 let root = canonicalize_path(&dir_path)?;
                 println!("> exporting {key_prefix} to {root:?}");
-                let entries = self
-                    .store
-                    .get_latest_by_prefix(self.doc.namespace(), key_prefix.as_bytes())?;
+                let entries = self.store.get(
+                    self.doc.namespace(),
+                    GetFilter::latest().with_prefix(&key_prefix),
+                )?;
                 let mut checked_dirs = HashSet::new();
                 for entry in entries {
-                    let (id, entry) = entry?;
-                    let key = id.key();
+                    let entry = entry?;
+                    let key = entry.entry().id().key();
                     let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                     let len = entry.entry().record().content_len();
                     let blob = self.db.get(entry.content_hash());
@@ -579,10 +580,10 @@ impl ReplState {
                 // TODO: Fix
                 let entry = self
                     .store
-                    .get_latest_by_key(self.doc.namespace(), &key)?
+                    .get(self.doc.namespace(), GetFilter::latest().with_key(&key))?
                     .next();
                 if let Some(entry) = entry {
-                    let (_, entry) = entry?;
+                    let entry = entry?;
                     println!("> exporting {key} to {path:?}");
                     let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
                     tokio::fs::create_dir_all(&parent).await?;
