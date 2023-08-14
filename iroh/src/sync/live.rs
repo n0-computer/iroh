@@ -338,9 +338,9 @@ impl<S: store::Store> Actor<S> {
         cb: Box<dyn Fn(LiveEvent) + Send + Sync + 'static>,
     ) -> anyhow::Result<()> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if let Some((replica, tokens)) = self.replicas.get_mut(&topic) {
+        if let Some((replica, _token)) = self.replicas.get_mut(&topic) {
             // TODO: handle unsubscribe
-            let token = replica.on_insert(Box::new(move |origin, entry| match origin {
+            let _token = replica.on_insert(Box::new(move |origin, _entry| match origin {
                 InsertOrigin::Local => cb(LiveEvent::InsertLocal),
                 InsertOrigin::Sync(_) => cb(LiveEvent::InsertRemote),
             }));
