@@ -653,9 +653,9 @@ dependencies = [
 
 [[package]]
 name = "crypto_box"
-version = "0.9.0-rc.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20e2e9da0705c71ce86168d6e906af19123543130e4bff7149b55c0d4a729086"
+checksum = "bf9110046be7209b9ede918929c7bb18f4438a4e533c0e78746994fc9979348e"
 dependencies = [
  "aead",
  "chacha20",
@@ -684,9 +684,9 @@ dependencies = [
 
 [[package]]
 name = "curve25519-dalek"
-version = "4.0.0-rc.3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "436ace70fc06e06f7f689d2624dc4e2f0ea666efb5aa704215f7249ae6e047a7"
+checksum = "f711ade317dd348950a9910f81c5947e3d8907ebd2b83f76203ff1807e6a2bc2"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -930,9 +930,9 @@ dependencies = [
 
 [[package]]
 name = "ed25519-dalek"
-version = "2.0.0-rc.3"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faa8e9049d5d72bfc12acbc05914731b5322f79b5e2f195e9f2d705fca22ab4c"
+checksum = "7277392b266383ef8396db7fdeb1e77b6c52fed775f5df15bb24f35b72156980"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
@@ -3625,9 +3625,9 @@ dependencies = [
 
 [[package]]
 name = "ssh-cipher"
-version = "0.1.0-pre.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c654ae3f0ee989c7ff306b33f644c776af891d30a082ba3e22f47c23a40b5d1a"
+checksum = "caac132742f0d33c3af65bfcde7f6aa8f62f0e991d80db99149eb9d44708784f"
 dependencies = [
  "cipher",
  "ssh-encoding",
@@ -3635,9 +3635,9 @@ dependencies = [
 
 [[package]]
 name = "ssh-encoding"
-version = "0.2.0-pre.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fde709d55a07116c56152154338b23501571f14c5ab58f9d3d6acfe38ab6c4df"
+checksum = "eb9242b9ef4108a78e8cd1a2c98e193ef372437f8c22be363075233321dd4a15"
 dependencies = [
  "base64ct",
  "pem-rfc7468",
@@ -3646,9 +3646,9 @@ dependencies = [
 
 [[package]]
 name = "ssh-key"
-version = "0.6.0-rc.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "110fff26e39d649d1764dbaf7dd7c38da89752219c6c53ed09809dc42fd431a2"
+checksum = "4b0a17fec6ea344bfa1cda3aed2f0696fddc6295cfcc8c454a3bf58b8ffaabeb"
 dependencies = [
  "ed25519-dalek",
  "p256",
