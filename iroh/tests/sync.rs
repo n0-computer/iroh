@@ -3,12 +3,13 @@
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use iroh::{
     client::mem::Doc,
     collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
+    sync::LiveEvent,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -85,16 +86,28 @@ async fn sync_full_basic() -> Result<()> {
         let author = iroh.create_author().await?;
         let doc = iroh.import_doc(ticket.clone()).await?;
 
-        // todo: events over rpc to not use sleep...
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // wait for remote insert on doc2
+        let mut events = doc.subscribe().await?;
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::InsertRemote));
+        // TODO: emit event when download is complete instead of having a timeout
+        tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc, b"k1", b"v1").await;
+
+
+        // setup event channel on on doc1
+        let mut events = doc1.subscribe().await?;
 
         let key = b"k2";
         let value = b"v2";
         doc.set_bytes(author, key.to_vec(), value.to_vec()).await?;
         assert_latest(&doc, key, value).await;
-        // todo: events
-        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // wait for remote insert on doc1
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::InsertRemote));
+        // TODO: emit event when download is complete instead of having a timeout
+        tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc1, key, value).await;
         doc
     };
@@ -102,11 +115,17 @@ async fn sync_full_basic() -> Result<()> {
     //  node 3 joins & imports the doc from peer 1
     let _doc3 = {
         let iroh = &clients[2];
-        println!("!!!! DOC 3 JOIN !!!!!");
         let doc = iroh.import_doc(ticket).await?;
 
-        // todo: events
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // wait for 2 remote inserts
+        let mut events = doc.subscribe().await?;
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::InsertRemote));
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::InsertRemote));
+
+        // TODO: emit event when download is complete instead of having a timeout
+        tokio::time::sleep(Duration::from_secs(1)).await;
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;
         doc
