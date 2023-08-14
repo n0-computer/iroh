@@ -28,6 +28,7 @@ pub mod mem;
 pub mod quic;
 
 /// Iroh client
+#[derive(Debug, Clone)]
 pub struct Iroh<C> {
     rpc: RpcClient<ProviderService, C>,
 }
@@ -94,6 +95,7 @@ where
 }
 
 /// Document handle
+#[derive(Debug, Clone)]
 pub struct Doc<C> {
     id: NamespaceId,
     rpc: RpcClient<ProviderService, C>,
