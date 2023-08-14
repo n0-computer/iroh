@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
@@ -16,10 +16,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
     type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
 
-    type GetLatestIter<'a>: Iterator<Item = Result<(RecordIdentifier, SignedEntry)>>
-    where
-        Self: 'a;
-    type GetAllIter<'a>: Iterator<Item = Result<(RecordIdentifier, SignedEntry)>>
+    type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
     where
         Self: 'a;
 
@@ -40,60 +37,15 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn list_authors(&self) -> Result<Vec<Author>>;
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
-    /// Gets all entries matching this key and author.
+    /// Returns an iterator over the entries in a namespace.
+    fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
+    /// Gets the latest entry this key and author.
     fn get_latest_by_key_and_author(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>>;
-
-    /// Returns the latest version of the matching documents by key.
-    fn get_latest_by_key(
-        &self,
-        namespace: NamespaceId,
-        key: impl AsRef<[u8]>,
-    ) -> Result<Self::GetLatestIter<'_>>;
-
-    /// Returns the latest version of the matching documents by prefix.
-    fn get_latest_by_prefix(
-        &self,
-        namespace: NamespaceId,
-        prefix: impl AsRef<[u8]>,
-    ) -> Result<Self::GetLatestIter<'_>>;
-
-    /// Returns the latest versions of all documents.
-    fn get_latest(&self, namespace: NamespaceId) -> Result<Self::GetLatestIter<'_>>;
-
-    /// Returns all versions of the matching documents by author.
-    fn get_all_by_key_and_author<'a, 'b: 'a>(
-        &'a self,
-        namespace: NamespaceId,
-        author: AuthorId,
-        key: impl AsRef<[u8]> + 'b,
-    ) -> Result<Self::GetAllIter<'a>>;
-
-    /// Returns all versions of the matching documents by key.
-    fn get_all_by_key(
-        &self,
-        namespace: NamespaceId,
-        key: impl AsRef<[u8]>,
-    ) -> Result<Self::GetAllIter<'_>>;
-
-    /// Returns all versions of the matching documents by prefix.
-    fn get_all_by_prefix(
-        &self,
-        namespace: NamespaceId,
-        prefix: impl AsRef<[u8]>,
-    ) -> Result<Self::GetAllIter<'_>>;
-
-    /// Returns all versions of all documents.
-    fn get_all(&self, namespace: NamespaceId) -> Result<Self::GetAllIter<'_>>;
-
-    /// Returns an iterator over the entries in a namespace.
-    fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<GetIter<'_, Self>> {
-        GetIter::new(self, namespace, filter)
-    }
 }
 
 /// Filter a get query onto a namespace
@@ -106,28 +58,37 @@ pub struct GetFilter {
 
 impl Default for GetFilter {
     fn default() -> Self {
+        Self::latest()
+    }
+}
+
+impl GetFilter {
+    /// No filter, iterate over all entries.
+    pub fn all() -> Self {
+        Self {
+            latest: false,
+            author: None,
+            key: KeyFilter::All,
+        }
+    }
+
+    /// Only include the latest entries.
+    pub fn latest() -> Self {
         Self {
             latest: true,
             author: None,
             key: KeyFilter::All,
         }
     }
-}
-
-impl GetFilter {
-    /// Create a new get filter. Defaults to latest entries for all keys and authors.
-    pub fn new() -> Self {
-        Self::default()
-    }
 
     /// Filter by exact key match.
-    pub fn with_key(mut self, key: Vec<u8>) -> Self {
-        self.key = KeyFilter::Key(key);
+    pub fn with_key(mut self, key: impl AsRef<[u8]>) -> Self {
+        self.key = KeyFilter::Key(key.as_ref().to_vec());
         self
     }
     /// Filter by prefix key match.
-    pub fn with_prefix(mut self, prefix: Vec<u8>) -> Self {
-        self.key = KeyFilter::Prefix(prefix);
+    pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
+        self.key = KeyFilter::Prefix(prefix.as_ref().to_vec());
         self
     }
     /// Filter by author.
@@ -151,63 +112,4 @@ pub enum KeyFilter {
     Prefix(Vec<u8>),
     /// Filter for exact key match
     Key(Vec<u8>),
-}
-
-/// Iterator over the entries in a namespace
-pub enum GetIter<'s, S: Store> {
-    All(S::GetAllIter<'s>),
-    Latest(S::GetLatestIter<'s>),
-    Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
-}
-
-impl<'s, S: Store> Iterator for GetIter<'s, S> {
-    type Item = anyhow::Result<SignedEntry>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            GetIter::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIter::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIter::Single(iter) => iter.next(),
-        }
-    }
-}
-
-impl<'s, S: Store> GetIter<'s, S> {
-    fn new(store: &'s S, namespace: NamespaceId, filter: GetFilter) -> anyhow::Result<Self> {
-        use KeyFilter::*;
-        Ok(match filter.latest {
-            false => match (filter.key, filter.author) {
-                (All, None) => Self::All(store.get_all(namespace)?),
-                (Prefix(prefix), None) => Self::All(store.get_all_by_prefix(namespace, &prefix)?),
-                (Key(key), None) => Self::All(store.get_all_by_key(namespace, key)?),
-                (Key(key), Some(author)) => {
-                    Self::All(store.get_all_by_key_and_author(namespace, author, key)?)
-                }
-                (All, Some(_)) | (Prefix(_), Some(_)) => {
-                    bail!("This filter combination is not yet supported")
-                }
-            },
-            true => match (filter.key, filter.author) {
-                (All, None) => Self::Latest(store.get_latest(namespace)?),
-                (Prefix(prefix), None) => {
-                    Self::Latest(store.get_latest_by_prefix(namespace, &prefix)?)
-                }
-                (Key(key), None) => Self::Latest(store.get_latest_by_key(namespace, key)?),
-                (Key(key), Some(author)) => Self::Single(
-                    store
-                        .get_latest_by_key_and_author(namespace, author, key)?
-                        .map(Ok)
-                        .into_iter(),
-                ),
-                (All, Some(_)) | (Prefix(_), Some(_)) => {
-                    bail!("This filter combination is not yet supported")
-                }
-            },
-        })
-    }
-
-    /// Returns true if this iterator is known to return only a single result.
-    pub fn single(&self) -> bool {
-        matches!(self, Self::Single(_))
-    }
 }

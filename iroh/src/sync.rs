@@ -214,7 +214,10 @@ async fn send_sync_message<W: AsyncWrite + Unpin>(
 
 #[cfg(test)]
 mod tests {
-    use iroh_sync::{store::Store as _, sync::Namespace};
+    use iroh_sync::{
+        store::{GetFilter, Store as _},
+        sync::Namespace,
+    };
 
     use super::*;
 
@@ -241,7 +244,7 @@ mod tests {
 
         assert_eq!(
             bob_replica_store
-                .get_all(bob_replica.namespace())
+                .get(bob_replica.namespace(), GetFilter::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -250,7 +253,7 @@ mod tests {
         );
         assert_eq!(
             alice_replica_store
-                .get_all(alice_replica.namespace())
+                .get(alice_replica.namespace(), GetFilter::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -289,7 +292,7 @@ mod tests {
 
         assert_eq!(
             bob_replica_store
-                .get_all(bob_replica.namespace())
+                .get(bob_replica.namespace(), GetFilter::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -298,7 +301,7 @@ mod tests {
         );
         assert_eq!(
             alice_replica_store
-                .get_all(alice_replica.namespace())
+                .get(alice_replica.namespace(), GetFilter::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()

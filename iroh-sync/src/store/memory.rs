@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use parking_lot::{RwLock, RwLockReadGuard};
 use rand_core::CryptoRngCore;
 
@@ -29,8 +29,7 @@ type ReplicaRecordsOwned =
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
-    type GetLatestIter<'a> = GetLatestIter<'a>;
-    type GetAllIter<'a> = GetAllIter<'a>;
+    type GetIter<'a> = GetIter<'a>;
 
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
@@ -65,6 +64,38 @@ impl super::Store for Store {
         Ok(replica)
     }
 
+    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
+        use super::KeyFilter::*;
+        Ok(match filter.latest {
+            false => match (filter.key, filter.author) {
+                (All, None) => GetIter::All(self.get_all(namespace)?),
+                (Prefix(prefix), None) => GetIter::All(self.get_all_by_prefix(namespace, &prefix)?),
+                (Key(key), None) => GetIter::All(self.get_all_by_key(namespace, key)?),
+                (Key(key), Some(author)) => {
+                    GetIter::All(self.get_all_by_key_and_author(namespace, author, key)?)
+                }
+                (All, Some(_)) | (Prefix(_), Some(_)) => {
+                    bail!("This filter combination is not yet supported")
+                }
+            },
+            true => match (filter.key, filter.author) {
+                (All, None) => GetIter::Latest(self.get_latest(namespace)?),
+                (Prefix(prefix), None) => {
+                    GetIter::Latest(self.get_latest_by_prefix(namespace, &prefix)?)
+                }
+                (Key(key), None) => GetIter::Latest(self.get_latest_by_key(namespace, key)?),
+                (Key(key), Some(author)) => GetIter::Single(
+                    self.get_latest_by_key_and_author(namespace, author, key)?
+                        .map(Ok)
+                        .into_iter(),
+                ),
+                (All, Some(_)) | (Prefix(_), Some(_)) => {
+                    bail!("This filter combination is not yet supported")
+                }
+            },
+        })
+    }
+
     fn get_latest_by_key_and_author(
         &self,
         namespace: NamespaceId,
@@ -80,7 +111,28 @@ impl super::Store for Store {
 
         Ok(value.map(|(_, v)| v.clone()))
     }
+}
 
+#[derive(Debug)]
+pub enum GetIter<'s> {
+    All(GetAllIter<'s>),
+    Latest(GetLatestIter<'s>),
+    Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
+}
+
+impl<'s> Iterator for GetIter<'s> {
+    type Item = anyhow::Result<SignedEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            GetIter::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
+            GetIter::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
+            GetIter::Single(iter) => iter.next(),
+        }
+    }
+}
+
+impl Store {
     fn get_latest_by_key(
         &self,
         namespace: NamespaceId,

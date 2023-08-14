@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
@@ -99,10 +99,28 @@ impl Store {
     }
 }
 
+#[derive(Debug)]
+pub enum GetIter<'s> {
+    All(RangeAllIterator<'s>),
+    Latest(RangeLatestIterator<'s>),
+    Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
+}
+
+impl<'s> Iterator for GetIter<'s> {
+    type Item = anyhow::Result<SignedEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            GetIter::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
+            GetIter::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
+            GetIter::Single(iter) => iter.next(),
+        }
+    }
+}
+
 impl super::Store for Store {
     type Instance = StoreInstance;
-    type GetAllIter<'a> = RangeAllIterator<'a>;
-    type GetLatestIter<'a> = RangeLatestIterator<'a>;
+    type GetIter<'a> = GetIter<'a>;
 
     fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
@@ -174,7 +192,38 @@ impl super::Store for Store {
         Ok(replica)
     }
 
-    /// Gets all entries matching this key and author.
+    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
+        use super::KeyFilter::*;
+        Ok(match filter.latest {
+            false => match (filter.key, filter.author) {
+                (All, None) => GetIter::All(self.get_all(namespace)?),
+                (Prefix(prefix), None) => GetIter::All(self.get_all_by_prefix(namespace, &prefix)?),
+                (Key(key), None) => GetIter::All(self.get_all_by_key(namespace, key)?),
+                (Key(key), Some(author)) => {
+                    GetIter::All(self.get_all_by_key_and_author(namespace, author, key)?)
+                }
+                (All, Some(_)) | (Prefix(_), Some(_)) => {
+                    bail!("This filter combination is not yet supported")
+                }
+            },
+            true => match (filter.key, filter.author) {
+                (All, None) => GetIter::Latest(self.get_latest(namespace)?),
+                (Prefix(prefix), None) => {
+                    GetIter::Latest(self.get_latest_by_prefix(namespace, &prefix)?)
+                }
+                (Key(key), None) => GetIter::Latest(self.get_latest_by_key(namespace, key)?),
+                (Key(key), Some(author)) => GetIter::Single(
+                    self.get_latest_by_key_and_author(namespace, author, key)?
+                        .map(Ok)
+                        .into_iter(),
+                ),
+                (All, Some(_)) | (Prefix(_), Some(_)) => {
+                    bail!("This filter combination is not yet supported")
+                }
+            },
+        })
+    }
+
     fn get_latest_by_key_and_author(
         &self,
         namespace: NamespaceId,
@@ -199,12 +248,14 @@ impl super::Store for Store {
 
         Ok(Some(signed_entry))
     }
+}
 
+impl Store {
     fn get_latest_by_key(
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
-    ) -> Result<Self::GetLatestIter<'_>> {
+    ) -> Result<RangeLatestIterator<'_>> {
         let start = (namespace.as_bytes(), &[0u8; 32], &[][..]);
         let end = (namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeLatestIterator::try_new(
@@ -226,7 +277,7 @@ impl super::Store for Store {
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> Result<Self::GetLatestIter<'_>> {
+    ) -> Result<RangeLatestIterator<'_>> {
         let start = (namespace.as_bytes(), &[0u8; 32], &[][..]);
         let end = (namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeLatestIterator::try_new(
@@ -244,7 +295,7 @@ impl super::Store for Store {
         Ok(iter)
     }
 
-    fn get_latest(&self, namespace: NamespaceId) -> Result<Self::GetLatestIter<'_>> {
+    fn get_latest(&self, namespace: NamespaceId) -> Result<RangeLatestIterator<'_>> {
         let start = (namespace.as_bytes(), &[0u8; 32], &[][..]);
         let end = (namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeLatestIterator::try_new(
@@ -267,7 +318,7 @@ impl super::Store for Store {
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]> + 'b,
-    ) -> Result<Self::GetAllIter<'a>> {
+    ) -> Result<RangeAllIterator<'a>> {
         let start = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
         let end = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
         let iter = RangeAllIterator::try_new(
@@ -293,7 +344,7 @@ impl super::Store for Store {
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
-    ) -> Result<Self::GetAllIter<'_>> {
+    ) -> Result<RangeAllIterator<'_>> {
         let start = (namespace.as_bytes(), &[0u8; 32], &[][..]);
         let end = (namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeAllIterator::try_new(
@@ -319,7 +370,7 @@ impl super::Store for Store {
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> Result<Self::GetAllIter<'_>> {
+    ) -> Result<RangeAllIterator<'_>> {
         let start = (namespace.as_bytes(), &[0u8; 32], &[][..]);
         let end = (namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeAllIterator::try_new(
@@ -341,7 +392,7 @@ impl super::Store for Store {
         Ok(iter)
     }
 
-    fn get_all(&self, namespace: NamespaceId) -> Result<Self::GetAllIter<'_>> {
+    fn get_all(&self, namespace: NamespaceId) -> Result<RangeAllIterator<'_>> {
         let start = (namespace.as_bytes(), &[0u8; 32], &[][..]);
         let end = (namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeAllIterator::try_new(

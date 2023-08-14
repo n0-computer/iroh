@@ -148,7 +148,7 @@ async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
 }
 
 async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let filter = GetFilter::new().with_key(key.to_vec());
+    let filter = GetFilter::latest().with_key(key);
     let entry = doc
         .get(filter)
         .await?

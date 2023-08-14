@@ -707,7 +707,10 @@ impl Record {
 mod tests {
     use anyhow::Result;
 
-    use crate::{ranger::Range, store};
+    use crate::{
+        ranger::Range,
+        store::{self, GetFilter},
+    };
 
     use super::*;
 
@@ -773,37 +776,51 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_all_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::all()
+                    .with_author(alice.id())
+                    .with_key("/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_all_by_key(my_replica.namespace(), b"/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::all().with_key(b"/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get latest by key
         let entries: Vec<_> = store
-            .get_latest_by_key(my_replica.namespace(), b"/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::latest().with_key(b"/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get latest by prefix
         let entries: Vec<_> = store
-            .get_latest_by_prefix(my_replica.namespace(), b"/cool")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::latest().with_prefix(b"/cool"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_all(my_replica.namespace())?
+            .get(my_replica.namespace(), GetFilter::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
         // Get All latest
         let entries: Vec<_> = store
-            .get_latest(my_replica.namespace())?
+            .get(my_replica.namespace(), GetFilter::latest())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
@@ -814,48 +831,70 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_all_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::all()
+                    .with_author(alice.id())
+                    .with_key("/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         let entries: Vec<_> = store
-            .get_all_by_key_and_author(my_replica.namespace(), bob.id(), "/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::all()
+                    .with_author(bob.id())
+                    .with_key("/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_all_by_key(my_replica.namespace(), b"/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::all().with_key(b"/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 3);
 
         // Get latest by key
         let entries: Vec<_> = store
-            .get_latest_by_key(my_replica.namespace(), b"/cool/path")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::latest().with_key(b"/cool/path"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get latest by prefix
         let entries: Vec<_> = store
-            .get_latest_by_prefix(my_replica.namespace(), b"/cool")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::latest().with_prefix(b"/cool"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_all_by_prefix(my_replica.namespace(), b"/cool")?
+            .get(
+                my_replica.namespace(),
+                GetFilter::all().with_prefix(b"/cool"),
+            )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 3);
 
         // Get All
         let entries: Vec<_> = store
-            .get_all(my_replica.namespace())?
+            .get(my_replica.namespace(), GetFilter::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 13);
 
         // Get All latest
         let entries: Vec<_> = store
-            .get_latest(my_replica.namespace())?
+            .get(my_replica.namespace(), GetFilter::latest())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
