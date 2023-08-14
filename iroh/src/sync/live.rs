@@ -142,6 +142,7 @@ pub type OnLiveEventCallback =
 
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum LiveEvent {
     /// A local insertion.
     InsertLocal {
@@ -388,7 +389,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     if let Some((topic, hash)) = res {
                         if let Some(subs) = self.event_subscriptions.get(&topic) {
                             let event = LiveEvent::ContentReady { hash };
-                            notify_all(&subs, event).await;
+                            notify_all(subs, event).await;
                         }
                     }
 
@@ -590,7 +591,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     let event = LiveEvent::InsertLocal {
                         entry: entry.clone(),
                     };
-                    notify_all(&subs, event).await;
+                    notify_all(subs, event).await;
                 }
             }
             InsertOrigin::Sync(peer_id) => {
@@ -622,7 +623,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         entry: entry.clone(),
                         content_status,
                     };
-                    notify_all(&subs, event).await;
+                    notify_all(subs, event).await;
                 }
             }
         }
