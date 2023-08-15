@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use config::{Environment, File, Value};
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
@@ -109,6 +109,23 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Make a config from the default environment variables.
+    ///
+    /// Optionally provide an additional configuration source.
+    pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
+        let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
+        let sources = [Some(config_path.as_path()), additional_config_source];
+        let config = Config::load(
+            // potential config files
+            &sources,
+            // env var prefix for this config
+            ENV_PREFIX,
+            // map of present command line arguments
+            // args.make_overrides_map(),
+            HashMap::<String, String>::new(),
+        )?;
+        Ok(config)
+    }
     /// Make a config using a default, files, environment variables, and commandline flags.
     ///
     /// Later items in the *file_paths* slice will have a higher priority than earlier ones.

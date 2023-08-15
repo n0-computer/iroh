@@ -42,7 +42,7 @@ pub async fn run(client: RpcClient) -> anyhow::Result<()> {
 #[derive(Debug)]
 pub enum FromRepl {
     RpcCmd {
-        cmd: super::RpcCommand,
+        cmd: super::RpcCommands,
     },
     DocCmd {
         id: NamespaceId,
@@ -160,7 +160,7 @@ impl ReplState {
             Pwd::Doc { id } => match parse_cmd::<DocCommands>(line)? {
                 DocCommands::Repl(cmd) => self.process_repl_command(cmd),
                 DocCommands::Sync(cmd) => Some(FromRepl::RpcCmd {
-                    cmd: super::RpcCommand::Sync(cmd),
+                    cmd: super::RpcCommands::Sync(cmd),
                 }),
                 DocCommands::Doc(cmd) => Some(FromRepl::DocCmd {
                     id,
@@ -223,7 +223,7 @@ pub enum HomeCommands {
     #[clap(flatten)]
     Repl(#[clap(subcommand)] ReplCommand),
     #[clap(flatten)]
-    Rpc(#[clap(subcommand)] super::RpcCommand),
+    Rpc(#[clap(subcommand)] super::RpcCommands),
 }
 
 fn try_parse_cmd<C: Subcommand>(s: &str) -> anyhow::Result<C> {
