@@ -43,6 +43,9 @@ pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
 // TODO: Support collections, likely become generic over C: CollectionParser
 #[derive(Debug, Clone)]
 pub struct Downloader {
+    // TODO(@divma): this is doing deduplication before the actor but the senders are still sent,
+    // should be done in just one place. If we do downloads per hash and range the subset logic is
+    // more involved and should probably go straight to the actor. Remove then?
     pending_downloads: Arc<Mutex<HashMap<Hash, DownloadFuture>>>,
     to_actor_tx: flume::Sender<DownloadRequest>,
 }
@@ -103,6 +106,7 @@ impl Downloader {
     ///
     /// NOTE: This does not start the download itself. Use [`Self::push`] for that.
     pub fn finished(&self, hash: &Hash) -> DownloadFuture {
+        // TODO(@divma): lots of unwraps
         match self.pending_downloads.lock().unwrap().get(hash) {
             Some(fut) => fut.clone(),
             None => futures::future::ready(None).boxed().shared(),
@@ -123,9 +127,13 @@ struct DownloadRequest {
 
 #[derive(Debug)]
 struct DownloadActor<B> {
+    // TODO(@divma): potentially easier to test abstracting this
     dialer: Dialer,
     db: B,
+    // TODO(@divma): another options, move this hashmap of connections (which also exists in sync/
+    // gossip net) to the dialer 
     conns: HashMap<PeerId, quinn::Connection>,
+    // TODO(@divma): duplicates handled here as well
     replies: HashMap<Hash, VecDeque<DownloadReply>>,
     pending_download_futs: PendingDownloadsFutures,
     queue: DownloadQueue,
@@ -152,6 +160,9 @@ impl<B: BaoStore> DownloadActor<B> {
                 },
                 (peer, conn) = self.dialer.next() => match conn {
                     Ok(conn) => {
+                        // TODO(@divma): most of the time downloads request might come from sync,
+                        // which already has a connections, should we try to reuse it?
+                        // not sure how multiplexing works here
                         debug!(peer = ?peer, "connection established");
                         self.conns.insert(peer, conn);
                         self.on_peer_ready(peer);
@@ -220,6 +231,7 @@ impl<B: BaoStore> DownloadActor<B> {
     }
 
     fn start_download_unchecked(&mut self, peer: PeerId, hash: Hash) {
+        // TODO(@divma): just pass the connection and forgo the unwrap
         let conn = self.conns.get(&peer).unwrap().clone();
         let db = self.db.clone();
         let progress_sender = IgnoreProgressSender::default();
@@ -230,6 +242,7 @@ impl<B: BaoStore> DownloadActor<B> {
             #[cfg(feature = "metrics")]
             let start = Instant::now();
 
+            // TODO(@divma): need a get by hash and range, looks simple enough to craft
             // TODO: None for not found instead of error
             let res = crate::get::get_blob(&db, conn, &hash, progress_sender).await;
             let res = res.and_then(|_stats| {
@@ -280,8 +293,12 @@ impl<B: BaoStore> DownloadActor<B> {
 
 #[derive(Debug, Default)]
 struct DownloadQueue {
+    // TODO(@divma): ideally make by hash and then by range. Logic about subsets needs to be added
+    // with care
+    // TODO(@divma): these queues are never poped on the front, a vec would be smaller and simpler
     candidates_by_hash: HashMap<Hash, VecDeque<PeerId>>,
     candidates_by_peer: HashMap<PeerId, VecDeque<Hash>>,
+    // Concurrency model could include requested chunks by peer
     running_by_hash: HashMap<Hash, PeerId>,
     running_by_peer: HashMap<PeerId, Hash>,
 }
@@ -340,6 +357,8 @@ impl DownloadQueue {
     ///
     /// Returns a list of hashes that have no other peers queue. Those hashes should thus be
     /// considered failed.
+    // TODO(@divma): identifying failures? for example if the peer does not have the blob or the
+    // download times out? (are there timeouts?)
     pub fn on_peer_fail(&mut self, peer: &PeerId) -> Vec<Hash> {
         let mut failed = vec![];
         for hash in self
