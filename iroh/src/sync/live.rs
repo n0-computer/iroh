@@ -601,7 +601,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                let content_status = if let Some(_bao_entry) = self.bao_store.get(&hash) {
+                let content_status = if self.bao_store.get(&hash).is_some() {
                     ContentStatus::Ready
                 } else {
                     if let Some(from) = from {
