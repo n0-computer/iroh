@@ -18,6 +18,12 @@ pub struct PublicKey(crypto_box::PublicKey);
 
 impl From<crate::tls::PeerId> for PublicKey {
     fn from(value: crate::tls::PeerId) -> Self {
+        crate::tls::PublicKey::from(value).into()
+    }
+}
+
+impl From<crate::tls::PublicKey> for PublicKey {
+    fn from(value: crate::tls::PublicKey) -> Self {
         let key: ed25519_dalek::VerifyingKey = value.into();
         PublicKey(crypto_box::PublicKey::from(key.to_montgomery()))
     }
@@ -216,7 +222,9 @@ impl From<[u8; SECRET_KEY_LENGTH]> for SecretKey {
 
 impl From<SecretKey> for crate::tls::Keypair {
     fn from(value: SecretKey) -> Self {
-        ed25519_dalek::SigningKey::from_bytes(&value.to_bytes()).into()
+        let scalar =
+            curve25519_dalek::scalar::Scalar::from_canonical_bytes(value.to_bytes()).unwrap();
+        ed25519_dalek::SigningKey::from_bytes(scalar.as_bytes()).into()
     }
 }
 
@@ -263,6 +271,8 @@ impl SharedSecret {
 
 #[cfg(test)]
 mod tests {
+    use crate::tls;
+
     use super::*;
 
     #[test]
@@ -270,11 +280,58 @@ mod tests {
         let key_a = SecretKey::generate();
         let key_b = SecretKey::generate();
 
+        seal_open_roundtrip(key_a, key_b);
+    }
+
+    fn seal_open_roundtrip(key_a: SecretKey, key_b: SecretKey) {
         let msg = b"super secret message!!!!";
         let sealed_message = key_a.seal_to(&key_b.public_key(), msg);
         let decrypted_message = key_b
             .open_from(&key_a.public_key(), &sealed_message)
             .unwrap();
         assert_eq!(&msg[..], &decrypted_message);
+    }
+
+    #[test]
+    fn test_conversion_minimal() {
+        let mut rng = rand::rngs::OsRng;
+        let secret = ed25519_dalek::SigningKey::generate(&mut rng);
+        let crypto_box_key = crypto_box::SecretKey::from(secret.to_scalar());
+        let secret_back = ed25519_dalek::SigningKey::from_bytes(&crypto_box_key.to_bytes());
+        assert_eq!(secret.to_bytes(), secret_back.to_bytes());
+    }
+
+    #[test]
+    fn test_conversion() {
+        let key_a = tls::Keypair::generate();
+        let key_b = tls::Keypair::generate();
+
+        let node_key_secret_a = SecretKey::from(key_a.secret().clone());
+        let node_key_public_a = PublicKey::from(key_a.public().clone());
+
+        let node_key_secret_b = SecretKey::from(key_b.secret().clone());
+        let node_key_public_b = PublicKey::from(key_b.public().clone());
+
+        let key_a_back = tls::Keypair::from(node_key_secret_a.clone());
+        let key_b_back = tls::Keypair::from(node_key_secret_b.clone());
+        assert_eq!(key_a.to_bytes(), key_a_back.to_bytes());
+        assert_eq!(key_b.to_bytes(), key_b_back.to_bytes());
+
+        seal_open_roundtrip(node_key_secret_a.clone(), node_key_secret_b.clone());
+        seal_open_roundtrip(node_key_secret_b.clone(), node_key_secret_a.clone());
+
+        for _ in 0..5 {
+            assert_eq!(
+                node_key_secret_a.to_bytes(),
+                SecretKey::from(key_a.secret().clone()).to_bytes()
+            );
+            assert_eq!(node_key_public_a, PublicKey::from(key_a.public().clone()));
+
+            assert_eq!(
+                node_key_secret_b.to_bytes(),
+                SecretKey::from(key_b.secret().clone()).to_bytes()
+            );
+            assert_eq!(node_key_public_b, PublicKey::from(key_b.public().clone()));
+        }
     }
 }
