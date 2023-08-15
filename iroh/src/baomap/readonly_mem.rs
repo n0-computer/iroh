@@ -173,6 +173,10 @@ impl MapEntry<Store> for Entry {
     fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
         futures::future::ok(self.data.clone()).boxed()
     }
+
+    fn is_complete(&self) -> bool {
+        true
+    }
 }
 
 impl Map for Store {
@@ -186,6 +190,14 @@ impl Map for Store {
             outboard: o.clone(),
             data: d.clone(),
         })
+    }
+
+    fn contains_complete(&self, hash: &Hash) -> bool {
+        self.0.contains_key(hash)
+    }
+
+    fn contains_partial(&self, _hash: &Hash) -> bool {
+        false
     }
 }
 
@@ -267,6 +279,11 @@ impl MapEntry<Store> for PartialEntry {
     }
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+        // this is unreachable, since PartialEntry can not be created
+        unreachable!()
+    }
+
+    fn is_complete(&self) -> bool {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }

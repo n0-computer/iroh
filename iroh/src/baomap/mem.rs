@@ -204,6 +204,7 @@ pub struct Entry {
     hash: blake3::Hash,
     outboard: PreOrderOutboard<MemFile>,
     data: MemFile,
+    is_complete: bool
 }
 
 impl MapEntry<Store> for Entry {
@@ -225,6 +226,10 @@ impl MapEntry<Store> for Entry {
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone()).boxed()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 }
 
@@ -261,6 +266,10 @@ impl MapEntry<Store> for PartialEntry {
     fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone().into()).boxed()
     }
+
+    fn is_complete(&self) -> bool {
+        false
+    }
 }
 
 impl Map for Store {
@@ -280,6 +289,7 @@ impl Map for Store {
                     data: outboard.data.clone().into(),
                 },
                 data: data.clone().into(),
+                is_complete: true
             })
         } else if let Some((data, outboard)) = state.partial.get(hash) {
             Some(Entry {
@@ -290,10 +300,21 @@ impl Map for Store {
                     data: outboard.data.clone().into(),
                 },
                 data: data.clone().into(),
+                is_complete: false
             })
         } else {
             None
         }
+    }
+
+    fn contains_complete(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        state.complete.contains_key(hash)
+    }
+
+    fn contains_partial(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        state.partial.contains_key(hash)
     }
 }
 

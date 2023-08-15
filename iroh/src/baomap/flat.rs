@@ -266,6 +266,10 @@ impl MapEntry<Store> for PartialEntry {
         }
         .boxed()
     }
+
+    fn is_complete(&self) -> bool {
+        false
+    }
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
@@ -417,6 +421,7 @@ pub struct Entry {
     /// the hash is not part of the entry itself
     hash: blake3::Hash,
     entry: EntryData,
+    is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
@@ -450,6 +455,10 @@ impl MapEntry<Store> for Entry {
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
         self.entry.data_reader().boxed()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 }
 
@@ -562,6 +571,7 @@ impl Map for Store {
             let data = state.data.get(hash).cloned();
             Some(Entry {
                 hash: blake3::Hash::from(*hash),
+                is_complete: true,
                 entry: EntryData {
                     data: if let Some(data) = data {
                         Either::Left(data)
@@ -590,6 +600,7 @@ impl Map for Store {
                 hex::encode(entry.uuid)
             );
             Some(Entry {
+                is_complete: false,
                 hash: blake3::Hash::from(*hash),
                 entry: EntryData {
                     data: Either::Right((data_path, entry.size)),
@@ -600,6 +611,16 @@ impl Map for Store {
             tracing::trace!("got none {}", hash);
             None
         }
+    }
+
+    fn contains_complete(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        state.complete.contains_key(hash)
+    }
+
+    fn contains_partial(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        state.partial.contains_key(hash)
     }
 }
 

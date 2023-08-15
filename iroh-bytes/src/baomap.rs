@@ -30,6 +30,12 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     fn hash(&self) -> blake3::Hash;
     /// The size of the entry.
     fn size(&self) -> u64;
+    /// Returns `true` if the entry is complete.
+    ///
+    /// Note that this does not actually verify if the bytes on disk are complete, it only checks
+    /// if the entry is among the partial or complete section of the [`Map`]. To verify if all
+    /// bytes are actually available on disk, use [`MapEntry::available_ranges`].
+    fn is_complete(&self) -> bool;
     /// Compute the available ranges.
     ///
     /// Depending on the implementation, this may be an expensive operation.
@@ -66,6 +72,11 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// This function should not block to perform io. The knowledge about
     /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+
+    /// Return true if the `hash` is present in the set of complete entries of the store.
+    fn contains_complete(&self, hash: &Hash) -> bool;
+    /// Return true if the `hash` is present in the set of partial entries of the store.
+    fn contains_partial(&self, hash: &Hash) -> bool;
 }
 
 /// A partial entry
