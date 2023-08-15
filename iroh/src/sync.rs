@@ -59,7 +59,7 @@ pub async fn connect_and_sync<S: store::Store>(
         .await
         .context("dial_and_sync")?;
     let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
-    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, Some(peer_id)).await;
+    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer_id).await;
 
     #[cfg(feature = "metrics")]
     if res.is_ok() {
@@ -77,9 +77,9 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
     writer: &mut W,
     reader: &mut R,
     alice: &Replica<S::Instance>,
-    peer: Option<PeerId>,
+    other_peer_id: PeerId,
 ) -> Result<()> {
-    let peer = peer.map(|peer| peer.to_bytes());
+    let other_peer_id = other_peer_id.to_bytes();
     let mut buffer = BytesMut::with_capacity(1024);
 
     // Init message
@@ -101,7 +101,10 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
                 bail!("unexpected message: init");
             }
             Message::Sync(msg) => {
-                if let Some(msg) = alice.sync_process_message(msg, peer).map_err(Into::into)? {
+                if let Some(msg) = alice
+                    .sync_process_message(msg, other_peer_id)
+                    .map_err(Into::into)?
+                {
                     send_sync_message(writer, msg).await?;
                 } else {
                     break;
@@ -123,13 +126,7 @@ pub async fn handle_connection<S: store::Store>(
     let (mut send_stream, mut recv_stream) = connection.accept_bi().await?;
     debug!(peer = ?peer_id, "incoming sync: start");
 
-    let res = run_bob(
-        &mut send_stream,
-        &mut recv_stream,
-        replica_store,
-        Some(peer_id),
-    )
-    .await;
+    let res = run_bob(&mut send_stream, &mut recv_stream, replica_store, peer_id).await;
 
     #[cfg(feature = "metrics")]
     if res.is_ok() {
@@ -151,9 +148,9 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
     writer: &mut W,
     reader: &mut R,
     replica_store: S,
-    peer: Option<PeerId>,
+    other_peer_id: PeerId,
 ) -> Result<()> {
-    let peer = peer.map(|peer| peer.to_bytes());
+    let other_peer_id = other_peer_id.to_bytes();
     let mut buffer = BytesMut::with_capacity(1024);
 
     let mut replica = None;
@@ -168,8 +165,9 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
                 match replica_store.open_replica(&namespace)? {
                     Some(r) => {
                         debug!("starting sync for {}", namespace);
-                        if let Some(msg) =
-                            r.sync_process_message(message, peer).map_err(Into::into)?
+                        if let Some(msg) = r
+                            .sync_process_message(message, other_peer_id)
+                            .map_err(Into::into)?
                         {
                             send_sync_message(writer, msg).await?;
                         } else {
@@ -185,7 +183,7 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
                     if let Some(msg) = replica
-                        .sync_process_message(msg, peer)
+                        .sync_process_message(msg, other_peer_id)
                         .map_err(Into::into)?
                     {
                         send_sync_message(writer, msg).await?;
@@ -214,6 +212,7 @@ async fn send_sync_message<W: AsyncWrite + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    use iroh_net::tls::Keypair;
     use iroh_sync::{
         store::{GetFilter, Store as _},
         sync::Namespace,
@@ -224,6 +223,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_simple() -> Result<()> {
         let mut rng = rand::thread_rng();
+        let alice_peer_id = PeerId::from(Keypair::from_bytes(&[1u8; 32]).public());
+        let bob_peer_id = PeerId::from(Keypair::from_bytes(&[2u8; 32]).public());
 
         let alice_replica_store = store::memory::Store::default();
         // For now uses same author on both sides.
@@ -270,7 +271,7 @@ mod tests {
                 &mut alice_writer,
                 &mut alice_reader,
                 &replica,
-                None,
+                bob_peer_id,
             )
             .await
         });
@@ -282,7 +283,7 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 bob_replica_store_task,
-                None,
+                alice_peer_id,
             )
             .await
         });

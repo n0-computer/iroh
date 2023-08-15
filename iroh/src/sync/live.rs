@@ -152,7 +152,7 @@ pub enum LiveEvent {
     /// Received a remote insert.
     InsertRemote {
         /// The peer that sent us the entry.
-        from: Option<PeerId>,
+        from: PeerId,
         /// The inserted entry.
         entry: Entry,
         /// If the content is available at the local node
@@ -370,7 +370,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     }
                 },
                 Some((origin, entry))  = self.replicas_subscription.next() => {
-                    self.on_replica_event(origin, entry).await?;
+                    if let Err(err) = self.on_replica_event(origin, entry).await {
+                        error!("Failed to process replica event: {err:?}");
+                    }
                 }
                 Some((topic, peer, res)) = self.pending_syncs.next() => {
                     // let (topic, peer, res) = res.context("task sync_with_peer paniced")?;
@@ -553,7 +555,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 match op {
                     Op::Put(entry) => {
                         debug!(peer = ?prev_peer, topic = ?topic, "received entry via gossip");
-                        replica.insert_remote_entry(entry, Some(prev_peer.to_bytes()))?
+                        replica.insert_remote_entry(entry, prev_peer.to_bytes())?
                     }
                 }
             }
@@ -595,7 +597,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
             }
             InsertOrigin::Sync(peer_id) => {
-                let from = peer_id.and_then(|id| PeerId::from_bytes(&id).ok());
+                let from = PeerId::from_bytes(&peer_id)?;
                 let entry = signed_entry.entry();
                 let hash = *entry.record().content_hash();
 
@@ -604,20 +606,17 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 let content_status = if self.bao_store.get(&hash).is_some() {
                     ContentStatus::Ready
                 } else {
-                    if let Some(from) = from {
-                        self.downloader.push(hash, vec![from]).await;
-                        let fut = self.downloader.finished(&hash).await;
-                        let fut = fut
-                            .map(move |res| res.map(move |(hash, _len)| (topic, hash)))
-                            .boxed();
-                        self.pending_downloads.push(fut);
-                    }
+                    self.downloader.push(hash, vec![from]).await;
+                    let fut = self.downloader.finished(&hash).await;
+                    let fut = fut
+                        .map(move |res| res.map(move |(hash, _len)| (topic, hash)))
+                        .boxed();
+                    self.pending_downloads.push(fut);
                     ContentStatus::Pending
                 };
 
                 // Notify subscribers about the event
                 if let Some(subs) = subs {
-                    let from = peer_id.and_then(|id| PeerId::from_bytes(&id).ok());
                     let event = LiveEvent::InsertRemote {
                         from,
                         entry: entry.clone(),

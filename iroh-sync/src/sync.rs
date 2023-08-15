@@ -240,7 +240,7 @@ pub type PeerIdBytes = [u8; 32];
 #[derive(Debug, Clone)]
 pub enum InsertOrigin {
     Local,
-    Sync(Option<PeerIdBytes>),
+    Sync(PeerIdBytes),
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -338,7 +338,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     pub fn insert_remote_entry(
         &self,
         entry: SignedEntry,
-        received_from: Option<PeerIdBytes>,
+        received_from: PeerIdBytes,
     ) -> anyhow::Result<()> {
         entry.verify()?;
         let mut inner = self.inner.write();
@@ -367,7 +367,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     pub fn sync_process_message(
         &self,
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
-        from_peer: Option<PeerIdBytes>,
+        from_peer: PeerIdBytes,
     ) -> Result<Option<crate::ranger::Message<RecordIdentifier, SignedEntry>>, S::Error> {
         let reply = self
             .inner
@@ -1010,6 +1010,8 @@ mod tests {
         alice_set: &[&str],
         bob_set: &[&str],
     ) -> Result<()> {
+        let alice_peer_id = [1u8; 32];
+        let bob_peer_id = [2u8; 32];
         // Sync alice - bob
         let mut next_to_bob = Some(alice.sync_initial_message().map_err(Into::into)?);
         let mut rounds = 0;
@@ -1017,8 +1019,13 @@ mod tests {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg, None).map_err(Into::into)? {
-                next_to_bob = alice.sync_process_message(msg, None).map_err(Into::into)?;
+            if let Some(msg) = bob
+                .sync_process_message(msg, alice_peer_id)
+                .map_err(Into::into)?
+            {
+                next_to_bob = alice
+                    .sync_process_message(msg, bob_peer_id)
+                    .map_err(Into::into)?;
             }
         }
 

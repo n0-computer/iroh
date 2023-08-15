@@ -79,6 +79,14 @@ impl Keypair {
     pub fn to_bytes(&self) -> [u8; 32] {
         self.secret.to_bytes()
     }
+
+    /// Create a keypair by converting a byte array into the secret part.
+    /// The public part can always be recovered.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let secret = SecretKey::from_bytes(bytes);
+        let public = secret.verifying_key();
+        Self { secret, public }
+    }
 }
 
 impl From<SecretKey> for Keypair {
