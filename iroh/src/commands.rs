@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 use iroh::client::quic::RpcClient;
 use iroh::dial::Ticket;
@@ -44,6 +44,27 @@ pub mod validate;
 pub struct Cli {
     #[clap(subcommand)]
     pub command: Option<Commands>,
+
+    #[clap(flatten)]
+    #[clap(next_help_heading = "Options for all commands (except `provide`, `get`, and `doctor`)")]
+    pub rpc_args: RpcArgs,
+
+    #[clap(flatten)]
+    #[clap(next_help_heading = "Options for `provide`, `get` and `doctor`")]
+    pub full_args: FullArgs,
+}
+
+/// Options for commands that talk to a running Iroh node over RPC
+#[derive(Args, Debug, Clone)]
+pub struct RpcArgs {
+    /// RPC port of the Iroh node
+    #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+    pub rpc_port: u16,
+}
+
+/// Options for commands that may start an Iroh node
+#[derive(Args, Debug, Clone)]
+pub struct FullArgs {
     /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
     #[clap(long)]
     pub keylog: bool,
@@ -53,33 +74,53 @@ pub struct Cli {
     pub metrics_addr: Option<SocketAddr>,
     #[clap(long)]
     pub cfg: Option<PathBuf>,
-    /// RPC port of the Iroh node
-    #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-    rpc_port: u16,
 }
 
 impl Cli {
-    pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
-        match self.command {
-            None => {
-                let client = iroh::client::quic::connect_raw(self.rpc_port).await?;
+    pub async fn run(self, rt: &runtime::Handle) -> Result<()> {
+        let command = self.command.unwrap_or(Commands::Console);
+        match command {
+            Commands::Console => {
+                let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
                 repl::run(client).await
             }
-            Some(Commands::Rpc(command)) => {
-                let client = iroh::client::quic::connect_raw(self.rpc_port).await?;
+            Commands::Rpc(command) => {
+                let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
                 command.run(client).await
             }
-            Some(Commands::Full(command)) => command.run(rt, config, self.keylog).await,
+            Commands::Full(command) => {
+                let FullArgs {
+                    cfg,
+                    metrics_addr,
+                    keylog,
+                } = self.full_args;
+
+                let config = Config::from_env(cfg.as_deref())?;
+
+                #[cfg(feature = "metrics")]
+                let metrics_fut = start_metrics_server(metrics_addr, &rt);
+
+                let res = command.run(rt, &config, keylog).await;
+
+                #[cfg(feature = "metrics")]
+                if let Some(metrics_fut) = metrics_fut {
+                    metrics_fut.abort();
+                }
+
+                res
+            }
         }
     }
 }
 
 #[derive(Parser, Debug, Clone)]
 pub enum Commands {
+    /// Start the Iroh console
+    Console,
     #[clap(flatten)]
     Full(#[clap(subcommand)] FullCommands),
     #[clap(flatten)]
-    Rpc(#[clap(subcommands)] RpcCommand),
+    Rpc(#[clap(subcommands)] RpcCommands),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -237,8 +278,14 @@ impl FullCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+pub enum ConsoleCommands {
+    /// Start the Iroh console. This is the default command.
+    Console,
+}
+
+#[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub enum RpcCommand {
+pub enum RpcCommands {
     /// List availble content on the provider.
     #[clap(subcommand)]
     List(self::list::Commands),
@@ -319,10 +366,10 @@ pub enum RpcCommand {
     Sync(#[clap(subcommand)] sync::Commands),
 }
 
-impl RpcCommand {
+impl RpcCommands {
     pub async fn run(self, client: RpcClient) -> Result<()> {
         match self {
-            RpcCommand::Share {
+            RpcCommands::Share {
                 hash,
                 recursive,
                 peer,
@@ -377,32 +424,32 @@ impl RpcCommand {
                 }
                 Ok(())
             }
-            RpcCommand::List(cmd) => cmd.run(client).await,
-            RpcCommand::Validate { repair } => self::validate::run(client, repair).await,
-            RpcCommand::Shutdown { force } => {
+            RpcCommands::List(cmd) => cmd.run(client).await,
+            RpcCommands::Validate { repair } => self::validate::run(client, repair).await,
+            RpcCommands::Shutdown { force } => {
                 client.rpc(ShutdownRequest { force }).await?;
                 Ok(())
             }
-            RpcCommand::Id {} => {
+            RpcCommands::Id {} => {
                 let response = client.rpc(IdRequest).await?;
 
                 println!("Listening address: {:#?}", response.listen_addrs);
                 println!("PeerID: {}", response.peer_id);
                 Ok(())
             }
-            RpcCommand::Add { path, in_place } => self::add::run(client, path, in_place).await,
-            RpcCommand::Addresses {} => {
+            RpcCommands::Add { path, in_place } => self::add::run(client, path, in_place).await,
+            RpcCommands::Addresses {} => {
                 let response = client.rpc(AddrsRequest).await?;
                 println!("Listening addresses: {:?}", response.addrs);
                 Ok(())
             }
-            RpcCommand::Sync(command) => command.run(client).await,
+            RpcCommands::Sync(command) => command.run(client).await,
         }
     }
 }
 
 #[cfg(feature = "metrics")]
-pub fn init_metrics_collection(
+pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
     rt: &iroh_bytes::util::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
