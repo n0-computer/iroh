@@ -23,8 +23,8 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{
-        self, range_collections::RangeSet2, ExportMode, ImportMode, ImportProgress, Map, MapEntry,
-        PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
+        self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
+        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
     },
     util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
@@ -192,12 +192,11 @@ impl Map for Store {
         })
     }
 
-    fn contains_complete(&self, hash: &Hash) -> bool {
-        self.0.contains_key(hash)
-    }
-
-    fn contains_partial(&self, _hash: &Hash) -> bool {
-        false
+    fn contains(&self, hash: &Hash) -> EntryStatus {
+        match self.0.contains_key(hash) {
+            true => EntryStatus::Complete,
+            false => EntryStatus::NotFound,
+        }
     }
 }
 

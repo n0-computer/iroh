@@ -24,6 +24,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_bytes::baomap;
 use iroh_bytes::baomap::range_collections::RangeSet2;
+use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
@@ -307,14 +308,15 @@ impl Map for Store {
         }
     }
 
-    fn contains_complete(&self, hash: &Hash) -> bool {
+    fn contains(&self, hash: &Hash) -> EntryStatus {
         let state = self.0.state.read().unwrap();
-        state.complete.contains_key(hash)
-    }
-
-    fn contains_partial(&self, hash: &Hash) -> bool {
-        let state = self.0.state.read().unwrap();
-        state.partial.contains_key(hash)
+        if state.complete.contains_key(hash) {
+            EntryStatus::Complete
+        } else if state.partial.contains_key(hash) {
+            EntryStatus::Partial
+        } else {
+            EntryStatus::NotFound
+        }
     }
 }
 
