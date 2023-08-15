@@ -71,6 +71,7 @@ pub struct Args {
 
 #[derive(Parser, Debug)]
 pub enum Command {
+    List,
     Create,
     Open { key: String },
     Join { ticket: String },
@@ -250,6 +251,17 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let bind_addr: SocketAddr = format!("0.0.0.0:{}", args.bind_port).parse().unwrap();
     let iroh = iroh_node::Iroh::new(rt, keypair, derp_map, bind_addr, args.storage_path).await?;
 
+    if let Command::List = args.command {
+        let mut docs = iroh.client().list_docs().await?;
+        println!("Available Task Lists:");
+        while let Some(doc) = docs.next().await {
+            let doc = doc?;
+            println!("\t{doc}");
+        }
+        iroh.shutdown();
+        return Ok(());
+    }
+
     let tasks = Tasks::new(iroh.client(), args.command).await?;
     println!("> ticket: {}", tasks.ticket());
 
@@ -407,6 +419,9 @@ impl Tasks {
                     ticket.key, ticket.peers
                 );
                 iroh.import_doc(ticket).await?
+            }
+            Command::List => {
+                unreachable!("Command::List should have never made it to here");
             }
         };
 
@@ -582,13 +597,9 @@ impl TasksApp {
                                 };
                                 let mut order = update_order.lock().await;
                                 *order = tasks.iter().map(|t| t.id.clone()).collect();
-                                match event {
-                                    LiveEvent::InsertLocal => {},
-                                    LiveEvent::InsertRemote => {
-                                        // TODO: need an `on_download` or an event stream that
-                                        // notifies for downloads rather than entry insertions
-                                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                    },
+                                if let LiveEvent::InsertRemote { .. } = event {
+                                    // must wait for remote content to download before displaying
+                                    continue;
                                 }
                                 let table = fmt_tasks(&tasks);
                                 println!("\n{table}");
