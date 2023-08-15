@@ -204,7 +204,7 @@ pub struct Entry {
     hash: blake3::Hash,
     outboard: PreOrderOutboard<MemFile>,
     data: MemFile,
-    is_complete: bool
+    is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
@@ -289,7 +289,7 @@ impl Map for Store {
                     data: outboard.data.clone().into(),
                 },
                 data: data.clone().into(),
-                is_complete: true
+                is_complete: true,
             })
         } else if let Some((data, outboard)) = state.partial.get(hash) {
             Some(Entry {
@@ -300,7 +300,7 @@ impl Map for Store {
                     data: outboard.data.clone().into(),
                 },
                 data: data.clone().into(),
-                is_complete: false
+                is_complete: false,
             })
         } else {
             None
