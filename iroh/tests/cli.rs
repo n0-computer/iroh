@@ -396,7 +396,7 @@ fn cli_provide_addresses() -> Result<()> {
     let _ticket = match_provide_output(&mut provider, 1)?;
 
     // test output
-    let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
+    let get_output = cmd(iroh_bin(), ["--rpc-port", RPC_PORT, "addresses"])
         // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
         .stdout_capture()
         .run()?;
