@@ -668,6 +668,11 @@ mod test {
 
         let len = 10;
 
+        // subscribe nodes 2 and 3 to the topic
+        let mut stream2 = go2.subscribe(topic).await.unwrap();
+        let mut stream3 = go3.subscribe(topic).await.unwrap();
+
+        // publish messages on node1
         let pub1 = spawn(async move {
             for i in 0..len {
                 let message = format!("hi{}", i);
@@ -679,11 +684,11 @@ mod test {
             }
         });
 
+        // wait for messages on node2
         let sub2 = spawn(async move {
-            let mut stream = go2.subscribe(topic).await.unwrap();
             let mut recv = vec![];
             loop {
-                let ev = stream.recv().await.unwrap();
+                let ev = stream2.recv().await.unwrap();
                 info!("go2 event: {ev:?}");
                 if let Event::Received(msg, _prev_peer) = ev {
                     recv.push(msg);
@@ -694,11 +699,11 @@ mod test {
             }
         });
 
+        // wait for messages on node3
         let sub3 = spawn(async move {
-            let mut stream = go3.subscribe(topic).await.unwrap();
             let mut recv = vec![];
             loop {
-                let ev = stream.recv().await.unwrap();
+                let ev = stream3.recv().await.unwrap();
                 info!("go3 event: {ev:?}");
                 if let Event::Received(msg, _prev_peer) = ev {
                     recv.push(msg);
