@@ -6,3 +6,4 @@ pub mod metrics;
 mod ranger;
 pub mod store;
 pub mod sync;
+mod keys;
