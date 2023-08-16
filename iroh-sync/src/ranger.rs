@@ -402,22 +402,23 @@ where
     }
 }
 
-impl<K, V, S> Peer<K, V, S>
-where
-    K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
-    V: Clone + Debug,
-    S: Store<K, V> + Default,
-{
-    pub fn with_limit(limit: Range<K>) -> Self {
-        Peer {
-            store: S::default(),
-            max_set_size: 1,
-            split_factor: 2,
-            limit: Some(limit),
-            _phantom: Default::default(),
-        }
-    }
-}
+// TODO: with_limit is unused, remove?
+// impl<K, V, S> Peer<K, V, S>
+// where
+//     K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
+//     V: Clone + Debug,
+//     S: Store<K, V> + Default,
+// {
+//     fn with_limit(limit: Range<K>) -> Self {
+//         Peer {
+//             store: S::default(),
+//             max_set_size: 1,
+//             split_factor: 2,
+//             limit: Some(limit),
+//             _phantom: Default::default(),
+//         }
+//     }
+// }
 impl<K, V, S> Peer<K, V, S>
 where
     K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
@@ -612,24 +613,25 @@ where
         self.store.put(k, v)
     }
 
-    pub fn get(&self, k: &K) -> Result<Option<V>, S::Error> {
-        self.store.get(k)
-    }
-
-    /// Remove the given key.
-    pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
-        self.store.remove(k)
-    }
-
-    /// List all existing key value pairs.
-    pub fn all(&self) -> Result<impl Iterator<Item = Result<(K, V), S::Error>> + '_, S::Error> {
-        self.store.all()
-    }
-
-    /// Returns a refernce to the underlying store.
-    pub fn store(&self) -> &S {
-        &self.store
-    }
+    // TODO: these are unused, remove?
+    // pub fn get(&self, k: &K) -> Result<Option<V>, S::Error> {
+    //     self.store.get(k)
+    // }
+    //
+    // /// Remove the given key.
+    // pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
+    //     self.store.remove(k)
+    // }
+    //
+    // /// List all existing key value pairs.
+    // pub fn all(&self) -> Result<impl Iterator<Item = Result<(K, V), S::Error>> + '_, S::Error> {
+    //     self.store.all()
+    // }
+    //
+    // /// Returns a refernce to the underlying store.
+    // pub fn store(&self) -> &S {
+    //     &self.store
+    // }
 }
 
 /// Sadly <https://doc.rust-lang.org/std/primitive.usize.html#method.div_ceil> is still unstable..

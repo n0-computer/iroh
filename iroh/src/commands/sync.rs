@@ -6,7 +6,7 @@ use iroh::{
     sync::PeerSource,
 };
 use iroh_sync::{
-    store::{GetFilter, KeyFilter},
+    store::{GetFilter},
     sync::{AuthorId, NamespaceId, SignedEntry},
 };
 use quic_rpc::transport::quinn::QuinnConnection;
@@ -196,16 +196,18 @@ impl Doc {
                 old,
                 content,
             } => {
-                let key = key.as_bytes().to_vec();
-                let key = match prefix {
-                    true => KeyFilter::Prefix(key),
-                    false => KeyFilter::Key(key),
+                let mut filter = match old {
+                    true => GetFilter::all(),
+                    false => GetFilter::latest(),
                 };
-                let filter = GetFilter {
-                    latest: !old,
-                    author,
-                    key,
+                if let Some(author) = author {
+                    filter = filter.with_author(author);
                 };
+                let filter = match prefix {
+                    true => filter.with_prefix(key),
+                    false => filter.with_key(key),
+                };
+
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
@@ -229,14 +231,13 @@ impl Doc {
                 }
             }
             Doc::List { old, prefix } => {
-                let key = match prefix {
-                    Some(prefix) => KeyFilter::Prefix(prefix.as_bytes().to_vec()),
-                    None => KeyFilter::All,
+                let filter = match old {
+                    true => GetFilter::all(),
+                    false => GetFilter::latest(),
                 };
-                let filter = GetFilter {
-                    latest: !old,
-                    author: None,
-                    key,
+                let filter = match prefix {
+                    Some(prefix) => filter.with_prefix(prefix),
+                    None => filter,
                 };
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {

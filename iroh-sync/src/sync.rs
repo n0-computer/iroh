@@ -1,3 +1,5 @@
+//! API for iroh-sync replicas
+
 // Names and concepts are roughly based on Willows design at the moment:
 //
 // https://hackmd.io/DTtck8QOQm6tZaQBBtTf7w
@@ -26,8 +28,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::ranger::{self, AsFingerprint, Fingerprint, Peer, RangeKey};
 
+/// Protocol message for the set reconciliation protocol
+///
+/// Can be serialized to bytes with [serde] to transfer between peers.
 pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>;
 
+/// Author key to insert entries in a [`Replica`]
+///
+/// Internally, an author is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Author {
     priv_key: SigningKey,
@@ -40,12 +48,14 @@ impl Display for Author {
 }
 
 impl Author {
+    /// Create a new author with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let priv_key = SigningKey::generate(rng);
 
         Author { priv_key }
     }
 
+    /// Create an author from a byte array.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
@@ -60,19 +70,26 @@ impl Author {
         self.priv_key.verifying_key().to_bytes()
     }
 
+    /// Get the [`AuthorId`] for this author.
     pub fn id(&self) -> AuthorId {
         AuthorId(self.priv_key.verifying_key())
     }
 
+    /// Sign a message with this author key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         self.priv_key.sign(msg)
     }
 
+    /// Strictly verify a signature on a message with this author's public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.priv_key.verify_strict(msg, signature)
     }
 }
 
+/// Identifier for an [`Author`]
+///
+/// This is the corresponding [`VerifyingKey`] for an author. It is used as an identifier, and can
+/// be used to verify [`Signature`]s.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct AuthorId(VerifyingKey);
 
@@ -89,19 +106,33 @@ impl Display for AuthorId {
 }
 
 impl AuthorId {
+    /// Verify that a signature matches the `msg` bytes and was created with this the [`Author`]
+    /// that corresponds to this [`AuthorId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.0.verify_strict(msg, signature)
     }
 
+    /// Get the byte representation of this [`AuthorId`].
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
 
+    /// Construct an `AuthorId` from a slice of bytes.
+    ///
+    /// # Warning
+    ///
+    /// The caller is responsible for ensuring that the bytes passed into this method actually
+    /// represent a valid [`ed25591`] curve point. This will never fail for bytes returned from
+    /// [`Self::as_bytes`].
     pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(AuthorId(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
+/// Namespace key of a [`Replica`].
+///
+/// Holders of this key can insert new entries into a [`Replica`].
+/// Internally, a namespace is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Namespace {
     priv_key: SigningKey,
@@ -172,39 +203,48 @@ impl From<SigningKey> for Namespace {
 }
 
 impl Namespace {
+    /// Create a new namespace with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let priv_key = SigningKey::generate(rng);
 
         Namespace { priv_key }
     }
 
+    /// Create a namespace from a byte array.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
 
-    /// Returns the Namespace byte representation.
+    /// Returns the namespace byte representation.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.priv_key.to_bytes()
     }
 
-    /// Returns the NamespaceId byte representation.
+    /// Returns the [`NamespaceId`] byte representation.
     pub fn id_bytes(&self) -> [u8; 32] {
         self.priv_key.verifying_key().to_bytes()
     }
 
+    /// Get the [`NamespaceId`] for this namespace.
     pub fn id(&self) -> NamespaceId {
         NamespaceId(self.priv_key.verifying_key())
     }
 
+    /// Sign a message with this namespace key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         self.priv_key.sign(msg)
     }
 
+    /// Strictly verify a signature on a message with this namespaces's public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.priv_key.verify_strict(msg, signature)
     }
 }
 
+/// Identifier for a [`Namespace`]
+///
+/// This is the corresponding [`VerifyingKey`] for an author. It is used as an identifier, and can
+/// be used to verify [`Signature`]s.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct NamespaceId(VerifyingKey);
 
@@ -221,28 +261,43 @@ impl Debug for NamespaceId {
 }
 
 impl NamespaceId {
+    /// Verify that a signature matches the `msg` bytes and was created with this the [`Author`]
+    /// that corresponds to this [`NamespaceId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.0.verify_strict(msg, signature)
     }
 
+    /// Get the byte representation of this [`NamespaceId`].
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
 
+    /// Construct a `NamespaceId` from a slice of bytes.
+    ///
+    /// # Warning
+    ///
+    /// The caller is responsible for ensuring that the bytes passed into this method actually
+    /// represent a valid [`ed25591`] curve point. This will never fail for bytes returned from
+    /// [`Self::as_bytes`].
     pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(NamespaceId(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
-/// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
+/// Byte represenation of a `PeerId` from `iroh-net`
+// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
 
+/// Whether an entry was inserted locally or by a remote peer.
 #[derive(Debug, Clone)]
 pub enum InsertOrigin {
+    /// The entry was inserted locally.
     Local,
+    /// The entry was received from the remote peer identified by [`PeerIdBytes`].
     Sync(PeerIdBytes),
 }
 
+/// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
     inner: Arc<RwLock<InnerReplica<S>>>,
@@ -264,7 +319,8 @@ struct ReplicaData {
 }
 
 impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
-    // TODO: check that read only replicas are possible
+    /// Create a new replica.
+    // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
         let (s, r) = flume::bounded(16); // TODO: should this be configurable?
         Replica {
@@ -277,12 +333,19 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         }
     }
 
-    /// Subscribes to the events. Only one subscription can be active at a time.
+    /// Subscribe to insert events.
+    ///
+    /// Only one subscription can be active at a time. If a previous subscription was created, this
+    /// will return `None`.
+    // TODO: Allow to clear a previous subscription?
     pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
         self.on_insert_receiver.lock().take()
     }
 
-    /// Inserts a new record at the given key.
+    /// Insert a new record at the given key.
+    ///
+    /// The entry will by signed by the provided `author`.
+    /// The `len` must be the byte length of the data identified by `hash`.
     pub fn insert(
         &self,
         key: impl AsRef<[u8]>,
@@ -315,8 +378,8 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     }
 
     /// Hashes the given data and inserts it.
-    /// This does not store the content, just the record of it.
     ///
+    /// This does not store the content, just the record of it.
     /// Returns the calculated hash.
     pub fn hash_and_insert(
         &self,
@@ -330,11 +393,16 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         Ok(hash)
     }
 
+    /// Get the identifier for an entry in this replica.
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
         let inner = self.inner.read();
         RecordIdentifier::new(key, inner.namespace.id(), author.id())
     }
 
+    /// Insert an entry into this replica which was received from a remote peer.
+    ///
+    /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
+    /// event, and insert the entry into the replica store.
     pub fn insert_remote_entry(
         &self,
         entry: SignedEntry,
@@ -358,12 +426,16 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         Ok(())
     }
 
+    /// Create the initial message for the set reconciliation flow with a remote peer.
     pub fn sync_initial_message(
         &self,
     ) -> Result<crate::ranger::Message<RecordIdentifier, SignedEntry>, S::Error> {
         self.inner.read().peer.initial_message()
     }
 
+    /// Process a set reconciliation message from a remote peer.
+    ///
+    /// Returns the next message to be sent to the peer, if any.
     pub fn sync_process_message(
         &self,
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
@@ -382,10 +454,13 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         Ok(reply)
     }
 
+    /// Get the namespace identifier for this [`Replica`].
     pub fn namespace(&self) -> NamespaceId {
         self.inner.read().namespace.id()
     }
 
+    /// Get the byte represenation of the [`Namespace`] key for this replica.
+    // TODO: Why return [u8; 32] and not `Namespace` here?
     pub fn secret_key(&self) -> [u8; 32] {
         self.inner.read().namespace.to_bytes()
     }
@@ -399,37 +474,48 @@ pub struct SignedEntry {
 }
 
 impl SignedEntry {
-    pub fn new(signature: EntrySignature, entry: Entry) -> Self {
+    pub(crate) fn new(signature: EntrySignature, entry: Entry) -> Self {
         SignedEntry { signature, entry }
     }
 
+    /// Create a new signed entry by signing an entry with a namespace and author.
     pub fn from_entry(entry: Entry, namespace: &Namespace, author: &Author) -> Self {
         let signature = EntrySignature::from_entry(&entry, namespace, author);
         SignedEntry { signature, entry }
     }
 
+    /// Verify the signatures on this entry.
     pub fn verify(&self) -> Result<(), SignatureError> {
         self.signature
             .verify(&self.entry, &self.entry.id.namespace, &self.entry.id.author)
     }
 
+    /// Get the signature.
     pub fn signature(&self) -> &EntrySignature {
         &self.signature
     }
 
+    /// Get the entry.
     pub fn entry(&self) -> &Entry {
         &self.entry
     }
 
+    /// Get the content hash of the entry.
     pub fn content_hash(&self) -> &Hash {
         self.entry().record().content_hash()
     }
+
+    /// Get the content length of the entry.
     pub fn content_len(&self) -> u64 {
         self.entry().record().content_len()
     }
+
+    /// Get the author of the entry.
     pub fn author(&self) -> AuthorId {
         self.entry().id().author()
     }
+
+    /// Get the key of the entry.
     pub fn key(&self) -> &[u8] {
         self.entry().id().key()
     }
@@ -443,6 +529,7 @@ pub struct EntrySignature {
 }
 
 impl EntrySignature {
+    /// Create a new signature by signing an entry with a namespace and author.
     pub fn from_entry(entry: &Entry, namespace: &Namespace, author: &Author) -> Self {
         // TODO: this should probably include a namespace prefix
         // namespace in the cryptographic sense.
@@ -456,6 +543,8 @@ impl EntrySignature {
         }
     }
 
+    /// Verify that this signature was created by signing the `entry` with the
+    /// secret keys of the specified `author` and `namespace`.
     pub fn verify(
         &self,
         entry: &Entry,
@@ -469,7 +558,7 @@ impl EntrySignature {
         Ok(())
     }
 
-    pub fn from_parts(namespace_sig: &[u8; 64], author_sig: &[u8; 64]) -> Self {
+    pub(crate) fn from_parts(namespace_sig: &[u8; 64], author_sig: &[u8; 64]) -> Self {
         let namespace_signature = Signature::from_bytes(namespace_sig);
         let author_signature = Signature::from_bytes(author_sig);
 
@@ -479,11 +568,11 @@ impl EntrySignature {
         }
     }
 
-    pub fn author_signature(&self) -> &Signature {
+    pub(crate) fn author_signature(&self) -> &Signature {
         &self.author_signature
     }
 
-    pub fn namespace_signature(&self) -> &Signature {
+    pub(crate) fn namespace_signature(&self) -> &Signature {
         &self.namespace_signature
     }
 }
@@ -496,18 +585,22 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Create a new entry
     pub fn new(id: RecordIdentifier, record: Record) -> Self {
         Entry { id, record }
     }
 
+    /// Get the [`RecordIdentifier`] for this entry.
     pub fn id(&self) -> &RecordIdentifier {
         &self.id
     }
 
+    /// Get the [`NamespaceId`] of this entry.
     pub fn namespace(&self) -> NamespaceId {
         self.id.namespace()
     }
 
+    /// Get the [`Record`] contained in this entry.
     pub fn record(&self) -> &Record {
         &self.record
     }
@@ -518,12 +611,14 @@ impl Entry {
         self.record.as_bytes(out);
     }
 
+    /// Serialize this entry into a new vector with its canonical byte representation.
     pub fn to_vec(&self) -> Vec<u8> {
         let mut out = Vec::new();
         self.into_vec(&mut out);
         out
     }
 
+    /// Sign this entry with a [`Namespace`] and [`Author`].
     pub fn sign(self, namespace: &Namespace, author: &Author) -> SignedEntry {
         SignedEntry::from_entry(self, namespace, author)
     }
@@ -589,6 +684,7 @@ impl RangeKey for RecordIdentifier {
 }
 
 impl RecordIdentifier {
+    /// Create a new record identifier.
     pub fn new(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
@@ -597,7 +693,11 @@ impl RecordIdentifier {
         }
     }
 
-    pub fn from_parts(key: &[u8], namespace: &[u8; 32], author: &[u8; 32]) -> anyhow::Result<Self> {
+    pub(crate) fn from_parts(
+        key: &[u8],
+        namespace: &[u8; 32],
+        author: &[u8; 32],
+    ) -> anyhow::Result<Self> {
         Ok(RecordIdentifier {
             key: key.to_vec(),
             namespace: NamespaceId::from_bytes(namespace)?,
@@ -605,33 +705,38 @@ impl RecordIdentifier {
         })
     }
 
-    pub fn as_bytes(&self, out: &mut Vec<u8>) {
+    /// Serialize this record identifier into a mutable byte array.
+    pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(self.author.as_bytes());
         out.extend_from_slice(&self.key);
     }
 
+    /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
         &self.key
     }
 
+    /// Get the namespace of this record.
     pub fn namespace(&self) -> NamespaceId {
         self.namespace
     }
 
-    pub fn namespace_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn namespace_bytes(&self) -> &[u8; 32] {
         self.namespace.as_bytes()
     }
 
+    /// Get the author of this record.
     pub fn author(&self) -> AuthorId {
         self.author
     }
 
-    pub fn author_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn author_bytes(&self) -> &[u8; 32] {
         self.author.as_bytes()
     }
 }
 
+/// The data part of an entry in a [`Replica`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     /// Record creation timestamp. Counted as micros since the Unix epoch.
@@ -642,6 +747,7 @@ pub struct Record {
 }
 
 impl Record {
+    /// Create a new record.
     pub fn new(timestamp: u64, len: u64, hash: Hash) -> Self {
         Record {
             timestamp,
@@ -650,18 +756,22 @@ impl Record {
         }
     }
 
+    /// Get the timestamp of this record.
     pub fn timestamp(&self) -> u64 {
         self.timestamp
     }
 
+    /// Get the length of the data to which this record's content hash refers to.
     pub fn content_len(&self) -> u64 {
         self.len
     }
 
+    /// Get the content hash of this record.
     pub fn content_hash(&self) -> &Hash {
         &self.hash
     }
 
+    /// Create a new record with a timestamp of the current system date.
     pub fn from_hash(hash: Hash, len: u64) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -671,7 +781,8 @@ impl Record {
     }
 
     // TODO: remove
-    pub fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
+    #[cfg(test)]
+    pub(crate) fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
         // Salted hash
         // TODO: do we actually want this?
         // TODO: this should probably use a namespace prefix if used
@@ -682,7 +793,8 @@ impl Record {
         Self::from_hash(hash.into(), data.as_ref().len() as u64)
     }
 
-    pub fn as_bytes(&self, out: &mut Vec<u8>) {
+    /// Serialize this record into a mutable byte array.
+    pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.len.to_be_bytes());
         out.extend_from_slice(self.hash.as_ref());

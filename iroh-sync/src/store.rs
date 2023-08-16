@@ -1,3 +1,5 @@
+//! Storage trait and implementation for iroh-sync documents
+
 use anyhow::Result;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -16,30 +18,43 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
     type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
 
+    /// The iterator returned from [`Self::get`].
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
     where
         Self: 'a;
 
-    /// Open a replica
+    /// Create a new replica for `namespace` and persist in this store.
+    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
+
+    /// List all replicas in this store.
+    // TODO: return iterator
+    fn list_replicas(&self) -> Result<Vec<NamespaceId>>;
+
+    /// Open a replica from this store.
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
     ///
-    /// TODO: Add close_replica
+    // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
-    // TODO: return iterator
-    fn list_replicas(&self) -> Result<Vec<NamespaceId>>;
-    fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
+    /// Create a new author key key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author>;
 
+    /// List all author keys in this store.
     // TODO: return iterator
     fn list_authors(&self) -> Result<Vec<Author>>;
-    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
-    /// Returns an iterator over the entries in a namespace.
+    /// Get an author key from the store.
+    fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
+
+    /// Iterate over entries of a replica.
+    ///
+    /// Returns an iterator. The [`GetFilter`] has several methods of filtering the returned
+    /// entries.
     fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
-    /// Gets the latest entry this key and author.
+
+    /// Gets the single latest entry for the specified key and author.
     fn get_latest_by_key_and_author(
         &self,
         namespace: NamespaceId,
@@ -51,9 +66,9 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 /// Filter a get query onto a namespace
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetFilter {
-    pub latest: bool,
-    pub author: Option<AuthorId>,
-    pub key: KeyFilter,
+    latest: bool,
+    author: Option<AuthorId>,
+    key: KeyFilter,
 }
 
 impl Default for GetFilter {
@@ -63,22 +78,28 @@ impl Default for GetFilter {
 }
 
 impl GetFilter {
-    /// No filter, iterate over all entries.
-    pub fn all() -> Self {
-        Self {
-            latest: false,
+    /// Create a new get filter, either for only latest or all entries.
+    pub fn new(latest: bool) -> Self {
+        GetFilter {
+            latest,
             author: None,
             key: KeyFilter::All,
         }
     }
+    /// No filter, iterate over all entries.
+    pub fn all() -> Self {
+        Self::new(false)
+    }
 
     /// Only include the latest entries.
     pub fn latest() -> Self {
-        Self {
-            latest: true,
-            author: None,
-            key: KeyFilter::All,
-        }
+        Self::new(true)
+    }
+
+    /// Set the key filter.
+    pub fn with_key_filter(mut self, key_filter: KeyFilter) -> Self {
+        self.key = key_filter;
+        self
     }
 
     /// Filter by exact key match.
