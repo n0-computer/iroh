@@ -33,8 +33,7 @@ use tracing::{debug, error, info, warn};
 const CHANNEL_CAP: usize = 8;
 
 /// The address to connect to a peer
-/// TODO: Move into iroh-net
-/// TODO: Make an enum and support DNS resolution
+// TODO: Move into iroh-net
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeerSource {
     /// The peer id (required)
@@ -44,9 +43,6 @@ pub struct PeerSource {
     /// Derp region for this peer
     pub derp_region: Option<u16>,
 }
-
-// /// A SyncId is a 32 byte array which is both a [`NamespaceId`] and a [`TopicId`].
-// pub struct SyncId([u8; 32]);
 
 impl PeerSource {
     /// Deserializes from bytes.
@@ -279,7 +275,6 @@ impl<S: store::Store> LiveSync<S> {
     }
 }
 
-// TODO: Also add `handle_connection` to the replica and track incoming sync requests here too.
 // Currently peers might double-sync in both directions.
 struct Actor<S: store::Store, B: baomap::Store> {
     endpoint: MagicEndpoint,

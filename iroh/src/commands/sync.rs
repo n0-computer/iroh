@@ -2,19 +2,16 @@ use clap::Parser;
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    rpc_protocol::{DocTicket, ProviderRequest, ProviderResponse, ShareMode},
+    rpc_protocol::{DocTicket, ShareMode},
+    client::quic::Iroh,
     sync::PeerSource,
 };
 use iroh_sync::{
     store::GetFilter,
     sync::{AuthorId, NamespaceId, SignedEntry},
 };
-use quic_rpc::transport::quinn::QuinnConnection;
 
 use super::RpcClient;
-
-// TODO: It is a bit unfortunate that we have to drag the generics all through. Maybe box the conn?
-pub type Iroh = iroh::client::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
