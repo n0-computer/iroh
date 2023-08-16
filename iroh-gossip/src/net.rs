@@ -599,6 +599,7 @@ mod test {
 
     use iroh_net::{derp::DerpMap, MagicEndpoint};
     use tokio::spawn;
+    use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
 
@@ -708,9 +709,18 @@ mod test {
             }
         });
 
-        pub1.await.unwrap();
-        let recv2 = sub2.await.unwrap();
-        let recv3 = sub3.await.unwrap();
+        timeout(Duration::from_secs(10), pub1)
+            .await
+            .unwrap()
+            .unwrap();
+        let recv2 = timeout(Duration::from_secs(10), sub2)
+            .await
+            .unwrap()
+            .unwrap();
+        let recv3 = timeout(Duration::from_secs(10), sub3)
+            .await
+            .unwrap()
+            .unwrap();
 
         let expected: Vec<Bytes> = (0..len)
             .map(|i| Bytes::from(format!("hi{i}").into_bytes()))
@@ -720,7 +730,11 @@ mod test {
 
         cancel.cancel();
         for t in tasks {
-            t.await.unwrap().unwrap();
+            timeout(Duration::from_secs(10), t)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
         }
         drop(cleanup);
     }
