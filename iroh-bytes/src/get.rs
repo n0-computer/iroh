@@ -425,7 +425,7 @@ pub mod fsm {
         misc: Box<Misc>,
     }
 
-    /// Error that you can get from [AtBlobHeader::next]
+    /// Error that you can get from [`AtBlobHeader::next`]
     #[derive(Debug, thiserror::Error)]
     pub enum AtBlobHeaderNextError {
         /// Eof when reading the size header
