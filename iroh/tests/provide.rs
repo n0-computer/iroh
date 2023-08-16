@@ -32,8 +32,8 @@ use iroh_bytes::{
     baomap::Store,
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{
-        fsm::ConnectedNext,
         fsm::{self},
+        fsm::{ConnectedNext, DecodeError},
         Stats,
     },
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
@@ -495,11 +495,14 @@ async fn test_not_found() {
         let request = GetRequest::all(hash).into();
         let res = run_get_request(opts, request).await;
         if let Err(cause) = res {
-            if let Some(e) = cause.downcast_ref::<std::io::Error>() {
-                tracing::debug!("ERRORRRRR {:?}", e);
-                Ok(())
+            if let Some(e) = cause.downcast_ref::<DecodeError>() {
+                if let DecodeError::NotFound = e {
+                    Ok(())
+                } else {
+                    anyhow::bail!("expected DecodeError::NotFound, got {:?}", e);
+                }
             } else {
-                anyhow::bail!("expected AtBlobHeaderNextError, got {:?}", cause);
+                anyhow::bail!("expected DecodeError, got {:?}", cause);
             }
         } else {
             anyhow::bail!("expected error when getting non-existent blob");

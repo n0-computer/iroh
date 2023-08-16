@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 use crate::util::Hash;
 use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
-use bao_tree::io::DecodeError;
 use bao_tree::ChunkNum;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -61,6 +60,7 @@ pub mod fsm {
         io::fsm::{
             OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
         },
+        TreeNode,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
@@ -191,8 +191,8 @@ pub mod fsm {
         Io(io::Error),
     }
 
-    impl From<io::Error> for ConnectedNextError {
-        fn from(cause: io::Error) -> Self {
+    impl ConnectedNextError {
+        fn from_io(cause: io::Error) -> Self {
             if cause.kind() == io::ErrorKind::UnexpectedEof {
                 Self::Eof
             } else if let Some(inner) = cause.get_ref() {
@@ -252,10 +252,16 @@ pub mod fsm {
                 }
 
                 // write u64 length prefix
-                writer.write_u64_le(request_bytes.len() as u64).await?;
+                writer
+                    .write_u64_le(request_bytes.len() as u64)
+                    .await
+                    .map_err(ConnectedNextError::from_io)?;
 
                 // write the request itself
-                writer.write_all(&request_bytes).await?;
+                writer
+                    .write_all(&request_bytes)
+                    .await
+                    .map_err(ConnectedNextError::from_io)?;
             }
 
             // 2. Finish writing before expecting a response
@@ -270,7 +276,10 @@ pub mod fsm {
                 }
                 AnyGetRequest::CustomGet(_) => {
                     // we sent a custom request, so we need the actual GetRequest from the response
-                    let response_len = reader.read_u64_le().await?;
+                    let response_len = reader
+                        .read_u64_le()
+                        .await
+                        .map_err(ConnectedNextError::from_io)?;
 
                     let mut response = if response_len < (MAX_MESSAGE_SIZE as u64) {
                         Vec::with_capacity(response_len as usize)
@@ -280,7 +289,8 @@ pub mod fsm {
                     (&mut reader)
                         .take(response_len)
                         .read_to_end(&mut response)
-                        .await?;
+                        .await
+                        .map_err(ConnectedNextError::from_io)?;
                     if response.len() != response_len as usize {
                         return Err(ConnectedNextError::Eof);
                     }
@@ -443,37 +453,33 @@ pub mod fsm {
         }
     }
 
-    impl From<io::Error> for AtBlobHeaderNextError {
-        fn from(cause: io::Error) -> Self {
-            if cause.kind() == io::ErrorKind::UnexpectedEof {
-                Self::NotFound
-            } else if let Some(inner) = cause.get_ref() {
-                if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
-                    Self::Read(e.clone())
-                } else {
-                    Self::Io(cause)
-                }
-            } else {
-                Self::Io(cause)
-            }
-        }
-    }
-
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
         pub async fn next(self) -> Result<(AtBlobContent, u64), AtBlobHeaderNextError> {
-            let (stream, size) = self.stream.next().await?;
-            Ok((
-                AtBlobContent {
-                    stream,
-                    misc: self.misc,
-                },
-                size,
-            ))
+            match self.stream.next().await {
+                Ok((stream, size)) => Ok((
+                    AtBlobContent {
+                        stream,
+                        misc: self.misc,
+                    },
+                    size,
+                )),
+                Err(cause) => Err(if cause.kind() == io::ErrorKind::UnexpectedEof {
+                    AtBlobHeaderNextError::NotFound
+                } else if let Some(inner) = cause.get_ref() {
+                    if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                        AtBlobHeaderNextError::Read(e.clone())
+                    } else {
+                        AtBlobHeaderNextError::Io(cause)
+                    }
+                } else {
+                    AtBlobHeaderNextError::Io(cause)
+                }),
+            }
         }
 
         /// Drain the response and throw away the result
-        pub async fn drain(self) -> result::Result<AtEndBlob, io::Error> {
+        pub async fn drain(self) -> result::Result<AtEndBlob, DecodeError> {
             let (mut content, _size) = self.next().await?;
             loop {
                 match content.next().await {
@@ -492,7 +498,9 @@ pub mod fsm {
         ///
         /// For a request that does not request the complete blob, this will just
         /// concatenate the ranges that were requested.
-        pub async fn concatenate_into_vec(self) -> result::Result<(AtEndBlob, Vec<u8>), io::Error> {
+        pub async fn concatenate_into_vec(
+            self,
+        ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
             let (mut curr, size) = self.next().await?;
             let mut res = Vec::with_capacity(size as usize);
             let done = loop {
@@ -516,9 +524,10 @@ pub mod fsm {
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
             data: D,
-        ) -> result::Result<AtEndBlob, io::Error> {
+        ) -> result::Result<AtEndBlob, DecodeError> {
             let (content, _size) = self.next().await?;
-            content.write_all(data).await
+            let res = content.write_all(data).await?;
+            Ok(res)
         }
 
         /// Write the entire blob to a slice writer and to an optional outboard.
@@ -529,13 +538,14 @@ pub mod fsm {
             self,
             outboard: Option<O>,
             data: D,
-        ) -> result::Result<AtEndBlob, io::Error>
+        ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
             O: OutboardMut,
         {
             let (content, _size) = self.next().await?;
-            content.write_all_with_outboard(outboard, data).await
+            let res = content.write_all_with_outboard(outboard, data).await?;
+            Ok(res)
         }
 
         /// The hash of the blob we are reading.
@@ -556,6 +566,102 @@ pub mod fsm {
         misc: Box<Misc>,
     }
 
+    /// Decode error that you can get once you have sent the request and are
+    /// decoding the response, e.g. from [`AtBlobContent::next`].
+    ///
+    /// This is similar to [`bao_tree::io::DecodeError`], but takes into account
+    /// that we are reading from a [`quinn::RecvStream`], so read errors will be
+    /// propagated as [`DecodeError::Read`], containing a [`quinn::ReadError`].
+    /// This carries more concrete information about the error than an [`io::Error`].
+    ///
+    /// When the provider finds that it does not have a chunk that we requested,
+    /// or that the chunk is invalid, it will stop sending data without producing
+    /// an error. This is indicated by the [`DecodeError::ChunkNotFound`] variant,
+    /// which can be used to detect that data is missing but the connection as well
+    /// that the provider is otherwise healthy.
+    ///
+    /// The [`DecodeError::ParentHashMismatch`] and [`DecodeError::LeafHashMismatch`]
+    /// variants indicate that the provider has sent us invalid data. A well-behaved
+    /// provider should never do this, so this is an indication that the provider is
+    /// not behaving correctly.
+    ///
+    /// The [`DecodeError::InvalidQueryRange`] variant indicates that the we requested
+    /// a range that is invalid for the current blob. E.g. we requested chunk 5 for
+    /// a blob that is only 2 chunks large.
+    ///
+    /// The [`DecodeError::Io`] variant is just a fallback for any other io error that
+    /// is not actually a [`quinn::ReadError`].
+    #[derive(Debug, thiserror::Error)]
+    pub enum DecodeError {
+        /// A chunk was not found or invalid, so the provider stopped sending data
+        #[error("not found")]
+        NotFound,
+        /// A chunk was not found or invalid, so the provider stopped sending data
+        #[error("chunk not found")]
+        ChunkNotFound,
+        /// The hash of a parent did not match the expected hash
+        #[error("parent hash mismatch: {0:?}")]
+        ParentHashMismatch(TreeNode),
+        /// The hash of a leaf did not match the expected hash
+        #[error("leaf hash mismatch: {0}")]
+        LeafHashMismatch(ChunkNum),
+        /// The query range was invalid
+        #[error("invalid query range")]
+        InvalidQueryRange,
+        /// Error when reading from the stream
+        #[error("read: {0}")]
+        Read(quinn::ReadError),
+        /// A generic io error
+        #[error("io: {0}")]
+        Io(#[from] io::Error),
+    }
+
+    impl From<AtBlobHeaderNextError> for DecodeError {
+        fn from(cause: AtBlobHeaderNextError) -> Self {
+            match cause {
+                AtBlobHeaderNextError::NotFound => Self::NotFound,
+                AtBlobHeaderNextError::Read(cause) => Self::Read(cause),
+                AtBlobHeaderNextError::Io(cause) => Self::Io(cause),
+            }
+        }
+    }
+
+    impl From<DecodeError> for io::Error {
+        fn from(cause: DecodeError) -> Self {
+            match cause {
+                DecodeError::ChunkNotFound => io::Error::new(io::ErrorKind::UnexpectedEof, cause),
+                DecodeError::Read(cause) => cause.into(),
+                DecodeError::Io(cause) => cause,
+                _ => io::Error::new(io::ErrorKind::Other, cause),
+            }
+        }
+    }
+
+    impl From<bao_tree::io::DecodeError> for DecodeError {
+        fn from(value: bao_tree::io::DecodeError) -> Self {
+            match value {
+                bao_tree::io::DecodeError::InvalidQueryRange => Self::InvalidQueryRange,
+                bao_tree::io::DecodeError::ParentHashMismatch(node) => {
+                    Self::ParentHashMismatch(node)
+                }
+                bao_tree::io::DecodeError::LeafHashMismatch(chunk) => Self::LeafHashMismatch(chunk),
+                bao_tree::io::DecodeError::Io(cause) => {
+                    if cause.kind() == io::ErrorKind::UnexpectedEof {
+                        Self::ChunkNotFound
+                    } else if let Some(inner) = cause.get_ref() {
+                        if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                            Self::Read(e.clone())
+                        } else {
+                            Self::Io(cause)
+                        }
+                    } else {
+                        Self::Io(cause)
+                    }
+                }
+            }
+        }
+    }
+
     /// The next state after reading a content item
     #[derive(Debug, From)]
     pub enum BlobContentNext {
@@ -571,6 +677,7 @@ pub mod fsm {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
+                    let res = res.map_err(DecodeError::from);
                     BlobContentNext::More((next, res))
                 }
                 ResponseDecoderReadingNext::Done(stream) => BlobContentNext::Done(AtEndBlob {
@@ -598,7 +705,7 @@ pub mod fsm {
             self,
             mut outboard: Option<O>,
             mut data: D,
-        ) -> result::Result<AtEndBlob, io::Error>
+        ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
             O: OutboardMut,
@@ -627,7 +734,7 @@ pub mod fsm {
         }
 
         /// Write the entire blob to a slice writer.
-        pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, io::Error>
+        pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
         {
