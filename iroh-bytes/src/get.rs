@@ -162,7 +162,7 @@ pub mod fsm {
         Closing(AtClosing),
     }
 
-    /// Error that you can get from [AtConnected::next]
+    /// Error that you can get from [`AtConnected::next`]
     #[derive(Debug, thiserror::Error)]
     pub enum ConnectedNextError {
         /// Error when serializing the request
