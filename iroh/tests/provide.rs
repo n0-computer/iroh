@@ -544,7 +544,7 @@ async fn test_chunk_not_found_1() {
                 if let DecodeError::ChunkNotFound = e {
                     Ok(())
                 } else {
-                    anyhow::bail!("expected DecodeError::NotFound, got {:?}", e);
+                    anyhow::bail!("expected DecodeError::ChunkNotFound, got {:?}", e);
                 }
             } else {
                 anyhow::bail!("expected DecodeError, got {:?}", cause);
