@@ -171,7 +171,7 @@ impl GetRequest {
     }
 }
 
-/// Write the given data to the provider sink, with a unsigned varint length prefix.
+/// Write the given data to the provider sink, with an u64 length prefix.
 pub(crate) async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
     ensure!(
         data.len() < MAX_MESSAGE_SIZE,
