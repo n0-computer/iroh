@@ -19,6 +19,17 @@ use tokio::sync::mpsc;
 pub use bao_tree;
 pub use range_collections;
 
+/// The availability status of an entry in a store.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum EntryStatus {
+    /// The entry is completely available.
+    Complete,
+    /// The entry is partially available.
+    Partial,
+    /// The entry is not in the store.
+    NotFound,
+}
+
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)
@@ -30,6 +41,12 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     fn hash(&self) -> blake3::Hash;
     /// The size of the entry.
     fn size(&self) -> u64;
+    /// Returns `true` if the entry is complete.
+    ///
+    /// Note that this does not actually verify if the bytes on disk are complete, it only checks
+    /// if the entry is among the partial or complete section of the [`Map`]. To verify if all
+    /// bytes are actually available on disk, use [`MapEntry::available_ranges`].
+    fn is_complete(&self) -> bool;
     /// Compute the available ranges.
     ///
     /// Depending on the implementation, this may be an expensive operation.
@@ -66,6 +83,12 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// This function should not block to perform io. The knowledge about
     /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+
+    /// Find out if the data behind a `hash` is complete, partial, or not present.
+    ///
+    /// Note that this does not actually verify the on-disc data, but only checks in which section
+    /// of the store the entry is present.
+    fn contains(&self, hash: &Hash) -> EntryStatus;
 }
 
 /// A partial entry
