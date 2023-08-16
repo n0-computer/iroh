@@ -1,3 +1,5 @@
+//! Metrics for iroh-sync
+
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,

@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
-use iroh_sync::store::{GetFilter, KeyFilter};
+use iroh_sync::store::{GetFilter};
 use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
 use quic_rpc::{RpcClient, ServiceConnection};
 
@@ -135,11 +135,7 @@ where
     }
 
     pub async fn get_latest(&self, author_id: AuthorId, key: Vec<u8>) -> Result<SignedEntry> {
-        let filter = GetFilter {
-            key: KeyFilter::Key(key),
-            author: Some(author_id),
-            latest: true,
-        };
+        let filter = GetFilter::latest().with_key(key).with_author(author_id);
         let mut stream = self.get(filter).await?;
         let entry = stream
             .next()

@@ -66,25 +66,27 @@ impl super::Store for Store {
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
         use super::KeyFilter::*;
-        Ok(match filter.latest {
+        let inner = match filter.latest {
             false => match (filter.key, filter.author) {
-                (All, None) => GetIter::All(self.get_all(namespace)?),
-                (Prefix(prefix), None) => GetIter::All(self.get_all_by_prefix(namespace, &prefix)?),
-                (Key(key), None) => GetIter::All(self.get_all_by_key(namespace, key)?),
+                (All, None) => GetIterInner::All(self.get_all(namespace)?),
+                (Prefix(prefix), None) => {
+                    GetIterInner::All(self.get_all_by_prefix(namespace, &prefix)?)
+                }
+                (Key(key), None) => GetIterInner::All(self.get_all_by_key(namespace, key)?),
                 (Key(key), Some(author)) => {
-                    GetIter::All(self.get_all_by_key_and_author(namespace, author, key)?)
+                    GetIterInner::All(self.get_all_by_key_and_author(namespace, author, key)?)
                 }
                 (All, Some(_)) | (Prefix(_), Some(_)) => {
                     bail!("This filter combination is not yet supported")
                 }
             },
             true => match (filter.key, filter.author) {
-                (All, None) => GetIter::Latest(self.get_latest(namespace)?),
+                (All, None) => GetIterInner::Latest(self.get_latest(namespace)?),
                 (Prefix(prefix), None) => {
-                    GetIter::Latest(self.get_latest_by_prefix(namespace, &prefix)?)
+                    GetIterInner::Latest(self.get_latest_by_prefix(namespace, &prefix)?)
                 }
-                (Key(key), None) => GetIter::Latest(self.get_latest_by_key(namespace, key)?),
-                (Key(key), Some(author)) => GetIter::Single(
+                (Key(key), None) => GetIterInner::Latest(self.get_latest_by_key(namespace, key)?),
+                (Key(key), Some(author)) => GetIterInner::Single(
                     self.get_latest_by_key_and_author(namespace, author, key)?
                         .map(Ok)
                         .into_iter(),
@@ -93,7 +95,8 @@ impl super::Store for Store {
                     bail!("This filter combination is not yet supported")
                 }
             },
-        })
+        };
+        Ok(GetIter { inner })
     }
 
     fn get_latest_by_key_and_author(
@@ -113,8 +116,15 @@ impl super::Store for Store {
     }
 }
 
+/// Iterator for entries in [`Store`]
+// We use a struct with an inner enum to exclude the enum variants from the public API.
 #[derive(Debug)]
-pub enum GetIter<'s> {
+pub struct GetIter<'s> {
+    inner: GetIterInner<'s>,
+}
+
+#[derive(Debug)]
+enum GetIterInner<'s> {
     All(GetAllIter<'s>),
     Latest(GetLatestIter<'s>),
     Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
@@ -124,10 +134,10 @@ impl<'s> Iterator for GetIter<'s> {
     type Item = anyhow::Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            GetIter::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIter::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIter::Single(iter) => iter.next(),
+        match &mut self.inner {
+            GetIterInner::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
+            GetIterInner::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
+            GetIterInner::Single(iter) => iter.next(),
         }
     }
 }
@@ -266,7 +276,7 @@ impl GetFilter {
 }
 
 #[derive(Debug)]
-pub struct GetLatestIter<'a> {
+struct GetLatestIter<'a> {
     records: ReplicaRecords<'a>,
     filter: GetFilter,
     /// Current iteration index.
@@ -321,7 +331,7 @@ impl<'a> Iterator for GetLatestIter<'a> {
 }
 
 #[derive(Debug)]
-pub struct GetAllIter<'a> {
+struct GetAllIter<'a> {
     records: ReplicaRecords<'a>,
     filter: GetFilter,
     /// Current iteration index.
@@ -369,6 +379,7 @@ impl<'a> Iterator for GetAllIter<'a> {
     }
 }
 
+/// Instance of a [`Store`]
 #[derive(Debug, Clone)]
 pub struct ReplicaStoreInstance {
     namespace: NamespaceId,
@@ -529,6 +540,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     }
 }
 
+/// Range iterator for a [`ReplicaStoreInstance`]
 #[derive(Debug)]
 pub struct RangeIterator<'a> {
     iter: RecordsIter<'a>,
