@@ -11,13 +11,13 @@ use serde::{Deserialize, Serialize};
 /// Internally, an author is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Author {
-    priv_key: SigningKey,
+    signing_key: SigningKey,
 }
 impl Author {
     /// Create a new author with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
-        let priv_key = SigningKey::generate(rng);
-        Author { priv_key }
+        let signing_key = SigningKey::generate(rng);
+        Author { signing_key }
     }
 
     /// Create an author from a byte array.
@@ -27,27 +27,27 @@ impl Author {
 
     /// Returns the Author byte representation.
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.priv_key.to_bytes()
+        self.signing_key.to_bytes()
     }
 
     /// Returns the AuthorId byte representation.
     pub fn id_bytes(&self) -> [u8; 32] {
-        self.priv_key.verifying_key().to_bytes()
+        self.signing_key.verifying_key().to_bytes()
     }
 
     /// Get the [`AuthorId`] for this author.
     pub fn id(&self) -> AuthorId {
-        AuthorId(self.priv_key.verifying_key())
+        AuthorId(self.signing_key.verifying_key())
     }
 
     /// Sign a message with this author key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
-        self.priv_key.sign(msg)
+        self.signing_key.sign(msg)
     }
 
     /// Strictly verify a signature on a message with this author's public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.priv_key.verify_strict(msg, signature)
+        self.signing_key.verify_strict(msg, signature)
     }
 }
 
@@ -88,15 +88,15 @@ impl AuthorId {
 /// Internally, a namespace is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Namespace {
-    priv_key: SigningKey,
+    signing_key: SigningKey,
 }
 
 impl Namespace {
     /// Create a new namespace with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
-        let priv_key = SigningKey::generate(rng);
+        let signing_key = SigningKey::generate(rng);
 
-        Namespace { priv_key }
+        Namespace { signing_key }
     }
 
     /// Create a namespace from a byte array.
@@ -106,27 +106,27 @@ impl Namespace {
 
     /// Returns the namespace byte representation.
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.priv_key.to_bytes()
+        self.signing_key.to_bytes()
     }
 
     /// Returns the [`NamespaceId`] byte representation.
     pub fn id_bytes(&self) -> [u8; 32] {
-        self.priv_key.verifying_key().to_bytes()
+        self.signing_key.verifying_key().to_bytes()
     }
 
     /// Get the [`NamespaceId`] for this namespace.
     pub fn id(&self) -> NamespaceId {
-        NamespaceId(self.priv_key.verifying_key())
+        NamespaceId(self.signing_key.verifying_key())
     }
 
     /// Sign a message with this namespace key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
-        self.priv_key.sign(msg)
+        self.signing_key.sign(msg)
     }
 
     /// Strictly verify a signature on a message with this namespaces's public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.priv_key.verify_strict(msg, signature)
+        self.signing_key.verify_strict(msg, signature)
     }
 }
 
@@ -163,13 +163,13 @@ impl NamespaceId {
 
 impl fmt::Display for Author {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Author({})", hex::encode(self.priv_key.to_bytes()))
+        write!(f, "Author({})", hex::encode(self.signing_key.to_bytes()))
     }
 }
 
 impl fmt::Display for Namespace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Namespace({})", hex::encode(self.priv_key.to_bytes()))
+        write!(f, "Namespace({})", hex::encode(self.signing_key.to_bytes()))
     }
 }
 
@@ -201,10 +201,10 @@ impl FromStr for Author {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let priv_key: [u8; 32] = hex::decode(s).map_err(|_| ())?.try_into().map_err(|_| ())?;
-        let priv_key = SigningKey::from_bytes(&priv_key);
+        let signing_key: [u8; 32] = hex::decode(s).map_err(|_| ())?.try_into().map_err(|_| ())?;
+        let signing_key = SigningKey::from_bytes(&signing_key);
 
-        Ok(Author { priv_key })
+        Ok(Author { signing_key })
     }
 }
 
@@ -212,10 +212,10 @@ impl FromStr for Namespace {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let priv_key: [u8; 32] = hex::decode(s).map_err(|_| ())?.try_into().map_err(|_| ())?;
-        let priv_key = SigningKey::from_bytes(&priv_key);
+        let signing_key: [u8; 32] = hex::decode(s).map_err(|_| ())?.try_into().map_err(|_| ())?;
+        let signing_key = SigningKey::from_bytes(&signing_key);
 
-        Ok(Namespace { priv_key })
+        Ok(Namespace { signing_key })
     }
 }
 
@@ -223,11 +223,11 @@ impl FromStr for AuthorId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let pub_key: [u8; 32] = hex::decode(s)?
+        let verifying_key: [u8; 32] = hex::decode(s)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("failed to parse: invalid key length"))?;
-        let pub_key = VerifyingKey::from_bytes(&pub_key)?;
-        Ok(AuthorId(pub_key))
+        let verifying_key = VerifyingKey::from_bytes(&verifying_key)?;
+        Ok(AuthorId(verifying_key))
     }
 }
 
@@ -235,23 +235,23 @@ impl FromStr for NamespaceId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let pub_key: [u8; 32] = hex::decode(s)?
+        let verifying_key: [u8; 32] = hex::decode(s)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("failed to parse: invalid key length"))?;
-        let pub_key = VerifyingKey::from_bytes(&pub_key)?;
-        Ok(NamespaceId(pub_key))
+        let verifying_key = VerifyingKey::from_bytes(&verifying_key)?;
+        Ok(NamespaceId(verifying_key))
     }
 }
 
 impl From<SigningKey> for Author {
-    fn from(priv_key: SigningKey) -> Self {
-        Self { priv_key }
+    fn from(signing_key: SigningKey) -> Self {
+        Self { signing_key }
     }
 }
 
 impl From<SigningKey> for Namespace {
-    fn from(priv_key: SigningKey) -> Self {
-        Self { priv_key }
+    fn from(signing_key: SigningKey) -> Self {
+        Self { signing_key }
     }
 }
 
