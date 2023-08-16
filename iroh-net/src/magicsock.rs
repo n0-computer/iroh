@@ -121,8 +121,8 @@ pub struct Options {
     /// Private key for this node.
     pub private_key: key::node::SecretKey,
 
-    /// The [`DerpMap`] to use.
-    pub derp_map: Option<DerpMap>,
+    /// The [`DerpMap`] to use, leave empty to not use a DERP server.
+    pub derp_map: DerpMap,
 
     /// Callbacks to emit on various socket events
     pub callbacks: Callbacks,
@@ -150,7 +150,7 @@ impl Default for Options {
         Options {
             port: 0,
             private_key: key::node::SecretKey::generate(),
-            derp_map: None,
+            derp_map: Default::default(),
             callbacks: Default::default(),
         }
     }
@@ -213,7 +213,7 @@ pub(self) struct Inner {
     pub(self) ipv6_reported: Arc<AtomicBool>,
 
     /// None (or zero regions/nodes) means DERP is disabled.
-    pub(self) derp_map: Option<DerpMap>,
+    pub(self) derp_map: DerpMap,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
 }
@@ -235,17 +235,11 @@ impl Inner {
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
     pub(self) async fn has_derp_region(&self, region: u16) -> bool {
-        match &self.derp_map {
-            None => false,
-            Some(ref derp_map) => derp_map.contains_region(region),
-        }
+        self.derp_map.contains_region(region)
     }
 
     pub(self) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
-        match &self.derp_map {
-            None => None,
-            Some(ref derp_map) => derp_map.get_region(region).cloned(),
-        }
+        self.derp_map.get_region(region).cloned()
     }
 
     pub(self) fn is_closing(&self) -> bool {
@@ -1533,13 +1527,12 @@ impl Actor {
 
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
-        let derp_map = self.inner.derp_map.as_ref();
-        if derp_map.is_none() {
-            debug!("skipping netcheck, no Derp Map");
+        if self.inner.derp_map.is_empty() {
+            debug!("skipping netcheck, empty DerpMap");
             return Ok(Default::default());
         }
 
-        let derp_map = derp_map.cloned().unwrap();
+        let derp_map = self.inner.derp_map.clone();
         let net_checker = &mut self.net_checker;
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
@@ -1597,11 +1590,6 @@ impl Actor {
 
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
         {
-            let derp_map = &self.inner.derp_map;
-            if derp_map.is_none() {
-                self.inner.set_my_derp(0);
-                return false;
-            }
             let my_derp = self.inner.my_derp();
             if derp_num == my_derp {
                 // No change.
@@ -1614,11 +1602,7 @@ impl Actor {
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
-            match derp_map
-                .as_ref()
-                .expect("already checked")
-                .get_region(derp_num)
-            {
+            match self.inner.derp_map.get_region(derp_num) {
                 Some(dr) => {
                     info!("home is now derp-{} ({})", derp_num, dr.region_code);
                 }
@@ -1641,17 +1625,10 @@ impl Actor {
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
-    /// If no [`DerpMap`] exists, returns `0`.
+    /// If no the [`DerpMap`] is empty, returns `0`.
     async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
-            let derp_map = &self.inner.derp_map;
-            if derp_map.is_none() {
-                return 0;
-            }
-            let ids = derp_map
-                .as_ref()
-                .map(|d| d.region_ids())
-                .unwrap_or_default();
+            let ids = self.inner.derp_map.region_ids();
             if ids.is_empty() {
                 // No DERP regions in map.
                 return 0;

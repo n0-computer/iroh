@@ -187,16 +187,9 @@ impl DerpActor {
         peer: key::node::PublicKey,
     ) {
         debug!(region_id, %peer, "sending derp");
-        {
-            let derp_map = &self.conn.derp_map;
-            if derp_map.is_none() {
-                warn!("DERP is disabled");
-                return;
-            }
-            if !derp_map.as_ref().unwrap().contains_region(region_id) {
-                warn!("unknown region id {}", region_id);
-                return;
-            }
+        if !self.conn.derp_map.contains_region(region_id) {
+            warn!("unknown region id {}", region_id);
+            return;
         }
 
         // Derp Send

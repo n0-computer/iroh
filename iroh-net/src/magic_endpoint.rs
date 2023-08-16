@@ -178,13 +178,13 @@ impl MagicEndpoint {
         keypair: Keypair,
         bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
-        derp_map: Option<DerpMap>,
+        derp_map: Option<DerpMap>, // TODO: remove this option as well?
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
         let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
-            derp_map: Some(derp_map.unwrap_or_default()),
+            derp_map: derp_map.unwrap_or_default(),
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
         })
