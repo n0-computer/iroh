@@ -174,7 +174,7 @@ pub mod fsm {
         /// Error when writing the request to the [quinn::SendStream]
         #[error("write: {0}")]
         Write(#[from] quinn::WriteError),
-        /// Error when reading a custom request from the [quinn::RecvStream]
+        /// Error when reading a custom request from the [`quinn::RecvStream`]
         #[error("read: {0}")]
         Read(quinn::ReadError),
         /// The remote side sent a custom request that is too big
