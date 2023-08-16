@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 /// Configures logging for the current test, **single-threaded runtime only**.
 ///
 /// This setup can be used for any sync test or async test using a single-threaded tokio
-/// runtime (the default).  For multi-threaded runtimes use [`with_logging`].
+/// runtime (the default).
 ///
 /// This configures logging that will interact well with tests: logs will be captured by the
 /// test framework and only printed on failure.
@@ -91,7 +91,7 @@ pub fn testing_subscriber() -> impl tracing::Subscriber {
 /// A tracing writer that interacts well with test output capture.
 ///
 /// Using this writer will make sure that the output is captured normally and only printed
-/// when the test fails.  See [`setup_logging`] to actually use this.
+/// when the test fails.  See [`setup`] to actually use this.
 #[derive(Debug)]
 struct TestWriter;
 
