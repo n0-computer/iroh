@@ -17,7 +17,6 @@ use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, UseIpv4, UseIpv6},
-    key::node::SecretKey,
     netcheck, portmapper,
     tls::{Keypair, PeerId, PublicKey},
     MagicEndpoint,
@@ -489,12 +488,12 @@ fn configure_local_derp_map() -> DerpMap {
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 
 async fn make_endpoint(
-    private_key: SecretKey,
+    private_key: Keypair,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<MagicEndpoint> {
     tracing::info!(
         "public key: {}",
-        hex::encode(private_key.public_key().as_bytes())
+        hex::encode(private_key.public().as_bytes())
     );
     tracing::info!("derp map {:#?}", derp_map);
 
@@ -536,12 +535,12 @@ async fn make_endpoint(
 
 async fn connect(
     dial: String,
-    private_key: SecretKey,
+    private_key: Keypair,
     remote_endpoints: Vec<SocketAddr>,
     derp_region: Option<u16>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(private_key.clone(), derp_map).await?;
+    let endpoint = make_endpoint(private_key, derp_map).await?;
 
     let bytes = hex::decode(dial)?;
     let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
@@ -575,7 +574,7 @@ fn format_addr(addr: SocketAddr) -> String {
 }
 
 async fn accept(
-    private_key: SecretKey,
+    private_key: Keypair,
     config: TestConfig,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
@@ -589,7 +588,7 @@ async fn accept(
         .join(" ");
     println!(
             "Run\n\niroh doctor connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
-            hex::encode(private_key.public_key().as_bytes()),
+            hex::encode(private_key.public().as_bytes()),
             remote_addrs,
         );
     println!("Omit the --remote-endpoint args to connect just by key.");
@@ -769,26 +768,26 @@ impl std::fmt::Display for RegionDetails {
     }
 }
 
-fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
+fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<Keypair> {
     Ok(match private_key {
-        PrivateKey::Random => SecretKey::generate(),
+        PrivateKey::Random => Keypair::generate(),
         PrivateKey::Hex(hex) => {
             let bytes = hex::decode(hex)?;
             let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-            SecretKey::from(bytes)
+            Keypair::from(iroh_net::tls::SecretKey::from(bytes))
         }
         PrivateKey::Local => {
             let path = IrohPaths::Keypair.with_env()?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
                 let keypair = Keypair::try_from_openssh(bytes)?;
-                SecretKey::from(keypair.secret().to_bytes())
+                keypair
             } else {
                 println!(
                     "Local key not found in {}. Using random key.",
                     path.display()
                 );
-                SecretKey::generate()
+                Keypair::generate()
             }
         }
     })

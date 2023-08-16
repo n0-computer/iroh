@@ -3072,11 +3072,10 @@ pub(crate) mod tests {
         setup_logging();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
-            let key = key::node::SecretKey::generate();
+            let key = tls::Keypair::generate();
             let conn = std::net::UdpSocket::bind(addr)?;
 
-            let tls_server_config =
-                tls::make_server_config(&key.clone().into(), vec![ALPN.to_vec()], false)?;
+            let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -3216,11 +3215,10 @@ pub(crate) mod tests {
         setup_logging();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
-            let key = key::node::SecretKey::generate();
+            let key = tls::Keypair::generate();
             let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into()).await?;
 
-            let tls_server_config =
-                tls::make_server_config(&key.clone().into(), vec![ALPN.to_vec()], false)?;
+            let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -3234,7 +3232,7 @@ pub(crate) mod tests {
             )?;
 
             let tls_client_config =
-                tls::make_client_config(&key.clone().into(), None, vec![ALPN.to_vec()], false)?;
+                tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
