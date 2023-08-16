@@ -6,7 +6,7 @@ use iroh::{
     sync::PeerSource,
 };
 use iroh_sync::{
-    store::{GetFilter},
+    store::GetFilter,
     sync::{AuthorId, NamespaceId, SignedEntry},
 };
 use quic_rpc::transport::quinn::QuinnConnection;
