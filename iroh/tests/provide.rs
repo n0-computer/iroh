@@ -31,7 +31,11 @@ use bao_tree::blake3;
 use iroh_bytes::{
     baomap::Store,
     collection::{CollectionParser, CollectionStats, LinkStream},
-    get::{fsm, fsm::ConnectedNext, Stats},
+    get::{
+        fsm::ConnectedNext,
+        fsm::{self},
+        Stats,
+    },
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
@@ -469,6 +473,44 @@ async fn test_ipv6() {
 }
 
 #[tokio::test]
+async fn test_not_found() {
+    setup_logging();
+    let rt = test_runtime();
+
+    let (db, _hash) = create_test_db([("test", b"hello")]);
+    let (_db, hash) = create_test_db([("test", b"goodbye")]);
+    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
+    let node = match test_node(db, addr).runtime(&rt).spawn().await {
+        Ok(provider) => provider,
+        Err(_) => {
+            // We assume the problem here is IPv6 on this host.  If the problem is
+            // not IPv6 then other tests will also fail.
+            return;
+        }
+    };
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let opts = get_options(peer_id, addrs);
+        let request = GetRequest::all(hash).into();
+        let res = run_get_request(opts, request).await;
+        if let Err(cause) = res {
+            if let Some(e) = cause.downcast_ref::<std::io::Error>() {
+                tracing::debug!("ERRORRRRR {:?}", e);
+                Ok(())
+            } else {
+                anyhow::bail!("expected AtBlobHeaderNextError, got {:?}", cause);
+            }
+        } else {
+            anyhow::bail!("expected error when getting non-existent blob");
+        }
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
+}
+
+#[tokio::test]
 async fn test_run_ticket() {
     let rt = test_runtime();
     let (db, hash) = create_test_db([("test", b"hello")]);
@@ -541,8 +583,8 @@ async fn run_custom_get_request<C: CollectionParser>(
     // we assume that the request includes the entire collection
     let (mut next, root, mut c) = {
         let ConnectedNext::StartRoot(sc) = connected.next().await? else {
-                panic!("request did not include collection");
-            };
+            panic!("request did not include collection");
+        };
         println!("getting collection");
         let (done, data) = sc.next().concatenate_into_vec().await?;
         let mut data = Bytes::from(data);
