@@ -6,7 +6,7 @@ use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey}
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
-/// Author key to insert entries in a [`Replica`]
+/// Author key to insert entries in a [`crate::Replica`]
 ///
 /// Internally, an author is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,21 +70,19 @@ impl AuthorId {
         self.0.as_bytes()
     }
 
-    /// Construct an `AuthorId` from a slice of bytes.
+    /// Create from a slice of bytes.
     ///
-    /// # Warning
-    ///
-    /// The caller is responsible for ensuring that the bytes passed into this method actually
-    /// represent a valid [`ed25591`] curve point. This will never fail for bytes returned from
-    /// [`Self::as_bytes`].
+    /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
+    /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
+    /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(AuthorId(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
-/// Namespace key of a [`Replica`].
+/// Namespace key of a [`crate::Replica`].
 ///
-/// Holders of this key can insert new entries into a [`Replica`].
+/// Holders of this key can insert new entries into a [`crate::Replica`].
 /// Internally, a namespace is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Namespace {
@@ -149,13 +147,11 @@ impl NamespaceId {
         self.0.as_bytes()
     }
 
-    /// Construct a `NamespaceId` from a slice of bytes.
+    /// Create from a slice of bytes.
     ///
-    /// # Warning
-    ///
-    /// The caller is responsible for ensuring that the bytes passed into this method actually
-    /// represent a valid [`ed25591`] curve point. This will never fail for bytes returned from
-    /// [`Self::as_bytes`].
+    /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
+    /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
+    /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(NamespaceId(VerifyingKey::from_bytes(bytes)?))
     }
