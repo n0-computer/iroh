@@ -171,7 +171,7 @@ pub mod fsm {
         /// The serialized request is too long to be sent
         #[error("request too big")]
         RequestTooBig,
-        /// Error when writing the request to the [quinn::SendStream]
+        /// Error when writing the request to the [`quinn::SendStream`]
         #[error("write: {0}")]
         Write(#[from] quinn::WriteError),
         /// Error when reading a custom request from the [`quinn::RecvStream`]
