@@ -472,7 +472,7 @@ async fn test_ipv6() {
     .expect("get failed");
 }
 
-/// Simulate a node that has nohting
+/// Simulate a node that has nothing
 #[tokio::test]
 async fn test_not_found() {
     setup_logging();
