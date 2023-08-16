@@ -2003,14 +2003,8 @@ impl Actor {
         let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &sender);
         let payload = di.shared_key.open(sealed_box);
         if payload.is_err() {
-            // This might be have been intended for a previous
-            // disco key.  When we restart we get a new disco key
-            // and old packets might've still been in flight (or
-            // scheduled). This is particularly the case for LANs
-            // or non-NATed endpoints.
-            // Don't log in normal case. Pass on to wireguard, in case
-            // it's actually a wireguard packet (super unlikely, but).
-            debug!(
+            // This could happen if we changed the key between restarts.
+            warn!(
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
                 self.inner.public_key, sender, payload,
             );

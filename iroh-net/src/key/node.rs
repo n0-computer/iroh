@@ -266,19 +266,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_seal_open_roundtrip() {
+    fn test_seal_open_roundtrip_regular() {
         let key_a = SecretKey::generate();
         let key_b = SecretKey::generate();
 
-        seal_open_roundtrip(key_a, key_b);
+        seal_open_roundtrip(&key_a, &key_b);
+        seal_open_roundtrip(&key_b, &key_a);
     }
 
-    fn seal_open_roundtrip(key_a: SecretKey, key_b: SecretKey) {
+    #[test]
+    fn test_seal_open_roundtrip_converted() {
+        let key_a = crate::tls::Keypair::generate();
+        let key_b = crate::tls::Keypair::generate();
+        let key_a: SecretKey = key_a.secret().clone().into();
+        let key_b: SecretKey = key_b.secret().clone().into();
+
+        seal_open_roundtrip(&key_a, &key_b);
+        seal_open_roundtrip(&key_b, &key_a);
+        seal_open_roundtrip(&key_a, &key_a);
+    }
+
+    fn seal_open_roundtrip(key_a: &SecretKey, key_b: &SecretKey) {
         let msg = b"super secret message!!!!";
         let sealed_message = key_a.seal_to(&key_b.public_key(), msg);
         let decrypted_message = key_b
             .open_from(&key_a.public_key(), &sealed_message)
             .unwrap();
         assert_eq!(&msg[..], &decrypted_message);
+    }
+
+    #[test]
+    fn test_roundtrip_public_key() {
+        let key = SecretKey::generate();
+        let public_bytes = *key.public_key().as_bytes();
+        let public_key_back = PublicKey::from(public_bytes);
+        assert_eq!(key.public_key(), public_key_back);
     }
 }
