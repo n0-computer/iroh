@@ -25,7 +25,6 @@ use iroh_net::{
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
 use tokio::sync::mpsc;
-use tracing_subscriber::{prelude::*, EnvFilter};
 
 use bao_tree::blake3;
 use iroh_bytes::{
@@ -55,7 +54,7 @@ fn test_node<D: Store>(
 
 #[tokio::test]
 async fn basics() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
     transfer_data(
         vec![("hello_world", "hello world!".as_bytes().to_vec())],
@@ -66,7 +65,7 @@ async fn basics() -> Result<()> {
 
 #[tokio::test]
 async fn multi_file() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
 
     let file_opts = vec![
@@ -81,7 +80,7 @@ async fn multi_file() -> Result<()> {
 
 #[tokio::test]
 async fn many_files() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
     let num_files = [10, 100];
     for num in num_files {
@@ -100,7 +99,7 @@ async fn many_files() -> Result<()> {
 
 #[tokio::test]
 async fn sizes() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
 
     let sizes = [
@@ -349,20 +348,12 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
 }
 
-fn setup_logging() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .ok();
-}
-
 #[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let mut db = iroh::baomap::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::new(
@@ -443,7 +434,7 @@ fn create_test_db(
 
 #[tokio::test]
 async fn test_ipv6() {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
 
     let (db, hash) = create_test_db([("test", b"hello")]);

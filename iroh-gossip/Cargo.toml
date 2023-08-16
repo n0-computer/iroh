@@ -34,10 +34,11 @@ once_cell = "1.18.0"
 genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
-url = "2.4.0"
+iroh-test = { path = "../iroh-test" }
 rand_chacha = "0.3.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.4.0"
 
 [features]
 default = ["net"]

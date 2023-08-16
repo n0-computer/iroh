@@ -1,10 +1,11 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-net",
   "iroh-bytes",
   "iroh-gossip",
   "iroh-metrics",
+  "iroh-net",
+  "iroh-test",
 ]
 
 [profile.release]

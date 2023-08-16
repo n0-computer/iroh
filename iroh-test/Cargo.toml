@@ -1,0 +1,14 @@
+[package]
+name = "iroh-test"
+version = "0.5.1"
+edition = "2021"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+publish = false
+
+[dependencies]
+tokio = { version = "1", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
