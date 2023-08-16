@@ -322,6 +322,10 @@ impl EntrySignature {
 }
 
 /// A single entry in a replica.
+///
+/// An entry is identified by a key, its author, and the replica's
+/// namespace. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
+/// of the entry's content data, the size of this content data, and a timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     id: RecordIdentifier,
@@ -463,6 +467,7 @@ pub struct Record {
     timestamp: u64,
     /// Length of the data referenced by `hash`.
     len: u64,
+    /// Hash of the content data.
     hash: Hash,
 }
 
@@ -481,12 +486,12 @@ impl Record {
         self.timestamp
     }
 
-    /// Get the length of the data to which this record's content hash refers to.
+    /// Get the length of the data addressed by this record's content hash.
     pub fn content_len(&self) -> u64 {
         self.len
     }
 
-    /// Get the content hash of this record.
+    /// Get the hash of the content data of this record.
     pub fn content_hash(&self) -> &Hash {
         &self.hash
     }
