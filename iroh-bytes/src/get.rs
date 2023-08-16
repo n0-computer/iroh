@@ -415,9 +415,53 @@ pub mod fsm {
         misc: Box<Misc>,
     }
 
+    /// Error that you can get from [AtBlobHeader::next]
+    #[derive(Debug, thiserror::Error)]
+    pub enum AtBlobHeaderNextError {
+        /// Eof when reading the size header
+        ///
+        /// This indicates that the provider does not have the requested data.
+        #[error("not found")]
+        NotFound,
+        /// Quinn read error when reading the size header
+        #[error("read: {0}")]
+        Read(quinn::ReadError),
+        /// Generic io error
+        #[error("io: {0}")]
+        Io(io::Error),
+    }
+
+    impl From<AtBlobHeaderNextError> for io::Error {
+        fn from(cause: AtBlobHeaderNextError) -> Self {
+            match cause {
+                AtBlobHeaderNextError::NotFound => {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, cause)
+                }
+                AtBlobHeaderNextError::Read(cause) => cause.into(),
+                AtBlobHeaderNextError::Io(cause) => cause,
+            }
+        }
+    }
+
+    impl From<io::Error> for AtBlobHeaderNextError {
+        fn from(cause: io::Error) -> Self {
+            if cause.kind() == io::ErrorKind::UnexpectedEof {
+                Self::NotFound
+            } else if let Some(inner) = cause.get_ref() {
+                if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                    Self::Read(e.clone())
+                } else {
+                    Self::Io(cause)
+                }
+            } else {
+                Self::Io(cause)
+            }
+        }
+    }
+
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(AtBlobContent, u64), std::io::Error> {
+        pub async fn next(self) -> Result<(AtBlobContent, u64), AtBlobHeaderNextError> {
             let (stream, size) = self.stream.next().await?;
             Ok((
                 AtBlobContent {
@@ -429,16 +473,14 @@ pub mod fsm {
         }
 
         /// Drain the response and throw away the result
-        pub async fn drain(self) -> result::Result<AtEndBlob, DecodeError> {
+        pub async fn drain(self) -> result::Result<AtEndBlob, io::Error> {
             let (mut content, _size) = self.next().await?;
             loop {
                 match content.next().await {
                     BlobContentNext::More((content1, Ok(_))) => {
                         content = content1;
                     }
-                    BlobContentNext::More((_, Err(e))) => {
-                        return Err(e);
-                    }
+                    BlobContentNext::More((_, Err(e))) => return Err(e.into()),
                     BlobContentNext::Done(end) => {
                         return Ok(end);
                     }
@@ -450,9 +492,7 @@ pub mod fsm {
         ///
         /// For a request that does not request the complete blob, this will just
         /// concatenate the ranges that were requested.
-        pub async fn concatenate_into_vec(
-            self,
-        ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
+        pub async fn concatenate_into_vec(self) -> result::Result<(AtEndBlob, Vec<u8>), io::Error> {
             let (mut curr, size) = self.next().await?;
             let mut res = Vec::with_capacity(size as usize);
             let done = loop {
@@ -476,7 +516,7 @@ pub mod fsm {
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
             data: D,
-        ) -> result::Result<AtEndBlob, DecodeError> {
+        ) -> result::Result<AtEndBlob, io::Error> {
             let (content, _size) = self.next().await?;
             content.write_all(data).await
         }
@@ -489,7 +529,7 @@ pub mod fsm {
             self,
             outboard: Option<O>,
             data: D,
-        ) -> result::Result<AtEndBlob, DecodeError>
+        ) -> result::Result<AtEndBlob, io::Error>
         where
             D: AsyncSliceWriter,
             O: OutboardMut,
@@ -531,13 +571,12 @@ pub mod fsm {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
-                    (next, res).into()
+                    BlobContentNext::More((next, res))
                 }
-                ResponseDecoderReadingNext::Done(stream) => AtEndBlob {
+                ResponseDecoderReadingNext::Done(stream) => BlobContentNext::Done(AtEndBlob {
                     stream,
                     misc: self.misc,
-                }
-                .into(),
+                }),
             }
         }
 
@@ -559,7 +598,7 @@ pub mod fsm {
             self,
             mut outboard: Option<O>,
             mut data: D,
-        ) -> result::Result<AtEndBlob, DecodeError>
+        ) -> result::Result<AtEndBlob, io::Error>
         where
             D: AsyncSliceWriter,
             O: OutboardMut,
@@ -588,7 +627,7 @@ pub mod fsm {
         }
 
         /// Write the entire blob to a slice writer.
-        pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, DecodeError>
+        pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, io::Error>
         where
             D: AsyncSliceWriter,
         {
@@ -658,7 +697,7 @@ pub mod fsm {
         }
 
         /// Finish the get response, returning statistics
-        pub async fn next(self) -> result::Result<Stats, std::io::Error> {
+        pub async fn next(self) -> result::Result<Stats, quinn::ReadError> {
             // Shut down the stream
             let (mut reader, bytes_read) = self.reader.into_parts();
             if let Some(chunk) = reader.read_chunk(8, false).await? {
