@@ -402,23 +402,25 @@ where
     }
 }
 
-// TODO: with_limit is unused, remove?
-// impl<K, V, S> Peer<K, V, S>
-// where
-//     K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
-//     V: Clone + Debug,
-//     S: Store<K, V> + Default,
-// {
-//     fn with_limit(limit: Range<K>) -> Self {
-//         Peer {
-//             store: S::default(),
-//             max_set_size: 1,
-//             split_factor: 2,
-//             limit: Some(limit),
-//             _phantom: Default::default(),
-//         }
-//     }
-// }
+// currently unused outside of tests
+#[cfg(test)]
+impl<K, V, S> Peer<K, V, S>
+where
+    K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
+    V: Clone + Debug,
+    S: Store<K, V> + Default,
+{
+    fn with_limit(limit: Range<K>) -> Self {
+        Peer {
+            store: S::default(),
+            max_set_size: 1,
+            split_factor: 2,
+            limit: Some(limit),
+            _phantom: Default::default(),
+        }
+    }
+}
+
 impl<K, V, S> Peer<K, V, S>
 where
     K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
@@ -613,19 +615,20 @@ where
         self.store.put(k, v)
     }
 
-    // TODO: these are unused, remove?
+    /// List all existing key value pairs.
+    // currently unused outside of tests
+    #[cfg(test)]
+    pub fn all(&self) -> Result<impl Iterator<Item = Result<(K, V), S::Error>> + '_, S::Error> {
+        self.store.all()
+    }
+
+    // /// Get the entry for the given key.
     // pub fn get(&self, k: &K) -> Result<Option<V>, S::Error> {
     //     self.store.get(k)
     // }
-    //
     // /// Remove the given key.
     // pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
     //     self.store.remove(k)
-    // }
-    //
-    // /// List all existing key value pairs.
-    // pub fn all(&self) -> Result<impl Iterator<Item = Result<(K, V), S::Error>> + '_, S::Error> {
-    //     self.store.all()
     // }
     //
     // /// Returns a refernce to the underlying store.

@@ -1,10 +1,7 @@
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_bytes::util::runtime;
-use iroh_sync::{
-    store::{GetFilter, KeyFilter},
-    sync::SignedEntry,
-};
+use iroh_sync::{store::GetFilter, sync::SignedEntry};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -22,13 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;
-    let mut stream = doc
-        .get(GetFilter {
-            latest: true,
-            key: KeyFilter::All,
-            author: None,
-        })
-        .await?;
+    let mut stream = doc.get(GetFilter::latest()).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
         let content = doc.get_content_bytes(&entry).await?;
