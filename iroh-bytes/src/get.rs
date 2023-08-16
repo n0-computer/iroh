@@ -15,16 +15,15 @@ use std::fmt::{self, Debug};
 use std::time::{Duration, Instant};
 
 use crate::util::Hash;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::io::DecodeError;
 use bao_tree::ChunkNum;
-use bytes::BytesMut;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use tracing::{debug, error};
 
-use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
+use crate::protocol::{AnyGetRequest, RangeSpecSeq};
 use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
@@ -51,9 +50,9 @@ impl Stats {
 ///
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
 pub mod fsm {
-    use std::result;
+    use std::{io, result};
 
-    use crate::protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter};
+    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, MAX_MESSAGE_SIZE};
 
     use super::*;
 
@@ -65,6 +64,7 @@ pub mod fsm {
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -162,6 +162,71 @@ pub mod fsm {
         Closing(AtClosing),
     }
 
+    /// Error that you can get from [AtConnected::next]
+    #[derive(Debug, thiserror::Error)]
+    pub enum ConnectedNextError {
+        /// Error when serializing the request
+        #[error("postcard ser: {0}")]
+        PostcardSer(postcard::Error),
+        /// The serialized request is too long to be sent
+        #[error("request too big")]
+        RequestTooBig,
+        /// Error when writing the request to the [quinn::SendStream]
+        #[error("write: {0}")]
+        Write(#[from] quinn::WriteError),
+        /// Error when reading a custom request from the [quinn::RecvStream]
+        #[error("read: {0}")]
+        Read(quinn::ReadError),
+        /// The remote side sent a custom request that is too big
+        #[error("custom request too big")]
+        CustomRequestTooBig,
+        /// Response terminated early when reading a custom request
+        #[error("eof")]
+        Eof,
+        /// Error when deserializing a received custom request
+        #[error("postcard: {0}")]
+        PostcardDe(postcard::Error),
+        /// A generic io error
+        #[error("io {0}")]
+        Io(io::Error),
+    }
+
+    impl From<io::Error> for ConnectedNextError {
+        fn from(cause: io::Error) -> Self {
+            if cause.kind() == io::ErrorKind::UnexpectedEof {
+                Self::Eof
+            } else if let Some(inner) = cause.get_ref() {
+                if let Some(e) = inner.downcast_ref::<quinn::WriteError>() {
+                    Self::Write(e.clone())
+                } else if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                    Self::Read(e.clone())
+                } else {
+                    Self::Io(cause)
+                }
+            } else {
+                Self::Io(cause)
+            }
+        }
+    }
+
+    impl From<ConnectedNextError> for io::Error {
+        fn from(cause: ConnectedNextError) -> Self {
+            match cause {
+                ConnectedNextError::Write(cause) => cause.into(),
+                ConnectedNextError::Read(cause) => cause.into(),
+                ConnectedNextError::Eof => io::ErrorKind::UnexpectedEof.into(),
+                ConnectedNextError::Io(cause) => cause,
+                ConnectedNextError::PostcardSer(cause) => {
+                    io::Error::new(io::ErrorKind::Other, cause)
+                }
+                ConnectedNextError::PostcardDe(cause) => {
+                    io::Error::new(io::ErrorKind::Other, cause)
+                }
+                _ => io::Error::new(io::ErrorKind::Other, cause),
+            }
+        }
+    }
+
     impl AtConnected {
         /// Send the request and move to the next state
         ///
@@ -169,7 +234,7 @@ pub mod fsm {
         /// the request requests part of the collection or not.
         ///
         /// If the request is empty, this can also move directly to `Finished`.
-        pub async fn next(self) -> Result<ConnectedNext, GetResponseError> {
+        pub async fn next(self) -> Result<ConnectedNext, ConnectedNextError> {
             let Self {
                 start,
                 mut reader,
@@ -179,9 +244,18 @@ pub mod fsm {
             // 1. Send Request
             {
                 debug!("sending request");
-                // wrap the get request in a request so we can serialize it
-                let request_bytes = postcard::to_stdvec(&request)?;
-                write_lp(&mut writer, &request_bytes).await?;
+                let request_bytes =
+                    postcard::to_stdvec(&request).map_err(ConnectedNextError::PostcardSer)?;
+
+                if request_bytes.len() > MAX_MESSAGE_SIZE {
+                    return Err(ConnectedNextError::RequestTooBig);
+                }
+
+                // write u64 length prefix
+                writer.write_u64_le(request_bytes.len() as u64).await?;
+
+                // write the request itself
+                writer.write_all(&request_bytes).await?;
             }
 
             // 2. Finish writing before expecting a response
@@ -196,13 +270,22 @@ pub mod fsm {
                 }
                 AnyGetRequest::CustomGet(_) => {
                     // we sent a custom request, so we need the actual GetRequest from the response
-                    let mut buffer = BytesMut::new();
-                    let response = read_lp(&mut reader, &mut buffer)
-                        .await?
-                        .context("unexpected EOF when reading response to custom get request")?;
-                    postcard::from_bytes::<GetRequest>(&response).context(
-                        "unable to deserialize response to custom get request as get request",
-                    )?
+                    let response_len = reader.read_u64_le().await?;
+
+                    let mut response = if response_len < (MAX_MESSAGE_SIZE as u64) {
+                        Vec::with_capacity(response_len as usize)
+                    } else {
+                        return Err(ConnectedNextError::CustomRequestTooBig);
+                    };
+                    (&mut reader)
+                        .take(response_len)
+                        .read_to_end(&mut response)
+                        .await?;
+                    if response.len() != response_len as usize {
+                        return Err(ConnectedNextError::Eof);
+                    }
+                    postcard::from_bytes::<GetRequest>(&response)
+                        .map_err(ConnectedNextError::PostcardDe)?
                 }
             };
             let hash = request.hash;
