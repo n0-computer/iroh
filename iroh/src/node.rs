@@ -347,7 +347,6 @@ where
         gossip_cell.set(gossip.clone()).unwrap();
 
         // spawn the sync engine
-        // TODO: Remove once persistence is merged
         let downloader = Downloader::new(rt.clone(), endpoint.clone(), self.db.clone());
         let sync = SyncEngine::spawn(
             rt.clone(),
@@ -607,8 +606,6 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    ///
-    /// TODO: remove blobs_path argument once peristence branch is merged
     pub fn builder(bao_store: D, doc_store: S) -> Builder<D, S> {
         Builder::with_db_and_store(bao_store, doc_store)
     }
