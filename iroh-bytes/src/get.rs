@@ -486,7 +486,7 @@ pub mod fsm {
                     BlobContentNext::More((content1, Ok(_))) => {
                         content = content1;
                     }
-                    BlobContentNext::More((_, Err(e))) => return Err(e.into()),
+                    BlobContentNext::More((_, Err(e))) => return Err(e),
                     BlobContentNext::Done(end) => {
                         return Ok(end);
                     }
