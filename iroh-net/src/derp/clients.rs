@@ -1,7 +1,7 @@
 //! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
-use crate::key::node::PublicKey;
+use crate::tls::PublicKey;
 use std::collections::{HashMap, HashSet};
 
 use futures::future::join_all;
@@ -296,8 +296,11 @@ impl Clients {
 mod tests {
     use super::*;
 
-    use crate::derp::{
-        client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
+    use crate::{
+        derp::{
+            client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
+        },
+        tls::Keypair,
     };
 
     use anyhow::Result;
@@ -334,8 +337,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_clients() -> Result<()> {
-        let a_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let b_key = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
+        let a_key = Keypair::generate().public();
+        let b_key = Keypair::generate().public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key.clone(), 0);
 

@@ -35,7 +35,8 @@ use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::node::{EncryptExt, PUBLIC_KEY_LENGTH};
+use crate::tls::{Keypair, PublicKey};
 use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
@@ -286,7 +287,7 @@ async fn write_frame_timeout(
 /// Flushes after writing.
 pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     mut writer: W,
-    secret_key: &SecretKey,
+    secret_key: &Keypair,
     server_key: &PublicKey,
     client_info: &ClientInfo,
 ) -> Result<()> {
@@ -296,7 +297,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     write_frame(
         &mut writer,
         FrameType::ClientInfo,
-        &[secret_key.public_key().as_bytes(), &sealed_msg],
+        &[secret_key.public().as_bytes(), &sealed_msg],
     )
     .await?;
     writer.flush().await?;
@@ -306,7 +307,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 async fn recv_client_key<R: AsyncRead + Unpin>(
-    secret_key: SecretKey,
+    secret_key: Keypair,
     mut reader: R,
 ) -> Result<(PublicKey, ClientInfo)> {
     let mut buf = BytesMut::new();
@@ -359,24 +360,18 @@ mod tests {
     #[tokio::test]
     async fn test_send_recv_client_key() -> Result<()> {
         let (mut reader, mut writer) = tokio::io::duplex(1024);
-        let server_key = SecretKey::generate();
-        let client_key = SecretKey::generate();
+        let server_key = Keypair::generate();
+        let client_key = Keypair::generate();
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
             mesh_key: Some([1u8; 32]),
             can_ack_pings: true,
             is_prober: true,
         };
-        println!("client_key pub {:?}", client_key.public_key());
-        send_client_key(
-            &mut writer,
-            &client_key,
-            &server_key.public_key(),
-            &client_info,
-        )
-        .await?;
+        println!("client_key pub {:?}", client_key.public());
+        send_client_key(&mut writer, &client_key, &server_key.public(), &client_info).await?;
         let (client_pub_key, got_client_info) = recv_client_key(server_key, &mut reader).await?;
-        assert_eq!(client_key.public_key(), client_pub_key);
+        assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())
     }

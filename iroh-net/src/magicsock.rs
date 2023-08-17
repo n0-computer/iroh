@@ -33,9 +33,11 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 use crate::{
     config::{self, DERP_MAGIC_IP},
     derp::{DerpMap, DerpRegion},
-    disco, key,
+    disco,
+    key::node::{EncryptExt, SharedSecret},
     net::ip::LocalAddresses,
     netcheck, netmap, portmapper, stun,
+    tls::{Keypair, PublicKey},
     util::AbortingJoinHandle,
 };
 
@@ -119,7 +121,7 @@ pub struct Options {
     pub port: u16,
 
     /// Private key for this node.
-    pub private_key: key::node::SecretKey,
+    pub private_key: Keypair,
 
     /// The [`DerpMap`] to use.
     pub derp_map: Option<DerpMap>,
@@ -149,7 +151,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             port: 0,
-            private_key: key::node::SecretKey::generate(),
+            private_key: Keypair::generate(),
             derp_map: None,
             callbacks: Default::default(),
         }
@@ -195,9 +197,8 @@ pub(self) struct Inner {
     network_recv_wakers: std::sync::Mutex<Option<Waker>>,
     pub(self) network_send_wakers: std::sync::Mutex<Option<Waker>>,
 
-    public_key: key::node::PublicKey,
-    /// Private key for this node.
-    pub(self) private_key: key::node::SecretKey,
+    /// Key for this node.
+    pub(self) private_key: Keypair,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
@@ -255,6 +256,10 @@ impl Inner {
     pub(self) fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
+
+    fn public_key(&self) -> PublicKey {
+        self.private_key.public()
+    }
 }
 
 #[derive(Debug)]
@@ -287,7 +292,10 @@ impl MagicSock {
     ///
     /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
-        let name = format!("magic-{}", opts.private_key.public_key().short_hex());
+        let name = format!(
+            "magic-{}",
+            hex::encode(&opts.private_key.public().as_bytes()[..8])
+        );
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("magicsock", %name))
             .await
@@ -338,7 +346,6 @@ impl MagicSock {
             on_derp_active,
             on_net_info,
             port: AtomicU16::new(port),
-            public_key: private_key.public_key(),
             private_key,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
@@ -469,7 +476,7 @@ impl MagicSock {
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// `QuicMappedAddr` as we do internally.
-    pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
+    pub async fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
         let (s, r) = tokio::sync::oneshot::channel();
         if self
             .inner
@@ -602,13 +609,13 @@ impl MagicSock {
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
 pub(self) struct DiscoInfo {
-    pub(self) node_key: key::node::PublicKey,
+    pub(self) node_key: PublicKey,
     /// The precomputed key for communication with the peer that has the `node_key` used to
     /// look up this `DiscoInfo` in MagicSock.discoInfo.
     /// Not modified once initialized.
-    shared_key: key::node::SharedSecret,
+    shared_key: SharedSecret,
 
-    /// Tthe src of a ping for `node_key`.
+    /// The src of a ping for `node_key`.
     last_ping_from: Option<SendAddr>,
 
     /// The last time of a ping for `node_key`.
@@ -814,10 +821,7 @@ impl Drop for WgGuard {
 pub(self) enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
-    GetMappingAddr(
-        key::node::PublicKey,
-        sync::oneshot::Sender<Option<QuicMappedAddr>>,
-    ),
+    GetMappingAddr(PublicKey, sync::oneshot::Sender<Option<QuicMappedAddr>>),
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
@@ -829,7 +833,7 @@ pub(self) enum ActorMessage {
     },
     SendDiscoMessage {
         dst: SendAddr,
-        dst_key: key::node::PublicKey,
+        dst_key: PublicKey,
         msg: disco::Message,
     },
     SetNetworkMap(netmap::NetworkMap, sync::oneshot::Sender<()>),
@@ -865,7 +869,7 @@ struct Actor {
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<config::NetInfo>,
     /// The state for an active DiscoKey.
-    disco_info: HashMap<key::node::PublicKey, DiscoInfo>,
+    disco_info: HashMap<PublicKey, DiscoInfo>,
     /// Tracks the networkmap node entity for each peer discovery key.
     peer_map: PeerMap,
 
@@ -911,8 +915,8 @@ impl Actor {
                 Some(msg) = self.ip_receiver.recv() => {
                     trace!("tick: ip_receiver");
                     match msg {
-                        IpPacket::Disco { source, sealed_box, src } => {
-                            self.handle_disco_message(source, &sealed_box, src, None).await;
+                        IpPacket::Disco { sender, sealed_box, src } => {
+                            self.handle_disco_message(sender, &sealed_box, src, None).await;
                         }
                         IpPacket::Forward(mut forward) => {
                             if let NetworkReadResult::Ok { meta, bytes, .. } = &mut forward {
@@ -1121,10 +1125,10 @@ impl Actor {
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
             Some(ep) => ep.quic_mapped_addr,
             None => {
-                info!(peer=%dm.src, "no peer_map state found for peer");
+                info!(peer=?dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
-                    msock_public_key: self.inner.public_key.clone(),
+                    msock_public_key: self.inner.public_key(),
                     public_key: dm.src.clone(),
                     derp_addr: Some(region_id),
                 });
@@ -1275,7 +1279,7 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    fn send_derp(&mut self, region_id: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
+    fn send_derp(&mut self, region_id: u16, peer: PublicKey, contents: Vec<Bytes>) {
         self.send_derp_actor(DerpActorMessage::Send {
             region_id,
             contents,
@@ -1870,7 +1874,7 @@ impl Actor {
     async fn send_disco_message(
         &mut self,
         dst: SendAddr,
-        dst_key: key::node::PublicKey,
+        dst_key: PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
         debug!("sending disco message to {}: {:?}", dst, msg);
@@ -1887,7 +1891,7 @@ impl Actor {
             inc!(MagicsockMetrics, send_disco_udp);
         }
 
-        let pkt = disco::encode_message(&self.inner.public_key, seal);
+        let pkt = disco::encode_message(&self.inner.public_key(), seal);
         let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
         match sent {
             Ok(0) => {
@@ -1927,7 +1931,7 @@ impl Actor {
     async fn send_addr(
         &mut self,
         addr: SendAddr,
-        pub_key: Option<&key::node::PublicKey>,
+        pub_key: Option<&PublicKey>,
         pkt: Bytes,
     ) -> io::Result<usize> {
         match addr {
@@ -1958,7 +1962,7 @@ impl Actor {
         &mut self,
         msg: &[u8],
         src: SendAddr,
-        derp_node_src: key::node::PublicKey,
+        derp_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
             Some((source, sealed_box)) => {
@@ -1976,17 +1980,16 @@ impl Actor {
     #[instrument(skip_all)]
     async fn handle_disco_message(
         &mut self,
-        source: [u8; disco::KEY_LEN],
+        sender: PublicKey,
         sealed_box: &[u8],
         src: SendAddr,
-        derp_node_src: Option<key::node::PublicKey>,
+        derp_node_src: Option<PublicKey>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
         if self.inner.is_closed() {
             return true;
         }
 
-        let sender = key::node::PublicKey::from(source);
         let mut unknown_sender = false;
         if self.peer_map.endpoint_for_node_key(&sender).is_none()
             && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
@@ -2006,7 +2009,9 @@ impl Actor {
             // This could happen if we changed the key between restarts.
             warn!(
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
-                self.inner.public_key, sender, payload,
+                self.inner.public_key(),
+                sender,
+                payload,
             );
             inc!(MagicsockMetrics, recv_disco_bad_key);
             return true;
@@ -2043,7 +2048,7 @@ impl Actor {
                 if unknown_sender {
                     self.peer_map.insert_endpoint(EndpointOptions {
                         msock_sender: self.inner.actor_sender.clone(),
-                        msock_public_key: self.inner.public_key.clone(),
+                        msock_public_key: self.inner.public_key(),
                         public_key: sender.clone(),
                         derp_addr: src.derp_region(),
                     });
@@ -2055,7 +2060,7 @@ impl Actor {
                 inc!(MagicsockMetrics, recv_disco_pong);
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
                     let (_, insert) = ep
-                        .handle_pong_conn(&self.inner.public_key, &pong, di, src)
+                        .handle_pong_conn(&self.inner.public_key(), &pong, di, src)
                         .await;
                     if let Some((src, key)) = insert {
                         self.peer_map.set_node_key_for_ip_port(&src, &key);
@@ -2082,7 +2087,7 @@ impl Actor {
                     Some(ep) => {
                         info!(
                             "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
-                            self.inner.public_key,
+                            self.inner.public_key(),
                             ep.public_key(),
                             src,
                             cm.my_number.len()
@@ -2101,9 +2106,9 @@ impl Actor {
     async fn handle_ping(
         &mut self,
         dm: disco::Ping,
-        sender: &key::node::PublicKey,
+        sender: &PublicKey,
         src: SendAddr,
-        derp_node_src: Option<key::node::PublicKey>,
+        derp_node_src: Option<PublicKey>,
     ) {
         let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
@@ -2160,7 +2165,9 @@ impl Actor {
         if !likely_heart_beat {
             info!(
                 "disco: {:?}<-{:?} ({dst_key:?}, {src:?})  got ping tx={:?}",
-                self.inner.public_key, di.node_key, dm.tx_id
+                self.inner.public_key(),
+                di.node_key,
+                dm.tx_id
             );
         }
 
@@ -2209,12 +2216,12 @@ impl Actor {
                 //     n,                     // node being added
                 // );
                 info!(
-                    peer = %n.key,
+                    peer = ?n.key,
                     "inserting peer's endpoint in PeerMap"
                 );
                 self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
-                    msock_public_key: self.inner.public_key.clone(),
+                    msock_public_key: self.inner.public_key(),
                     public_key: n.key.clone(),
                     derp_addr: n.derp,
                 });
@@ -2313,9 +2320,9 @@ impl Actor {
 
 /// Returns the previous or new DiscoInfo for `k`.
 fn get_disco_info<'a>(
-    disco_info: &'a mut HashMap<key::node::PublicKey, DiscoInfo>,
-    node_private: &key::node::SecretKey,
-    k: &key::node::PublicKey,
+    disco_info: &'a mut HashMap<PublicKey, DiscoInfo>,
+    node_private: &Keypair,
+    k: &PublicKey,
 ) -> &'a mut DiscoInfo {
     if !disco_info.contains_key(k) {
         let shared_key = node_private.shared(k);
@@ -2743,7 +2750,7 @@ pub(crate) mod tests {
             })
         }
 
-        async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
+        async fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
                 .tracked_endpoints()
@@ -2754,9 +2761,8 @@ pub(crate) mod tests {
                 .collect()
         }
 
-        fn public(&self) -> key::node::PublicKey {
-            let key: key::node::SecretKey = self.keypair.secret().clone().into();
-            key.public_key()
+        fn public(&self) -> PublicKey {
+            self.keypair.public()
         }
     }
 

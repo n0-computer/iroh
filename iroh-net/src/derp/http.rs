@@ -50,7 +50,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
-    use crate::key::node::{PublicKey, SecretKey};
+    use crate::tls::{Keypair, PublicKey};
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {
@@ -60,9 +60,9 @@ mod tests {
             .try_init()
             .ok();
 
-        let server_key = SecretKey::generate();
-        let a_key = SecretKey::generate();
-        let b_key = SecretKey::generate();
+        let server_key = Keypair::generate();
+        let a_key = Keypair::generate();
+        let b_key = Keypair::generate();
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
@@ -135,7 +135,7 @@ mod tests {
     }
 
     fn create_test_client(
-        key: SecretKey,
+        key: Keypair,
         region: DerpRegion,
         server_url: Option<Url>,
     ) -> (
@@ -155,20 +155,20 @@ mod tests {
             })
             .build(key.clone())
             .expect("won't fail if you supply a `get_region`");
-        let public_key = key.public_key();
+        let public_key = key.public();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
         let client_reader = client.clone();
         let client_reader_task = tokio::spawn(
             async move {
                 loop {
-                    println!("waiting for message on {:?}", key.public_key());
+                    println!("waiting for message on {:?}", key.public());
                     match client_reader.recv_detail().await {
                         Err(e) => {
-                            println!("client {:?} `recv_detail` error {e}", key.public_key());
+                            println!("client {:?} `recv_detail` error {e}", key.public());
                             return;
                         }
                         Ok((msg, _)) => {
-                            println!("got message on {:?}: {msg:?}", key.public_key());
+                            println!("got message on {:?}: {msg:?}", key.public());
                             if let ReceivedMessage::ReceivedPacket { source, data } = msg {
                                 received_msg_s
                                     .send((source.clone(), data))
@@ -176,7 +176,7 @@ mod tests {
                                     .unwrap_or_else(|err| {
                                         panic!(
                                             "client {:?}, error sending message over channel: {:?}",
-                                            key.public_key(),
+                                            key.public(),
                                             err
                                         )
                                     });
@@ -198,9 +198,9 @@ mod tests {
             .try_init()
             .ok();
 
-        let server_key = SecretKey::generate();
-        let a_key = SecretKey::generate();
-        let b_key = SecretKey::generate();
+        let server_key = Keypair::generate();
+        let a_key = Keypair::generate();
+        let b_key = Keypair::generate();
 
         // create tls_config
         let tls_config = make_tls_config();

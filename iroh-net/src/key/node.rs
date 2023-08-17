@@ -16,15 +16,9 @@ pub(crate) const NONCE_LEN: usize = 24;
 #[derive(Clone, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
 
-impl From<crate::tls::PeerId> for PublicKey {
-    fn from(value: crate::tls::PeerId) -> Self {
-        crate::tls::PublicKey::from(value).into()
-    }
-}
-
-impl From<crate::tls::PublicKey> for PublicKey {
-    fn from(value: crate::tls::PublicKey) -> Self {
-        let key: ed25519_dalek::VerifyingKey = value.into();
+impl From<&crate::tls::PublicKey> for PublicKey {
+    fn from(value: &crate::tls::PublicKey) -> Self {
+        let key: ed25519_dalek::VerifyingKey =(*value).into();
         PublicKey(crypto_box::PublicKey::from(key.to_montgomery()))
     }
 }
@@ -110,8 +104,8 @@ impl PublicKey {
 #[derive(Clone)]
 pub struct SecretKey(crypto_box::SecretKey);
 
-impl From<crate::tls::SecretKey> for SecretKey {
-    fn from(key: crate::tls::SecretKey) -> Self {
+impl From<&crate::tls::SecretKey> for SecretKey {
+    fn from(key: &crate::tls::SecretKey) -> Self {
         SecretKey(crypto_box::SecretKey::from(key.to_scalar()))
     }
 }
@@ -261,6 +255,39 @@ impl SharedSecret {
     }
 }
 
+/// Extension trait for dealing with encryption.
+pub trait EncryptExt {
+    /// Creates a shared secret between [Self] and the given [crate::tls::PublicKey], and seals the
+    /// provided cleartext.
+    fn seal_to(&self, other: &crate::tls::PublicKey, cleartext: &[u8]) -> Vec<u8>;
+    /// Creates a shared secret between [Self] and the given [crate::tls::PublicKey], and opens the
+    /// `seal`, returning the cleartext.
+    fn open_from(&self, other: &crate::tls::PublicKey, seal: &[u8]) -> Result<Vec<u8>>;
+    /// Returns the shared key for communication between this key and `other`.
+    fn shared(&self, other: &crate::tls::PublicKey) -> SharedSecret;
+}
+
+
+impl EncryptExt for crate::tls::Keypair {
+    fn seal_to(&self, other: &crate::tls::PublicKey, cleartext: &[u8]) -> Vec<u8> {
+        let secret_key: SecretKey = self.secret().into();
+        let public_key: PublicKey = other.into();
+        secret_key.seal_to(&public_key, cleartext)
+    }
+
+    fn open_from(&self, other: &crate::tls::PublicKey, seal: &[u8]) -> Result<Vec<u8>> {
+        let secret_key: SecretKey = self.secret().into();
+        let public_key: PublicKey = other.into();
+        secret_key.open_from(&public_key, seal)
+    }
+
+    fn shared(&self, other: &crate::tls::PublicKey) -> SharedSecret {
+        let secret_key: SecretKey = self.secret().into();
+        let public_key: PublicKey = other.into();
+        secret_key.shared(&public_key)        
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,8 +305,8 @@ mod tests {
     fn test_seal_open_roundtrip_converted() {
         let key_a = crate::tls::Keypair::generate();
         let key_b = crate::tls::Keypair::generate();
-        let key_a: SecretKey = key_a.secret().clone().into();
-        let key_b: SecretKey = key_b.secret().clone().into();
+        let key_a: SecretKey = key_a.secret().into();
+        let key_b: SecretKey = key_b.secret().into();
 
         seal_open_roundtrip(&key_a, &key_b);
         seal_open_roundtrip(&key_b, &key_a);
@@ -293,6 +320,15 @@ mod tests {
             .open_from(&key_a.public_key(), &sealed_message)
             .unwrap();
         assert_eq!(&msg[..], &decrypted_message);
+
+        let shared_a = key_a.shared(&key_b.public_key());
+        let sealed_message = shared_a.seal(msg);
+        let shared_b = key_b.shared(&key_a.public_key());
+        let decrypted_message = shared_b
+            .open(&sealed_message)
+            .unwrap();
+        assert_eq!(&msg[..], &decrypted_message);
+
     }
 
     #[test]
@@ -301,5 +337,32 @@ mod tests {
         let public_bytes = *key.public_key().as_bytes();
         let public_key_back = PublicKey::from(public_bytes);
         assert_eq!(key.public_key(), public_key_back);
+    }
+
+    #[test]
+    fn test_same_public_key_api() {
+        let key = crate::tls::Keypair::generate();
+        let public_key1: PublicKey = (&key.public()).into();
+        let public_key2: PublicKey = SecretKey::from(key.secret()).public_key();
+
+        assert_eq!(public_key1, public_key2);
+    }
+
+    #[test]
+    fn test_same_public_key_low_level() {
+        let mut rng = rand::thread_rng();
+        let key = ed25519_dalek::SigningKey::generate(&mut rng);
+        let public_key1 = {
+            let m = key.verifying_key().to_montgomery();
+            crypto_box::PublicKey::from(m)
+        };
+
+        let public_key2 = {
+            let s = key.to_scalar();
+            let cs = crypto_box::SecretKey::from(s);
+            cs.public_key()
+        };
+
+        assert_eq!(public_key1, public_key2);
     }
 }

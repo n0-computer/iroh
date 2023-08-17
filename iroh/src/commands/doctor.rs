@@ -656,7 +656,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 }
 
 async fn derp_regions(config: Config) -> anyhow::Result<()> {
-    let key = iroh_net::key::node::SecretKey::generate();
+    let key = Keypair::generate();
     let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");

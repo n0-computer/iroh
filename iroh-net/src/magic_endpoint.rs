@@ -13,10 +13,9 @@ use tracing::{debug, trace};
 use crate::{
     config,
     derp::DerpMap,
-    key,
     magicsock::{self, Callbacks, MagicSock},
     netmap::NetworkMap,
-    tls::{self, Keypair, PeerId},
+    tls::{self, Keypair, PeerId, PublicKey},
 };
 
 /// Builder for [MagicEndpoint]
@@ -269,7 +268,7 @@ impl MagicEndpoint {
                 .await?;
         }
 
-        let node_key: key::node::PublicKey = peer_id.into();
+        let node_key: PublicKey = peer_id.into();
         let addr = self
             .msock
             .get_mapping_addr(&node_key)
@@ -333,7 +332,7 @@ impl MagicEndpoint {
             _ => {}
         }
 
-        let node_key: key::node::PublicKey = peer_id.into();
+        let node_key: PublicKey = peer_id.into();
         let netmap = {
             let mut netmap = self.netmap.lock().unwrap();
             let node = netmap.peers.iter_mut().find(|peer| peer.key == node_key);

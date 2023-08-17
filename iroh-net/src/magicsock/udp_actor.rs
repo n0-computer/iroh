@@ -13,7 +13,7 @@ use quinn::AsyncUdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-use crate::{disco, netcheck, stun};
+use crate::{disco, netcheck, stun, tls::PublicKey};
 
 use super::{
     rebinding_conn::RebindingUdpConn,
@@ -43,7 +43,7 @@ pub(super) enum NetworkSource {
 
 pub(super) enum IpPacket {
     Disco {
-        source: [u8; disco::KEY_LEN],
+        sender: PublicKey,
         sealed_box: Bytes,
         src: SendAddr,
     },
@@ -111,13 +111,13 @@ impl UdpActor {
                                     if stun::is(&packet) {
                                         trace!("tick: stun packet");
                                         net_checker.receive_stun_packet(packet, meta.addr);
-                                    } else if let Some((source, sealed_box)) = disco::source_and_box(&packet) {
+                                    } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
                                         // Disco?
                                         trace!("tick: disco packet: {:?}", meta);
                                         if ip_sender
                                             .send(
                                                 IpPacket::Disco {
-                                                source,
+                                                sender,
                                                 sealed_box: packet.slice_ref(sealed_box),
                                                 src: SendAddr::Udp(meta.addr),
                                             })

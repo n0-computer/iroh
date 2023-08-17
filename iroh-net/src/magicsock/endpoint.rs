@@ -12,7 +12,9 @@ use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
-use crate::{config, disco, key, magicsock::Timer, net::ip::is_unicast_link_local, stun};
+use crate::{
+    config, disco, magicsock::Timer, net::ip::is_unicast_link_local, stun, tls::PublicKey,
+};
 
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr,
@@ -50,9 +52,9 @@ pub(super) struct Endpoint {
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
     /// Public key for this node/connection.
-    conn_public_key: key::node::PublicKey,
+    conn_public_key: PublicKey,
     /// Peer public key (for UDP + DERP)
-    pub(super) public_key: key::node::PublicKey,
+    pub(super) public_key: PublicKey,
     /// Last time we pinged all endpoints
     last_full_ping: Option<Instant>,
     /// Fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
@@ -89,8 +91,8 @@ pub struct PendingCliPing {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) msock_sender: mpsc::Sender<ActorMessage>,
-    pub(super) msock_public_key: key::node::PublicKey,
-    pub(super) public_key: key::node::PublicKey,
+    pub(super) msock_public_key: PublicKey,
+    pub(super) public_key: PublicKey,
     pub(super) derp_addr: Option<u16>,
 }
 
@@ -123,7 +125,7 @@ impl Endpoint {
         }
     }
 
-    pub fn public_key(&self) -> &key::node::PublicKey {
+    pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
 
@@ -363,7 +365,7 @@ impl Endpoint {
     async fn send_disco_ping(
         &mut self,
         ep: SendAddr,
-        public_key: Option<key::node::PublicKey>,
+        public_key: Option<PublicKey>,
         tx_id: stun::TransactionId,
     ) {
         debug!("send disco ping: start");
@@ -676,11 +678,11 @@ impl Endpoint {
     /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
     pub(super) async fn handle_pong_conn(
         &mut self,
-        conn_disco_public: &key::node::PublicKey,
+        conn_disco_public: &PublicKey,
         m: &disco::Pong,
         _di: &mut DiscoInfo,
         src: SendAddr,
-    ) -> (bool, Option<(SendAddr, key::node::PublicKey)>) {
+    ) -> (bool, Option<(SendAddr, PublicKey)>) {
         let is_derp = src.is_derp();
 
         info!(
@@ -975,7 +977,7 @@ pub struct AddrLatency {
 /// An index of peerInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
 #[derive(Default, Debug)]
 pub(super) struct PeerMap {
-    by_node_key: HashMap<key::node::PublicKey, usize>,
+    by_node_key: HashMap<PublicKey, usize>,
     by_ip_port: HashMap<SendAddr, usize>,
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
     by_id: HashMap<usize, Endpoint>,
@@ -997,14 +999,11 @@ impl PeerMap {
     }
 
     /// Returns the endpoint for nk, or None if nk is not known to us.
-    pub(super) fn endpoint_for_node_key(&self, nk: &key::node::PublicKey) -> Option<&Endpoint> {
+    pub(super) fn endpoint_for_node_key(&self, nk: &PublicKey) -> Option<&Endpoint> {
         self.by_node_key.get(nk).and_then(|id| self.by_id(id))
     }
 
-    pub(super) fn endpoint_for_node_key_mut(
-        &mut self,
-        nk: &key::node::PublicKey,
-    ) -> Option<&mut Endpoint> {
+    pub(super) fn endpoint_for_node_key_mut(&mut self, nk: &PublicKey) -> Option<&mut Endpoint> {
         self.by_node_key
             .get(nk)
             .and_then(|id| self.by_id.get_mut(id))
@@ -1057,7 +1056,7 @@ impl PeerMap {
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: &SendAddr, nk: &key::node::PublicKey) {
+    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: &SendAddr, nk: &PublicKey) {
         if let Some(id) = self.by_ip_port.get(ipp) {
             if !self.by_node_key.contains_key(nk) {
                 self.by_node_key.insert(nk.clone(), *id);
@@ -1121,7 +1120,7 @@ struct EndpointState {
 #[derive(Debug, Clone)]
 pub struct EndpointInfo {
     /// The public key of the endpoint.
-    pub public_key: key::node::PublicKey,
+    pub public_key: PublicKey,
     /// Derp region, if available.
     pub derp_addr: Option<u16>,
     /// List of addresses this node might be reachable under.

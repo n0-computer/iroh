@@ -36,7 +36,7 @@ use crate::{
         types::PacketForwarder,
         MaybeTlsStreamServer,
     },
-    key::node::SecretKey,
+    tls::Keypair,
 };
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -124,7 +124,8 @@ impl Server {
             mesh_clients.shutdown().await;
         }
 
-        let mut mesh_clients = MeshClients::new(mesh_key, server_key, mesh_addrs, packet_fwd);
+        let mut mesh_clients =
+            MeshClients::new(mesh_key, server_key.clone(), mesh_addrs, packet_fwd);
 
         let recvs = mesh_clients.mesh().await?;
         self.mesh_clients = Some(mesh_clients);
@@ -145,16 +146,16 @@ pub struct TlsConfig {
 ///
 /// Defaults to handling "derp" requests on the "/derp" endpoint.
 ///
-/// If no [`SecretKey`] is provided, it is assumed that you will provide a `derp_override` function
+/// If no [`Keypair`] is provided, it is assumed that you will provide a `derp_override` function
 /// that handles requests to the derp endpoint. Not providing a `derp_override` in this case will
 /// result in an error on `spawn`.
 #[derive(derive_more::Debug)]
 pub struct ServerBuilder {
-    /// The SecretKey for this Server.
+    /// The Keypair for this Server.
     ///
     /// When `None`, you must also provide a `derp_override` function that
     /// will be run when someone hits the derp endpoint.
-    secret_key: Option<SecretKey>,
+    secret_key: Option<Keypair>,
     /// The ip + port combination for this server.
     addr: SocketAddr,
     /// Optional MeshKey for this server. When it exists it will ensure that This
@@ -204,9 +205,9 @@ impl ServerBuilder {
         }
     }
 
-    /// The [`SecretKey`] identity for this derp server. When set to `None`, the builder assumes
+    /// The [`Keypair`] identity for this derp server. When set to `None`, the builder assumes
     /// you do not want to run a derp service.
-    pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
+    pub fn secret_key(mut self, secret_key: Option<Keypair>) -> Self {
         self.secret_key = secret_key;
         self
     }
@@ -248,7 +249,7 @@ impl ServerBuilder {
         self
     }
 
-    /// Handle the derp endpoint in a custom way. This is required if no [`SecretKey`] was provided
+    /// Handle the derp endpoint in a custom way. This is required if no [`Keypair`] was provided
     /// to the builder.
     pub fn derp_override(mut self, handler: HyperFn) -> Self {
         self.derp_override = Some(handler);
@@ -269,7 +270,7 @@ impl ServerBuilder {
 
     /// Build and spawn an HTTP(S) derp Server
     pub async fn spawn(self) -> Result<Server> {
-        ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
+        ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `Keypair` for the derp server OR pass in an override function for the 'derp' endpoint");
         let (derp_handler, derp_server, mesh_clients) = if let Some(secret_key) = self.secret_key {
             let server = crate::derp::server::Server::new(secret_key.clone(), self.mesh_key);
             let header_map: HeaderMap = HeaderMap::from_iter(

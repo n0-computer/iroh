@@ -14,7 +14,8 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     derp::{self, MAX_PACKET_SIZE},
-    key::{self, node::PUBLIC_KEY_LENGTH},
+    key::node::PUBLIC_KEY_LENGTH,
+    tls::PublicKey,
 };
 
 use super::Metrics as MagicsockMetrics;
@@ -30,11 +31,11 @@ pub(super) enum DerpActorMessage {
     Send {
         region_id: u16,
         contents: Vec<Bytes>,
-        peer: key::node::PublicKey,
+        peer: PublicKey,
     },
     Connect {
         region_id: u16,
-        peer: Option<key::node::PublicKey>,
+        peer: Option<PublicKey>,
     },
     CloseOrReconnect {
         region_id: u16,
@@ -75,7 +76,7 @@ pub(super) struct DerpActor {
     /// on a different DERP connection (which should really only be on our DERP
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
-    derp_route: HashMap<key::node::PublicKey, DerpRoute>,
+    derp_route: HashMap<PublicKey, DerpRoute>,
     msg_sender: mpsc::Sender<ActorMessage>,
 }
 
@@ -180,13 +181,8 @@ impl DerpActor {
         .await;
     }
 
-    async fn send_derp(
-        &mut self,
-        region_id: u16,
-        contents: Vec<Bytes>,
-        peer: key::node::PublicKey,
-    ) {
-        debug!(region_id, %peer, "sending derp");
+    async fn send_derp(&mut self, region_id: u16, contents: Vec<Bytes>, peer: PublicKey) {
+        debug!(region_id, ?peer, "sending derp");
         {
             let derp_map = &self.conn.derp_map;
             if derp_map.is_none() {
@@ -235,7 +231,7 @@ impl DerpActor {
     async fn connect_derp(
         &mut self,
         region_id: u16,
-        peer: Option<&key::node::PublicKey>,
+        peer: Option<&PublicKey>,
     ) -> derp::http::Client {
         // See if we have a connection open to that DERP node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
@@ -467,7 +463,7 @@ impl DerpActor {
     /// Removes a DERP route entry previously added by add_derp_peer_route.
     fn remove_derp_peer_routes(
         &mut self,
-        peers: Vec<key::node::PublicKey>,
+        peers: Vec<PublicKey>,
         derp_id: u16,
         dc: &derp::http::Client,
     ) {
@@ -484,7 +480,7 @@ impl DerpActor {
     /// connection identified by `dc`.
     fn add_derp_peer_routes(
         &mut self,
-        peers: Vec<key::node::PublicKey>,
+        peers: Vec<PublicKey>,
         derp_id: u16,
         dc: derp::http::Client,
     ) {
@@ -503,7 +499,7 @@ impl DerpActor {
 #[derive(derive_more::Debug)]
 pub(super) struct DerpReadResult {
     pub(super) region_id: u16,
-    pub(super) src: key::node::PublicKey,
+    pub(super) src: PublicKey,
     /// packet data
     #[debug(skip)]
     pub(super) buf: Bytes,
@@ -516,10 +512,10 @@ struct ReaderState {
     derp_client: derp::http::Client,
     /// The set of senders we know are present on this connection, based on
     /// messages we've received from the server.
-    peer_present: HashSet<key::node::PublicKey>,
+    peer_present: HashSet<PublicKey>,
     backoff: backoff::exponential::ExponentialBackoff<backoff::SystemClock>,
     last_packet_time: Option<Instant>,
-    last_packet_src: Option<key::node::PublicKey>,
+    last_packet_src: Option<PublicKey>,
     cancel: CancellationToken,
 }
 
@@ -534,12 +530,12 @@ pub(super) enum ReadResult {
 pub(super) enum ReadAction {
     None,
     RemovePeerRoutes {
-        peers: Vec<key::node::PublicKey>,
+        peers: Vec<PublicKey>,
         region: u16,
         derp_client: derp::http::Client,
     },
     AddPeerRoutes {
-        peers: Vec<key::node::PublicKey>,
+        peers: Vec<PublicKey>,
         region: u16,
         derp_client: derp::http::Client,
     },

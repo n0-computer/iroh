@@ -10,10 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
-use crate::{
-    disco::looks_like_disco_wrapper,
-    key::node::{PublicKey, PUBLIC_KEY_LENGTH},
-};
+use crate::{disco::looks_like_disco_wrapper, key::node::PUBLIC_KEY_LENGTH, tls::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
@@ -433,24 +430,13 @@ where
         let srckey = packet.src;
         let contents = packet.bytes;
         inc_by!(Metrics, bytes_sent, contents.len().try_into().unwrap());
-        if srckey.is_zero() {
-            // TODO: ensure we handle this correctly on the client side
-            write_frame_timeout(
-                &mut self.io,
-                FrameType::RecvPacket,
-                &[&contents],
-                self.timeout,
-            )
-            .await
-        } else {
-            write_frame_timeout(
-                &mut self.io,
-                FrameType::RecvPacket,
-                &[srckey.as_bytes(), &contents],
-                self.timeout,
-            )
-            .await
-        }
+        write_frame_timeout(
+            &mut self.io,
+            FrameType::RecvPacket,
+            &[srckey.as_bytes(), &contents],
+            self.timeout,
+        )
+        .await
     }
 
     /// Handles read results.
@@ -676,6 +662,8 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 mod tests {
     use std::sync::Arc;
 
+    use crate::tls::Keypair;
+
     use super::*;
 
     use anyhow::bail;
@@ -696,7 +684,7 @@ mod tests {
         let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
-        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+        let key = Keypair::generate().public();
         let (io, mut io_rw) = tokio::io::duplex(1024);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
@@ -816,7 +804,7 @@ mod tests {
 
         // send message to close a peer
         println!("  close peer");
-        let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
+        let target = Keypair::generate().public();
         crate::derp::client::close_peer(&mut io_rw, target.clone()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -863,7 +851,7 @@ mod tests {
 
         // forward packet
         println!("  forward packet");
-        let fwd_key = PublicKey::from([0x03; PUBLIC_KEY_LENGTH]);
+        let fwd_key = Keypair::generate().public();
         crate::derp::client::forward_packet(&mut io_rw, fwd_key.clone(), target.clone(), data)
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
@@ -912,7 +900,7 @@ mod tests {
         let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
-        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+        let key = Keypair::generate().public();
         let (io, mut io_rw) = tokio::io::duplex(1024);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
@@ -941,7 +929,7 @@ mod tests {
         // send packet
         println!("   send packet");
         let data = b"hello world!";
-        let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
+        let target = Keypair::generate().public();
 
         crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
         let msg = server_channel_r.recv().await.unwrap();

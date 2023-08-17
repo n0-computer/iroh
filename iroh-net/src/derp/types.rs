@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::client_conn::ClientConnManager;
 use super::PROTOCOL_VERSION;
-use crate::key::node::PublicKey;
+use crate::tls::PublicKey;
 
 /// A key to identify if a node belongs in a mesh
 pub type MeshKey = [u8; 32];

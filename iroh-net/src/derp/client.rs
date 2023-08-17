@@ -20,7 +20,8 @@ use super::{
     PROTOCOL_VERSION,
 };
 
-use crate::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::node::{EncryptExt, PUBLIC_KEY_LENGTH};
+use crate::tls::{Keypair, PublicKey};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -61,7 +62,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        debug!(%dstkey, len=packet.len(), "[DERP] send");
+        debug!(?dstkey, len = packet.len(), "[DERP] send");
 
         self.inner
             .writer_channel
@@ -384,7 +385,7 @@ pub struct ClientBuilder<W>
 where
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    secret_key: SecretKey,
+    secret_key: Keypair,
     reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
     writer: W,
     local_addr: SocketAddr,
@@ -399,7 +400,7 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     pub fn new(
-        secret_key: SecretKey,
+        secret_key: Keypair,
         local_addr: SocketAddr,
         reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
         writer: W,
@@ -546,7 +547,8 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
 
 // errors if `frame_len` is less than the expected [`PUBLIC_KEY_LENGTH`]
 fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
-    Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
+    let key = PublicKey::try_from(&payload[..PUBLIC_KEY_LENGTH])?;
+    Ok(key)
 }
 
 #[derive(derive_more::Debug, Clone)]
