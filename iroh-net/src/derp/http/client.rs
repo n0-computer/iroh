@@ -547,7 +547,7 @@ impl Client {
                 .mesh_key(self.inner.mesh_key)
                 .can_ack_pings(self.inner.can_ack_pings)
                 .prober(self.inner.is_prober)
-                .server_public_key(self.inner.server_public_key.clone())
+                .server_public_key(self.inner.server_public_key)
                 .build(Some(read_buf))
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
@@ -963,7 +963,7 @@ impl Client {
                 bail!("detected self-connect; closing this client");
             }
 
-            let peers_present = PeersPresent::new(server_public_key.clone());
+            let peers_present = PeersPresent::new(server_public_key);
             tracing::info!("Connected to mesh derp server {server_public_key:?}");
 
             // receive detail loop
@@ -992,7 +992,7 @@ impl Client {
                         if key == own_key {
                             continue;
                         }
-                        peers_present.insert(key.clone()).await?;
+                        peers_present.insert(key).await?;
                         packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
                     }
                     ReceivedMessage::PeerGone(key) => {
@@ -1000,7 +1000,7 @@ impl Client {
                         if key == own_key {
                             continue;
                         }
-                        peers_present.remove(key.clone()).await?;
+                        peers_present.remove(key).await?;
                         packet_forwarder_handler.remove_packet_forwarder(key)?;
                     }
                     _ => {}
@@ -1103,8 +1103,8 @@ impl PacketForwarder for Client {
         tokio::spawn(async move {
             // attempt to send the packet 3 times
             for _ in 0..3 {
-                let srckey = srckey.clone();
-                let dstkey = dstkey.clone();
+                let srckey = srckey;
+                let dstkey = dstkey;
                 let packet = packet.clone();
                 debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {

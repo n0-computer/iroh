@@ -515,7 +515,7 @@ async fn make_endpoint(
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
     let endpoint = MagicEndpoint::builder()
-        .keypair(private_key.into())
+        .keypair(private_key)
         .alpns(vec![DR_DERP_ALPN.to_vec()])
         .derp_map(derp_map)
         .transport_config(transport_config)
@@ -779,8 +779,7 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<Keypair> {
             let path = IrohPaths::Keypair.with_env()?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
-                let keypair = Keypair::try_from_openssh(bytes)?;
-                keypair
+                Keypair::try_from_openssh(bytes)?
             } else {
                 println!(
                     "Local key not found in {}. Using random key.",

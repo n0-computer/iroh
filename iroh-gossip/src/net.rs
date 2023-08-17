@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PeerId, magic_endpoint::get_peer_id, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -752,6 +752,7 @@ mod test {
         use anyhow::Result;
         use iroh_net::{
             derp::{DerpMap, UseIpv4, UseIpv6},
+            key::Keypair,
             stun::{is, parse_binding_request, response},
         };
         use tokio::{runtime::RuntimeFlavor, sync::oneshot};
@@ -871,7 +872,7 @@ mod test {
         ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
-            let server_key = iroh_net::key::node::SecretKey::generate();
+            let server_key = Keypair::generate();
             let server = iroh_net::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
                 .secret_key(Some(server_key))
                 .tls_config(None)

@@ -141,7 +141,7 @@ impl Endpoint {
             .collect();
 
         EndpointInfo {
-            public_key: self.public_key.clone(),
+            public_key: self.public_key,
             derp_addr: self.derp_addr,
             addrs,
             has_direct_connection: self.is_best_addr_valid(Instant::now()),
@@ -378,7 +378,7 @@ impl Endpoint {
                     dst_key: pub_key,
                     msg: disco::Message::Ping(disco::Ping {
                         tx_id,
-                        node_key: self.conn_public_key.clone(),
+                        node_key: self.conn_public_key,
                     }),
                 })
                 .await
@@ -427,8 +427,7 @@ impl Endpoint {
                 timer,
             },
         );
-        let public_key = self.public_key.clone();
-        self.send_disco_ping(ep, Some(public_key), txid).await;
+        self.send_disco_ping(ep, Some(self.public_key), txid).await;
     }
 
     async fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) {
@@ -708,7 +707,7 @@ impl Endpoint {
                 let latency = now - sp.at;
 
                 if !is_derp {
-                    let key = self.public_key.clone();
+                    let key = self.public_key;
                     match self.endpoint_state.get_mut(&sp.to) {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
@@ -1045,7 +1044,7 @@ impl PeerMap {
 
         // update indices
         self.by_quic_mapped_addr.insert(ep.quic_mapped_addr, id);
-        self.by_node_key.insert(ep.public_key.clone(), id);
+        self.by_node_key.insert(ep.public_key, id);
 
         self.by_id.insert(id, ep);
         id
@@ -1059,7 +1058,7 @@ impl PeerMap {
     pub(super) fn set_node_key_for_ip_port(&mut self, ipp: &SendAddr, nk: &PublicKey) {
         if let Some(id) = self.by_ip_port.get(ipp) {
             if !self.by_node_key.contains_key(nk) {
-                self.by_node_key.insert(nk.clone(), *id);
+                self.by_node_key.insert(*nk, *id);
             }
             self.by_ip_port.remove(ipp);
         }

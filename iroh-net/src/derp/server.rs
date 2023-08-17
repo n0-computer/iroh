@@ -443,12 +443,12 @@ where
                                continue;
                            }
                            // list of all connected clients
-                           let updates = self.clients.all_clients().map(|k| PeerConnState{ peer: k.clone(), present: true }).collect();
+                           let updates = self.clients.all_clients().map(|k| PeerConnState{ peer: *k, present: true }).collect();
                            // send list of connected clients to the client
                            self.clients.send_mesh_updates(&key, updates);
 
                            // add to the list of watchers
-                           self.watchers.insert(key.clone());
+                           self.watchers.insert(key);
                        },
                        ServerMessage::ClosePeer(key) => {
                            tracing::trace!("close peer: {:?}", key);
@@ -458,7 +458,7 @@ where
                        },
                         ServerMessage::SendPacket((key, packet)) => {
                            tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
-                            let src = packet.src.clone();
+                            let src = packet.src;
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
                                 // packet
@@ -476,7 +476,7 @@ where
                         }
                        ServerMessage::SendDiscoPacket((key, packet)) => {
                            tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
-                            let src = packet.src.clone();
+                            let src = packet.src;
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
                                 // packet
@@ -496,20 +496,17 @@ where
                        ServerMessage::CreateClient(client_builder) => {
                            inc!(Metrics, accepts);
                            tracing::trace!("create client: {:?}", client_builder.key);
-                           let key = client_builder.key.clone();
+                           let key = client_builder.key;
                            // add client to mesh
-                            if !self.client_mesh.contains_key(&key) {
-                                // `None` means its a local client (so it doesn't need a packet
-                                // forwarder)
-                                self.client_mesh.insert(key.clone(), None);
-                            }
-                            // build and register client, starting up read & write loops for the
-                            // client connection
-                            self.clients.register(client_builder);
-                            // broadcast to watchers that a new peer has joined the network
-                            self.broadcast_peer_state_change(key, true);
+                           // `None` means its a local client (so it doesn't need a packet forwarder)
+                           self.client_mesh.entry(key).or_insert(None);
+                           // build and register client, starting up read & write loops for the
+                           // client connection
+                           self.clients.register(client_builder);
+                           // broadcast to watchers that a new peer has joined the network
+                           self.broadcast_peer_state_change(key, true);
 
-                        }
+                       }
                        ServerMessage::RemoveClient((key, conn_num)) => {
                            inc!(Metrics, disconnects);
                            tracing::trace!("remove client: {:?}", key);
@@ -748,7 +745,7 @@ mod tests {
         );
 
         let key_a = Keypair::generate().public();
-        let (client_a, mut a_io) = test_client_builder(key_a.clone(), 1, server_channel.clone());
+        let (client_a, mut a_io) = test_client_builder(key_a, 1, server_channel.clone());
 
         // create client a
         server_channel
@@ -758,7 +755,7 @@ mod tests {
 
         // add a to watcher list
         server_channel
-            .send(ServerMessage::AddWatcher(key_a.clone()))
+            .send(ServerMessage::AddWatcher(key_a))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
@@ -771,7 +768,7 @@ mod tests {
         let key_b = Keypair::generate().public();
 
         // server message: create client b
-        let (client_b, mut b_io) = test_client_builder(key_b.clone(), 2, server_channel.clone());
+        let (client_b, mut b_io) = test_client_builder(key_b, 2, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_b.build()))
             .await
@@ -784,7 +781,7 @@ mod tests {
 
         // server message: create client c
         let key_c = Keypair::generate().public();
-        let (client_c, mut c_io) = test_client_builder(key_c.clone(), 3, server_channel.clone());
+        let (client_c, mut c_io) = test_client_builder(key_c, 3, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_c.build()))
             .await
@@ -797,7 +794,7 @@ mod tests {
 
         // server message: add client c as watcher
         server_channel
-            .send(ServerMessage::AddWatcher(key_c.clone()))
+            .send(ServerMessage::AddWatcher(key_c))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
@@ -821,7 +818,7 @@ mod tests {
         let fwd_d = MockPacketForwarder { packets: packet_s };
         server_channel
             .send(ServerMessage::AddPacketForwarder {
-                key: key_d.clone(),
+                key: key_d,
                 forwarder: fwd_d,
             })
             .await
@@ -829,7 +826,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::derp::client::send_packet(&mut b_io, &None, key_a.clone(), &msg[..]).await?;
+        crate::derp::client::send_packet(&mut b_io, &None, key_a, &msg[..]).await?;
 
         // get message on a's reader
         let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
@@ -842,7 +839,7 @@ mod tests {
         let mut disco_msg = crate::disco::MAGIC.as_bytes().to_vec();
         disco_msg.extend_from_slice(key_b.as_bytes());
         disco_msg.extend_from_slice(msg);
-        crate::derp::client::send_packet(&mut b_io, &None, key_d.clone(), &disco_msg).await?;
+        crate::derp::client::send_packet(&mut b_io, &None, key_d, &disco_msg).await?;
 
         // get message on d's reader
         let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();
@@ -852,7 +849,7 @@ mod tests {
 
         // remove b
         server_channel
-            .send(ServerMessage::RemoveClient((key_b.clone(), 2)))
+            .send(ServerMessage::RemoveClient((key_b, 2)))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
@@ -998,11 +995,11 @@ mod tests {
         let key_c = Keypair::generate().public();
         let (mut fwd_recv, packet_fwd) = MockPacketForwarder::new();
         let handler = server.packet_forwarder_handler();
-        handler.add_packet_forwarder(key_c.clone(), packet_fwd)?;
+        handler.add_packet_forwarder(key_c, packet_fwd)?;
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a.send(public_key_b, msg.clone()).await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -1015,7 +1012,7 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a.clone(), msg.clone()).await?;
+        client_b.send(public_key_a, msg.clone()).await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
@@ -1028,14 +1025,14 @@ mod tests {
 
         // send message from a to c
         let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c.clone(), msg.clone()).await?;
+        client_a.send(key_c, msg.clone()).await?;
         let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
         assert_eq!(public_key_a, got_src);
         assert_eq!(key_c, got_dst);
         assert_eq!(&msg[..], got_packet);
 
         // remove the packet forwarder for c
-        handler.remove_packet_forwarder(key_c.clone())?;
+        handler.remove_packet_forwarder(key_c)?;
         // try to send c a message
         let msg = Bytes::from_static(b"can you pass this to client d?");
         client_a.send(key_c, msg.clone()).await?;
@@ -1088,7 +1085,7 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a.send(public_key_b, msg.clone()).await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -1101,7 +1098,7 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a.clone(), msg.clone()).await?;
+        client_b.send(public_key_a, msg.clone()).await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
@@ -1124,7 +1121,7 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"are you still there, b?!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a.send(public_key_b, msg.clone()).await?;
         match new_client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -1137,7 +1134,7 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
-        new_client_b.send(public_key_a.clone(), msg.clone()).await?;
+        new_client_b.send(public_key_a, msg.clone()).await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);

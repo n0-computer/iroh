@@ -5,7 +5,7 @@ use std::{collections::HashMap, io, pin::Pin, time::Instant};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use iroh_net::{tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PeerId, MagicEndpoint};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::{sleep_until, Sleep},

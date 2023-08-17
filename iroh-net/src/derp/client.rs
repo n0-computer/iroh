@@ -297,7 +297,7 @@ impl Client {
 
     /// The [`PublicKey`] of the [`super::server::Server`] this [`Client`] is connected with.
     pub fn server_public_key(self) -> PublicKey {
-        self.inner.server_public_key.clone()
+        self.inner.server_public_key
     }
 }
 

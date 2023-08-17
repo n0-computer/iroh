@@ -17,15 +17,16 @@ use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
-use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
 use iroh_net::{
+    defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME},
     derp::{
         self,
         http::{
             MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
         },
     },
-    key, stun,
+    key::SecretKey,
+    stun,
 };
 
 use reqwest::Url;
@@ -162,7 +163,7 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 #[derive(Serialize, Deserialize)]
 struct Config {
     /// PrivateKey for this Derper.
-    private_key: key::node::SecretKey,
+    private_key: SecretKey,
     /// Server listen address.
     ///
     /// Defaults to `[::]:443`.
@@ -243,7 +244,7 @@ struct Limits {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            private_key: key::node::SecretKey::generate(),
+            private_key: SecretKey::generate(&mut rand::rngs::OsRng),
             addr: "[::]:443".parse().unwrap(),
             stun_port: DEFAULT_DERP_STUN_PORT,
             hostname: NA_DERP_HOSTNAME.into(),
@@ -448,7 +449,7 @@ async fn run(
     };
 
     let mut builder = DerpServerBuilder::new(addr)
-        .secret_key(secret_key)
+        .secret_key(secret_key.map(Into::into))
         .mesh_key(mesh_key)
         .headers(headers)
         .tls_config(tls_config.clone())
@@ -886,7 +887,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_net::{
         derp::{http::ClientBuilder, ReceivedMessage},
-        key::node::SecretKey,
+        key::Keypair,
     };
 
     #[tokio::test]
@@ -953,8 +954,8 @@ mod tests {
         let derper_url: Url = derper_str_url.parse().unwrap();
 
         // set up clients
-        let a_secret_key = SecretKey::generate();
-        let a_key = a_secret_key.public_key();
+        let a_secret_key = Keypair::generate();
+        let a_key = a_secret_key.public();
         let client_a = ClientBuilder::new()
             .server_url(derper_url.clone())
             .build(a_secret_key)?;
@@ -977,15 +978,15 @@ mod tests {
             bail!("error connecting client a to derper: {e:?}");
         }
 
-        let b_secret_key = SecretKey::generate();
-        let b_key = b_secret_key.public_key();
+        let b_secret_key = Keypair::generate();
+        let b_key = b_secret_key.public();
         let client_b = ClientBuilder::new()
             .server_url(derper_url)
             .build(b_secret_key)?;
         client_b.connect().await?;
 
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key.clone(), msg.clone()).await?;
+        client_a.send(b_key, msg.clone()).await?;
 
         let (res, _) = client_b.recv_detail().await?;
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
@@ -996,7 +997,7 @@ mod tests {
         }
 
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key.clone(), msg.clone()).await?;
+        client_b.send(a_key, msg.clone()).await?;
 
         let (res, _) = client_a.recv_detail().await?;
         if let ReceivedMessage::ReceivedPacket { source, data } = res {

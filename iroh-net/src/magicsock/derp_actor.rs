@@ -208,7 +208,7 @@ impl DerpActor {
         // But we have no guarantee that the total size of the contents including
         // length prefix will be smaller than the payload size.
         for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
-            match derp_client.send(peer.clone(), packet).await {
+            match derp_client.send(peer, packet).await {
                 Ok(_) => {
                     inc_by!(MagicsockMetrics, send_derp, total_bytes);
                 }
@@ -628,11 +628,11 @@ impl ReaderState {
                             || &source != self.last_packet_src.as_ref().unwrap()
                         {
                             // avoid map lookup w/ high throughput single peer
-                            self.last_packet_src = Some(source.clone());
+                            self.last_packet_src = Some(source);
                             let mut peers = Vec::new();
                             if !self.peer_present.contains(&source) {
-                                self.peer_present.insert(source.clone());
-                                peers.push(source.clone());
+                                self.peer_present.insert(source);
+                                peers.push(source);
                             }
                             ReadAction::AddPeerRoutes {
                                 peers,

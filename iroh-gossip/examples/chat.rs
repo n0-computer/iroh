@@ -11,8 +11,8 @@ use iroh_gossip::{
 use iroh_net::{
     defaults::default_derp_map,
     derp::DerpMap,
+    key::{Keypair, PeerId},
     magic_endpoint::accept_conn,
-    tls::{Keypair, PeerId},
     MagicEndpoint,
 };
 use once_cell::sync::OnceCell;

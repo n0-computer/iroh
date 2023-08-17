@@ -41,6 +41,7 @@ pub(super) enum NetworkSource {
     Derp,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(super) enum IpPacket {
     Disco {
         sender: PublicKey,

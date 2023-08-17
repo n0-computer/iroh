@@ -351,7 +351,7 @@ impl MagicEndpoint {
                     name: None,
                     addresses,
                     endpoints,
-                    key: node_key.clone(),
+                    key: node_key,
                     derp: derp_region,
                 };
                 netmap.peers.push(node)

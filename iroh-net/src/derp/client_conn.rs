@@ -129,7 +129,7 @@ impl ClientConnManager {
         P: PacketForwarder,
     {
         let done = CancellationToken::new();
-        let client_id = (key.clone(), conn_num);
+        let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
@@ -148,7 +148,7 @@ impl ClientConnManager {
             mesh_update_r,
             mesh_update_s: mesh_update_s.clone(),
 
-            key: key.clone(),
+            key,
             preferred: Arc::clone(&preferred),
             server_channel: server_channel.clone(),
         };
@@ -162,7 +162,7 @@ impl ClientConnManager {
                 let conn_num = io_client_id.1;
                 let res = conn_io.run(io_done).await;
                 let _ = server_channel
-                    .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
+                    .send(ServerMessage::RemoveClient((key, conn_num)))
                     .await;
                 match res {
                     Err(e) => {
@@ -538,7 +538,7 @@ where
             "FrameType::WatchConns content is an unexpected size"
         );
         ensure!(self.can_mesh, "insufficient permissions");
-        self.send_server(ServerMessage::AddWatcher(self.key.clone()))
+        self.send_server(ServerMessage::AddWatcher(self.key))
             .await?;
 
         Ok(())
@@ -607,7 +607,7 @@ where
     async fn handle_frame_send_packet(&self, data: &[u8]) -> Result<()> {
         let (dstkey, data) = parse_send_packet(data)?;
         let packet = Packet {
-            src: self.key.clone(),
+            src: self.key,
             bytes: Bytes::from(data.to_owned()),
         };
         self.transfer_packet(dstkey, packet).await
@@ -701,7 +701,7 @@ mod tests {
             mesh_update_r,
             mesh_update_s: mesh_update_s.clone(),
 
-            key: key.clone(),
+            key,
             server_channel: server_channel_s,
             preferred: Arc::clone(&preferred),
         };
@@ -717,7 +717,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let packet = Packet {
-            src: key.clone(),
+            src: key,
             bytes: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
@@ -740,7 +740,7 @@ mod tests {
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(key.clone()).await?;
+        peer_gone_s.send(key).await?;
         let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::PeerGone, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
@@ -749,11 +749,11 @@ mod tests {
         // send mesh_upate
         let updates = vec![
             PeerConnState {
-                peer: key.clone(),
+                peer: key,
                 present: true,
             },
             PeerConnState {
-                peer: key.clone(),
+                peer: key,
                 present: false,
             },
         ];
@@ -808,7 +808,7 @@ mod tests {
         // send message to close a peer
         println!("  close peer");
         let target = Keypair::generate().public();
-        crate::derp::client::close_peer(&mut io_rw, target.clone()).await?;
+        crate::derp::client::close_peer(&mut io_rw, target).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
@@ -820,7 +820,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -839,7 +839,7 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), &disco_data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, &disco_data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -855,8 +855,7 @@ mod tests {
         // forward packet
         println!("  forward packet");
         let fwd_key = Keypair::generate().public();
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key.clone(), target.clone(), data)
-            .await?;
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -871,13 +870,7 @@ mod tests {
 
         // forward disco packet
         println!("  forward disco packet");
-        crate::derp::client::forward_packet(
-            &mut io_rw,
-            fwd_key.clone(),
-            target.clone(),
-            &disco_data,
-        )
-        .await?;
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, &disco_data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -918,7 +911,7 @@ mod tests {
             mesh_update_r,
             mesh_update_s: mesh_update_s.clone(),
 
-            key: key.clone(),
+            key,
             server_channel: server_channel_s,
             preferred: Arc::clone(&preferred),
         };
@@ -934,7 +927,7 @@ mod tests {
         let data = b"hello world!";
         let target = Keypair::generate().public();
 
-        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {

@@ -480,7 +480,7 @@ impl MagicSock {
         if self
             .inner
             .actor_sender
-            .send(ActorMessage::GetMappingAddr(node_key.clone(), s))
+            .send(ActorMessage::GetMappingAddr(*node_key, s))
             .await
             .is_ok()
         {
@@ -817,6 +817,7 @@ impl Drop for WgGuard {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(self) enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
@@ -1128,7 +1129,7 @@ impl Actor {
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key(),
-                    public_key: dm.src.clone(),
+                    public_key: dm.src,
                     derp_addr: Some(region_id),
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
@@ -1148,10 +1149,7 @@ impl Actor {
         for part in parts {
             match part {
                 Ok(part) => {
-                    if self
-                        .handle_derp_disco_message(&part, ipp, dm.src.clone())
-                        .await
-                    {
+                    if self.handle_derp_disco_message(&part, ipp, dm.src).await {
                         // Message was internal, do not bubble up.
                         debug!("processed internal disco message from {:?}", dm.src);
                         continue;
@@ -1230,7 +1228,7 @@ impl Actor {
             .endpoint_for_quic_mapped_addr_mut(&current_destination)
         {
             Some(ep) => {
-                let public_key = ep.public_key().clone();
+                let public_key = *ep.public_key();
                 trace!(
                     "Sending to endpoint for {:?} ({:?})",
                     current_destination,
@@ -1247,11 +1245,7 @@ impl Actor {
                         }
                     }
                     Ok((None, Some(derp_addr))) => {
-                        self.send_derp(
-                            derp_addr,
-                            public_key.clone(),
-                            Self::split_packets(transmits),
-                        );
+                        self.send_derp(derp_addr, public_key, Self::split_packets(transmits));
                     }
                     Ok((Some(udp_addr), None)) => {
                         if let Err(err) = self.send_raw(udp_addr, transmits).await {
@@ -1759,7 +1753,7 @@ impl Actor {
                 .await
                 .unwrap();
         } else {
-            let public_key = endpoint.public_key().clone();
+            let public_key = *endpoint.public_key();
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
 
@@ -1950,7 +1944,7 @@ impl Actor {
                     "missing pub key for derp route",
                 )),
                 Some(pub_key) => {
-                    self.send_derp(region, pub_key.clone(), vec![pkt]);
+                    self.send_derp(region, *pub_key, vec![pkt]);
                     Ok(1)
                 }
             },
@@ -2048,7 +2042,7 @@ impl Actor {
                     self.peer_map.insert_endpoint(EndpointOptions {
                         msock_sender: self.inner.actor_sender.clone(),
                         msock_public_key: self.inner.public_key(),
-                        public_key: sender.clone(),
+                        public_key: sender,
                         derp_addr: src.derp_region(),
                     });
                 }
@@ -2139,9 +2133,9 @@ impl Actor {
                         debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                         return;
                     }
-                    (dst_key.clone(), true)
+                    (dst_key, true)
                 } else {
-                    (dst_key.clone(), false)
+                    (dst_key, false)
                 }
             }
             None => {
@@ -2150,9 +2144,9 @@ impl Actor {
                         debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                         return;
                     }
-                    (di.node_key.clone(), true)
+                    (di.node_key, true)
                 } else {
-                    (di.node_key.clone(), false)
+                    (di.node_key, false)
                 }
             }
         };
@@ -2221,7 +2215,7 @@ impl Actor {
                 self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key(),
-                    public_key: n.key.clone(),
+                    public_key: n.key,
                     derp_addr: n.derp,
                 });
             }
@@ -2248,7 +2242,7 @@ impl Actor {
                 .unwrap()
                 .peers
                 .iter()
-                .map(|n| n.key.clone())
+                .map(|n| n.key)
                 .collect();
 
             let mut to_delete = Vec::new();
@@ -2326,9 +2320,9 @@ fn get_disco_info<'a>(
     if !disco_info.contains_key(k) {
         let shared_key = node_private.shared(k);
         disco_info.insert(
-            k.clone(),
+            *k,
             DiscoInfo {
-                node_key: k.clone(),
+                node_key: *k,
                 shared_key,
                 last_ping_from: None,
                 last_ping_time: None,
@@ -3088,7 +3082,7 @@ pub(crate) mod tests {
             )?;
 
             let tls_client_config =
-                tls::make_client_config(&key.into(), None, vec![ALPN.to_vec()], false)?;
+                tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
