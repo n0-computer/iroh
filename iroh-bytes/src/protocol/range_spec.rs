@@ -26,7 +26,7 @@ use smallvec::{smallvec, SmallVec};
 ///   - `[11, inf)` is deselected.
 ///   Iterating such a [`RangeSpec`] would then produce the [`RangeSet`] `RangeSet{2..7, 10..11}`
 ///
-/// - An empty range selected no spans, encoded as `[]`.  This means nothing of the blob is
+/// - An empty range selects no spans, encoded as `[]`. This means nothing of the blob is
 ///   selected.
 ///
 /// - To select an entire blob create a single half-open span starting at the first chunk:
@@ -126,12 +126,11 @@ impl fmt::Debug for RangeSpec {
 ///   - do no selection (empty) for children in the range `[2, 2+3) = [2, 5)` (3 children)
 ///   - Select `range_b` for children in the range `[5, 5+1) = [5, 6)` (1 children)
 ///   - do no selection (empty) for children in the open range `[6, inf)`
-///   - Selecting `range_a` for children in the range `[0,0+4)`
 ///
 /// Another way to understand this is that offsets represent the number of times the previous range
 /// appears.
 ///
-/// Other relevant examples:
+/// Other examples:
 ///
 /// - Select `range_a` from all blobs after the 5th one in the collection: `[(5, range_a)]`.
 ///
@@ -156,10 +155,8 @@ impl RangeSpecSeq {
         Self(SmallVec::new_const())
     }
 
-    /// Returns the blob index and [`RangeSpec`] of the first blob.
-    ///
-    /// If the selected chunk spans cover only the first blob, this will return the offset
-    /// of this blob (always `0`) and the selected spans of this blob as a [`RangeSpec`].
+    /// If this range seq describes a range for a single item, returns the offset
+    /// and range spec for that item
     pub fn single(&self) -> Option<(u64, &RangeSpec)> {
         // we got two elements,
         // the first element starts at offset 0,
@@ -183,7 +180,7 @@ impl RangeSpecSeq {
         Self(smallvec![(0, RangeSpec::all())])
     }
 
-    /// Creates a new range spec sequence from a sequence of range sets
+    /// Creates a new range spec sequence from a sequence of range sets.
     pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
         let mut prev = RangeSet2::empty();
         let mut count = 0;
@@ -217,11 +214,9 @@ impl RangeSpecSeq {
         }
     }
 
-    /// An iterator over blobs in the collection with a non-emtpy range specs.
+    /// An iterator over blobs in the collection with a non-emtpy range spec.
     ///
     /// This iterator will only yield items for blobs which have at least one chunk
-    /// selected.  It yields items of `(blob_index, range_spec)` to know which blob the
-    /// range spec applies to.
     ///
     /// This iterator is infinite if the [`RangeSpecSeq`] ends on a non-empty [`RangeSpec`],
     /// that is all further blobs have selected chunks spans.
@@ -291,12 +286,7 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
 
 /// An iterator over blobs in the collection with a non-emtpy range specs.
 ///
-/// This iterator will only yield items for blobs which have at least one chunk
-/// selected.  It yields items of `(blob_index, range_spec)` to know which blob the
-/// range spec applies to.
-///
-/// This iterator is infinite if the [`RangeSpecSeq`] ends on a non-empty [`RangeSpec`],
-/// that is all further blobs have selected chunks spans.
+/// default is what to use if the children of this RequestRangeSpec are empty.
 #[derive(Debug)]
 pub struct NonEmptyRequestRangeSpecIter<'a> {
     inner: RequestRangeSpecIter<'a>,
@@ -354,7 +344,6 @@ mod tests {
 
     fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
         let spec = RangeSpecSeq::new(ranges.iter().cloned());
-        println!("{spec:?}");
         spec.iter()
             .map(|x| x.to_chunk_ranges())
             .take(ranges.len())
@@ -364,35 +353,18 @@ mod tests {
     #[test]
     fn range_spec_seq_roundtrip_cases() {
         for case in [
-            // vec![0..1, 0..0],
-            // vec![1..2, 1..2, 1..2],
-            vec![1..2, 1..2, 0..0, 0..0, 0..0, 2..3],
+            vec![0..1, 0..0],
+            vec![1..2, 1..2, 1..2],
+            vec![1..2, 1..2, 2..3, 2..3],
         ] {
             let case = case
                 .iter()
                 .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
                 .collect::<Vec<_>>();
             let expected = case.clone();
-            println!("{:?}", &expected);
             let actual = range_spec_seq_roundtrip_impl(&case);
             assert_eq!(expected, actual);
         }
-    }
-
-    #[test]
-    fn doctestx() {
-        let range = RangeSpec(smallvec![2, 5, 3, 1]);
-        let r = RangeSpec::new(
-            RangeSet2::new(smallvec![
-                ChunkNum(2),
-                ChunkNum(7),
-                ChunkNum(10),
-                ChunkNum(11)
-            ])
-            .unwrap(),
-        );
-        assert_eq!(range, r);
-        println!("{:?}", range.to_chunk_ranges());
     }
 
     proptest! {
