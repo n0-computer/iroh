@@ -13,7 +13,11 @@ use futures::{
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt, TryFutureExt,
 };
-use iroh_bytes::{baomap, util::runtime::Handle, Hash};
+use iroh_bytes::{
+    baomap::{self, EntryStatus},
+    util::runtime::Handle,
+    Hash,
+};
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -166,13 +170,28 @@ pub enum LiveEvent {
 }
 
 /// Availability status of an entry's content bytes
-// TODO: Add NotRequested or similar
+// TODO: Add IsDownloading
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ContentStatus {
-    /// The content is available on the local node
-    Ready,
-    /// The content is not yet available on the local node
-    Pending,
+    /// Fully available on the local node.
+    Complete,
+    /// Partially available on the local node.
+    Incomplete,
+    /// Not available on the local node.
+    ///
+    /// This currently means either that the content is about to be downloaded, failed to be
+    /// downloaded, or was never requested.
+    Missing,
+}
+
+impl From<EntryStatus> for ContentStatus {
+    fn from(value: EntryStatus) -> Self {
+        match value {
+            EntryStatus::Complete => ContentStatus::Complete,
+            EntryStatus::Partial => ContentStatus::Incomplete,
+            EntryStatus::NotFound => ContentStatus::Missing,
+        }
+    }
 }
 
 /// Handle to a running live sync actor
@@ -603,24 +622,22 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                let content_status = if self.bao_store.get(&hash).is_some() {
-                    ContentStatus::Ready
-                } else {
+                let entry_status = self.bao_store.contains(&hash).into();
+                if matches!(entry_status, EntryStatus::NotFound) {
                     self.downloader.push(hash, vec![from]).await;
                     let fut = self.downloader.finished(&hash).await;
                     let fut = fut
                         .map(move |res| res.map(move |(hash, _len)| (topic, hash)))
                         .boxed();
                     self.pending_downloads.push(fut);
-                    ContentStatus::Pending
-                };
+                }
 
                 // Notify subscribers about the event
                 if let Some(subs) = subs {
                     let event = LiveEvent::InsertRemote {
                         from,
                         entry: entry.clone(),
-                        content_status,
+                        content_status: entry_status.into(),
                     };
                     notify_all(subs, event).await;
                 }
