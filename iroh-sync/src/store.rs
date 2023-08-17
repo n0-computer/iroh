@@ -23,12 +23,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     where
         Self: 'a;
 
-    /// Iterator over replicas in the store, returned from [`Self::list_replicas`]
+    /// Iterator over replica namespaces in the store, returned from [`Self::list_namespaces`]
     type NamespaceIter<'a>: Iterator<Item = Result<NamespaceId>>
     where
         Self: 'a;
 
-    /// Iterator over authors in the store, returned from [`Self::list_replicas`]
+    /// Iterator over authors in the store, returned from [`Self::list_authors`]
     type AuthorsIter<'a>: Iterator<Item = Result<Author>>
     where
         Self: 'a;
