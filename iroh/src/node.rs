@@ -43,8 +43,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
     key::{Keypair, PeerId},
-    tls,
-    MagicEndpoint,
+    tls, MagicEndpoint,
 };
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;

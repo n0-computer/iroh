@@ -13,9 +13,9 @@ use tracing::{debug, trace};
 use crate::{
     config,
     derp::DerpMap,
+    key::{Keypair, PeerId, PublicKey},
     magicsock::{self, Callbacks, MagicSock},
     netmap::NetworkMap,
-    key::{Keypair, PeerId, PublicKey},
     tls,
 };
 
