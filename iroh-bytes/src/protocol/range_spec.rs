@@ -52,7 +52,9 @@ use smallvec::{smallvec, SmallVec};
 pub struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
-    /// Create a new range spec from a range set
+    /// Creates a new [`RangeSpec`] from a range set.
+    ///
+    /// The range set will be interpreted just like a [`RangeSpec`].
     pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
         let ranges = ranges.as_ref().boundaries();
         let mut res = SmallVec::new();
@@ -67,25 +69,25 @@ impl RangeSpec {
         Self(res)
     }
 
-    /// An empty range spec
+    /// A [`RangeSpec`] deselecting the entire blob.
     pub const EMPTY: Self = Self(SmallVec::new_const());
 
-    /// Create a range spec that covers the entire range
+    /// Creates a [`RangeSpec`] selecting the entire blob.
     pub fn all() -> Self {
         Self(smallvec![0])
     }
 
-    /// Check if this range spec is empty
+    /// Checks if this [`RangeSpec`] does not select any chunks in the blob.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Check if this range spec covers all values
+    /// Checks if this [`RangeSpec`] selects all chunks in the blob.
     pub fn is_all(&self) -> bool {
         self.0.len() == 1 && self.0[0] == 0
     }
 
-    /// Convert a range set from this range spec
+    /// Creates a [`RangeSet2`] from this [`RangeSpec`].
     pub fn to_chunk_ranges(&self) -> RangeSet2<ChunkNum> {
         // this is zero allocation for single ranges
         // todo: optimize this in range collections
@@ -123,18 +125,40 @@ impl fmt::Debug for RangeSpec {
     }
 }
 
-/// A compressed sequence of range specs
+/// A chunk range specification for a collection of blobs.
+///
+/// To select chunks in an entire collection this is encoded as a sequence of
+/// `(blob_index, range_spec)` tuples.  This is interpreted as:
+///
+/// - Starting from the blob at `blob_index` in the collection, select the ranges specified
+///   by the `range_spec` [`RangeSpec`] for that **and all subsequent** blobs.
+///
+/// - The next tuple will update the [`RangeSpec`] for the blob at `blob_index` and all
+///   subsequent blobs.
+///
+/// - If the sequence is empty or does not start with a blob index of `0` there is an
+///   implicit `(0, [])` tuple at the start of this sequence: that is initially no chunks
+///   are selected from any chunks.
 ///
 /// Examples:
 ///
-/// All child ranges: `[(0, [0])]` starting at offset 0, all offsets (see above)
-/// First chunk of all children: `[(0, [0, 1])]` starting at offset 0, chunk range 0..1
-/// All of child 1234: `[(1234, [0]), [1, []]]`.
-/// First 33 chunks of child 5678: `[(5678, [0, 33]), (1, [])]`.
-/// Chunks 10 to 30 of child 6789: `[(6789, [10, 20]), (1, [])]`.
-/// No child ranges: `[]`
+/// - Select all chunks from all blobs in the collection: `[(0, [0])]`.
 ///
-/// This is a smallvec so that we can avoid allocations in the common case of a single child range.
+/// - Select the first chunk from all blobs in the collection: `[(0, [0, 1])]`.
+///
+/// - Select all chunks from blob 1234: `[(1234, [0]), (1235, [])]`.
+///
+/// - Select first 33 chunks of child 5678: `[(5678, [0, 34]), (5679, [])]`.
+///
+/// - Select chunk 10 to 30 of child 6789: `[(6789, [10, 31]), (6790, [])]`.
+///
+/// - Select nothing: `[]`.
+///
+/// Note that the `blob_index` of a tuple must always be larger than the `blob_index` of any
+/// previous tuple in the sequence.
+///
+/// This is a smallvec so that we can avoid allocations in the common case of a single child
+/// range.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpecSeq(SmallVec<[(u64, RangeSpec); 2]>);
