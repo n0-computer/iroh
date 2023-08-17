@@ -1,5 +1,10 @@
-//! Specifications for individual ranges within a blob, and for ranges for a
-//! collection and its children.
+//! Specifications for ranges selection in blobs and collections.
+//!
+//! The [`RangeSpec`] allows specifying which BAO chunks inside a single blob should be
+//! selected.
+//!
+//! The [`RangeSpecSeq`] builds on top of this to select blob chunks in an entire
+//! collection.
 use std::fmt;
 
 use bao_tree::ChunkNum;
@@ -7,20 +12,41 @@ use range_collections::{RangeSet2, RangeSetRef};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-/// A chunk range specification.
+/// A chunk range specification as a sequence of chunk indexes.
 ///
-/// this is a sequence of spans, where the first span is considered false, and each subsequent span is alternating.
+/// This specifies the selected chunks as a sequence of zero or more spans, where each span
+/// is a set of chunks which are selected.  Spans are encoded by the chunk indexes in this
+/// sequence, each chunk index is either the beginning or end of a span, depending on the
+/// position of the chunk index in the sequence:
 ///
-/// Examples:
-/// The range 10..33 would be encoded as `[10, 23]`
-/// The empty range would be encoded as the empty array `[]`
-/// A full interval .. would be encoded as `[0]`
-/// A half open interval 15.. would be encoded as `[15]`
+/// - Initially chunks are deselected.
 ///
-/// All values except for the first one must be non-zero. The first value may be zero.
-/// Values are bao chunk numbers, not byte offsets.
+/// - The first chunk index, if present, will select chunks from that index on.
 ///
-/// This is a SmallVec so we can avoid allocations for the very common case of a single chunk range.
+/// - The next chunk index, if present, will deselect chunks from that index on.
+///
+/// - If there are no more chunk indexes in the sequence the current selected/deselected
+///   state stays active for all remaining chunks in the blob.
+///
+/// Combined this sequence can be translated to a number of *spans* of selected chunks.  It
+/// follows from this that a valid span is always a sequence of **increasing** indexes.
+///
+/// Some examples:
+///
+/// - The half-open range `10..33` in Rust notation (`[10..33)` in maths notation) is
+///   encoded as: `[10, 33]`.  It expands to a single span of selected chunks: chunk 10 to
+///   32 (inclusive) will be selected.
+///
+/// - An empty range selected no spans, encoded as `[]`.  This means nothing of the blob is
+///   selected.
+///
+/// - To select an entire blob create a single half-open span starting at the first chunk:
+///   `[0]`.
+///
+/// - To select the tail of a blob, create a single half-open span: `[15]`.
+///
+/// This is a SmallVec so we can avoid allocations for the very common case of a single
+/// chunk range.
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpec(SmallVec<[u64; 2]>);
