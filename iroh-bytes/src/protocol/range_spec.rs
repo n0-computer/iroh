@@ -12,30 +12,19 @@ use range_collections::{RangeSet2, RangeSetRef};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-/// A chunk range specification as a sequence of chunk indexes.
+/// A chunk range specification as a sequence of chunk offsets.
 ///
-/// This specifies the selected chunks as a sequence of zero or more spans, where each span
-/// is a set of chunks which are selected.  Spans are encoded by the chunk indexes in this
-/// sequence, each chunk index is either the beginning or end of a span, depending on the
-/// position of the chunk index in the sequence:
+/// Offsets encode alternating spans starting on 0, where the first span is always deselected.
 ///
-/// - Initially chunks are deselected.
+/// ## Examples:
 ///
-/// - The first chunk index, if present, will select chunks from that index on.
-///
-/// - The next chunk index, if present, will deselect chunks from that index on.
-///
-/// - If there are no more chunk indexes in the sequence the current selected/deselected
-///   state stays active for all remaining chunks in the blob.
-///
-/// Combined this sequence can be translated to a number of *spans* of selected chunks.  It
-/// follows from this that a valid span is always a sequence of **increasing** indexes.
-///
-/// Some examples:
-///
-/// - The half-open range `10..33` in Rust notation (`[10..33)` in maths notation) is
-///   encoded as: `[10, 33]`.  It expands to a single span of selected chunks: chunk 10 to
-///   32 (inclusive) will be selected.
+/// - `[2, 5, 3, 1]` encodes five spans, of which two are selected:
+///   - `[0, 0+2) = [0, 2)` is deselected.
+///   - `[2, 2+5) = [2, 7)` is selected.
+///   - `[7, 7+3) = [7, 10)` is deselected.
+///   - `[10, 10+1) = [10, 11)` is selected.
+///   - `[11, inf)` is deselected.
+///   Iterating such a [`RangeSpec`] would then produce the [`RangeSet`] `RangeSet{2..7, 10..11}`
 ///
 /// - An empty range selected no spans, encoded as `[]`.  This means nothing of the blob is
 ///   selected.
@@ -53,8 +42,6 @@ pub struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
     /// Creates a new [`RangeSpec`] from a range set.
-    ///
-    /// The range set will be interpreted just like a [`RangeSpec`].
     pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
         let ranges = ranges.as_ref().boundaries();
         let mut res = SmallVec::new();
