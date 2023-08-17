@@ -14,8 +14,10 @@ use crate::download::Downloader;
 
 use super::{LiveSync, PeerSource};
 
-/// The SyncEngine combines the [`LiveSync`] actor with the Iroh bytes database and [`Downloader`].
+/// The SyncEngine contains the [`LiveSync`] handle, and keeps a copy of the store and endpoint.
 ///
+/// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
+/// implementations in [super::rpc].
 #[derive(Debug, Clone)]
 pub struct SyncEngine<S: Store> {
     pub(crate) rt: Handle,
