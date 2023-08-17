@@ -45,7 +45,7 @@ impl super::Store for Store {
             .read()
             .keys()
             .cloned()
-            .map(|n| Ok(n))
+            .map(Ok)
             .collect::<Vec<_>>()
             .into_iter())
     }
@@ -68,7 +68,7 @@ impl super::Store for Store {
             .read()
             .values()
             .cloned()
-            .map(|n| Ok(n))
+            .map(Ok)
             .collect::<Vec<_>>()
             .into_iter())
     }
