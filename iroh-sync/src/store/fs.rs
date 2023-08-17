@@ -131,6 +131,8 @@ impl<'s> Iterator for GetIter<'s> {
 impl super::Store for Store {
     type Instance = StoreInstance;
     type GetIter<'a> = GetIter<'a>;
+    type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
     fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
@@ -148,15 +150,18 @@ impl super::Store for Store {
         Ok(Some(replica))
     }
 
-    // TODO: return iterator
-    fn list_replicas(&self) -> Result<Vec<NamespaceId>> {
+    fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
+        // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
-        let namespaces = namespace_table
+        let namespaces: Vec<_> = namespace_table
             .iter()?
-            .filter_map(|entry| entry.ok())
-            .map(|(_key, value)| Namespace::from_bytes(value.value()).id());
-        Ok(namespaces.collect())
+            .map(|res| match res {
+                Ok((_key, value)) => Ok(Namespace::from_bytes(value.value()).id()),
+                Err(err) => Err(err.into()),
+            })
+            .collect();
+        Ok(namespaces.into_iter())
     }
 
     fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
@@ -170,26 +175,25 @@ impl super::Store for Store {
         Ok(Some(author))
     }
 
-    /// Generates a new author, using the passed in randomness.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
         let author = Author::new(rng);
         self.insert_author(author.clone())?;
         Ok(author)
     }
 
-    /// Generates a new author, using the passed in randomness.
-    fn list_authors(&self) -> Result<Vec<Author>> {
+    fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {
+        // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
-        let author_table = read_tx.open_table(AUTHORS_TABLE)?;
+        let authors_table = read_tx.open_table(AUTHORS_TABLE)?;
+        let authors: Vec<_> = authors_table
+            .iter()?
+            .map(|res| match res {
+                Ok((_key, value)) => Ok(Author::from_bytes(value.value())),
+                Err(err) => Err(err.into()),
+            })
+            .collect();
 
-        let mut authors = vec![];
-        let iter = author_table.iter()?;
-        for entry in iter {
-            let (_key, value) = entry?;
-            let author = Author::from_bytes(value.value());
-            authors.push(author);
-        }
-        Ok(authors)
+        Ok(authors.into_iter())
     }
 
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
