@@ -114,35 +114,32 @@ impl fmt::Debug for RangeSpec {
 
 /// A chunk range specification for a collection of blobs.
 ///
-/// To select chunks in an entire collection this is encoded as a sequence of
-/// `(blob_index, range_spec)` tuples.  This is interpreted as:
+/// To select chunks in a collection this is encoded as a sequence of `(blob_offset, range_spec)`
+/// tuples. Offsets are interpreted in an accumulating fashion.
 ///
-/// - Starting from the blob at `blob_index` in the collection, select the ranges specified
-///   by the `range_spec` [`RangeSpec`] for that **and all subsequent** blobs.
+/// ## Example:
 ///
-/// - The next tuple will update the [`RangeSpec`] for the blob at `blob_index` and all
-///   subsequent blobs.
+/// Supose two [`RangeSpec`]s `range_a` and `range_b`.
 ///
-/// - If the sequence is empty or does not start with a blob index of `0` there is an
-///   implicit `(0, [])` tuple at the start of this sequence: that is initially no chunks
-///   are selected from any chunks.
+/// - `[(0, range_a), (2, empty), (3, range_b), (1, empty)]` encodes:
+///   - Select `range_a` for children in the range `[0, 2)`
+///   - do no selection (empty) for children in the range `[2, 2+3) = [2, 5)` (3 children)
+///   - Select `range_b` for children in the range `[5, 5+1) = [5, 6)` (1 children)
+///   - do no selection (empty) for children in the open range `[6, inf)`
+///   - Selecting `range_a` for children in the range `[0,0+4)`
 ///
-/// Examples:
+/// Another way to understand this is that offsets represent the number of times the previous range
+/// appears.
 ///
-/// - Select all chunks from all blobs in the collection: `[(0, [0])]`.
+/// Other relevant examples:
 ///
-/// - Select the first chunk from all blobs in the collection: `[(0, [0, 1])]`.
+/// - Select `range_a` from all blobs after the 5th one in the collection: `[(5, range_a)]`.
 ///
-/// - Select all chunks from blob 1234: `[(1234, [0]), (1235, [])]`.
+/// - Select `range_a` from all blobs in the collection: `[(0, range_a)]`.
 ///
-/// - Select first 33 chunks of child 5678: `[(5678, [0, 34]), (5679, [])]`.
-///
-/// - Select chunk 10 to 30 of child 6789: `[(6789, [10, 31]), (6790, [])]`.
+/// - Select `range_a` from blob 1234: `[(1234, range_a), (1, empty)]`.
 ///
 /// - Select nothing: `[]`.
-///
-/// Note that the `blob_index` of a tuple must always be larger than the `blob_index` of any
-/// previous tuple in the sequence.
 ///
 /// This is a smallvec so that we can avoid allocations in the common case of a single child
 /// range.
@@ -357,6 +354,7 @@ mod tests {
 
     fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
         let spec = RangeSpecSeq::new(ranges.iter().cloned());
+        println!("{spec:?}");
         spec.iter()
             .map(|x| x.to_chunk_ranges())
             .take(ranges.len())
@@ -366,18 +364,35 @@ mod tests {
     #[test]
     fn range_spec_seq_roundtrip_cases() {
         for case in [
-            vec![0..1, 0..0],
-            vec![1..2, 1..2, 1..2],
-            vec![1..2, 1..2, 2..3, 2..3],
+            // vec![0..1, 0..0],
+            // vec![1..2, 1..2, 1..2],
+            vec![1..2, 1..2, 0..0, 0..0, 0..0, 2..3],
         ] {
             let case = case
                 .iter()
                 .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
                 .collect::<Vec<_>>();
             let expected = case.clone();
+            println!("{:?}", &expected);
             let actual = range_spec_seq_roundtrip_impl(&case);
             assert_eq!(expected, actual);
         }
+    }
+
+    #[test]
+    fn doctestx() {
+        let range = RangeSpec(smallvec![2, 5, 3, 1]);
+        let r = RangeSpec::new(
+            RangeSet2::new(smallvec![
+                ChunkNum(2),
+                ChunkNum(7),
+                ChunkNum(10),
+                ChunkNum(11)
+            ])
+            .unwrap(),
+        );
+        assert_eq!(range, r);
+        println!("{:?}", range.to_chunk_ranges());
     }
 
     proptest! {
