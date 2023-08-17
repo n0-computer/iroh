@@ -622,7 +622,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                let entry_status = self.bao_store.contains(&hash).into();
+                let entry_status = self.bao_store.contains(&hash);
                 if matches!(entry_status, EntryStatus::NotFound) {
                     self.downloader.push(hash, vec![from]).await;
                     let fut = self.downloader.finished(&hash).await;
