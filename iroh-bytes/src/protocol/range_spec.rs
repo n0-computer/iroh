@@ -248,9 +248,10 @@ impl RangeSpecSeq {
 
 static EMPTY_RANGE_SPEC: RangeSpec = RangeSpec::EMPTY;
 
-/// An infinite iterator of range specs
+/// An infinite iterator yielding [`RangeSpec`]s for each blob in a collection.
 ///
-/// default is what to use if the children of this RequestRangeSpec are empty.
+/// The first item yielded is the [`RangeSpec`] for the first blob in the collection, the
+/// next item is the [`RangeSpec`] for the next blob, etc.
 #[derive(Debug)]
 pub struct RequestRangeSpecIter<'a> {
     /// current value
@@ -272,7 +273,7 @@ impl<'a> RequestRangeSpecIter<'a> {
         }
     }
 
-    /// True if we are at the end of the iterator
+    /// True if we are at the end of the iterator.
     ///
     /// This does not mean that the iterator is terminated, it just means that
     /// it will repeat the same value forever.
@@ -304,9 +305,14 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
     }
 }
 
-/// An infinite iterator of range specs
+/// An iterator over blobs in the collection with a non-emtpy range specs.
 ///
-/// default is what to use if the children of this RequestRangeSpec are empty.
+/// This iterator will only yield items for blobs which have at least one chunk
+/// selected.  It yields items of `(blob_index, range_spec)` to know which blob the
+/// range spec applies to.
+///
+/// This iterator is infinite if the [`RangeSpecSeq`] ends on a non-empty [`RangeSpec`],
+/// that is all further blobs have selected chunks spans.
 #[derive(Debug)]
 pub struct NonEmptyRequestRangeSpecIter<'a> {
     inner: RequestRangeSpecIter<'a>,
