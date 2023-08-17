@@ -24,7 +24,7 @@ use smallvec::{smallvec, SmallVec};
 ///   - `[7, 7+3) = [7, 10)` is deselected.
 ///   - `[10, 10+1) = [10, 11)` is selected.
 ///   - `[11, inf)` is deselected.
-///   Iterating such a [`RangeSpec`] would then produce the [`RangeSet`] `RangeSet{2..7, 10..11}`
+///   Iterating such a [`RangeSpec`] would then produce the [`RangeSet2`] `RangeSet{2..7, 10..11}`
 ///
 /// - An empty range selects no spans, encoded as `[]`. This means nothing of the blob is
 ///   selected.
