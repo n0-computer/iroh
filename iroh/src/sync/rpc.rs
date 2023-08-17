@@ -17,6 +17,9 @@ use crate::rpc_protocol::{
 
 use super::{engine::SyncEngine, PeerSource};
 
+/// Capacity for the flume channels to forward sync store iterators to async RPC streams.
+const ITER_CHANNEL_CAP: usize = 64;
+
 #[allow(missing_docs)]
 impl<S: Store> SyncEngine<S> {
     pub fn author_create(&self, _req: AuthorCreateRequest) -> RpcResult<AuthorCreateResponse> {
@@ -31,12 +34,21 @@ impl<S: Store> SyncEngine<S> {
         &self,
         _req: AuthorListRequest,
     ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
-        let ite = self.store.list_authors().map(|authors| authors.into_iter());
-        let ite = inline_error(ite).map_ok(|author| AuthorListResponse {
-            author_id: author.id(),
-            writable: true,
+        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+        let store = self.store.clone();
+        self.rt.main().spawn_blocking(move || {
+            let ite = store.list_authors();
+            let ite = inline_result(ite).map_ok(|author| AuthorListResponse {
+                author_id: author.id(),
+                writable: true,
+            });
+            for entry in ite {
+                if let Err(_err) = tx.send(entry) {
+                    break;
+                }
+            }
         });
-        futures::stream::iter(ite)
+        rx.into_stream()
     }
 
     pub fn docs_create(&self, _req: DocsCreateRequest) -> RpcResult<DocsCreateResponse> {
@@ -50,9 +62,18 @@ impl<S: Store> SyncEngine<S> {
         &self,
         _req: DocsListRequest,
     ) -> impl Stream<Item = RpcResult<DocsListResponse>> {
-        let ite = self.store.list_replicas().map(|res| res.into_iter());
-        let ite = inline_error(ite).map_ok(|id| DocsListResponse { id });
-        futures::stream::iter(ite)
+        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
+        let store = self.store.clone();
+        self.rt.main().spawn_blocking(move || {
+            let ite = store.list_namespaces();
+            let ite = inline_result(ite).map_ok(|id| DocsListResponse { id });
+            for entry in ite {
+                if let Err(_err) = tx.send(entry) {
+                    break;
+                }
+            }
+        });
+        rx.into_stream()
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
@@ -140,7 +161,7 @@ impl<S: Store> SyncEngine<S> {
 
     pub fn doc_get(&self, req: DocGetRequest) -> impl Stream<Item = RpcResult<DocGetResponse>> {
         let DocGetRequest { doc_id, filter } = req;
-        let (tx, rx) = flume::bounded(16);
+        let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let store = self.store.clone();
         self.rt.main().spawn_blocking(move || {
             let ite = store.get(doc_id, filter);
@@ -160,15 +181,6 @@ fn inline_result<T>(
 ) -> impl Iterator<Item = RpcResult<T>> {
     match ite {
         Ok(ite) => itertools::Either::Left(ite.map(|item| item.map_err(|err| err.into()))),
-        Err(err) => itertools::Either::Right(Some(Err(err.into())).into_iter()),
-    }
-}
-
-fn inline_error<T>(
-    ite: Result<impl Iterator<Item = T>, impl Into<RpcError>>,
-) -> impl Iterator<Item = RpcResult<T>> {
-    match ite {
-        Ok(ite) => itertools::Either::Left(ite.map(|item| Ok(item))),
         Err(err) => itertools::Either::Right(Some(Err(err.into())).into_iter()),
     }
 }

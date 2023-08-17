@@ -18,8 +18,18 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
     type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
 
-    /// The iterator returned from [`Self::get`].
+    /// Iterator over entries in the store, returned from [`Self::get`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
+    where
+        Self: 'a;
+
+    /// Iterator over replicas in the store, returned from [`Self::list_replicas`]
+    type NamespaceIter<'a>: Iterator<Item = Result<NamespaceId>>
+    where
+        Self: 'a;
+
+    /// Iterator over authors in the store, returned from [`Self::list_replicas`]
+    type AuthorsIter<'a>: Iterator<Item = Result<Author>>
     where
         Self: 'a;
 
@@ -27,8 +37,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
     /// List all replicas in this store.
-    // TODO: return iterator
-    fn list_replicas(&self) -> Result<Vec<NamespaceId>>;
+    fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;
 
     /// Open a replica from this store.
     ///
@@ -43,7 +52,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// List all author keys in this store.
     // TODO: return iterator
-    fn list_authors(&self) -> Result<Vec<Author>>;
+    fn list_authors(&self) -> Result<Self::AuthorsIter<'_>>;
 
     /// Get an author key from the store.
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;

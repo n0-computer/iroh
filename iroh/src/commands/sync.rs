@@ -2,8 +2,8 @@ use clap::Parser;
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    rpc_protocol::{DocTicket, ShareMode},
     client::quic::Iroh,
+    rpc_protocol::{DocTicket, ShareMode},
     sync::PeerSource,
 };
 use iroh_sync::{

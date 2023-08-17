@@ -30,14 +30,24 @@ type ReplicaRecordsOwned =
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
     type GetIter<'a> = GetIter<'a>;
+    type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
         Ok(replicas.get(namespace).cloned())
     }
 
-    fn list_replicas(&self) -> Result<Vec<NamespaceId>> {
-        Ok(self.replicas.read().keys().cloned().collect())
+    fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
+        // TODO: avoid collect?
+        Ok(self
+            .replicas
+            .read()
+            .keys()
+            .cloned()
+            .map(|n| Ok(n))
+            .collect::<Vec<_>>()
+            .into_iter())
     }
 
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>> {
@@ -51,8 +61,16 @@ impl super::Store for Store {
         Ok(author)
     }
 
-    fn list_authors(&self) -> Result<Vec<Author>> {
-        Ok(self.authors.read().values().cloned().collect())
+    fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {
+        // TODO: avoid collect?
+        Ok(self
+            .authors
+            .read()
+            .values()
+            .cloned()
+            .map(|n| Ok(n))
+            .collect::<Vec<_>>()
+            .into_iter())
     }
 
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<ReplicaStoreInstance>> {
