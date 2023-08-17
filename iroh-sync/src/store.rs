@@ -36,7 +36,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Create a new replica for `namespace` and persist in this store.
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
-    /// List all replicas in this store.
+    /// List all replica namespaces in this store.
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;
 
     /// Open a replica from this store.
@@ -51,7 +51,6 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author>;
 
     /// List all author keys in this store.
-    // TODO: return iterator
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>>;
 
     /// Get an author key from the store.
@@ -59,8 +58,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Iterate over entries of a replica.
     ///
-    /// Returns an iterator. The [`GetFilter`] has several methods of filtering the returned
-    /// entries.
+    /// The [`GetFilter`] has several methods of filtering the returne entries.
     fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
     /// Gets the single latest entry for the specified key and author.
