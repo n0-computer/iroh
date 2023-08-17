@@ -27,20 +27,10 @@ pub mod repl;
 pub mod sync;
 pub mod validate;
 
-/// Send data.
-///
-/// The iroh command line tool has two modes: provide and get.
-///
-/// The provide mode is a long-running process binding to a socket which the get mode
-/// contacts to request data.  By default the provide process also binds to an RPC port
-/// which allows adding additional data to be provided as well as a few other maintenance
-/// commands.
-///
-/// The get mode retrieves data from the provider, for this it needs the hash, provider
-/// address and PeerID as well as an authentication code.  The get --ticket option is a
-/// shortcut to provide all this information conveniently in a single ticket.
+/// Iroh is a tool for syncing bytes.
+/// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
-#[clap(version)]
+#[clap(version, verbatim_doc_comment)]
 pub struct Cli {
     #[clap(subcommand)]
     pub command: Option<Commands>,
