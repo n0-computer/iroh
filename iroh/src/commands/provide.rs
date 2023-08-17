@@ -14,7 +14,7 @@ use iroh::{
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{baomap::Store, protocol::RequestToken, util::runtime};
-use iroh_net::{derp::DerpMap, tls::Keypair};
+use iroh_net::{derp::DerpMap, key::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};

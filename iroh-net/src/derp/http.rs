@@ -50,7 +50,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
-    use crate::tls::{Keypair, PublicKey};
+    use crate::key::{Keypair, PublicKey};
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {

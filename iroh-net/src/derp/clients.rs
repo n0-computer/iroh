@@ -1,7 +1,7 @@
 //! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
-use crate::tls::PublicKey;
+use crate::key::PublicKey;
 use std::collections::{HashMap, HashSet};
 
 use futures::future::join_all;
@@ -300,7 +300,7 @@ mod tests {
         derp::{
             client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
         },
-        tls::Keypair,
+        key::Keypair,
     };
 
     use anyhow::Result;

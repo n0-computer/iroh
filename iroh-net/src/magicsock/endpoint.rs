@@ -13,7 +13,7 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    config, disco, magicsock::Timer, net::ip::is_unicast_link_local, stun, tls::PublicKey,
+    config, disco, key::PublicKey, magicsock::Timer, net::ip::is_unicast_link_local, stun,
 };
 
 use super::{

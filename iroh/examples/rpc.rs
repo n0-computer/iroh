@@ -6,7 +6,7 @@ use iroh::collection::IrohCollectionParser;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
 use iroh_bytes::baomap::Store;
-use iroh_net::tls::Keypair;
+use iroh_net::key::Keypair;
 use quic_rpc::transport::quinn::QuinnServerEndpoint;
 use quic_rpc::ServiceEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};

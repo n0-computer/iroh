@@ -14,7 +14,7 @@ use iroh::collection::Collection;
 use iroh::dial::Ticket;
 use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
-use iroh_net::tls::Keypair;
+use iroh_net::key::Keypair;
 use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{prelude::*, EnvFilter};
 

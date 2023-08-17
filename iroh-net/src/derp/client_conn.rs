@@ -10,7 +10,10 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
-use crate::{disco::looks_like_disco_wrapper, key::node::PUBLIC_KEY_LENGTH, tls::PublicKey};
+use crate::{
+    disco::looks_like_disco_wrapper,
+    key::{PublicKey, PUBLIC_KEY_LENGTH},
+};
 
 use iroh_metrics::{inc, inc_by};
 
@@ -662,7 +665,7 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 mod tests {
     use std::sync::Arc;
 
-    use crate::tls::Keypair;
+    use crate::key::Keypair;
 
     use super::*;
 

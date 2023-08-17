@@ -8,7 +8,7 @@ use iroh::dial::Ticket;
 use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_io::ConcatenateSliceWriter;
-use iroh_net::tls::Keypair;
+use iroh_net::key::Keypair;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info

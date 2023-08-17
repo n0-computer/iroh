@@ -15,7 +15,8 @@ use crate::{
     derp::DerpMap,
     magicsock::{self, Callbacks, MagicSock},
     netmap::NetworkMap,
-    tls::{self, Keypair, PeerId, PublicKey},
+    key::{Keypair, PeerId, PublicKey},
+    tls,
 };
 
 /// Builder for [MagicEndpoint]

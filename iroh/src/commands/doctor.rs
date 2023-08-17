@@ -17,9 +17,8 @@ use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, UseIpv4, UseIpv6},
-    netcheck, portmapper,
-    tls::{Keypair, PeerId, PublicKey},
-    MagicEndpoint,
+    key::{Keypair, PeerId, PublicKey},
+    netcheck, portmapper, MagicEndpoint,
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -774,7 +773,7 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<Keypair> {
         PrivateKey::Hex(hex) => {
             let bytes = hex::decode(hex)?;
             let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-            Keypair::from(iroh_net::tls::SecretKey::from(bytes))
+            Keypair::from(iroh_net::key::SecretKey::from(bytes))
         }
         PrivateKey::Local => {
             let path = IrohPaths::Keypair.with_env()?;

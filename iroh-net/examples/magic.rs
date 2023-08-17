@@ -5,8 +5,8 @@ use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::{default_derp_map, TEST_REGION_ID},
     derp::DerpMap,
+    key::{Keypair, PeerId},
     magic_endpoint::accept_conn,
-    tls::{Keypair, PeerId},
     MagicEndpoint,
 };
 use tracing::{debug, info};

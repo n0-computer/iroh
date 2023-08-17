@@ -20,8 +20,7 @@ use super::{
     PROTOCOL_VERSION,
 };
 
-use crate::key::node::{EncryptExt, PUBLIC_KEY_LENGTH};
-use crate::tls::{Keypair, PublicKey};
+use crate::key::{Keypair, PublicKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 

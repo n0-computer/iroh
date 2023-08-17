@@ -35,8 +35,7 @@ use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::key::node::{EncryptExt, PUBLIC_KEY_LENGTH};
-use crate::tls::{Keypair, PublicKey};
+use crate::key::{Keypair, PublicKey, PUBLIC_KEY_LENGTH};
 use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.

@@ -11,7 +11,7 @@ use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
-use iroh_net::tls::{Keypair, PeerId};
+use iroh_net::key::{Keypair, PeerId};
 use serde::{Deserialize, Serialize};
 
 /// Options for the client
@@ -210,7 +210,6 @@ impl FromStr for Ticket {
 #[cfg(test)]
 mod tests {
     use bao_tree::blake3;
-    use iroh_net::tls::Keypair;
 
     use super::*;
 

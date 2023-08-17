@@ -26,7 +26,7 @@ use crate::derp::{
     PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
-use crate::tls::{Keypair, PublicKey};
+use crate::key::{Keypair, PublicKey};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);

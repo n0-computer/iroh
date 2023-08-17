@@ -11,7 +11,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
 use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
-use iroh_net::tls::PeerId;
+use iroh_net::key::PeerId;
 
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},

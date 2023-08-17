@@ -10,7 +10,7 @@ use futures::StreamExt;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::tls::{Keypair, PeerId};
+use iroh_net::key::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
@@ -414,7 +414,7 @@ pub fn create_quinn_client(
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> Result<quinn::Endpoint> {
-    let keypair = iroh_net::tls::Keypair::generate();
+    let keypair = iroh_net::key::Keypair::generate();
     let tls_client_config =
         iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));

@@ -36,7 +36,7 @@ use crate::{
         types::PacketForwarder,
         MaybeTlsStreamServer,
     },
-    tls::Keypair,
+    key::Keypair,
 };
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;

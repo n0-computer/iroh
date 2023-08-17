@@ -8,7 +8,7 @@
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use x509_parser::prelude::*;
 
-use super::{Keypair, PeerId, PublicKey, Signature};
+use crate::key::{Keypair, PeerId, PublicKey, Signature};
 
 /// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identier 1.3.6.1.4.1.53594.1.1,
@@ -91,10 +91,10 @@ pub struct P2pCertificate<'a> {
 /// and a signature performed using the private host key.
 #[derive(Debug)]
 pub struct P2pExtension {
-    public_key: super::PublicKey,
+    public_key: crate::key::PublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
-    signature: super::Signature,
+    signature: crate::key::Signature,
 }
 
 /// An error that occurs during certificate generation.

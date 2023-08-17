@@ -42,7 +42,8 @@ use iroh_bytes::{
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
-    tls::{self, Keypair, PeerId},
+    key::{Keypair, PeerId},
+    tls,
     MagicEndpoint,
 };
 use quic_rpc::server::RpcChannel;

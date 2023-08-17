@@ -19,7 +19,7 @@ use iroh::{
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
-    tls::{Keypair, PeerId},
+    key::{Keypair, PeerId},
     MagicEndpoint,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;

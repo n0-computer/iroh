@@ -14,8 +14,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     derp::{self, MAX_PACKET_SIZE},
-    key::node::PUBLIC_KEY_LENGTH,
-    tls::PublicKey,
+    key::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
 use super::Metrics as MagicsockMetrics;

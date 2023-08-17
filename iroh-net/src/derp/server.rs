@@ -17,8 +17,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
-use crate::key::node::EncryptExt;
-use crate::tls::{Keypair, PublicKey};
+use crate::key::{Keypair, PublicKey};
 
 use super::client_conn::ClientConnBuilder;
 use super::{
@@ -686,7 +685,7 @@ mod tests {
             types::ClientInfo,
             ReceivedMessage, MAX_FRAME_SIZE,
         },
-        key::node::PUBLIC_KEY_LENGTH,
+        key::PUBLIC_KEY_LENGTH,
     };
     use tracing_subscriber::{prelude::*, EnvFilter};
 

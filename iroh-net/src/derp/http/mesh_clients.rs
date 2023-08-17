@@ -5,7 +5,7 @@ use tracing::{info_span, Instrument};
 
 use crate::{
     derp::{http::ClientBuilder, DerpMap, MeshKey, PacketForwarderHandler},
-    tls::Keypair,
+    key::Keypair,
 };
 
 use super::Client;

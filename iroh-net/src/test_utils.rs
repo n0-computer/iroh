@@ -12,7 +12,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
-use crate::tls::Keypair;
+use crate::key::Keypair;
 
 /// Configures logging for the current test, **single-threaded runtime only**.
 ///

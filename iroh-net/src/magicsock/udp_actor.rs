@@ -13,7 +13,7 @@ use quinn::AsyncUdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-use crate::{disco, netcheck, stun, tls::PublicKey};
+use crate::{disco, key::PublicKey, netcheck, stun};
 
 use super::{
     rebinding_conn::RebindingUdpConn,

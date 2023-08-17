@@ -27,7 +27,7 @@ use anyhow::{anyhow, ensure, Result};
 
 use crate::{key, net::ip::to_canonical};
 
-use super::{stun, tls::PublicKey};
+use super::{key::PublicKey, stun};
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -46,7 +46,7 @@ const TX_LEN: usize = 12;
 /// Header: Type | Version
 const HEADER_LEN: usize = 2;
 
-const PING_LEN: usize = TX_LEN + key::node::PUBLIC_KEY_LENGTH;
+const PING_LEN: usize = TX_LEN + key::PUBLIC_KEY_LENGTH;
 const PONG_LEN: usize = TX_LEN + EP_LENGTH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,7 +151,7 @@ impl Ping {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
-        let raw_key = &p[TX_LEN..TX_LEN + key::node::PUBLIC_KEY_LENGTH];
+        let raw_key = &p[TX_LEN..TX_LEN + key::PUBLIC_KEY_LENGTH];
         let node_key = PublicKey::try_from(raw_key)?;
         let tx_id = stun::TransactionId::from(tx_id);
 
@@ -311,7 +311,7 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 #[cfg(test)]
 mod tests {
-    use crate::{key::node::EncryptExt, tls::Keypair};
+    use crate::key::Keypair;
 
     use super::*;
 

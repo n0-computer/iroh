@@ -34,10 +34,9 @@ use crate::{
     config::{self, DERP_MAGIC_IP},
     derp::{DerpMap, DerpRegion},
     disco,
-    key::node::{EncryptExt, SharedSecret},
+    key::{Keypair, PublicKey, SharedSecret},
     net::ip::LocalAddresses,
     netcheck, netmap, portmapper, stun,
-    tls::{Keypair, PublicKey},
     util::AbortingJoinHandle,
 };
 
@@ -2709,7 +2708,7 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct MagicStack {
         ep_ch: flume::Receiver<Vec<config::Endpoint>>,
-        keypair: tls::Keypair,
+        keypair: Keypair,
         endpoint: MagicEndpoint,
     }
 
@@ -2720,7 +2719,7 @@ pub(crate) mod tests {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
 
-            let keypair = tls::Keypair::generate();
+            let keypair = Keypair::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3072,7 +3071,7 @@ pub(crate) mod tests {
         setup_logging();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
-            let key = tls::Keypair::generate();
+            let key = Keypair::generate();
             let conn = std::net::UdpSocket::bind(addr)?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
@@ -3215,7 +3214,7 @@ pub(crate) mod tests {
         setup_logging();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
-            let key = tls::Keypair::generate();
+            let key = Keypair::generate();
             let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into()).await?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
