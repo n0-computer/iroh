@@ -78,6 +78,7 @@ impl Store {
             replicas: Default::default(),
         })
     }
+
     /// Stores a new namespace
     fn insert_namespace(&self, namespace: Namespace) -> Result<()> {
         let write_tx = self.db.begin_write()?;

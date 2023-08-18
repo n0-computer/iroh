@@ -14,23 +14,23 @@ pub struct Author {
     signing_key: SigningKey,
 }
 impl Author {
-    /// Create a new author with a random key.
+    /// Create a new [`Author`] with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let signing_key = SigningKey::generate(rng);
         Author { signing_key }
     }
 
-    /// Create an author from a byte array.
+    /// Create an [`Author`] from a byte array.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
 
-    /// Returns the Author byte representation.
+    /// Returns the [`Author`] byte representation.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.signing_key.to_bytes()
     }
 
-    /// Returns the AuthorId byte representation.
+    /// Returns the [`AuthorId`] byte representation.
     pub fn id_bytes(&self) -> [u8; 32] {
         self.signing_key.verifying_key().to_bytes()
     }
@@ -40,12 +40,12 @@ impl Author {
         AuthorId(self.signing_key.verifying_key())
     }
 
-    /// Sign a message with this author key.
+    /// Sign a message with this [`Author`] key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         self.signing_key.sign(msg)
     }
 
-    /// Strictly verify a signature on a message with this author's public key.
+    /// Strictly verify a signature on a message with this [`Author`]'s public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.signing_key.verify_strict(msg, signature)
     }
@@ -59,7 +59,7 @@ impl Author {
 pub struct AuthorId(VerifyingKey);
 
 impl AuthorId {
-    /// Verify that a signature matches the `msg` bytes and was created with this the [`Author`]
+    /// Verify that a signature matches the `msg` bytes and was created with the [`Author`]
     /// that corresponds to this [`AuthorId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.0.verify_strict(msg, signature)
@@ -83,26 +83,26 @@ impl AuthorId {
 /// Namespace key of a [`crate::Replica`].
 ///
 /// Holders of this key can insert new entries into a [`crate::Replica`].
-/// Internally, a namespace is a [`SigningKey`] which is used to sign entries.
+/// Internally, a [`Namespace`] is a [`SigningKey`] which is used to sign entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Namespace {
     signing_key: SigningKey,
 }
 
 impl Namespace {
-    /// Create a new namespace with a random key.
+    /// Create a new [`Namespace`] with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let signing_key = SigningKey::generate(rng);
 
         Namespace { signing_key }
     }
 
-    /// Create a namespace from a byte array.
+    /// Create a [`Namespace`] from a byte array.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
 
-    /// Returns the namespace byte representation.
+    /// Returns the [`Namespace`] byte representation.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.signing_key.to_bytes()
     }
@@ -117,12 +117,12 @@ impl Namespace {
         NamespaceId(self.signing_key.verifying_key())
     }
 
-    /// Sign a message with this namespace key.
+    /// Sign a message with this [`Namespace`] key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         self.signing_key.sign(msg)
     }
 
-    /// Strictly verify a signature on a message with this namespaces's public key.
+    /// Strictly verify a signature on a message with this [`Namespace`]'s public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.signing_key.verify_strict(msg, signature)
     }
@@ -130,13 +130,13 @@ impl Namespace {
 
 /// Identifier for a [`Namespace`]
 ///
-/// This is the corresponding [`VerifyingKey`] for an author. It is used as an identifier, and can
+/// This is the corresponding [`VerifyingKey`] for a [`Namespace`]. It is used as an identifier, and can
 /// be used to verify [`Signature`]s.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct NamespaceId(VerifyingKey);
 
 impl NamespaceId {
-    /// Verify that a signature matches the `msg` bytes and was created with this the [`Author`]
+    /// Verify that a signature matches the `msg` bytes and was created with the [`Namespace`]
     /// that corresponds to this [`NamespaceId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.0.verify_strict(msg, signature)

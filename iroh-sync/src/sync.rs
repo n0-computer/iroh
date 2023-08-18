@@ -23,12 +23,12 @@ use crate::ranger::{self, AsFingerprint, Fingerprint, Peer, RangeKey};
 
 pub use crate::keys::*;
 
-/// Protocol message for the set reconciliation protocol
+/// Protocol message for the set reconciliation protocol.
 ///
 /// Can be serialized to bytes with [serde] to transfer between peers.
 pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>;
 
-/// Byte represenation of a `PeerId` from `iroh-net`
+/// Byte represenation of a `PeerId` from `iroh-net`.
 // TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
 
@@ -222,7 +222,7 @@ impl SignedEntry {
         SignedEntry { signature, entry }
     }
 
-    /// Create a new signed entry by signing an entry with a namespace and author.
+    /// Create a new signed entry by signing an entry with the `namespace` and `author`.
     pub fn from_entry(entry: Entry, namespace: &Namespace, author: &Author) -> Self {
         let signature = EntrySignature::from_entry(&entry, namespace, author);
         SignedEntry { signature, entry }
@@ -239,12 +239,12 @@ impl SignedEntry {
         &self.signature
     }
 
-    /// Get the entry.
+    /// Get the [`Entry`].
     pub fn entry(&self) -> &Entry {
         &self.entry
     }
 
-    /// Get the content hash of the entry.
+    /// Get the content [`Hash`] of the entry.
     pub fn content_hash(&self) -> &Hash {
         self.entry().record().content_hash()
     }
@@ -254,7 +254,7 @@ impl SignedEntry {
         self.entry().record().content_len()
     }
 
-    /// Get the author of the entry.
+    /// Get the [`AuthorId`] of the entry.
     pub fn author(&self) -> AuthorId {
         self.entry().id().author()
     }
@@ -273,7 +273,7 @@ pub struct EntrySignature {
 }
 
 impl EntrySignature {
-    /// Create a new signature by signing an entry with a namespace and author.
+    /// Create a new signature by signing an entry with the `namespace` and `author`.
     pub fn from_entry(entry: &Entry, namespace: &Namespace, author: &Author) -> Self {
         // TODO: this should probably include a namespace prefix
         // namespace in the cryptographic sense.
@@ -321,10 +321,10 @@ impl EntrySignature {
     }
 }
 
-/// A single entry in a replica.
+/// A single entry in a [`Replica`]
 ///
-/// An entry is identified by a key, its author, and the replica's
-/// namespace. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
+/// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
+/// [`Namespace`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
@@ -377,9 +377,9 @@ impl Entry {
 pub struct RecordIdentifier {
     /// The key of the record.
     key: Vec<u8>,
-    /// The namespace this record belongs to.
+    /// The [`NamespaceId`] of the namespace this record belongs to.
     namespace: NamespaceId,
-    /// The author that wrote this record.
+    /// The [`AuthorId`] of the author that wrote this record.
     author: AuthorId,
 }
 
@@ -408,7 +408,7 @@ impl RangeKey for RecordIdentifier {
 }
 
 impl RecordIdentifier {
-    /// Create a new record identifier.
+    /// Create a new [`RecordIdentifier`].
     pub fn new(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
@@ -429,7 +429,7 @@ impl RecordIdentifier {
         })
     }
 
-    /// Serialize this record identifier into a mutable byte array.
+    /// Serialize this [`RecordIdentifier`] into a mutable byte array.
     pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(self.author.as_bytes());
@@ -441,7 +441,7 @@ impl RecordIdentifier {
         &self.key
     }
 
-    /// Get the namespace of this record.
+    /// Get the [`NamespaceId`] of this record.
     pub fn namespace(&self) -> NamespaceId {
         self.namespace
     }
@@ -450,7 +450,7 @@ impl RecordIdentifier {
         self.namespace.as_bytes()
     }
 
-    /// Get the author of this record.
+    /// Get the [`AuthorId`] of this record.
     pub fn author(&self) -> AuthorId {
         self.author
     }
@@ -491,7 +491,7 @@ impl Record {
         self.len
     }
 
-    /// Get the hash of the content data of this record.
+    /// Get the [`Hash`] of the content data of this record.
     pub fn content_hash(&self) -> &Hash {
         &self.hash
     }

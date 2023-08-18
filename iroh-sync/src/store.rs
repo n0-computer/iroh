@@ -47,7 +47,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
-    /// Create a new author key key and persist it in the store.
+    /// Create a new author key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author>;
 
     /// List all author keys in this store.
@@ -58,7 +58,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Iterate over entries of a replica.
     ///
-    /// The [`GetFilter`] has several methods of filtering the returne entries.
+    /// The [`GetFilter`] has several methods of filtering the returned entries.
     fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
     /// Gets the single latest entry for the specified key and author.
@@ -85,7 +85,10 @@ impl Default for GetFilter {
 }
 
 impl GetFilter {
-    /// Create a new get filter, either for only latest or all entries.
+    /// Create a new get filter.
+    ///
+    /// When `latest` is `true`, it will iterate over the latest entries, otherwise it will
+    /// iterate over all entires.
     pub fn new(latest: bool) -> Self {
         GetFilter {
             latest,
@@ -93,6 +96,7 @@ impl GetFilter {
             key: KeyFilter::All,
         }
     }
+
     /// No filter, iterate over all entries.
     pub fn all() -> Self {
         Self::new(false)
@@ -114,16 +118,19 @@ impl GetFilter {
         self.key = KeyFilter::Key(key.as_ref().to_vec());
         self
     }
+
     /// Filter by prefix key match.
     pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
         self.key = KeyFilter::Prefix(prefix.as_ref().to_vec());
         self
     }
+
     /// Filter by author.
     pub fn with_author(mut self, author: AuthorId) -> Self {
         self.author = Some(author);
         self
     }
+
     /// Include not only latest entries but also all historical entries.
     pub fn with_history(mut self) -> Self {
         self.latest = false;

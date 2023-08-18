@@ -264,6 +264,7 @@ impl Store {
         })
     }
 }
+
 #[derive(Debug)]
 enum GetFilter {
     /// All entries.
@@ -526,6 +527,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     }
 
     type RangeIterator<'a> = RangeIterator<'a>;
+
     fn get_range(
         &self,
         range: Range<RecordIdentifier>,
