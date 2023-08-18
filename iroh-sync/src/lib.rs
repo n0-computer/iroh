@@ -10,14 +10,14 @@
 //!
 //! * The [Namespace] key, as a token of write capability. The public key is the [NamespaceId], which
 //!   also serves as the unique identifier for a replica.
-//! * The [Author] key, as a proof of authorship. Any number of authors may be created, and an
+//! * The [Author] key, as a proof of authorship. Any number of authors may be created, and
 //!   their semantic meaning is application-specific. The public key of an author is the [AuthorId].
 //!
 //! Replicas can be synchronized between peers by exchanging messages. The synchronization algorithm
 //! is based on a technique called *range-based set reconciliation*, based on [this paper][paper] by
 //! Aljoscha Meyer:
 //!
-//! > Range-based set reconciliation is a simple approach to efficiently computing the union of two
+//! > Range-based set reconciliation is a simple approach to efficiently compute the union of two
 //! sets over a network, based on recursively partitioning the sets and comparing fingerprints of
 //! the partitions to probabilistically detect whether a partition requires further work.
 //!
