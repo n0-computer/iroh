@@ -40,7 +40,7 @@ rcgen = "0.11"
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 ssh-key = { version = "0.6.0-rc.0", features = ["ed25519", "std", "rand_core"] }
 serdect = "0.2.0"
 socket2 = "0.5.3"

@@ -94,7 +94,8 @@ mod tests {
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
-            }],
+            }
+            .into()],
             region_code: "test_region".to_string(),
         };
 
@@ -237,7 +238,8 @@ mod tests {
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
-            }],
+            }
+            .into()],
             region_code: "test_region".to_string(),
         };
 

@@ -443,7 +443,7 @@ impl Client {
             .body(Body::empty())
             .unwrap();
 
-        let res = if self.use_https(derp_node.as_ref()) {
+        let res = if self.use_https(derp_node.as_deref()) {
             debug!("Starting TLS handshake");
             // TODO: review TLS config
             let mut roots = rustls::RootCertStore::empty();
@@ -466,7 +466,7 @@ impl Client {
 
             let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
             let hostname = self
-                .tls_servername(derp_node.as_ref())
+                .tls_servername(derp_node.as_deref())
                 .ok_or_else(|| ClientError::InvalidUrl("no tls servername".into()))?;
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
@@ -603,7 +603,10 @@ impl Client {
     ///
     /// Return a TCP stream to the provided region, trying each node in order
     /// (using [`Client::dial_node`]) until one connects
-    async fn dial_region(&self, reg: DerpRegion) -> Result<(TcpStream, DerpNode), ClientError> {
+    async fn dial_region(
+        &self,
+        reg: DerpRegion,
+    ) -> Result<(TcpStream, Arc<DerpNode>), ClientError> {
         debug!("dial region: {:?}", reg);
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
@@ -612,16 +615,16 @@ impl Client {
         let mut first_err: Option<ClientError> = None;
         // TODO (ramfox): these dials should probably happen in parallel, and we should return the
         // first one to respond.
-        for node in reg.nodes {
+        for node in reg.nodes.iter() {
             if node.stun_only {
                 if first_err.is_none() {
                     first_err = Some(ClientError::StunOnlyNodesFound(target.clone()));
                 }
                 continue;
             }
-            let conn = self.dial_node(&node).await;
+            let conn = self.dial_node(node).await;
             match conn {
-                Ok(conn) => return Ok((conn, node)),
+                Ok(conn) => return Ok((conn, node.clone())),
                 Err(e) => first_err = Some(e),
             }
         }
@@ -1197,7 +1200,8 @@ mod tests {
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
                 ipv6: UseIpv6::Disabled,
-            }],
+            }
+            .into()],
             region_code: "test_region".to_string(),
         };
 

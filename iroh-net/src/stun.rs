@@ -200,7 +200,7 @@ pub mod test {
                     region_id,
                     region_code: "".to_string(),
                     avoid: false,
-                    nodes: vec![node],
+                    nodes: vec![node.into()],
                 }
             })
             .into()
