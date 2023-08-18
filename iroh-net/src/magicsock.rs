@@ -287,6 +287,9 @@ impl MagicSock {
     ///
     /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
+        #[cfg(features = "derp-only")]
+        debug!("creating MagicSock that will only send packets over a derp relay connection.");
+
         let name = format!("magic-{}", opts.private_key.public_key().short_hex());
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("magicsock", %name))
@@ -2397,6 +2400,7 @@ impl SendAddr {
         matches!(self, Self::Derp(_))
     }
 
+    #[cfg(not(feature = "derp-only"))]
     pub(self) fn as_udp(&self) -> Option<&SocketAddr> {
         match self {
             Self::Derp(_) => None,

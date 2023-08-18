@@ -52,6 +52,7 @@ async fn main_impl() -> Result<()> {
     #[cfg(feature = "metrics")]
     let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
 
+    tracing::debug!(target: "derponly", "{config:?}");
     let r = cli.run(&rt, &config).await;
 
     #[cfg(feature = "metrics")]

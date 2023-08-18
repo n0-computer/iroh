@@ -98,6 +98,7 @@ duct = "0.13.6"
 default = ["metrics"]
 derper = ["clap", "toml", "rustls-pemfile", "regex", "tracing-subscriber"]
 metrics = ["iroh-metrics"]
+derp-only = []
 
 [[bin]]
 name = "derper"

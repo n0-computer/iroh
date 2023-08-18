@@ -58,6 +58,7 @@ mem-db = []
 flat-db = []
 iroh-collection = []
 test = []
+derp-only= ["iroh-net/derp-only"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
