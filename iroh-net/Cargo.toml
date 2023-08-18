@@ -85,11 +85,16 @@ wmi = "0.13"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
+criterion = "0.3"
 ntest = "0.9"
 pretty_assertions = "1.4"
 rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bench]]
+name = "key"
+harness = false
 
 [build-dependencies]
 duct = "0.13.6"
