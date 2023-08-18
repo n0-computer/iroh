@@ -1,8 +1,10 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#![cfg(not(features = "derp-only"))]
 #![cfg(feature = "cli")]
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
+// use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, io};
@@ -471,7 +473,7 @@ fn make_provider_in(
         ],
     )
     .stderr_null()
-    // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+    // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
     .env("RUST_LOG", "debug")
     .env("IROH_DATA_DIR", iroh_data_dir);
 
@@ -617,6 +619,10 @@ fn test_provide_get_loop_single(
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
     let peer = ticket.peer().to_string();
+    let region = ticket
+        .derp_region()
+        .context("should have derp region in ticket")?
+        .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
     let mut args = vec!["get", "--peer", &peer];
@@ -628,6 +634,8 @@ fn test_provide_get_loop_single(
         args.push("--out");
         args.push(out.to_str().unwrap());
     }
+    args.push("--region");
+    args.push(&region);
     args.push("--single");
     let hash_str = hash.to_string();
     args.push(&hash_str);
