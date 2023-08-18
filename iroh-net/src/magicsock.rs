@@ -23,6 +23,7 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
+use quinn_udp::RecvMeta;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     sync::{self, mpsc, Mutex},
@@ -216,6 +217,19 @@ pub(self) struct Inner {
     pub(self) derp_map: Option<DerpMap>,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
+
+    /// Raw datagrams which need to be returned on the next .poll_recv().
+    ///
+    /// Since we use GSO (Generic Segementation Offloading) on the send path we end up
+    /// sending concatenated datagrams over the DERP connection as well.  Since we have no
+    /// GRO (Generic Read Offloading) stack on the receiving side when using the DERP
+    /// connection we will receive the concatenated datagrams in the magicsock even if the
+    /// local machine does not support this, e.g. MacOS.  In this case Quinn will not give
+    /// us large enough buffers in .poll_recv() to put the entire received payload and we
+    /// need to split up the payload.  If we had to split the payload we store the
+    /// not-yet-received datagrams here and the next .poll_recv() will return these before
+    /// reading more from the [`Inner::network_recv_ch`].
+    cached_recv_datagrams: std::sync::Mutex<Option<(RecvMeta, Bytes)>>,
 }
 
 impl Inner {
@@ -351,6 +365,7 @@ impl MagicSock {
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map,
             my_derp: AtomicU16::new(0),
+            cached_recv_datagrams: std::sync::Mutex::new(None),
         });
 
         let udp_state = quinn_udp::UdpState::default();
@@ -717,6 +732,31 @@ impl AsyncUdpSocket for MagicSock {
 
         let mut num_msgs = 0;
         for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
+            // first read from self.inner.cached_recv_datagrams
+            {
+                if self.inner.is_closed() {
+                    break;
+                }
+                let mut cached = self.inner.cached_recv_datagrams.lock().unwrap();
+                if let Some((mut meta, mut bytes)) = cached.take() {
+                    let copy_len = if bytes.len() > buf_out.len() {
+                        let segment_count = buf_out.len() / meta.stride;
+                        segment_count * meta.stride
+                    } else {
+                        bytes.len()
+                    };
+                    let remaining_bytes = bytes.split_off(copy_len);
+                    buf_out[..bytes.len()].copy_from_slice(&bytes[..bytes.len()]);
+                    meta.len = bytes.len();
+                    *meta_out = meta;
+                    if !remaining_bytes.is_empty() {
+                        meta.len = remaining_bytes.len();
+                        *cached = Some((meta, remaining_bytes));
+                    }
+                    continue;
+                }
+            }
+            // now read from the channel
             match self.inner.network_recv_ch.try_recv() {
                 Err(flume::TryRecvError::Empty) => {
                     self.inner
@@ -742,12 +782,29 @@ impl AsyncUdpSocket for MagicSock {
                             return Poll::Ready(Err(err));
                         }
                         NetworkReadResult::Ok {
-                            bytes,
-                            meta,
+                            mut bytes,
+                            mut meta,
                             source,
                         } => {
-                            buf_out[..bytes.len()].copy_from_slice(&bytes);
+                            let copy_len = if bytes.len() > buf_out.len() {
+                                // split bytes on segment boundary, leaving the largest
+                                // possible number of segments for buf.  Store the remaining
+                                // segements for next round.
+                                let segment_count = buf_out.len() / meta.stride;
+                                segment_count * meta.stride
+                            } else {
+                                bytes.len()
+                            };
+                            let remaining_bytes = bytes.split_off(copy_len);
+                            buf_out[..bytes.len()].copy_from_slice(&bytes[..bytes.len()]);
+                            meta.len = bytes.len();
                             *meta_out = meta;
+
+                            if !remaining_bytes.is_empty() {
+                                meta.len = remaining_bytes.len();
+                                let mut cached = self.inner.cached_recv_datagrams.lock().unwrap();
+                                *cached = Some((meta, remaining_bytes));
+                            }
 
                             match source {
                                 NetworkSource::Derp => {
