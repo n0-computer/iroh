@@ -289,6 +289,9 @@ impl MagicSock {
             "magic-{}",
             hex::encode(&opts.secret_key.public().as_bytes()[..8])
         );
+        #[cfg(features = "derp-only")]
+        debug!("creating MagicSock that will only send packets over a derp relay connection.");
+
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("magicsock", %name))
             .await
@@ -2362,6 +2365,7 @@ impl SendAddr {
         matches!(self, Self::Derp(_))
     }
 
+    #[cfg(not(feature = "derp-only"))]
     fn as_udp(&self) -> Option<&SocketAddr> {
         match self {
             Self::Derp(_) => None,

@@ -3,6 +3,9 @@
 //! This crate is a collection of tools to establish connectivity between peers.  At
 //! the high level [`MagicEndpoint`] is used to establish a QUIC connection with
 //! authenticated peers, relaying and holepunching support.
+//!
+//! The "derp-only" feature forces all traffic to send over the derp relays. We still
+//! receive traffic over udp and relay. This feature should only be used for testing.
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]

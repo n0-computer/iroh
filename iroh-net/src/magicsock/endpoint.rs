@@ -8,6 +8,7 @@ use std::{
 
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
+#[cfg(not(feature = "derp-only"))]
 use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
@@ -151,6 +152,14 @@ impl Endpoint {
 
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
+    #[cfg(feature = "derp-only")]
+    fn addr_for_send(&mut self, _now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
+        return (None, self.derp_addr, false);
+    }
+
+    /// Returns the address(es) that should be used for sending the next packet.
+    /// Zero, one, or both of UDP address and DERP addr may be non-zero.
+    #[cfg(not(feature = "derp-only"))]
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
         match self.best_addr {
             Some(ref best_addr) => {
@@ -184,6 +193,7 @@ impl Endpoint {
     }
 
     /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
+    #[cfg(not(feature = "derp-only"))]
     fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
@@ -1168,6 +1178,7 @@ impl EndpointState {
     }
 
     /// Returns the most recent pong if available.
+    #[cfg(not(feature = "derp-only"))]
     fn recent_pong(&self) -> Option<&PongReply> {
         self.recent_pongs.get(self.recent_pong)
     }
