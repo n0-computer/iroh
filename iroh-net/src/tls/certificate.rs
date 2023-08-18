@@ -135,13 +135,9 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
         if oid == &p2p_ext_oid {
             let signed_key =
                 SignedKey::from_der(ext.value).map_err(|_| webpki::Error::ExtensionValueInvalid)?;
-            let public_key_raw: [u8; 32] = signed_key
-                .public_key
-                .as_bytes()
-                .try_into()
-                .map_err(|_| webpki::Error::UnknownIssuer)?;
+            let public_key_raw = signed_key.public_key.as_bytes();
             let public_key =
-                PublicKey::from_bytes(&public_key_raw).map_err(|_| webpki::Error::UnknownIssuer)?;
+                PublicKey::try_from(public_key_raw).map_err(|_| webpki::Error::UnknownIssuer)?;
 
             let signature = Signature::from_slice(signed_key.signature.as_bytes())
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
@@ -285,7 +281,6 @@ impl P2pCertificate<'_> {
     /// 4. be self signed;
     /// 5. contain a valid signature in the specific libp2p extension.
     fn verify(&self) -> Result<(), webpki::Error> {
-        use ed25519_dalek::Verifier;
         use webpki::Error;
 
         // The certificate MUST have NotBefore and NotAfter fields set

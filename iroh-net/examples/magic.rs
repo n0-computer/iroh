@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn fmt_secret(keypair: &Keypair) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
+    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.to_bytes());
     text.make_ascii_lowercase();
     text
 }

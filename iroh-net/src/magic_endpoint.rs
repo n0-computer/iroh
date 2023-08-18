@@ -185,7 +185,7 @@ impl MagicEndpoint {
         let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
             derp_map: Some(derp_map.unwrap_or_default()),
-            private_key: keypair.secret().clone().into(),
+            private_key: keypair.clone(),
             callbacks: callbacks.unwrap_or_default(),
         })
         .await?;

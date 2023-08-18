@@ -7,19 +7,72 @@ use std::{
     str::FromStr,
 };
 
-pub use ed25519_dalek::{
-    Signature, SigningKey as SecretKey, VerifyingKey as PublicKey, PUBLIC_KEY_LENGTH,
-};
+pub use ed25519_dalek::{Signature, VerifyingKey, PUBLIC_KEY_LENGTH};
+use ed25519_dalek::{SignatureError, SigningKey as SecretKey, Verifier};
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
 pub use self::encryption::SharedSecret;
+use self::encryption::{public_ed_box, secret_ed_box};
+
+/// A public key.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PublicKey {
+    public: VerifyingKey,
+}
+
+impl PublicKey {
+    /// Get this peer id as a byte array.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.public.as_bytes()
+    }
+
+    fn public_crypto_box(&self) -> crypto_box::PublicKey {
+        // TODO: cache? prevents us from making `PublicKey` Copy.
+        public_ed_box(&self.public)
+    }
+
+    /// Verify a signature on a message with this keypair's public key.
+    ///
+    /// # Return
+    ///
+    /// Returns `Ok(())` if the signature is valid, and `Err` otherwise.
+    pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
+        self.public.verify(message, signature)
+    }
+}
+
+impl TryFrom<&[u8]> for PublicKey {
+    type Error = SignatureError;
+
+    #[inline]
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let public = VerifyingKey::try_from(bytes)?;
+        Ok(Self { public })
+    }
+}
+
+impl AsRef<[u8]> for PublicKey {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl From<VerifyingKey> for PublicKey {
+    fn from(public: VerifyingKey) -> Self {
+        PublicKey { public }
+    }
+}
 
 /// A keypair.
+// TODO: rename to `SecretKey`.
 #[derive(Clone, Debug)]
 pub struct Keypair {
     public: PublicKey,
     secret: SecretKey,
+    secret_crypto_box: OnceCell<crypto_box::SecretKey>,
 }
 
 impl Keypair {
@@ -28,24 +81,23 @@ impl Keypair {
         self.public
     }
 
-    /// The secret key of this keypair.
-    pub fn secret(&self) -> &SecretKey {
-        &self.secret
-    }
-
     /// Generate a new keypair.
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng;
         let secret = SecretKey::generate(&mut rng);
-        let public = secret.verifying_key();
+        let public = secret.verifying_key().into();
 
-        Self { public, secret }
+        Self {
+            public,
+            secret,
+            secret_crypto_box: OnceCell::default(),
+        }
     }
 
     /// Serialise the keypair to OpenSSH format.
     pub fn to_openssh(&self) -> ssh_key::Result<zeroize::Zeroizing<String>> {
         let ckey = ssh_key::private::Ed25519Keypair {
-            public: self.public.into(),
+            public: self.public.public.into(),
             private: self.secret.clone().into(),
         };
         ssh_key::private::PrivateKey::from(ckey).to_openssh(LineEnding::default())
@@ -56,11 +108,12 @@ impl Keypair {
         let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
         match ser_key.key_data() {
             ssh_key::private::KeypairData::Ed25519(kp) => {
-                let public: PublicKey = kp.public.try_into()?;
+                let public: VerifyingKey = kp.public.try_into()?;
 
                 Ok(Keypair {
-                    public,
+                    public: public.into(),
                     secret: kp.private.clone().into(),
+                    secret_crypto_box: OnceCell::default(),
                 })
             }
             _ => anyhow::bail!("invalid key format"),
@@ -79,12 +132,21 @@ impl Keypair {
     pub fn to_bytes(&self) -> [u8; 32] {
         self.secret.to_bytes()
     }
+
+    fn secret_crypto_box(&self) -> &crypto_box::SecretKey {
+        self.secret_crypto_box
+            .get_or_init(|| secret_ed_box(&self.secret))
+    }
 }
 
 impl From<SecretKey> for Keypair {
     fn from(secret: SecretKey) -> Self {
         let public = secret.verifying_key();
-        Keypair { secret, public }
+        Keypair {
+            secret,
+            public: public.into(),
+            secret_crypto_box: OnceCell::default(),
+        }
     }
 }
 
@@ -160,11 +222,8 @@ impl FromStr for PeerId {
     type Err = PeerIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
-            .decode(s.to_ascii_uppercase().as_bytes())?
-            .try_into()
-            .map_err(|_| PeerIdError::DecodingSize)?;
-        let key = PublicKey::from_bytes(&bytes)?;
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        let key = PublicKey::try_from(&bytes[..])?;
         Ok(PeerId(key))
     }
 }

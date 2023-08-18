@@ -6,11 +6,11 @@ use anyhow::{anyhow, ensure, Result};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
-fn public_ed_box(key: &ed25519_dalek::VerifyingKey) -> crypto_box::PublicKey {
+pub(super) fn public_ed_box(key: &ed25519_dalek::VerifyingKey) -> crypto_box::PublicKey {
     crypto_box::PublicKey::from(key.to_montgomery())
 }
 
-fn secret_ed_box(key: &ed25519_dalek::SigningKey) -> crypto_box::SecretKey {
+pub(super) fn secret_ed_box(key: &ed25519_dalek::SigningKey) -> crypto_box::SecretKey {
     crypto_box::SecretKey::from(key.to_scalar())
 }
 
@@ -63,8 +63,8 @@ impl crate::key::Keypair {
     /// Creates a shared secret between [Self] and the given [super::key::PublicKey], and seals the
     /// provided cleartext.
     pub fn seal_to(&self, other: &crate::key::PublicKey, cleartext: &[u8]) -> Vec<u8> {
-        let secret_key = secret_ed_box(self.secret());
-        let public_key = public_ed_box(other);
+        let secret_key = self.secret_crypto_box();
+        let public_key = other.public_crypto_box();
 
         let shared = SharedSecret::new(&secret_key, &public_key);
         shared.seal(cleartext)
@@ -72,8 +72,8 @@ impl crate::key::Keypair {
 
     /// Creates a shared secret between [Self] and the given [super::key::PublicKey], and opens the
     pub fn open_from(&self, other: &crate::key::PublicKey, seal: &[u8]) -> Result<Vec<u8>> {
-        let secret_key = secret_ed_box(self.secret());
-        let public_key = public_ed_box(other);
+        let secret_key = self.secret_crypto_box();
+        let public_key = other.public_crypto_box();
 
         let shared = SharedSecret::new(&secret_key, &public_key);
 
@@ -82,8 +82,8 @@ impl crate::key::Keypair {
 
     /// Returns the shared key for communication between this key and `other`.
     pub fn shared(&self, other: &crate::key::PublicKey) -> SharedSecret {
-        let secret_key = secret_ed_box(self.secret());
-        let public_key = public_ed_box(other);
+        let secret_key = self.secret_crypto_box();
+        let public_key = other.public_crypto_box();
 
         SharedSecret::new(&secret_key, &public_key)
     }
@@ -127,8 +127,8 @@ mod tests {
     #[test]
     fn test_same_public_key_api() {
         let key = crate::key::Keypair::generate();
-        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public());
-        let public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
+        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public);
+        let public_key2: crypto_box::PublicKey = secret_ed_box(&key.secret).public_key();
 
         assert_eq!(public_key1, public_key2);
     }
