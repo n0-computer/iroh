@@ -7,17 +7,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use bytes::BytesMut;
 use hyper::HeaderMap;
 use iroh_metrics::inc;
-use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
-use crate::key::{Keypair, PublicKey};
+use crate::key::{Keypair, PublicKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
 use super::{
@@ -313,11 +311,12 @@ where
             .await
             .context("unable to send server key to client")?;
         trace!("accept: recv client key");
-        let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut io)
-            .await
-            .context("unable to receive client information")?;
+        let (client_key, client_info, shared_secret) =
+            recv_client_key(self.secret_key.clone(), &mut io)
+                .await
+                .context("unable to receive client information")?;
         trace!("accept: send server info");
-        self.send_server_info(&mut io, &client_key)
+        self.send_server_info(&mut io, &shared_secret)
             .await
             .context("unable to sent server info to client {client_key}")?;
         trace!("accept: build client conn");
@@ -360,15 +359,17 @@ where
         Ok(())
     }
 
-    async fn send_server_info<T>(&self, mut writer: &mut T, client_key: &PublicKey) -> Result<()>
+    async fn send_server_info<T>(
+        &self,
+        mut writer: &mut T,
+        shared_secret: &SharedSecret,
+    ) -> Result<()>
     where
         T: AsyncWrite + Unpin,
     {
-        let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
-        let msg = postcard::to_slice(&self.server_info, &mut buf)?;
-        let msg = self.secret_key.seal_to(client_key, msg);
-        let msg = &[msg.as_slice()];
-        write_frame(&mut writer, FrameType::ServerInfo, msg).await?;
+        let mut msg = postcard::to_stdvec(&self.server_info)?;
+        shared_secret.seal(&mut msg);
+        write_frame(&mut writer, FrameType::ServerInfo, &[&msg]).await?;
         writer.flush().await?;
         Ok(())
     }
@@ -911,10 +912,11 @@ mod tests {
                 can_ack_pings: true,
                 is_prober: true,
             };
+            let shared_secret = client_key.shared(&got_server_key);
             crate::derp::send_client_key(
                 &mut client_writer,
-                &client_key,
-                &got_server_key,
+                &shared_secret,
+                &client_key.public(),
                 &client_info,
             )
             .await?;
@@ -924,8 +926,8 @@ mod tests {
             let (frame_type, _) =
                 crate::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
             assert_eq!(FrameType::ServerInfo, frame_type);
-            let msg = client_key.open_from(&got_server_key, &buf)?;
-            let _info: ServerInfo = postcard::from_bytes(&msg)?;
+            shared_secret.open(&mut buf)?;
+            let _info: ServerInfo = postcard::from_bytes(&buf)?;
             Ok(())
         });
 

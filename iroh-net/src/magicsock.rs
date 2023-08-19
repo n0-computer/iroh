@@ -1875,7 +1875,8 @@ impl Actor {
             bail!("connection closed");
         }
         let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &dst_key);
-        let seal = di.shared_key.seal(&msg.as_bytes());
+        let mut seal = msg.as_bytes();
+        di.shared_key.seal(&mut seal);
 
         let is_derp = dst.is_derp();
         if is_derp {
@@ -1997,7 +1998,8 @@ impl Actor {
         // this peer, do the heavy crypto lifting to see what they want.
 
         let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &sender);
-        let payload = di.shared_key.open(sealed_box);
+        let mut sealed_box = sealed_box.to_vec();
+        let payload = di.shared_key.open(&mut sealed_box);
         if payload.is_err() {
             // This could happen if we changed the key between restarts.
             warn!(
@@ -2009,8 +2011,7 @@ impl Actor {
             inc!(MagicsockMetrics, recv_disco_bad_key);
             return true;
         }
-        let payload = payload.unwrap();
-        let dm = disco::Message::from_bytes(&payload);
+        let dm = disco::Message::from_bytes(&sealed_box);
         debug!("disco: disco.parse = {:?}", dm);
 
         if dm.is_err() {

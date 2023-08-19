@@ -31,11 +31,10 @@ use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
 use bytes::BytesMut;
-use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::key::{Keypair, PublicKey, PUBLIC_KEY_LENGTH};
+use crate::key::{Keypair, PublicKey, SharedSecret, PUBLIC_KEY_LENGTH};
 use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
@@ -286,17 +285,16 @@ async fn write_frame_timeout(
 /// Flushes after writing.
 pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     mut writer: W,
-    secret_key: &Keypair,
-    server_key: &PublicKey,
+    shared_secret: &SharedSecret,
+    client_public_key: &PublicKey,
     client_info: &ClientInfo,
 ) -> Result<()> {
-    let mut buf = BytesMut::zeroed(ClientInfo::POSTCARD_MAX_SIZE);
-    let msg = postcard::to_slice(client_info, &mut buf)?;
-    let sealed_msg = secret_key.seal_to(server_key, msg);
+    let mut msg = postcard::to_stdvec(client_info)?;
+    shared_secret.seal(&mut msg);
     write_frame(
         &mut writer,
         FrameType::ClientInfo,
-        &[secret_key.public().as_bytes(), &sealed_msg],
+        &[client_public_key.as_bytes(), &msg],
     )
     .await?;
     writer.flush().await?;
@@ -308,7 +306,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 async fn recv_client_key<R: AsyncRead + Unpin>(
     secret_key: Keypair,
     mut reader: R,
-) -> Result<(PublicKey, ClientInfo)> {
+) -> Result<(PublicKey, ClientInfo, SharedSecret)> {
     let mut buf = BytesMut::new();
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
@@ -325,10 +323,11 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
         "expected FrameType::ClientInfo frame got {frame_type}"
     );
     let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH]).context("public key")?;
-    let msg = &buf[PUBLIC_KEY_LENGTH..];
-    let msg = secret_key.open_from(&key, msg).context("shared secret")?;
+    let mut msg = buf[PUBLIC_KEY_LENGTH..].to_vec();
+    let shared_secret = secret_key.shared(&key);
+    shared_secret.open(&mut msg).context("shared secret")?;
     let info: ClientInfo = postcard::from_bytes(&msg).context("deserialization")?;
-    Ok((key, info))
+    Ok((key, info, shared_secret))
 }
 
 #[cfg(test)]
@@ -368,8 +367,15 @@ mod tests {
             is_prober: true,
         };
         println!("client_key pub {:?}", client_key.public());
-        send_client_key(&mut writer, &client_key, &server_key.public(), &client_info).await?;
-        let (client_pub_key, got_client_info) = recv_client_key(server_key, &mut reader).await?;
+        let shared_secret = client_key.shared(&server_key.public());
+        send_client_key(
+            &mut writer,
+            &shared_secret,
+            &client_key.public(),
+            &client_info,
+        )
+        .await?;
+        let (client_pub_key, got_client_info, _) = recv_client_key(server_key, &mut reader).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())

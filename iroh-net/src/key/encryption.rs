@@ -2,6 +2,7 @@
 
 use std::fmt::Debug;
 
+use aead::Buffer;
 use anyhow::{anyhow, ensure, Result};
 
 pub(crate) const NONCE_LEN: usize = 24;
@@ -29,57 +30,35 @@ impl SharedSecret {
     }
 
     /// Seals the provided cleartext.
-    pub fn seal(&self, cleartext: &[u8]) -> Vec<u8> {
-        use crypto_box::aead::{Aead, AeadCore, OsRng};
+    pub fn seal(&self, buffer: &mut dyn Buffer) {
+        use aead::{AeadCore, AeadInPlace, OsRng};
 
         let nonce = crypto_box::ChaChaBox::generate_nonce(&mut OsRng);
-        let ciphertext = self
-            .0
-            .encrypt(&nonce, cleartext)
+        self.0
+            .encrypt_in_place(&nonce, &[], buffer)
             .expect("encryption failed");
 
-        let mut res = nonce.to_vec();
-        res.extend(ciphertext);
-        res
+        buffer.extend_from_slice(&nonce).expect("buffer too small");
     }
 
-    /// Opens the ciphertext, which must have been created using `Self::seal`, and returns the cleartext.
-    pub fn open(&self, seal: &[u8]) -> Result<Vec<u8>> {
-        use crypto_box::aead::Aead;
-        ensure!(seal.len() > NONCE_LEN, "too short");
+    /// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
+    pub fn open(&self, buffer: &mut dyn Buffer) -> Result<()> {
+        use aead::AeadInPlace;
+        ensure!(buffer.len() > NONCE_LEN, "too short");
 
-        let (nonce, ciphertext) = seal.split_at(NONCE_LEN);
-        let nonce: [u8; NONCE_LEN] = nonce.try_into().unwrap();
-        let plaintext = self
-            .0
-            .decrypt(&nonce.into(), ciphertext)
+        let offset = buffer.len() - NONCE_LEN;
+        let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..].try_into().unwrap();
+
+        buffer.truncate(offset);
+        self.0
+            .decrypt_in_place(&nonce.into(), &[], buffer)
             .map_err(|e| anyhow!("decryption failed: {:?}", e))?;
 
-        Ok(plaintext)
+        Ok(())
     }
 }
 
 impl crate::key::Keypair {
-    /// Creates a shared secret between [Self] and the given [super::key::PublicKey], and seals the
-    /// provided cleartext.
-    pub fn seal_to(&self, other: &crate::key::PublicKey, cleartext: &[u8]) -> Vec<u8> {
-        let secret_key = self.secret_crypto_box();
-        let public_key = other.public_crypto_box();
-
-        let shared = SharedSecret::new(&secret_key, &public_key);
-        shared.seal(cleartext)
-    }
-
-    /// Creates a shared secret between [Self] and the given [super::key::PublicKey], and opens the
-    pub fn open_from(&self, other: &crate::key::PublicKey, seal: &[u8]) -> Result<Vec<u8>> {
-        let secret_key = self.secret_crypto_box();
-        let public_key = other.public_crypto_box();
-
-        let shared = SharedSecret::new(&secret_key, &public_key);
-
-        shared.open(seal)
-    }
-
     /// Returns the shared key for communication between this key and `other`.
     pub fn shared(&self, other: &crate::key::PublicKey) -> SharedSecret {
         let secret_key = self.secret_crypto_box();
@@ -104,15 +83,13 @@ mod tests {
     }
 
     fn seal_open_roundtrip(key_a: &crate::key::Keypair, key_b: &crate::key::Keypair) {
-        let msg = b"super secret message!!!!";
-        let sealed_message = key_a.seal_to(&key_b.public(), msg);
-        let decrypted_message = key_b.open_from(&key_a.public(), &sealed_message).unwrap();
-        assert_eq!(&msg[..], &decrypted_message);
-
+        let msg = b"super secret message!!!!".to_vec();
         let shared_a = key_a.shared(&key_b.public());
-        let sealed_message = shared_a.seal(msg);
+        let mut sealed_message = msg.clone();
+        shared_a.seal(&mut sealed_message);
         let shared_b = key_b.shared(&key_a.public());
-        let decrypted_message = shared_b.open(&sealed_message).unwrap();
+        let mut decrypted_message = sealed_message.clone();
+        shared_b.open(&mut decrypted_message).unwrap();
         assert_eq!(&msg[..], &decrypted_message);
     }
 

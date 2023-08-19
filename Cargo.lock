@@ -23,6 +23,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
 dependencies = [
+ "bytes",
  "crypto-common",
  "generic-array",
 ]
@@ -1937,6 +1938,7 @@ dependencies = [
 name = "iroh-net"
 version = "0.5.1"
 dependencies = [
+ "aead",
  "anyhow",
  "backoff",
  "bytes",

@@ -466,10 +466,11 @@ where
             is_prober: self.is_prober,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
+        let shared_secret = self.secret_key.shared(&server_key);
         crate::derp::send_client_key(
             &mut self.writer,
-            &self.secret_key,
-            &server_key,
+            &shared_secret,
+            &self.secret_key.public(),
             &client_info,
         )
         .await?;
@@ -477,8 +478,8 @@ where
         let (frame_type, _) =
             crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(FrameType::ServerInfo, frame_type);
-        let msg = self.secret_key.open_from(&server_key, &buf)?;
-        let info: ServerInfo = postcard::from_bytes(&msg)?;
+        shared_secret.open(&mut buf)?;
+        let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
                 "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",

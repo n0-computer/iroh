@@ -17,21 +17,40 @@ pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
 
 /// A public key.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct PublicKey {
     public: VerifyingKey,
+    /// Cached version of `crypto_box::PublicKey` matching `public`.
+    public_crypto_box: [u8; 32],
+}
+
+impl Serialize for PublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.public.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let public = VerifyingKey::deserialize(deserializer)?;
+        Ok(public.into())
+    }
 }
 
 impl PublicKey {
-    /// Get this peer id as a byte array.
+    /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.public.as_bytes()
     }
 
     fn public_crypto_box(&self) -> crypto_box::PublicKey {
-        // TODO: cache? prevents us from making `PublicKey` Copy.
-        public_ed_box(&self.public)
+        crypto_box::PublicKey::from_bytes(self.public_crypto_box)
     }
 
     /// Verify a signature on a message with this keypair's public key.
@@ -50,7 +69,7 @@ impl TryFrom<&[u8]> for PublicKey {
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let public = VerifyingKey::try_from(bytes)?;
-        Ok(Self { public })
+        Ok(public.into())
     }
 }
 
@@ -62,7 +81,12 @@ impl AsRef<[u8]> for PublicKey {
 
 impl From<VerifyingKey> for PublicKey {
     fn from(public: VerifyingKey) -> Self {
-        PublicKey { public }
+        let public_crypto_box = public_ed_box(&public).to_bytes();
+        PublicKey {
+            public,
+
+            public_crypto_box,
+        }
     }
 }
 

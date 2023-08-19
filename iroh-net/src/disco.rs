@@ -390,7 +390,8 @@ mod tests {
         });
 
         let shared = sender_key.shared(&recv_key.public());
-        let seal = shared.seal(&msg.as_bytes());
+        let mut seal = msg.as_bytes();
+        shared.seal(&mut seal);
 
         let bytes = encode_message(&sender_key.public(), seal.clone());
 
@@ -402,8 +403,9 @@ mod tests {
         assert_eq!(seal_back, seal);
 
         let shared_recv = recv_key.shared(&sender_key.public());
-        let open_seal = shared_recv
-            .open(seal_back)
+        let mut open_seal = seal_back.to_vec();
+        shared_recv
+            .open(&mut open_seal)
             .expect("failed to open seal_back");
         let msg_back = Message::from_bytes(&open_seal).unwrap();
         assert_eq!(msg_back, msg);
