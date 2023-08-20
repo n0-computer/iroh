@@ -15,7 +15,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.66"
+  MSRV: "1.67"
 
 jobs:
   build_and_test_nix:

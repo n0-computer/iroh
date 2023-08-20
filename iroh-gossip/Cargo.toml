@@ -8,6 +8,9 @@ license = "MIT/Apache-2.0"
 authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh-sync"
 
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.67"
+
 [dependencies]
 # proto dependencies (required)
 anyhow = { version = "1", features = ["backtrace"] }
