@@ -302,7 +302,7 @@ impl PartialMapEntry<Store> for PartialEntry {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(path.clone())
+                .open(path)
         })
         .boxed()
     }
@@ -740,7 +740,7 @@ impl Store {
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 (
                     hash,
-                    CompleteEntry::new_external(size, path.clone()),
+                    CompleteEntry::new_external(size, path),
                     outboard,
                 )
             }

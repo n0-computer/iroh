@@ -86,7 +86,7 @@ wmi = "0.13"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-criterion = "0.3"
+criterion = "0.5.1"
 ntest = "0.9"
 pretty_assertions = "1.4"
 rand_chacha = "0.3.1"
