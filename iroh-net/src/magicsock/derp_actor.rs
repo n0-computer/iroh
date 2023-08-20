@@ -287,7 +287,7 @@ impl DerpActor {
                     conn.get_derp_region(region_id).await
                 })
             })
-            .build(self.conn.private_key.clone())
+            .build(self.conn.secret_key.clone())
             .expect("will only fail is a `get_region` callback is not supplied");
 
         let cancel = CancellationToken::new();

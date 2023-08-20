@@ -148,7 +148,7 @@ where
     }
 
     /// Returns the server's private key.
-    pub fn private_key(&self) -> &SecretKey {
+    pub fn secret_key(&self) -> &SecretKey {
         &self.secret_key
     }
 

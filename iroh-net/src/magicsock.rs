@@ -120,7 +120,7 @@ pub struct Options {
     pub port: u16,
 
     /// Private key for this node.
-    pub private_key: SecretKey,
+    pub secret_key: SecretKey,
 
     /// The [`DerpMap`] to use.
     pub derp_map: Option<DerpMap>,
@@ -150,7 +150,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             port: 0,
-            private_key: SecretKey::generate(),
+            secret_key: SecretKey::generate(),
             derp_map: None,
             callbacks: Default::default(),
         }
@@ -197,7 +197,7 @@ pub(self) struct Inner {
     pub(self) network_send_wakers: std::sync::Mutex<Option<Waker>>,
 
     /// Key for this node.
-    pub(self) private_key: SecretKey,
+    pub(self) secret_key: SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
@@ -257,7 +257,7 @@ impl Inner {
     }
 
     fn public_key(&self) -> PublicKey {
-        self.private_key.public()
+        self.secret_key.public()
     }
 }
 
@@ -293,7 +293,7 @@ impl MagicSock {
     pub async fn new(opts: Options) -> Result<Self> {
         let name = format!(
             "magic-{}",
-            hex::encode(&opts.private_key.public().as_bytes()[..8])
+            hex::encode(&opts.secret_key.public().as_bytes()[..8])
         );
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("magicsock", %name))
@@ -310,7 +310,7 @@ impl MagicSock {
 
         let Options {
             port,
-            private_key,
+            secret_key,
             derp_map,
             callbacks:
                 Callbacks {
@@ -345,7 +345,7 @@ impl MagicSock {
             on_derp_active,
             on_net_info,
             port: AtomicU16::new(port),
-            private_key,
+            secret_key,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -1125,7 +1125,7 @@ impl Actor {
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
             Some(ep) => ep.quic_mapped_addr,
             None => {
-                info!(peer=?dm.src, "no peer_map state found for peer");
+                info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key(),
@@ -1874,7 +1874,7 @@ impl Actor {
         if self.inner.is_closed() {
             bail!("connection closed");
         }
-        let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &dst_key);
+        let di = get_disco_info(&mut self.disco_info, &self.inner.secret_key, &dst_key);
         let mut seal = msg.as_bytes();
         di.shared_key.seal(&mut seal);
 
@@ -1997,7 +1997,7 @@ impl Actor {
         // We're now reasonably sure we're expecting communication from
         // this peer, do the heavy crypto lifting to see what they want.
 
-        let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &sender);
+        let di = get_disco_info(&mut self.disco_info, &self.inner.secret_key, &sender);
         let mut sealed_box = sealed_box.to_vec();
         let payload = di.shared_key.open(&mut sealed_box);
         if payload.is_err() {
@@ -2104,7 +2104,7 @@ impl Actor {
         src: SendAddr,
         derp_node_src: Option<PublicKey>,
     ) {
-        let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, sender);
+        let di = get_disco_info(&mut self.disco_info, &self.inner.secret_key, sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
             && di
                 .last_ping_time
@@ -2703,7 +2703,7 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct MagicStack {
         ep_ch: flume::Receiver<Vec<config::Endpoint>>,
-        keypair: SecretKey,
+        secret_key: SecretKey,
         endpoint: MagicEndpoint,
     }
 
@@ -2714,13 +2714,13 @@ pub(crate) mod tests {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
 
-            let keypair = SecretKey::generate();
+            let secret_key = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
             let endpoint = MagicEndpoint::builder()
-                .keypair(keypair.clone())
+                .secret_key(secret_key.clone())
                 .on_endpoints(Box::new(move |eps: &[config::Endpoint]| {
                     let _ = ep_s.send(eps.to_vec());
                 }))
@@ -2739,7 +2739,7 @@ pub(crate) mod tests {
 
             Ok(Self {
                 ep_ch: ep_r,
-                keypair,
+                secret_key,
                 endpoint,
             })
         }
@@ -2756,7 +2756,7 @@ pub(crate) mod tests {
         }
 
         fn public(&self) -> PublicKey {
-            self.keypair.public()
+            self.secret_key.public()
         }
     }
 

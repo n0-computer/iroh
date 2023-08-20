@@ -160,11 +160,11 @@ async fn main() -> anyhow::Result<()> {
     let ticket = args().nth(1).expect("missing ticket");
     let ticket = Ticket::from_str(&ticket)?;
 
-    // generate a transient keypair for this connection
+    // generate a transient secret key for this connection
     //
-    // in real applications, it would be very much preferable to use a persistent keypair
-    let keypair = SecretKey::generate();
-    let dial_options = ticket.as_get_options(keypair, None);
+    // in real applications, it would be very much preferable to use a persistent secret key
+    let secret_key = SecretKey::generate();
+    let dial_options = ticket.as_get_options(secret_key, None);
 
     // connect to the peer
     //

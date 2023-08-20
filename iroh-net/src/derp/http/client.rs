@@ -353,7 +353,7 @@ impl Client {
             trace!("got connection, conn num {conn_gen}");
             Ok((derp_client, conn_gen))
         }
-        .instrument(info_span!("client-connect", ?key))
+        .instrument(info_span!("client-connect", %key))
         .await
     }
 

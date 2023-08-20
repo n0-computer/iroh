@@ -146,7 +146,7 @@ impl Cli {
                             keylog: self.keylog,
                             derp_region: region,
                             derp_map: config.derp_map(),
-                            keypair: SecretKey::generate(),
+                            secret_key: SecretKey::generate(),
                         },
                         token,
                         single,
@@ -414,9 +414,9 @@ pub fn create_quinn_client(
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> Result<quinn::Endpoint> {
-    let keypair = iroh_net::key::SecretKey::generate();
+    let secret_key = iroh_net::key::SecretKey::generate();
     let tls_client_config =
-        iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
+        iroh_net::tls::make_client_config(&secret_key, None, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let mut endpoint = quinn::Endpoint::client(bind_addr)?;
     let mut transport_config = quinn::TransportConfig::default();

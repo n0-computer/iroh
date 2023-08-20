@@ -872,7 +872,7 @@ impl Endpoint {
     /// Stops timers associated with de and resets its state back to zero.
     /// It's called when a discovery endpoint is no longer present in the
     /// NetworkMap, or when magicsock is transitioning from running to
-    /// stopped state (via `set_private_key(None)`).
+    /// stopped state (via `set_secret_key(None)`).
     pub fn stop_and_reset(&mut self) {
         self.reset();
         self.pending_cli_pings.clear();

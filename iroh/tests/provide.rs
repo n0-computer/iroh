@@ -138,10 +138,10 @@ async fn empty_files() -> Result<()> {
 }
 
 /// Create new get options with the given peer id and addresses, using a
-/// randomly generated keypair.
+/// randomly generated secret key.
 fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     iroh::dial::Options {
-        keypair: SecretKey::generate(),
+        secret_key: SecretKey::generate(),
         peer_id,
         addrs,
         derp_region: None,
@@ -821,7 +821,7 @@ async fn test_token_passthrough() -> Result<()> {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let endpoint = MagicEndpoint::builder()
-            .keypair(SecretKey::generate())
+            .secret_key(SecretKey::generate())
             .keylog(true)
             .bind(0)
             .await?;

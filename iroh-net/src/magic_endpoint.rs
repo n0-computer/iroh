@@ -22,7 +22,7 @@ use crate::{
 /// Builder for [MagicEndpoint]
 #[derive(Debug, Default)]
 pub struct MagicEndpointBuilder {
-    keypair: Option<SecretKey>,
+    secret_key: Option<SecretKey>,
     derp_map: Option<DerpMap>,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
@@ -32,13 +32,13 @@ pub struct MagicEndpointBuilder {
 }
 
 impl MagicEndpointBuilder {
-    /// Set a keypair to authenticate with other peers.
+    /// Set a secret key to authenticate with other peers.
     ///
-    /// This keypair's public key will be the [PeerId] of this endpoint.
+    /// This secret key's public key will be the [PeerId] of this endpoint.
     ///
-    /// If not set, a new keypair will be generated.
-    pub fn keypair(mut self, keypair: SecretKey) -> Self {
-        self.keypair = Some(keypair);
+    /// If not set, a new secret key will be generated.
+    pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
+        self.secret_key = Some(secret_key);
         self
     }
 
@@ -120,9 +120,9 @@ impl MagicEndpointBuilder {
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
-        let keypair = self.keypair.unwrap_or_else(SecretKey::generate);
+        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let mut server_config = make_server_config(
-            &keypair,
+            &secret_key,
             self.alpn_protocols,
             self.transport_config,
             self.keylog,
@@ -131,7 +131,7 @@ impl MagicEndpointBuilder {
             server_config.concurrent_connections(c);
         }
         MagicEndpoint::bind(
-            keypair,
+            secret_key,
             bind_port,
             Some(server_config),
             self.derp_map,
@@ -143,12 +143,12 @@ impl MagicEndpointBuilder {
 }
 
 fn make_server_config(
-    keypair: &SecretKey,
+    secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
 ) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, keylog)?;
+    let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
     Ok(server_config)
@@ -157,7 +157,7 @@ fn make_server_config(
 /// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
-    keypair: Arc<SecretKey>,
+    secret_key: Arc<SecretKey>,
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     netmap: Arc<Mutex<NetworkMap>>,
@@ -175,7 +175,7 @@ impl MagicEndpoint {
     /// This is for internal use, the public interface is the [MagicEndpointBuilder] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
-        keypair: SecretKey,
+        secret_key: SecretKey,
         bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
         derp_map: Option<DerpMap>,
@@ -185,7 +185,7 @@ impl MagicEndpoint {
         let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
             derp_map: Some(derp_map.unwrap_or_default()),
-            private_key: keypair.clone(),
+            secret_key: secret_key.clone(),
             callbacks: callbacks.unwrap_or_default(),
         })
         .await?;
@@ -200,7 +200,7 @@ impl MagicEndpoint {
         trace!("created quinn endpoint");
 
         Ok(Self {
-            keypair: Arc::new(keypair),
+            secret_key: Arc::new(secret_key),
             msock,
             endpoint,
             netmap: Arc::new(Mutex::new(NetworkMap { peers: vec![] })),
@@ -215,12 +215,12 @@ impl MagicEndpoint {
 
     /// Get the peer id of this endpoint.
     pub fn peer_id(&self) -> PeerId {
-        self.keypair.public().into()
+        self.secret_key.public().into()
     }
 
-    /// Get the keypair of this endpoint.
-    pub fn keypair(&self) -> &SecretKey {
-        &self.keypair
+    /// Get the secret_key of this endpoint.
+    pub fn secret_key(&self) -> &SecretKey {
+        &self.secret_key
     }
 
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
@@ -280,8 +280,12 @@ impl MagicEndpoint {
 
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let tls_client_config =
-                tls::make_client_config(&self.keypair, Some(peer_id), alpn_protocols, self.keylog)?;
+            let tls_client_config = tls::make_client_config(
+                &self.secret_key,
+                Some(peer_id),
+                alpn_protocols,
+                self.keylog,
+            )?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
@@ -450,15 +454,15 @@ mod tests {
     async fn magic_endpoint_connect_close() {
         let _guard = setup_logging();
         let (derp_map, region_id, _guard) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
-        let server_keypair = SecretKey::generate();
-        let server_peer_id = PeerId::from(server_keypair.public());
+        let server_secret_key = SecretKey::generate();
+        let server_peer_id = PeerId::from(server_secret_key.public());
 
         let server = {
             let derp_map = derp_map.clone();
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
-                        .keypair(server_keypair)
+                        .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .derp_map(Some(derp_map))
                         .bind(0)

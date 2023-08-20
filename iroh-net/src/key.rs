@@ -53,7 +53,7 @@ impl PublicKey {
         crypto_box::PublicKey::from_bytes(self.public_crypto_box)
     }
 
-    /// Verify a signature on a message with this keypair's public key.
+    /// Verify a signature on a message with this secret key's public key.
     ///
     /// # Return
     ///
@@ -149,12 +149,12 @@ impl<'de> Deserialize<'de> for SecretKey {
 }
 
 impl SecretKey {
-    /// The public key of this keypair.
+    /// The public key of this [`SecretKey`].
     pub fn public(&self) -> PublicKey {
         self.secret.verifying_key().into()
     }
 
-    /// Generate a new keypair.
+    /// Generate a new [`SecretKey`].
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng;
         let secret = SigningKey::generate(&mut rng);
@@ -165,7 +165,7 @@ impl SecretKey {
         }
     }
 
-    /// Serialise the keypair to OpenSSH format.
+    /// Serialise this key to OpenSSH format.
     pub fn to_openssh(&self) -> ssh_key::Result<zeroize::Zeroizing<String>> {
         let ckey = ssh_key::private::Ed25519Keypair {
             public: self.secret.verifying_key().into(),
@@ -174,7 +174,7 @@ impl SecretKey {
         ssh_key::private::PrivateKey::from(ckey).to_openssh(LineEnding::default())
     }
 
-    /// Deserialise the keypair from OpenSSH format.
+    /// Deserialise this key from OpenSSH format.
     pub fn try_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Self> {
         let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
         match ser_key.key_data() {
@@ -324,7 +324,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_keypair_openssh_roundtrip() {
+    fn test_secret_key_openssh_roundtrip() {
         let kp = SecretKey::generate();
         let ser = kp.to_openssh().unwrap();
         let de = SecretKey::try_from_openssh(&ser).unwrap();

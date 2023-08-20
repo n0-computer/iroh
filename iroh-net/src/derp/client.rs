@@ -61,7 +61,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        debug!(?dstkey, len = packet.len(), "[DERP] send");
+        debug!(%dstkey, len = packet.len(), "[DERP] send");
 
         self.inner
             .writer_channel

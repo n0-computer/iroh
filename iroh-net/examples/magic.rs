@@ -41,11 +41,11 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
-    let keypair = match args.secret {
+    let secret_key = match args.secret {
         None => {
-            let keypair = SecretKey::generate();
-            println!("our secret key: {}", fmt_secret(&keypair));
-            keypair
+            let secret_key = SecretKey::generate();
+            println!("our secret key: {}", fmt_secret(&secret_key));
+            secret_key
         }
         Some(key) => parse_secret(&key)?,
     };
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let endpoint = MagicEndpoint::builder()
-        .keypair(keypair)
+        .secret_key(secret_key)
         .alpns(vec![args.alpn.to_string().into_bytes()])
         .derp_map(Some(derp_map))
         .bind(args.bind_port)
@@ -116,8 +116,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fmt_secret(keypair: &SecretKey) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.to_bytes());
+fn fmt_secret(secret_key: &SecretKey) -> String {
+    let mut text = data_encoding::BASE32_NOPAD.encode(&secret_key.to_bytes());
     text.make_ascii_lowercase();
     text
 }

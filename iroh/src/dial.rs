@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 /// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// The keypair of the node
-    pub keypair: SecretKey,
+    /// The secret key of the node
+    pub secret_key: SecretKey,
     /// The addresses to connect to
     pub addrs: Vec<SocketAddr>,
     /// The peer id to dial
@@ -38,7 +38,7 @@ pub struct Options {
 /// it is preferable to create an endpoint and use `connect` on the endpoint.
 pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
-        .keypair(opts.keypair)
+        .secret_key(opts.secret_key)
         .derp_map(opts.derp_map)
         .keylog(opts.keylog)
         .bind(0)
@@ -173,12 +173,12 @@ impl Ticket {
         (hash, peer, addrs, token, recursive, derp_region)
     }
 
-    /// Convert this ticket into a [`Options`], adding the given keypair.
-    pub fn as_get_options(&self, keypair: SecretKey, derp_map: Option<DerpMap>) -> Options {
+    /// Convert this ticket into a [`Options`], adding the given secret key.
+    pub fn as_get_options(&self, secret_key: SecretKey, derp_map: Option<DerpMap>) -> Options {
         Options {
             peer_id: self.peer,
             addrs: self.addrs.clone(),
-            keypair,
+            secret_key,
             keylog: true,
             derp_region: self.derp_region,
             derp_map,

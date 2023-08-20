@@ -35,11 +35,11 @@ struct SignedKey<'a> {
 }
 
 /// Generates a self-signed TLS certificate that includes a libp2p-specific
-/// certificate extension containing the public key of the given keypair.
+/// certificate extension containing the public key of the given secret key.
 pub fn generate(
-    identity_keypair: &SecretKey,
+    identity_secret_key: &SecretKey,
 ) -> Result<(rustls::Certificate, rustls::PrivateKey), GenError> {
-    // Keypair used to sign the certificate.
+    // SecretKey used to sign the certificate.
     // SHOULD NOT be related to the host's key.
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
@@ -51,7 +51,7 @@ pub fn generate(
         let mut params = rcgen::CertificateParams::new(vec![]);
         params.distinguished_name = rcgen::DistinguishedName::new();
         params.custom_extensions.push(make_libp2p_extension(
-            identity_keypair,
+            identity_secret_key,
             &certificate_keypair,
         )?);
         params.alg = P2P_SIGNATURE_ALGORITHM;
@@ -171,7 +171,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
 }
 
 fn make_libp2p_extension(
-    identity_keypair: &SecretKey,
+    identity_secret_key: &SecretKey,
     certificate_keypair: &rcgen::KeyPair,
 ) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
@@ -182,10 +182,10 @@ fn make_libp2p_extension(
         msg.extend(P2P_SIGNING_PREFIX);
         msg.extend(certificate_keypair.public_key_der());
 
-        identity_keypair.sign(&msg)
+        identity_secret_key.sign(&msg)
     };
 
-    let public_key = identity_keypair.public();
+    let public_key = identity_secret_key.public();
     let signature = signature.to_bytes();
     let key = SignedKey {
         public_key: OctetStringRef::new(&public_key.as_bytes()[..]).unwrap(),
@@ -382,12 +382,12 @@ mod tests {
 
     #[test]
     fn sanity_check() {
-        let keypair = SecretKey::generate();
+        let secret_key = SecretKey::generate();
 
-        let (cert, _) = generate(&keypair).unwrap();
+        let (cert, _) = generate(&secret_key).unwrap();
         let parsed_cert = parse(&cert).unwrap();
 
         assert!(parsed_cert.verify().is_ok());
-        assert_eq!(keypair.public(), parsed_cert.extension.public_key);
+        assert_eq!(secret_key.public(), parsed_cert.extension.public_key);
     }
 }

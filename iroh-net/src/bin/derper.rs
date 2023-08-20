@@ -106,14 +106,14 @@ impl CertMode {
                 let cert_path = dir.join(format!("{keyname}.crt"));
                 let key_path = dir.join(format!("{keyname}.key"));
 
-                let (certs, private_key) = tokio::task::spawn_blocking(move || {
+                let (certs, secret_key) = tokio::task::spawn_blocking(move || {
                     let certs = load_certs(cert_path)?;
-                    let key = load_private_key(key_path)?;
+                    let key = load_secret_key(key_path)?;
                     anyhow::Ok((certs, key))
                 })
                 .await??;
 
-                let config = config.with_single_cert(certs, private_key)?;
+                let config = config.with_single_cert(certs, secret_key)?;
                 let config = Arc::new(config);
                 let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
 
@@ -140,7 +140,7 @@ fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
     Ok(certs)
 }
 
-fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
+fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
     let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open private key file")?;
     let mut reader = std::io::BufReader::new(keyfile);
 
@@ -162,8 +162,8 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 
 #[derive(Serialize, Deserialize)]
 struct Config {
-    /// PrivateKey for this Derper.
-    private_key: SecretKey,
+    /// [`SecretKey`] for this Derper.
+    secret_key: SecretKey,
     /// Server listen address.
     ///
     /// Defaults to `[::]:443`.
@@ -244,7 +244,7 @@ struct Limits {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            private_key: SecretKey::generate(),
+            secret_key: SecretKey::generate(),
             addr: "[::]:443".parse().unwrap(),
             stun_port: DEFAULT_DERP_STUN_PORT,
             hostname: NA_DERP_HOSTNAME.into(),
@@ -409,7 +409,7 @@ async fn run(
             } else {
                 (None, None)
             };
-            (Some(cfg.private_key), mesh_key, mesh_derpers)
+            (Some(cfg.secret_key), mesh_key, mesh_derpers)
         }
         false => (None, None, None),
     };

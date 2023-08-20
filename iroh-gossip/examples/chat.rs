@@ -35,7 +35,7 @@ use url::Url;
 struct Args {
     /// Private key to derive our peer id from.
     #[clap(long)]
-    private_key: Option<String>,
+    secret_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
     #[clap(short, long)]
     derp: Option<Url>,
@@ -87,12 +87,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // parse or generate our keypair
-    let keypair = match args.private_key {
+    // parse or generate our secret key
+    let secret_key = match args.secret_key {
         None => SecretKey::generate(),
-        Some(key) => parse_keypair(&key)?,
+        Some(key) => parse_secret_key(&key)?,
     };
-    println!("> our private key: {}", base32::fmt(keypair.to_bytes()));
+    println!("> our private key: {}", base32::fmt(secret_key.to_bytes()));
 
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {
@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
 
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
-        .keypair(keypair)
+        .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .derp_map(derp_map)
         .on_endpoints({
@@ -170,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
     // broadcast our name, if set
     if let Some(name) = args.name {
         let message = Message::AboutMe { name };
-        let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
+        let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
         gossip.broadcast(topic, encoded_message).await?;
     }
 
@@ -186,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
     println!("> type a message and hit enter to broadcast...");
     while let Some(text) = line_rx.recv().await {
         let message = Message::Message { text: text.clone() };
-        let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
+        let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
         gossip.broadcast(topic, encoded_message).await?;
         println!("> sent: {text}");
     }
@@ -267,10 +267,10 @@ impl SignedMessage {
         Ok((signed_message.from, message))
     }
 
-    pub fn sign_and_encode(keypair: &SecretKey, message: &Message) -> anyhow::Result<Bytes> {
+    pub fn sign_and_encode(secret_key: &SecretKey, message: &Message) -> anyhow::Result<Bytes> {
         let data: Bytes = postcard::to_stdvec(&message)?.into();
-        let signature = keypair.sign(&data);
-        let from: PeerId = keypair.public().into();
+        let signature = secret_key.sign(&data);
+        let from: PeerId = secret_key.public().into();
         let signed_message = Self {
             from,
             data,
@@ -345,7 +345,7 @@ impl FromStr for Ticket {
 fn fmt_peer_id(input: &PeerId) -> String {
     base32::fmt_short(input.as_bytes())
 }
-fn parse_keypair(secret: &str) -> anyhow::Result<SecretKey> {
+fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
     let bytes: [u8; 32] = base32::parse_array(secret)?;
     Ok(SecretKey::from(bytes))
 }

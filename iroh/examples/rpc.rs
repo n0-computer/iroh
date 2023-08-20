@@ -24,10 +24,12 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
 /// Makes a an RPC endpoint that uses a QUIC transport
-fn make_rpc_endpoint(keypair: &SecretKey) -> anyhow::Result<impl ServiceEndpoint<ProviderService>> {
+fn make_rpc_endpoint(
+    secret_key: &SecretKey,
+) -> anyhow::Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        iroh::node::make_server_config(keypair, 8, 1024, vec![RPC_ALPN.to_vec()])?,
+        iroh::node::make_server_config(secret_key, 8, 1024, vec![RPC_ALPN.to_vec()])?,
         rpc_addr,
     )?;
     let rpc_endpoint =
@@ -38,15 +40,15 @@ fn make_rpc_endpoint(keypair: &SecretKey) -> anyhow::Result<impl ServiceEndpoint
 async fn run(db: impl Store) -> anyhow::Result<()> {
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
-    // create a random keypair
-    let keypair = SecretKey::generate();
+    // create a random secret key
+    let secret_key = SecretKey::generate();
     // create a rpc endpoint
-    let rpc_endpoint = make_rpc_endpoint(&keypair)?;
+    let rpc_endpoint = make_rpc_endpoint(&secret_key)?;
 
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
     let node = iroh::node::Node::builder(db)
-        .keypair(keypair)
+        .secret_key(secret_key)
         .collection_parser(IrohCollectionParser)
         .runtime(&rt)
         .rpc_endpoint(rpc_endpoint)
