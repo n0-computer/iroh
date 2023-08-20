@@ -10,7 +10,7 @@ use futures::StreamExt;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::key::{Keypair, PeerId};
+use iroh_net::key::{PeerId, SecretKey};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
@@ -132,7 +132,7 @@ impl Cli {
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash: ticket.hash(),
-                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
+                        opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()),
                         token: ticket.token().cloned(),
                         single: !ticket.recursive(),
                     }
@@ -146,7 +146,7 @@ impl Cli {
                             keylog: self.keylog,
                             derp_region: region,
                             derp_map: config.derp_map(),
-                            keypair: Keypair::generate(),
+                            keypair: SecretKey::generate(),
                         },
                         token,
                         single,
@@ -414,7 +414,7 @@ pub fn create_quinn_client(
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> Result<quinn::Endpoint> {
-    let keypair = iroh_net::key::Keypair::generate();
+    let keypair = iroh_net::key::SecretKey::generate();
     let tls_client_config =
         iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));

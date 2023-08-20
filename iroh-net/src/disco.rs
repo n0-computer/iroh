@@ -311,7 +311,7 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 #[cfg(test)]
 mod tests {
-    use crate::key::Keypair;
+    use crate::key::SecretKey;
 
     use super::*;
 
@@ -381,8 +381,8 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = Keypair::generate();
-        let recv_key = Keypair::generate();
+        let sender_key = SecretKey::generate();
+        let recv_key = SecretKey::generate();
 
         let msg = Message::Ping(Ping {
             tx_id: stun::TransactionId::default(),

@@ -34,7 +34,7 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::key::{Keypair, PublicKey, SharedSecret, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
 use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
@@ -304,7 +304,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 async fn recv_client_key<R: AsyncRead + Unpin>(
-    secret_key: Keypair,
+    secret_key: SecretKey,
     mut reader: R,
 ) -> Result<(PublicKey, ClientInfo, SharedSecret)> {
     let mut buf = BytesMut::new();
@@ -358,8 +358,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_recv_client_key() -> Result<()> {
         let (mut reader, mut writer) = tokio::io::duplex(1024);
-        let server_key = Keypair::generate();
-        let client_key = Keypair::generate();
+        let server_key = SecretKey::generate();
+        let client_key = SecretKey::generate();
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
             mesh_key: Some([1u8; 32]),

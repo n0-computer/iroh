@@ -36,7 +36,7 @@ use crate::{
         types::PacketForwarder,
         MaybeTlsStreamServer,
     },
-    key::Keypair,
+    key::SecretKey,
 };
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -155,7 +155,7 @@ pub struct ServerBuilder {
     ///
     /// When `None`, you must also provide a `derp_override` function that
     /// will be run when someone hits the derp endpoint.
-    secret_key: Option<Keypair>,
+    secret_key: Option<SecretKey>,
     /// The ip + port combination for this server.
     addr: SocketAddr,
     /// Optional MeshKey for this server. When it exists it will ensure that This
@@ -207,7 +207,7 @@ impl ServerBuilder {
 
     /// The [`Keypair`] identity for this derp server. When set to `None`, the builder assumes
     /// you do not want to run a derp service.
-    pub fn secret_key(mut self, secret_key: Option<Keypair>) -> Self {
+    pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
         self.secret_key = secret_key;
         self
     }

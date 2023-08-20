@@ -752,7 +752,7 @@ mod test {
         use anyhow::Result;
         use iroh_net::{
             derp::{DerpMap, UseIpv4, UseIpv6},
-            key::Keypair,
+            key::SecretKey,
             stun::{is, parse_binding_request, response},
         };
         use tokio::{runtime::RuntimeFlavor, sync::oneshot};
@@ -872,7 +872,7 @@ mod test {
         ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
-            let server_key = Keypair::generate();
+            let server_key = SecretKey::generate();
             let server = iroh_net::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
                 .secret_key(Some(server_key))
                 .tls_config(None)

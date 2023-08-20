@@ -1,11 +1,10 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::{default_derp_map, TEST_REGION_ID},
     derp::DerpMap,
-    key::{Keypair, PeerId},
+    key::{PeerId, SecretKey},
     magic_endpoint::accept_conn,
     MagicEndpoint,
 };
@@ -44,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let keypair = match args.secret {
         None => {
-            let keypair = Keypair::generate();
+            let keypair = SecretKey::generate();
             println!("our secret key: {}", fmt_secret(&keypair));
             keypair
         }
@@ -117,16 +116,16 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fmt_secret(keypair: &Keypair) -> String {
+fn fmt_secret(keypair: &SecretKey) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.to_bytes());
     text.make_ascii_lowercase();
     text
 }
-fn parse_secret(secret: &str) -> anyhow::Result<Keypair> {
+fn parse_secret(secret: &str) -> anyhow::Result<SecretKey> {
     let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
         .decode(secret.to_ascii_uppercase().as_bytes())?
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
-    let key = SecretKey::from_bytes(&bytes);
-    Ok(key.into())
+    let key = SecretKey::from(bytes);
+    Ok(key)
 }

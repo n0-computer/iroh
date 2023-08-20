@@ -13,7 +13,7 @@ use tracing::{debug, trace};
 use crate::{
     config,
     derp::DerpMap,
-    key::{Keypair, PeerId, PublicKey},
+    key::{PeerId, PublicKey, SecretKey},
     magicsock::{self, Callbacks, MagicSock},
     netmap::NetworkMap,
     tls,
@@ -22,7 +22,7 @@ use crate::{
 /// Builder for [MagicEndpoint]
 #[derive(Debug, Default)]
 pub struct MagicEndpointBuilder {
-    keypair: Option<Keypair>,
+    keypair: Option<SecretKey>,
     derp_map: Option<DerpMap>,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
@@ -37,7 +37,7 @@ impl MagicEndpointBuilder {
     /// This keypair's public key will be the [PeerId] of this endpoint.
     ///
     /// If not set, a new keypair will be generated.
-    pub fn keypair(mut self, keypair: Keypair) -> Self {
+    pub fn keypair(mut self, keypair: SecretKey) -> Self {
         self.keypair = Some(keypair);
         self
     }
@@ -120,7 +120,7 @@ impl MagicEndpointBuilder {
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
-        let keypair = self.keypair.unwrap_or_else(Keypair::generate);
+        let keypair = self.keypair.unwrap_or_else(SecretKey::generate);
         let mut server_config = make_server_config(
             &keypair,
             self.alpn_protocols,
@@ -143,7 +143,7 @@ impl MagicEndpointBuilder {
 }
 
 fn make_server_config(
-    keypair: &Keypair,
+    keypair: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
@@ -157,7 +157,7 @@ fn make_server_config(
 /// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
-    keypair: Arc<Keypair>,
+    keypair: Arc<SecretKey>,
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     netmap: Arc<Mutex<NetworkMap>>,
@@ -175,7 +175,7 @@ impl MagicEndpoint {
     /// This is for internal use, the public interface is the [MagicEndpointBuilder] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
-        keypair: Keypair,
+        keypair: SecretKey,
         bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
         derp_map: Option<DerpMap>,
@@ -219,7 +219,7 @@ impl MagicEndpoint {
     }
 
     /// Get the keypair of this endpoint.
-    pub fn keypair(&self) -> &Keypair {
+    pub fn keypair(&self) -> &SecretKey {
         &self.keypair
     }
 
@@ -450,7 +450,7 @@ mod tests {
     async fn magic_endpoint_connect_close() {
         let _guard = setup_logging();
         let (derp_map, region_id, _guard) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
-        let server_keypair = Keypair::generate();
+        let server_keypair = SecretKey::generate();
         let server_peer_id = PeerId::from(server_keypair.public());
 
         let server = {

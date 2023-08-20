@@ -233,8 +233,8 @@ mod tests {
 
     const ALPN: [u8; 9] = *b"n0/test/1";
 
-    fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::Keypair)> {
-        let key = key::Keypair::generate();
+    fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::SecretKey)> {
+        let key = key::SecretKey::generate();
         let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
         let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
         let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(

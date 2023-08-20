@@ -665,7 +665,7 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 mod tests {
     use std::sync::Arc;
 
-    use crate::key::Keypair;
+    use crate::key::SecretKey;
 
     use super::*;
 
@@ -687,7 +687,7 @@ mod tests {
         let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
-        let key = Keypair::generate().public();
+        let key = SecretKey::generate().public();
         let (io, mut io_rw) = tokio::io::duplex(1024);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
@@ -807,7 +807,7 @@ mod tests {
 
         // send message to close a peer
         println!("  close peer");
-        let target = Keypair::generate().public();
+        let target = SecretKey::generate().public();
         crate::derp::client::close_peer(&mut io_rw, target).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -854,7 +854,7 @@ mod tests {
 
         // forward packet
         println!("  forward packet");
-        let fwd_key = Keypair::generate().public();
+        let fwd_key = SecretKey::generate().public();
         crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -896,7 +896,7 @@ mod tests {
         let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
-        let key = Keypair::generate().public();
+        let key = SecretKey::generate().public();
         let (io, mut io_rw) = tokio::io::duplex(1024);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
@@ -925,7 +925,7 @@ mod tests {
         // send packet
         println!("   send packet");
         let data = b"hello world!";
-        let target = Keypair::generate().public();
+        let target = SecretKey::generate().public();
 
         crate::derp::client::send_packet(&mut io_rw, &None, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();

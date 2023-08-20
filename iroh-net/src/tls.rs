@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::key::{Keypair, PeerId};
+use crate::key::{PeerId, SecretKey};
 
 pub mod certificate;
 mod verifier;
@@ -16,7 +16,7 @@ mod verifier;
 /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
 /// debugging purposes.
 pub fn make_client_config(
-    keypair: &Keypair,
+    keypair: &SecretKey,
     remote_peer_id: Option<PeerId>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
@@ -47,7 +47,7 @@ pub fn make_client_config(
 /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
 /// debugging purposes.
 pub fn make_server_config(
-    keypair: &Keypair,
+    keypair: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> Result<rustls::ServerConfig, certificate::GenError> {

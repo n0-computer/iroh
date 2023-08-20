@@ -17,7 +17,7 @@ use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, UseIpv4, UseIpv6},
-    key::{Keypair, PeerId},
+    key::{PeerId, SecretKey},
     netcheck, portmapper, MagicEndpoint,
 };
 use postcard::experimental::max_size::MaxSize;
@@ -487,7 +487,7 @@ fn configure_local_derp_map() -> DerpMap {
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 
 async fn make_endpoint(
-    private_key: Keypair,
+    private_key: SecretKey,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<MagicEndpoint> {
     tracing::info!(
@@ -534,7 +534,7 @@ async fn make_endpoint(
 
 async fn connect(
     dial: String,
-    private_key: Keypair,
+    private_key: SecretKey,
     remote_endpoints: Vec<SocketAddr>,
     derp_region: Option<u16>,
     derp_map: Option<DerpMap>,
@@ -572,7 +572,7 @@ fn format_addr(addr: SocketAddr) -> String {
 }
 
 async fn accept(
-    private_key: Keypair,
+    private_key: SecretKey,
     config: TestConfig,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
@@ -654,7 +654,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 }
 
 async fn derp_regions(config: Config) -> anyhow::Result<()> {
-    let key = Keypair::generate();
+    let key = SecretKey::generate();
     let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
@@ -766,24 +766,24 @@ impl std::fmt::Display for RegionDetails {
     }
 }
 
-fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<Keypair> {
+fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
     Ok(match private_key {
-        PrivateKey::Random => Keypair::generate(),
+        PrivateKey::Random => SecretKey::generate(),
         PrivateKey::Hex(hex) => {
             let bytes = hex::decode(hex)?;
-            Keypair::try_from(&bytes[..])?
+            SecretKey::try_from(&bytes[..])?
         }
         PrivateKey::Local => {
             let path = IrohPaths::Keypair.with_env()?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
-                Keypair::try_from_openssh(bytes)?
+                SecretKey::try_from_openssh(bytes)?
             } else {
                 println!(
                     "Local key not found in {}. Using random key.",
                     path.display()
                 );
-                Keypair::generate()
+                SecretKey::generate()
             }
         }
     })

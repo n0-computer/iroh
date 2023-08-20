@@ -11,14 +11,14 @@ use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
-use iroh_net::key::{Keypair, PeerId};
+use iroh_net::key::{PeerId, SecretKey};
 use serde::{Deserialize, Serialize};
 
 /// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {
     /// The keypair of the node
-    pub keypair: Keypair,
+    pub keypair: SecretKey,
     /// The addresses to connect to
     pub addrs: Vec<SocketAddr>,
     /// The peer id to dial
@@ -174,7 +174,7 @@ impl Ticket {
     }
 
     /// Convert this ticket into a [`Options`], adding the given keypair.
-    pub fn as_get_options(&self, keypair: Keypair, derp_map: Option<DerpMap>) -> Options {
+    pub fn as_get_options(&self, keypair: SecretKey, derp_map: Option<DerpMap>) -> Options {
         Options {
             peer_id: self.peer,
             addrs: self.addrs.clone(),
@@ -217,7 +217,7 @@ mod tests {
     fn test_ticket_base32_roundtrip() {
         let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
-        let peer = PeerId::from(Keypair::generate().public());
+        let peer = PeerId::from(SecretKey::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let derp_region = Some(0);

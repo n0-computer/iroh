@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use crypto_box::aead::{AeadCore, AeadInPlace, OsRng};
-use iroh_net::key::Keypair;
+use iroh_net::key::SecretKey;
 use rand::RngCore;
 
 pub fn seal_to(c: &mut Criterion) {
@@ -10,8 +10,8 @@ pub fn seal_to(c: &mut Criterion) {
         rand::thread_rng().fill_bytes(&mut text);
 
         group.bench_with_input(BenchmarkId::new("wrapper", i), i, |b, _| {
-            let key = Keypair::generate();
-            let target_key = Keypair::generate();
+            let key = SecretKey::generate();
+            let target_key = SecretKey::generate();
 
             b.iter(|| {
                 let shared = key.shared(&target_key.public());
@@ -45,8 +45,8 @@ pub fn open_from(c: &mut Criterion) {
         rand::thread_rng().fill_bytes(&mut text);
 
         group.bench_with_input(BenchmarkId::new("wrapper", i), i, |b, _| {
-            let key = Keypair::generate();
-            let target_key = Keypair::generate();
+            let key = SecretKey::generate();
+            let target_key = SecretKey::generate();
             let shared = key.shared(&target_key.public());
             let mut cipher_text = text.clone();
             shared.seal(&mut cipher_text);

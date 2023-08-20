@@ -5,7 +5,7 @@ use tracing::{info_span, Instrument};
 
 use crate::{
     derp::{http::ClientBuilder, DerpMap, MeshKey, PacketForwarderHandler},
-    key::Keypair,
+    key::SecretKey,
 };
 
 use super::Client;
@@ -20,7 +20,7 @@ use super::Client;
 pub(crate) struct MeshClients {
     tasks: JoinSet<()>,
     mesh_key: MeshKey,
-    server_key: Keypair,
+    server_key: SecretKey,
     mesh_addrs: MeshAddrs,
     packet_fwd: PacketForwarderHandler<Client>,
     cancel: CancellationToken,
@@ -29,7 +29,7 @@ pub(crate) struct MeshClients {
 impl MeshClients {
     pub(crate) fn new(
         mesh_key: MeshKey,
-        server_key: Keypair,
+        server_key: SecretKey,
         mesh_addrs: MeshAddrs,
         packet_fwd: PacketForwarderHandler<Client>,
     ) -> Self {
@@ -126,7 +126,7 @@ mod tests {
 
     async fn test_mesh_network_once() -> Result<()> {
         let mesh_key: MeshKey = [1; 32];
-        let a_key = Keypair::generate();
+        let a_key = SecretKey::generate();
         println!("derp server a: {:?}", a_key.public());
         let mut derp_server_a = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(a_key))
@@ -134,7 +134,7 @@ mod tests {
             .spawn()
             .await?;
 
-        let b_key = Keypair::generate();
+        let b_key = SecretKey::generate();
         println!("derp server b: {:?}", b_key.public());
         let mut derp_server_b = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(b_key))
@@ -167,14 +167,14 @@ mod tests {
         )
         .await??;
 
-        let alice_key = Keypair::generate();
+        let alice_key = SecretKey::generate();
         println!("client alice: {:?}", alice_key.public());
         let alice = ClientBuilder::new()
             .server_url(a_url)
             .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
-        let bob_key = Keypair::generate();
+        let bob_key = SecretKey::generate();
         println!("client bob: {:?}", bob_key.public());
         let bob = ClientBuilder::new()
             .server_url(b_url)

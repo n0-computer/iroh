@@ -20,7 +20,7 @@ use super::{
     PROTOCOL_VERSION,
 };
 
-use crate::key::{Keypair, PublicKey, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -385,7 +385,7 @@ pub struct ClientBuilder<W>
 where
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    secret_key: Keypair,
+    secret_key: SecretKey,
     reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
     writer: W,
     local_addr: SocketAddr,
@@ -400,7 +400,7 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     pub fn new(
-        secret_key: Keypair,
+        secret_key: SecretKey,
         local_addr: SocketAddr,
         reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
         writer: W,

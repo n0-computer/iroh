@@ -11,7 +11,7 @@ use iroh_gossip::{
 use iroh_net::{
     defaults::default_derp_map,
     derp::DerpMap,
-    key::{Keypair, PeerId, PublicKey},
+    key::{PeerId, PublicKey, SecretKey},
     magic_endpoint::accept_conn,
     MagicEndpoint,
 };
@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
 
     // parse or generate our keypair
     let keypair = match args.private_key {
-        None => Keypair::generate(),
+        None => SecretKey::generate(),
         Some(key) => parse_keypair(&key)?,
     };
     println!("> our private key: {}", base32::fmt(keypair.to_bytes()));
@@ -267,7 +267,7 @@ impl SignedMessage {
         Ok((signed_message.from, message))
     }
 
-    pub fn sign_and_encode(keypair: &Keypair, message: &Message) -> anyhow::Result<Bytes> {
+    pub fn sign_and_encode(keypair: &SecretKey, message: &Message) -> anyhow::Result<Bytes> {
         let data: Bytes = postcard::to_stdvec(&message)?.into();
         let signature = keypair.sign(&data);
         let from: PeerId = keypair.public().into();
@@ -345,9 +345,9 @@ impl FromStr for Ticket {
 fn fmt_peer_id(input: &PeerId) -> String {
     base32::fmt_short(input.as_bytes())
 }
-fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
+fn parse_keypair(secret: &str) -> anyhow::Result<SecretKey> {
     let bytes: [u8; 32] = base32::parse_array(secret)?;
-    Ok(Keypair::from(bytes))
+    Ok(SecretKey::from(bytes))
 }
 
 fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {

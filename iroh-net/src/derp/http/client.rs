@@ -26,7 +26,7 @@ use crate::derp::{
     PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
-use crate::key::{Keypair, PublicKey};
+use crate::key::{PublicKey, SecretKey};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -121,7 +121,7 @@ impl std::fmt::Debug for Client {
 }
 
 struct InnerClient {
-    secret_key: Keypair,
+    secret_key: SecretKey,
     get_region:
         Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
@@ -242,7 +242,7 @@ impl ClientBuilder {
     /// Build the [`Client`]
     ///
     /// Will error if there is no region or no url set.
-    pub fn build(self, key: Keypair) -> anyhow::Result<Client> {
+    pub fn build(self, key: SecretKey) -> anyhow::Result<Client> {
         anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
         Ok(Client {
             inner: Arc::new(InnerClient {
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recv_detail_connect_error() -> Result<()> {
-        let key = Keypair::generate();
+        let key = SecretKey::generate();
         let bad_region = DerpRegion {
             region_id: 1,
             avoid: false,
@@ -1215,7 +1215,7 @@ mod tests {
             .ok();
 
         // set up http server w/ mesh key
-        let server_key = Keypair::generate();
+        let server_key = SecretKey::generate();
         let mesh_key: MeshKey = [0; 32];
         let http_server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(server_key))
@@ -1229,7 +1229,7 @@ mod tests {
         let url = addr.to_string();
         let url: Url = format!("http://{url}/derp").parse().unwrap();
 
-        let mesh_client_secret_key = Keypair::generate();
+        let mesh_client_secret_key = SecretKey::generate();
         let mesh_client = ClientBuilder::new()
             .mesh_key(Some(mesh_key))
             .server_url(url.clone())
@@ -1259,7 +1259,7 @@ mod tests {
         // create another client that will become a normal peer for the derp server
         let normal_client = ClientBuilder::new()
             .server_url(url)
-            .build(Keypair::generate())?;
+            .build(SecretKey::generate())?;
         let normal_client_key = normal_client.public_key();
         tracing::info!("normal client public key: {normal_client:?}");
         let _ = normal_client.connect().await?;

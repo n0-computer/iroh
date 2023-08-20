@@ -42,7 +42,7 @@ use iroh_bytes::{
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
-    key::{Keypair, PeerId},
+    key::{PeerId, SecretKey},
     tls, MagicEndpoint,
 };
 use quic_rpc::server::RpcChannel;
@@ -82,7 +82,7 @@ where
     C: CollectionParser,
 {
     bind_addr: SocketAddr,
-    keypair: Keypair,
+    keypair: SecretKey,
     rpc_endpoint: E,
     db: D,
     keylog: bool,
@@ -139,7 +139,7 @@ impl<D: Map> Builder<D> {
     fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
-            keypair: Keypair::generate(),
+            keypair: SecretKey::generate(),
             db,
             keylog: false,
             derp_map: None,
@@ -229,7 +229,7 @@ where
     }
 
     /// Uses the given [`Keypair`] for the [`PeerId`] instead of a newly generated one.
-    pub fn keypair(mut self, keypair: Keypair) -> Self {
+    pub fn keypair(mut self, keypair: SecretKey) -> Self {
         self.keypair = keypair;
         self
     }
@@ -495,7 +495,7 @@ pub struct Node<D: Map> {
 struct NodeInner<D> {
     db: D,
     endpoint: MagicEndpoint,
-    keypair: Keypair,
+    keypair: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
@@ -1063,7 +1063,7 @@ fn handle_rpc_request<D: Store, E: ServiceEndpoint<ProviderService>, C: Collecti
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
 pub fn make_server_config(
-    keypair: &Keypair,
+    keypair: &SecretKey,
     max_streams: u64,
     max_connections: u32,
     alpn_protocols: Vec<Vec<u8>>,

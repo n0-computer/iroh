@@ -300,7 +300,7 @@ mod tests {
         derp::{
             client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
         },
-        key::Keypair,
+        key::SecretKey,
     };
 
     use anyhow::Result;
@@ -337,8 +337,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_clients() -> Result<()> {
-        let a_key = Keypair::generate().public();
-        let b_key = Keypair::generate().public();
+        let a_key = SecretKey::generate().public();
+        let b_key = SecretKey::generate().public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key, 0);
 

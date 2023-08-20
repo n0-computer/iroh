@@ -50,7 +50,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
-    use crate::key::{Keypair, PublicKey};
+    use crate::key::{PublicKey, SecretKey};
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {
@@ -60,9 +60,9 @@ mod tests {
             .try_init()
             .ok();
 
-        let server_key = Keypair::generate();
-        let a_key = Keypair::generate();
-        let b_key = Keypair::generate();
+        let server_key = SecretKey::generate();
+        let a_key = SecretKey::generate();
+        let b_key = SecretKey::generate();
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
@@ -135,7 +135,7 @@ mod tests {
     }
 
     fn create_test_client(
-        key: Keypair,
+        key: SecretKey,
         region: DerpRegion,
         server_url: Option<Url>,
     ) -> (
@@ -198,9 +198,9 @@ mod tests {
             .try_init()
             .ok();
 
-        let server_key = Keypair::generate();
-        let a_key = Keypair::generate();
-        let b_key = Keypair::generate();
+        let server_key = SecretKey::generate();
+        let a_key = SecretKey::generate();
+        let b_key = SecretKey::generate();
 
         // create tls_config
         let tls_config = make_tls_config();

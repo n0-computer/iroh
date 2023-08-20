@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
-use crate::key::{Keypair, PublicKey, SharedSecret};
+use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
 use super::{
@@ -53,7 +53,7 @@ where
     /// to a client
     write_timeout: Option<Duration>,
     /// secret_key of the client
-    secret_key: Keypair,
+    secret_key: SecretKey,
     // TODO: this is a string in the go impl, I made it a standard length array
     // of bytes in this impl for ease of serializing. (Postcard cannot estimate
     // the size of the serialized struct if this field is a `String`). This should
@@ -114,7 +114,7 @@ where
     P: PacketForwarder,
 {
     /// TODO: replace with builder
-    pub fn new(key: Keypair, mesh_key: Option<MeshKey>) -> Self {
+    pub fn new(key: SecretKey, mesh_key: Option<MeshKey>) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let server_actor = ServerActor::new(key.public(), server_channel_r);
         let cancel_token = CancellationToken::new();
@@ -148,7 +148,7 @@ where
     }
 
     /// Returns the server's private key.
-    pub fn private_key(&self) -> &Keypair {
+    pub fn private_key(&self) -> &SecretKey {
         &self.secret_key
     }
 
@@ -272,7 +272,7 @@ where
 {
     mesh_key: Option<MeshKey>,
     server_channel: mpsc::Sender<ServerMessage<P>>,
-    secret_key: Keypair,
+    secret_key: SecretKey,
     write_timeout: Option<Duration>,
     server_info: ServerInfo,
     pub(super) default_headers: Arc<HeaderMap>,
@@ -730,7 +730,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_actor() -> Result<()> {
-        let server_key = Keypair::generate().public();
+        let server_key = SecretKey::generate().public();
 
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
@@ -745,7 +745,7 @@ mod tests {
                 .instrument(info_span!("derp.srv.actor")),
         );
 
-        let key_a = Keypair::generate().public();
+        let key_a = SecretKey::generate().public();
         let (client_a, mut a_io) = test_client_builder(key_a, 1, server_channel.clone());
 
         // create client a
@@ -766,7 +766,7 @@ mod tests {
         assert_eq!(frame_type, FrameType::PeerPresent);
         assert_eq!(key_a.as_bytes()[..], buf[..]);
 
-        let key_b = Keypair::generate().public();
+        let key_b = SecretKey::generate().public();
 
         // server message: create client b
         let (client_b, mut b_io) = test_client_builder(key_b, 2, server_channel.clone());
@@ -781,7 +781,7 @@ mod tests {
         assert_eq!(key_b.as_bytes()[..], buf[..]);
 
         // server message: create client c
-        let key_c = Keypair::generate().public();
+        let key_c = SecretKey::generate().public();
         let (client_c, mut c_io) = test_client_builder(key_c, 3, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_c.build()))
@@ -814,7 +814,7 @@ mod tests {
         assert!(peers.contains(&key_c.as_bytes().to_vec()));
 
         // add packet forwarder for client d
-        let key_d = Keypair::generate().public();
+        let key_d = SecretKey::generate().public();
         let (packet_s, mut packet_r) = mpsc::channel(10);
         let fwd_d = MockPacketForwarder { packets: packet_s };
         server_channel
@@ -883,7 +883,7 @@ mod tests {
     async fn test_client_conn_handler() -> Result<()> {
         // create client connection handler
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let client_key = Keypair::generate();
+        let client_key = SecretKey::generate();
         let handler = ClientConnHandler::<MockPacketForwarder> {
             mesh_key: Some([1u8; 32]),
             secret_key: client_key.clone(),
@@ -946,7 +946,7 @@ mod tests {
     }
 
     fn make_test_client(
-        secret_key: Keypair,
+        secret_key: SecretKey,
     ) -> (
         tokio::io::DuplexStream,
         ClientBuilder<tokio::io::WriteHalf<Box<dyn Io + Send + Sync + 'static>>>,
@@ -969,12 +969,12 @@ mod tests {
     #[tokio::test]
     async fn test_server_basic() -> Result<()> {
         // create the server!
-        let server_key = Keypair::generate();
+        let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);
         let server: Server<MockPacketForwarder> = Server::new(server_key, mesh_key);
 
         // create client a and connect it to the server
-        let key_a = Keypair::generate();
+        let key_a = SecretKey::generate();
         let public_key_a = key_a.public();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
@@ -984,7 +984,7 @@ mod tests {
         handler_task.await??;
 
         // create client b and connect it to the server
-        let key_b = Keypair::generate();
+        let key_b = SecretKey::generate();
         let public_key_b = key_b.public();
         let (rw_b, client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
@@ -994,7 +994,7 @@ mod tests {
         handler_task.await??;
 
         // create a packet forwarder for client c and add it to the server
-        let key_c = Keypair::generate().public();
+        let key_c = SecretKey::generate().public();
         let (mut fwd_recv, packet_fwd) = MockPacketForwarder::new();
         let handler = server.packet_forwarder_handler();
         handler.add_packet_forwarder(key_c, packet_fwd)?;
@@ -1061,12 +1061,12 @@ mod tests {
             .ok();
 
         // create the server!
-        let server_key = Keypair::generate();
+        let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);
         let server: Server<MockPacketForwarder> = Server::new(server_key, mesh_key);
 
         // create client a and connect it to the server
-        let key_a = Keypair::generate();
+        let key_a = SecretKey::generate();
         let public_key_a = key_a.public();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
@@ -1076,7 +1076,7 @@ mod tests {
         handler_task.await??;
 
         // create client b and connect it to the server
-        let key_b = Keypair::generate();
+        let key_b = SecretKey::generate();
         let public_key_b = key_b.public();
         let (rw_b, client_b_builder) = make_test_client(key_b.clone());
         let handler = server.client_conn_handler(Default::default());

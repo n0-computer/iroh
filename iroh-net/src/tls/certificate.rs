@@ -8,7 +8,7 @@
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use x509_parser::prelude::*;
 
-use crate::key::{Keypair, PeerId, PublicKey, Signature};
+use crate::key::{PeerId, PublicKey, SecretKey, Signature};
 
 /// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identier 1.3.6.1.4.1.53594.1.1,
@@ -37,7 +37,7 @@ struct SignedKey<'a> {
 /// Generates a self-signed TLS certificate that includes a libp2p-specific
 /// certificate extension containing the public key of the given keypair.
 pub fn generate(
-    identity_keypair: &Keypair,
+    identity_keypair: &SecretKey,
 ) -> Result<(rustls::Certificate, rustls::PrivateKey), GenError> {
     // Keypair used to sign the certificate.
     // SHOULD NOT be related to the host's key.
@@ -171,7 +171,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
 }
 
 fn make_libp2p_extension(
-    identity_keypair: &Keypair,
+    identity_keypair: &SecretKey,
     certificate_keypair: &rcgen::KeyPair,
 ) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn sanity_check() {
-        let keypair = Keypair::generate();
+        let keypair = SecretKey::generate();
 
         let (cert, _) = generate(&keypair).unwrap();
         let parsed_cert = parse(&cert).unwrap();

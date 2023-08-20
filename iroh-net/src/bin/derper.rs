@@ -25,7 +25,7 @@ use iroh_net::{
             MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
         },
     },
-    key::Keypair,
+    key::SecretKey,
     stun,
 };
 
@@ -163,7 +163,7 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 #[derive(Serialize, Deserialize)]
 struct Config {
     /// PrivateKey for this Derper.
-    private_key: Keypair,
+    private_key: SecretKey,
     /// Server listen address.
     ///
     /// Defaults to `[::]:443`.
@@ -244,7 +244,7 @@ struct Limits {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            private_key: Keypair::generate(),
+            private_key: SecretKey::generate(),
             addr: "[::]:443".parse().unwrap(),
             stun_port: DEFAULT_DERP_STUN_PORT,
             hostname: NA_DERP_HOSTNAME.into(),
@@ -887,7 +887,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_net::{
         derp::{http::ClientBuilder, ReceivedMessage},
-        key::Keypair,
+        key::SecretKey,
     };
 
     #[tokio::test]
@@ -954,7 +954,7 @@ mod tests {
         let derper_url: Url = derper_str_url.parse().unwrap();
 
         // set up clients
-        let a_secret_key = Keypair::generate();
+        let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
         let client_a = ClientBuilder::new()
             .server_url(derper_url.clone())
@@ -978,7 +978,7 @@ mod tests {
             bail!("error connecting client a to derper: {e:?}");
         }
 
-        let b_secret_key = Keypair::generate();
+        let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
         let client_b = ClientBuilder::new()
             .server_url(derper_url)

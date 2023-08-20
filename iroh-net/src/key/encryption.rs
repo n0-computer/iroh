@@ -58,7 +58,7 @@ impl SharedSecret {
     }
 }
 
-impl crate::key::Keypair {
+impl crate::key::SecretKey {
     /// Returns the shared key for communication between this key and `other`.
     pub fn shared(&self, other: &crate::key::PublicKey) -> SharedSecret {
         let secret_key = self.secret_crypto_box();
@@ -74,15 +74,15 @@ mod tests {
 
     #[test]
     fn test_seal_open_roundtrip() {
-        let key_a = crate::key::Keypair::generate();
-        let key_b = crate::key::Keypair::generate();
+        let key_a = crate::key::SecretKey::generate();
+        let key_b = crate::key::SecretKey::generate();
 
         seal_open_roundtrip(&key_a, &key_b);
         seal_open_roundtrip(&key_b, &key_a);
         seal_open_roundtrip(&key_a, &key_a);
     }
 
-    fn seal_open_roundtrip(key_a: &crate::key::Keypair, key_b: &crate::key::Keypair) {
+    fn seal_open_roundtrip(key_a: &crate::key::SecretKey, key_b: &crate::key::SecretKey) {
         let msg = b"super secret message!!!!".to_vec();
         let shared_a = key_a.shared(&key_b.public());
         let mut sealed_message = msg.clone();
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_same_public_key_api() {
-        let key = crate::key::Keypair::generate();
+        let key = crate::key::SecretKey::generate();
         let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public);
         let public_key2: crypto_box::PublicKey = secret_ed_box(&key.secret).public_key();
 

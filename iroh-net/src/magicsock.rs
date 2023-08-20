@@ -34,7 +34,7 @@ use crate::{
     config::{self, DERP_MAGIC_IP},
     derp::{DerpMap, DerpRegion},
     disco,
-    key::{Keypair, PublicKey, SharedSecret},
+    key::{PublicKey, SecretKey, SharedSecret},
     net::ip::LocalAddresses,
     netcheck, netmap, portmapper, stun,
     util::AbortingJoinHandle,
@@ -120,7 +120,7 @@ pub struct Options {
     pub port: u16,
 
     /// Private key for this node.
-    pub private_key: Keypair,
+    pub private_key: SecretKey,
 
     /// The [`DerpMap`] to use.
     pub derp_map: Option<DerpMap>,
@@ -150,7 +150,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             port: 0,
-            private_key: Keypair::generate(),
+            private_key: SecretKey::generate(),
             derp_map: None,
             callbacks: Default::default(),
         }
@@ -197,7 +197,7 @@ pub(self) struct Inner {
     pub(self) network_send_wakers: std::sync::Mutex<Option<Waker>>,
 
     /// Key for this node.
-    pub(self) private_key: Keypair,
+    pub(self) private_key: SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
@@ -2315,7 +2315,7 @@ impl Actor {
 /// Returns the previous or new DiscoInfo for `k`.
 fn get_disco_info<'a>(
     disco_info: &'a mut HashMap<PublicKey, DiscoInfo>,
-    node_private: &Keypair,
+    node_private: &SecretKey,
     k: &PublicKey,
 ) -> &'a mut DiscoInfo {
     if !disco_info.contains_key(k) {
@@ -2703,7 +2703,7 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct MagicStack {
         ep_ch: flume::Receiver<Vec<config::Endpoint>>,
-        keypair: Keypair,
+        keypair: SecretKey,
         endpoint: MagicEndpoint,
     }
 
@@ -2714,7 +2714,7 @@ pub(crate) mod tests {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
 
-            let keypair = Keypair::generate();
+            let keypair = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3066,7 +3066,7 @@ pub(crate) mod tests {
         setup_logging();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
-            let key = Keypair::generate();
+            let key = SecretKey::generate();
             let conn = std::net::UdpSocket::bind(addr)?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
@@ -3209,7 +3209,7 @@ pub(crate) mod tests {
         setup_logging();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
-            let key = Keypair::generate();
+            let key = SecretKey::generate();
             let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into()).await?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;

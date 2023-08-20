@@ -7,8 +7,8 @@ use std::{
     str::FromStr,
 };
 
-pub use ed25519_dalek::{Signature, VerifyingKey, PUBLIC_KEY_LENGTH};
-use ed25519_dalek::{SignatureError, SigningKey as SecretKey};
+pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
+use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
@@ -17,7 +17,7 @@ pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
 
 /// A public key.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PublicKey {
     public: VerifyingKey,
     /// Cached version of `crypto_box::PublicKey` matching `public`.
@@ -84,22 +84,52 @@ impl From<VerifyingKey> for PublicKey {
         let public_crypto_box = public_ed_box(&public).to_bytes();
         PublicKey {
             public,
-
             public_crypto_box,
         }
     }
 }
 
-/// A keypair.
+impl Debug for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(self.as_bytes());
+        text.make_ascii_lowercase();
+        write!(f, "PublicKey({text})")
+    }
+}
+
+impl Display for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(self.as_bytes());
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
+    }
+}
+
+/// A secret key.
 // TODO: rename to `SecretKey`.
-#[derive(Clone, Debug)]
-pub struct Keypair {
-    public: PublicKey,
-    secret: SecretKey,
+#[derive(Clone)]
+pub struct SecretKey {
+    secret: SigningKey,
     secret_crypto_box: OnceCell<crypto_box::SecretKey>,
 }
 
-impl Serialize for Keypair {
+impl Debug for SecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.to_bytes());
+        text.make_ascii_lowercase();
+        write!(f, "SecretKey({text})")
+    }
+}
+
+impl Display for SecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.to_bytes());
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
+    }
+}
+
+impl Serialize for SecretKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -108,30 +138,28 @@ impl Serialize for Keypair {
     }
 }
 
-impl<'de> Deserialize<'de> for Keypair {
+impl<'de> Deserialize<'de> for SecretKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let secret = SecretKey::deserialize(deserializer)?;
+        let secret = SigningKey::deserialize(deserializer)?;
         Ok(secret.into())
     }
 }
 
-impl Keypair {
+impl SecretKey {
     /// The public key of this keypair.
     pub fn public(&self) -> PublicKey {
-        self.public
+        self.secret.verifying_key().into()
     }
 
     /// Generate a new keypair.
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng;
-        let secret = SecretKey::generate(&mut rng);
-        let public = secret.verifying_key().into();
+        let secret = SigningKey::generate(&mut rng);
 
         Self {
-            public,
             secret,
             secret_crypto_box: OnceCell::default(),
         }
@@ -140,7 +168,7 @@ impl Keypair {
     /// Serialise the keypair to OpenSSH format.
     pub fn to_openssh(&self) -> ssh_key::Result<zeroize::Zeroizing<String>> {
         let ckey = ssh_key::private::Ed25519Keypair {
-            public: self.public.public.into(),
+            public: self.secret.verifying_key().into(),
             private: self.secret.clone().into(),
         };
         ssh_key::private::PrivateKey::from(ckey).to_openssh(LineEnding::default())
@@ -150,15 +178,10 @@ impl Keypair {
     pub fn try_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Self> {
         let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
         match ser_key.key_data() {
-            ssh_key::private::KeypairData::Ed25519(kp) => {
-                let public: VerifyingKey = kp.public.try_into()?;
-
-                Ok(Keypair {
-                    public: public.into(),
-                    secret: kp.private.clone().into(),
-                    secret_crypto_box: OnceCell::default(),
-                })
-            }
+            ssh_key::private::KeypairData::Ed25519(kp) => Ok(SecretKey {
+                secret: kp.private.clone().into(),
+                secret_crypto_box: OnceCell::default(),
+            }),
             _ => anyhow::bail!("invalid key format"),
         }
     }
@@ -182,30 +205,28 @@ impl Keypair {
     }
 }
 
-impl From<SecretKey> for Keypair {
-    fn from(secret: SecretKey) -> Self {
-        let public = secret.verifying_key();
-        Keypair {
+impl From<SigningKey> for SecretKey {
+    fn from(secret: SigningKey) -> Self {
+        SecretKey {
             secret,
-            public: public.into(),
             secret_crypto_box: OnceCell::default(),
         }
     }
 }
 
-impl From<[u8; 32]> for Keypair {
+impl From<[u8; 32]> for SecretKey {
     fn from(value: [u8; 32]) -> Self {
-        let secret = SecretKey::from(value);
+        let secret = SigningKey::from(value);
         secret.into()
     }
 }
 
-impl TryFrom<&[u8]> for Keypair {
+impl TryFrom<&[u8]> for SecretKey {
     type Error = SignatureError;
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let secret = SecretKey::try_from(bytes)?;
+        let secret = SigningKey::try_from(bytes)?;
         Ok(secret.into())
     }
 }
@@ -304,9 +325,9 @@ mod tests {
 
     #[test]
     fn test_keypair_openssh_roundtrip() {
-        let kp = Keypair::generate();
+        let kp = SecretKey::generate();
         let ser = kp.to_openssh().unwrap();
-        let de = Keypair::try_from_openssh(&ser).unwrap();
+        let de = SecretKey::try_from_openssh(&ser).unwrap();
         assert_eq!(kp.to_bytes(), de.to_bytes());
     }
 }
