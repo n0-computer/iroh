@@ -303,6 +303,7 @@ impl Client {
 
 /// The kinds of messages we can send to the [`super::server::Server`]
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),

@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
 use anyhow::{bail, Context};
 use bytes::Bytes;
 use clap::Parser;
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::Signature;
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::{util::base32, Event, TopicId},
@@ -11,7 +11,7 @@ use iroh_gossip::{
 use iroh_net::{
     defaults::default_derp_map,
     derp::DerpMap,
-    key::{Keypair, PeerId},
+    key::{Keypair, PeerId, PublicKey},
     magic_endpoint::accept_conn,
     MagicEndpoint,
 };
@@ -92,10 +92,7 @@ async fn main() -> anyhow::Result<()> {
         None => Keypair::generate(),
         Some(key) => parse_keypair(&key)?,
     };
-    println!(
-        "> our private key: {}",
-        base32::fmt(keypair.secret().to_bytes())
-    );
+    println!("> our private key: {}", base32::fmt(keypair.to_bytes()));
 
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {
@@ -264,15 +261,15 @@ struct SignedMessage {
 impl SignedMessage {
     pub fn verify_and_decode(bytes: &[u8]) -> anyhow::Result<(PeerId, Message)> {
         let signed_message: Self = postcard::from_bytes(bytes)?;
-        let key: VerifyingKey = signed_message.from.into();
-        key.verify_strict(&signed_message.data, &signed_message.signature)?;
+        let key: PublicKey = signed_message.from.into();
+        key.verify(&signed_message.data, &signed_message.signature)?;
         let message: Message = postcard::from_bytes(&signed_message.data)?;
         Ok((signed_message.from, message))
     }
 
     pub fn sign_and_encode(keypair: &Keypair, message: &Message) -> anyhow::Result<Bytes> {
         let data: Bytes = postcard::to_stdvec(&message)?.into();
-        let signature = keypair.secret().sign(&data);
+        let signature = keypair.sign(&data);
         let from: PeerId = keypair.public().into();
         let signed_message = Self {
             from,
@@ -349,10 +346,10 @@ fn fmt_peer_id(input: &PeerId) -> String {
     base32::fmt_short(input.as_bytes())
 }
 fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
-    let bytes = base32::parse_array(secret)?;
-    let key = SigningKey::from_bytes(&bytes);
-    Ok(key.into())
+    let bytes: [u8; 32] = base32::parse_array(secret)?;
+    Ok(Keypair::from(bytes))
 }
+
 fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     match derp_map {
         None => "None".to_string(),

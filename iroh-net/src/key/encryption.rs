@@ -64,7 +64,7 @@ impl crate::key::Keypair {
         let secret_key = self.secret_crypto_box();
         let public_key = other.public_crypto_box();
 
-        SharedSecret::new(&secret_key, &public_key)
+        SharedSecret::new(secret_key, &public_key)
     }
 }
 

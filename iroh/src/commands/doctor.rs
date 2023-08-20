@@ -17,7 +17,7 @@ use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, UseIpv4, UseIpv6},
-    key::{Keypair, PeerId, PublicKey},
+    key::{Keypair, PeerId},
     netcheck, portmapper, MagicEndpoint,
 };
 use postcard::experimental::max_size::MaxSize;
@@ -542,8 +542,7 @@ async fn connect(
     let endpoint = make_endpoint(private_key, derp_map).await?;
 
     let bytes = hex::decode(dial)?;
-    let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-    let peer_id = PeerId::from(PublicKey::from_bytes(&bytes).context("failed to parse PeerId")?);
+    let peer_id = PeerId::try_from(&bytes[..]).context("failed to parse PeerId")?;
 
     tracing::info!("dialing {:?}", peer_id);
     let conn = endpoint
@@ -772,8 +771,7 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<Keypair> {
         PrivateKey::Random => Keypair::generate(),
         PrivateKey::Hex(hex) => {
             let bytes = hex::decode(hex)?;
-            let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-            Keypair::from(iroh_net::key::SecretKey::from(bytes))
+            Keypair::try_from(&bytes[..])?
         }
         PrivateKey::Local => {
             let path = IrohPaths::Keypair.with_env()?;

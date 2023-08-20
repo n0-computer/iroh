@@ -25,7 +25,7 @@ use iroh_net::{
             MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
         },
     },
-    key::SecretKey,
+    key::Keypair,
     stun,
 };
 
@@ -163,7 +163,7 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 #[derive(Serialize, Deserialize)]
 struct Config {
     /// PrivateKey for this Derper.
-    private_key: SecretKey,
+    private_key: Keypair,
     /// Server listen address.
     ///
     /// Defaults to `[::]:443`.
@@ -244,7 +244,7 @@ struct Limits {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            private_key: SecretKey::generate(&mut rand::rngs::OsRng),
+            private_key: Keypair::generate(),
             addr: "[::]:443".parse().unwrap(),
             stun_port: DEFAULT_DERP_STUN_PORT,
             hostname: NA_DERP_HOSTNAME.into(),

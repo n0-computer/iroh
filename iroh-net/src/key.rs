@@ -8,7 +8,7 @@ use std::{
 };
 
 pub use ed25519_dalek::{Signature, VerifyingKey, PUBLIC_KEY_LENGTH};
-use ed25519_dalek::{SignatureError, SigningKey as SecretKey, Verifier};
+use ed25519_dalek::{SignatureError, SigningKey as SecretKey};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
@@ -59,7 +59,7 @@ impl PublicKey {
     ///
     /// Returns `Ok(())` if the signature is valid, and `Err` otherwise.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.public.verify(message, signature)
+        self.public.verify_strict(message, signature)
     }
 }
 
@@ -97,6 +97,25 @@ pub struct Keypair {
     public: PublicKey,
     secret: SecretKey,
     secret_crypto_box: OnceCell<crypto_box::SecretKey>,
+}
+
+impl Serialize for Keypair {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.secret.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Keypair {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let secret = SecretKey::deserialize(deserializer)?;
+        Ok(secret.into())
+    }
 }
 
 impl Keypair {
@@ -174,6 +193,23 @@ impl From<SecretKey> for Keypair {
     }
 }
 
+impl From<[u8; 32]> for Keypair {
+    fn from(value: [u8; 32]) -> Self {
+        let secret = SecretKey::from(value);
+        secret.into()
+    }
+}
+
+impl TryFrom<&[u8]> for Keypair {
+    type Error = SignatureError;
+
+    #[inline]
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let secret = SecretKey::try_from(bytes)?;
+        Ok(secret.into())
+    }
+}
+
 // TODO: probably needs a version field
 /// An identifier for networked peers.
 ///
@@ -191,6 +227,16 @@ impl PeerId {
     /// Get this peer id as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+}
+
+impl TryFrom<&[u8]> for PeerId {
+    type Error = SignatureError;
+
+    #[inline]
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let public = PublicKey::try_from(bytes)?;
+        Ok(public.into())
     }
 }
 
