@@ -185,10 +185,17 @@ impl From<FrameType> for u8 {
     }
 }
 
-async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, usize)> {
-    let frame_type = reader.read_u8().await?;
-    let frame_len = reader.read_u32().await?;
-    Ok((frame_type.into(), frame_len.try_into()?))
+async fn read_frame_header(
+    mut reader: impl AsyncRead + Unpin,
+    buf: &mut BytesMut,
+) -> Result<(FrameType, usize)> {
+    while buf.len() < 5 {
+        reader.read_buf(buf).await?;
+    }
+    let frame_type = buf[0];
+    let frame_len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
+    let _ = buf.split_off(5);
+    Ok((frame_type.into(), frame_len))
 }
 
 /// AsyncReads a frame header and then reads a `frame_len` of bytes into `buf`.
@@ -203,7 +210,7 @@ async fn read_frame(
     max_size: usize,
     buf: &mut BytesMut,
 ) -> Result<(FrameType, usize)> {
-    let (frame_type, frame_len) = read_frame_header(&mut reader)
+    let (frame_type, frame_len) = read_frame_header(&mut reader, buf)
         .await
         .context("frame header")?;
     debug!("read frame header: {:?} - {:?}", frame_type, frame_len);
@@ -340,7 +347,8 @@ mod tests {
         let (mut reader, mut writer) = tokio::io::duplex(1024);
 
         write_frame_header(&mut writer, FrameType::PeerGone, 301).await?;
-        let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
+        let mut buf = BytesMut::new();
+        let (frame_type, frame_len) = read_frame_header(&mut reader, &mut buf).await?;
         assert_eq!(frame_type, FrameType::PeerGone);
         assert_eq!(frame_len, 301);
 
