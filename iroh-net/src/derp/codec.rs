@@ -3,40 +3,190 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::key::node::{PublicKey, SecretKey};
+use crate::key::PublicKey;
 
-use super::{FrameType, MAX_FRAME_SIZE};
+use super::{FrameType, MAGIC, MAX_FRAME_SIZE, NOT_PREFERRED, PREFERRED};
 
 #[derive(Debug, Default, Clone)]
-pub(super) struct DerpCodec;
+pub(crate) struct DerpCodec;
 
 #[derive(Debug)]
-pub(super) struct Frame {
-    pub(super) typ: FrameType,
-    pub(super) content: Bytes,
+pub(crate) struct Frame {
+    pub(crate) typ: FrameType,
+    pub(crate) content: Bytes,
 }
 
 #[derive(Debug)]
-pub(super) enum WriteFrame {
-    ServerKey {},
-    ClientInfo {
-        secret_key: SecretKey,
-        server_key: PublicKey,
+pub(crate) enum WriteFrame<'a> {
+    ServerKey {
+        key: PublicKey,
     },
-    ServerInfo {},
-    SendPacket {},
-    RecvPacket {},
-    KeepAlive {},
-    NotePreferred {},
-    PeerGone {},
-    PeerPresent {},
-    WatchConns {},
-    ClosePeer {},
-    Ping {},
-    Pong {},
-    Health {},
+    ClientInfo {
+        client_public_key: PublicKey,
+        encrypted_message: Vec<u8>,
+    },
+    ServerInfo {
+        encrypted_message: Vec<u8>,
+    },
+    SendPacket {
+        dst_key: PublicKey,
+        packet: &'a [u8],
+    },
+    RecvPacket {
+        src_key: PublicKey,
+        content: Bytes,
+    },
+    KeepAlive,
+    NotePreferred {
+        preferred: bool,
+    },
+    PeerGone {
+        peer: PublicKey,
+    },
+    PeerPresent {
+        peer: PublicKey,
+    },
+    WatchConns,
+    ClosePeer {
+        peer: PublicKey,
+    },
+    Ping {
+        data: [u8; 8],
+    },
+    Pong {
+        data: [u8; 8],
+    },
+    #[allow(dead_code)]
+    Health {
+        data: Vec<u8>,
+    },
+    #[allow(dead_code)]
     Restarting {},
-    ForwardPacket {},
+    ForwardPacket {
+        src_key: PublicKey,
+        dst_key: PublicKey,
+        packet: &'a [u8],
+    },
+}
+
+impl WriteFrame<'_> {
+    fn typ(&self) -> FrameType {
+        match self {
+            WriteFrame::ServerKey { .. } => FrameType::ServerKey,
+            WriteFrame::ClientInfo { .. } => FrameType::ClientInfo,
+            WriteFrame::ServerInfo { .. } => FrameType::ServerInfo,
+            WriteFrame::SendPacket { .. } => FrameType::SendPacket,
+            WriteFrame::RecvPacket { .. } => FrameType::RecvPacket,
+            WriteFrame::KeepAlive => FrameType::KeepAlive,
+            WriteFrame::NotePreferred { .. } => FrameType::NotePreferred,
+            WriteFrame::PeerGone { .. } => FrameType::PeerGone,
+            WriteFrame::PeerPresent { .. } => FrameType::PeerPresent,
+            WriteFrame::WatchConns => FrameType::WatchConns,
+            WriteFrame::ClosePeer { .. } => FrameType::ClosePeer,
+            WriteFrame::Ping { .. } => FrameType::Ping,
+            WriteFrame::Pong { .. } => FrameType::Pong,
+            WriteFrame::Health { .. } => FrameType::Health,
+            WriteFrame::Restarting { .. } => FrameType::Restarting,
+            WriteFrame::ForwardPacket { .. } => FrameType::ForwardPacket,
+        }
+    }
+
+    /// Serialized length (without the frame header)
+    pub(super) fn len(&self) -> usize {
+        match self {
+            WriteFrame::ServerKey { .. } => MAGIC.as_bytes().len() + 32,
+            WriteFrame::ClientInfo {
+                client_public_key: _,
+                encrypted_message,
+            } => 32 + encrypted_message.len(),
+            WriteFrame::ServerInfo { encrypted_message } => encrypted_message.len(),
+            WriteFrame::SendPacket { dst_key: _, packet } => 32 + packet.len(),
+            WriteFrame::RecvPacket {
+                src_key: _,
+                content,
+            } => 32 + content.len(),
+            WriteFrame::KeepAlive => 0,
+            WriteFrame::NotePreferred { .. } => 1,
+            WriteFrame::PeerGone { .. } => 32,
+            WriteFrame::PeerPresent { .. } => 32,
+            WriteFrame::WatchConns => 0,
+            WriteFrame::ClosePeer { .. } => 32,
+            WriteFrame::Ping { .. } => 8,
+            WriteFrame::Pong { .. } => 8,
+            WriteFrame::Health { data } => data.len(),
+            WriteFrame::Restarting {} => 0,
+            WriteFrame::ForwardPacket {
+                src_key: _,
+                dst_key: _,
+                packet,
+            } => 32 + 32 + packet.len(),
+        }
+    }
+
+    /// Writes it self to the given buffer.
+    fn write_to(&self, dst: &mut BytesMut) {
+        match self {
+            WriteFrame::ServerKey { key } => {
+                dst.put(MAGIC.as_bytes());
+                dst.put(key.as_ref());
+            }
+            WriteFrame::ClientInfo {
+                client_public_key,
+                encrypted_message,
+            } => {
+                dst.put(client_public_key.as_ref());
+                dst.put(&encrypted_message[..]);
+            }
+            WriteFrame::ServerInfo { encrypted_message } => {
+                dst.put(&encrypted_message[..]);
+            }
+            WriteFrame::SendPacket { dst_key, packet } => {
+                dst.put(dst_key.as_ref());
+                dst.put(*packet);
+            }
+            WriteFrame::RecvPacket { src_key, content } => {
+                dst.put(src_key.as_ref());
+                dst.put(content.as_ref());
+            }
+            WriteFrame::KeepAlive => {}
+            WriteFrame::NotePreferred { preferred } => {
+                if *preferred {
+                    dst.put_u8(PREFERRED);
+                } else {
+                    dst.put_u8(NOT_PREFERRED);
+                }
+            }
+            WriteFrame::PeerGone { peer } => {
+                dst.put(peer.as_ref());
+            }
+            WriteFrame::PeerPresent { peer } => {
+                dst.put(peer.as_ref());
+            }
+            WriteFrame::WatchConns => {}
+            WriteFrame::ClosePeer { peer } => {
+                dst.put(peer.as_ref());
+            }
+            WriteFrame::Ping { data } => {
+                dst.put(&data[..]);
+            }
+            WriteFrame::Pong { data } => {
+                dst.put(&data[..]);
+            }
+            WriteFrame::Health { data } => {
+                dst.put(&data[..]);
+            }
+            WriteFrame::Restarting {} => {}
+            WriteFrame::ForwardPacket {
+                src_key,
+                dst_key,
+                packet,
+            } => {
+                dst.put(src_key.as_ref());
+                dst.put(dst_key.as_ref());
+                dst.put(*packet);
+            }
+        }
+    }
 }
 
 const HEADER_LEN: usize = 5;
@@ -81,11 +231,11 @@ impl Decoder for DerpCodec {
     }
 }
 
-impl Encoder<WriteFrame<'_, '_>> for DerpCodec {
+impl Encoder<WriteFrame<'_>> for DerpCodec {
     type Error = std::io::Error;
 
-    fn encode(&mut self, frame: WriteFrame<'_, '_>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame_len: usize = frame.content.iter().map(|v| v.len()).sum();
+    fn encode(&mut self, frame: WriteFrame<'_>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let frame_len: usize = frame.len();
         if frame_len > MAX_FRAME_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -93,14 +243,12 @@ impl Encoder<WriteFrame<'_, '_>> for DerpCodec {
             ));
         }
 
-        let frame_len_u32 = u32::try_from(frame.content.len()).expect("just checked");
+        let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
 
         dst.reserve(HEADER_LEN + frame_len);
-        dst.put_u8(frame.typ.into());
+        dst.put_u8(frame.typ().into());
         dst.put_u32(frame_len_u32);
-        for content in frame.content {
-            dst.put(*content);
-        }
+        frame.write_to(dst);
 
         Ok(())
     }
