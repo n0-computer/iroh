@@ -23,8 +23,8 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{
-        self, range_collections::RangeSet2, ExportMode, ImportMode, ImportProgress, Map, MapEntry,
-        PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
+        self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
+        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
     },
     util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
@@ -173,6 +173,10 @@ impl MapEntry<Store> for Entry {
     fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
         futures::future::ok(self.data.clone()).boxed()
     }
+
+    fn is_complete(&self) -> bool {
+        true
+    }
 }
 
 impl Map for Store {
@@ -186,6 +190,13 @@ impl Map for Store {
             outboard: o.clone(),
             data: d.clone(),
         })
+    }
+
+    fn contains(&self, hash: &Hash) -> EntryStatus {
+        match self.0.contains_key(hash) {
+            true => EntryStatus::Complete,
+            false => EntryStatus::NotFound,
+        }
     }
 }
 
@@ -267,6 +278,11 @@ impl MapEntry<Store> for PartialEntry {
     }
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+        // this is unreachable, since PartialEntry can not be created
+        unreachable!()
+    }
+
+    fn is_complete(&self) -> bool {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
