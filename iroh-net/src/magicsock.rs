@@ -3358,4 +3358,55 @@ pub(crate) mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn split_packets() {
+        fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit {
+            let destination = "127.0.0.1:12345".parse().unwrap();
+            quinn_udp::Transmit {
+                destination,
+                ecn: None,
+                contents: contents.to_vec().into(),
+                segment_size,
+                src_ip: None,
+            }
+        }
+        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> Vec<Bytes> {
+            parts
+                .into_iter()
+                .map(|p| p.as_bytes().to_vec().into())
+                .collect()
+        }
+        // no packets
+        assert_eq!(Actor::split_packets(vec![]), Vec::<Bytes>::default());
+        // no split
+        assert_eq!(
+            Actor::split_packets(vec![
+                mk_transmit(b"hello", None),
+                mk_transmit(b"world", None)
+            ]),
+            mk_expected(["hello", "world"])
+        );
+        // split without rest
+        assert_eq!(
+            Actor::split_packets(vec![mk_transmit(b"helloworld", Some(5)),]),
+            mk_expected(["hello", "world"])
+        );
+        // split with rest and second transmit
+        assert_eq!(
+            Actor::split_packets(vec![
+                mk_transmit(b"hello world", Some(5)),
+                mk_transmit(b"!", None)
+            ]),
+            mk_expected(["hello", " worl", "d", "!"])
+        );
+        // split that results in 1 packet
+        assert_eq!(
+            Actor::split_packets(vec![
+                mk_transmit(b"hello world", Some(1000)),
+                mk_transmit(b"!", None)
+            ]),
+            mk_expected(["hello world", "!"])
+        );
+    }
 }
