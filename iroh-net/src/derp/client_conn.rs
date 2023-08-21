@@ -2,11 +2,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
-use bytes::{Bytes, BytesMut};
+use anyhow::{bail, ensure, Context, Result};
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
@@ -17,12 +19,12 @@ use crate::{
 
 use iroh_metrics::{inc, inc_by};
 
+use super::codec::{DerpCodec, Frame};
 use super::server::MaybeTlsStream;
 use super::{
     metrics::Metrics,
-    read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
+    write_frame_timeout, FrameType, KEEP_ALIVE, MAX_PACKET_SIZE, PREFERRED,
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -244,7 +246,7 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     /// Indicates whether this client can mesh
     can_mesh: bool,
     /// Io to talk to the client
-    io: MaybeTlsStream,
+    io: Framed<MaybeTlsStream, DerpCodec>,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -287,8 +289,6 @@ where
         // ticks immediately
         keep_alive.tick().await;
 
-        let mut read_buf = BytesMut::new();
-
         loop {
             trace!("tick");
             tokio::select! {
@@ -300,9 +300,9 @@ where
                     self.io.flush().await?;
                     return Ok(());
                 }
-                read_res = read_frame(&mut self.io, MAX_FRAME_SIZE, &mut read_buf) => {
+                read_res = self.io.next() => {
                     trace!("handle read");
-                    self.handle_read(read_res, &mut read_buf).await?;
+                    self.handle_read(read_res).await?;
                 }
                 peer = self.peer_gone.recv() => {
                     let peer = peer.context("Server.peer_gone dropped")?;
@@ -443,55 +443,49 @@ where
     }
 
     /// Handles read results.
-    async fn handle_read(
-        &mut self,
-        read_res: Result<(FrameType, usize)>,
-        buf: &mut BytesMut,
-    ) -> Result<()> {
+    async fn handle_read(&mut self, read_res: Option<std::io::Result<Frame>>) -> Result<()> {
         match read_res {
-            Ok((frame_type, frame_len)) => {
+            Some(Ok(frame)) => {
                 // TODO: "note client activity", meaning we update the server that the client with this
                 // public key was the last one to receive data
                 // it will be relevant when we add the ability to hold onto multiple clients
                 // for the same public key
-                let frame = buf.split_to(frame_len);
-                match frame_type {
+                match frame.typ {
                     FrameType::NotePreferred => {
-                        self.handle_frame_note_preferred(&frame)?;
+                        self.handle_frame_note_preferred(&frame.content)?;
                         inc!(Metrics, other_packets_recv);
                     }
                     FrameType::SendPacket => {
-                        self.handle_frame_send_packet(&frame).await?;
-                        inc_by!(Metrics, bytes_recv, frame_len as u64);
+                        self.handle_frame_send_packet(&frame.content).await?;
+                        inc_by!(Metrics, bytes_recv, frame.content.len() as u64);
                     }
                     FrameType::ForwardPacket => {
-                        self.handle_frame_forward_packet(&frame).await?;
+                        self.handle_frame_forward_packet(&frame.content).await?;
                         inc!(Metrics, packets_forwarded_in);
                     }
                     FrameType::WatchConns => {
-                        self.handle_frame_watch_conns(&frame).await?;
+                        self.handle_frame_watch_conns(&frame.content).await?;
                         inc!(Metrics, other_packets_recv);
                     }
                     FrameType::ClosePeer => {
-                        self.handle_frame_close_peer(&frame).await?;
+                        self.handle_frame_close_peer(&frame.content).await?;
                         inc!(Metrics, other_packets_recv);
                     }
                     FrameType::Ping => {
-                        self.handle_frame_ping(&frame).await?;
+                        self.handle_frame_ping(&frame.content).await?;
                         inc!(Metrics, got_ping);
                     }
                     FrameType::Unknown => {
                         inc!(Metrics, unknown_frames);
-                        buf.clear();
                     }
                     _ => {
                         inc!(Metrics, other_packets_recv);
-                        buf.clear();
                     }
                 }
                 Ok(())
             }
-            Err(err) => Err(err),
+            Some(Err(err)) => Err(err.into()),
+            None => bail!("EOF: reader stream ended"),
         }
     }
 
@@ -665,11 +659,13 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 mod tests {
     use std::sync::Arc;
 
+    use crate::derp::codec::recv_frame;
     use crate::key::SecretKey;
 
     use super::*;
 
     use anyhow::bail;
+    use tokio_util::codec::FramedRead;
 
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
@@ -680,7 +676,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
-        let mut buf = BytesMut::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
@@ -689,11 +684,12 @@ mod tests {
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
         let (io, mut io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = FramedRead::new(io_rw, DerpCodec::default());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: MaybeTlsStream::Test(io),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -721,9 +717,8 @@ mod tests {
             bytes: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::RecvPacket, frame_type);
-        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
+        let buf = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, buf.len());
         let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
@@ -731,9 +726,8 @@ mod tests {
         // send disco packet
         println!("  send disco packet");
         disco_send_queue_s.send(packet.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::RecvPacket, frame_type);
-        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
+        let buf = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, buf.len());
         let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
@@ -741,9 +735,8 @@ mod tests {
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(key).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::PeerGone, frame_type);
-        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
+        let buf = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(PUBLIC_KEY_LENGTH, buf.len());
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
 
         // send mesh_upate

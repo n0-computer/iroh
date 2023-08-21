@@ -12,6 +12,7 @@
 pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
+mod codec;
 pub mod http;
 mod map;
 mod metrics;
@@ -19,6 +20,7 @@ pub(crate) mod server;
 pub(crate) mod types;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
+use self::codec::{Frame, WriteFrame};
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::metrics::Metrics;
@@ -29,13 +31,16 @@ pub use self::types::{MeshKey, PacketForwarder};
 
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use bytes::BytesMut;
+use futures::{Sink, SinkExt, Stream};
+use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::debug;
 
+use crate::derp::codec::recv_frame;
 use crate::key::{PublicKey, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
-use types::ClientInfo;
+
+use self::types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
 /// (This only includes the data bytes visible to magicsock, not
@@ -190,47 +195,47 @@ async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameT
     Ok((frame_type.into(), frame_len.try_into()?))
 }
 
-/// AsyncReads a frame header and then reads a `frame_len` of bytes into `buf`.
-/// It resizes the `buf` to the expected `frame_len`.
-///
-/// If the frame header length is greater than `max_size`, `read_frame` returns
-/// an error after reading the frame header.
-///
-/// Also errors if we receive EOF before the end of the expected length of the frame.
-async fn read_frame(
-    mut reader: impl AsyncRead + Unpin,
-    max_size: usize,
-    buf: &mut BytesMut,
-) -> Result<(FrameType, usize)> {
-    let (frame_type, frame_len) = read_frame_header(&mut reader)
-        .await
-        .context("frame header")?;
-    debug!("read frame header: {:?} - {:?}", frame_type, frame_len);
-    ensure!(
-        frame_len < max_size,
-        "frame header size {frame_len} exceeds reader limit of {max_size}"
-    );
-    buf.resize(frame_len, 0u8);
-    reader.read_exact(buf).await.context("read exact")?;
-    Ok((frame_type, frame_len))
-}
+// /// AsyncReads a frame header and then reads a `frame_len` of bytes into `buf`.
+// /// It resizes the `buf` to the expected `frame_len`.
+// ///
+// /// If the frame header length is greater than `max_size`, `read_frame` returns
+// /// an error after reading the frame header.
+// ///
+// /// Also errors if we receive EOF before the end of the expected length of the frame.
+// async fn read_frame(
+//     mut reader: impl AsyncRead + Unpin,
+//     max_size: usize,
+//     buf: &mut BytesMut,
+// ) -> Result<(FrameType, usize)> {
+//     let (frame_type, frame_len) = read_frame_header(&mut reader)
+//         .await
+//         .context("frame header")?;
+//     debug!("read frame header: {:?} - {:?}", frame_type, frame_len);
+//     ensure!(
+//         frame_len < max_size,
+//         "frame header size {frame_len} exceeds reader limit of {max_size}"
+//     );
+//     buf.resize(frame_len, 0u8);
+//     reader.read_exact(buf).await.context("read exact")?;
+//     Ok((frame_type, frame_len))
+// }
 
-async fn read_frame_timeout(
-    mut reader: impl AsyncRead + Unpin,
-    max_size: usize,
-    buf: &mut BytesMut,
-    timeout: Option<Duration>,
-) -> Result<(FrameType, usize)> {
-    if let Some(duration) = timeout {
-        let (frame_type, frame_len) =
-            tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
-                .await
-                .context("timeout")??;
-        Ok((frame_type, frame_len))
-    } else {
-        read_frame(&mut reader, max_size, buf).await
-    }
-}
+// async fn read_frame_timeout(
+//     mut reader: impl AsyncRead + Unpin,
+//     max_size: usize,
+//     buf: &mut BytesMut,
+//     timeout: Option<Duration>,
+// ) -> Result<(FrameType, usize)> {
+//     if let Some(duration) = timeout {
+//         let (frame_type, frame_len) =
+//             tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
+//                 .await
+//                 .context("timeout")??;
+//         Ok((frame_type, frame_len))
+//     } else {
+//         read_frame(&mut reader, max_size, buf).await
+//     }
+// }
 
 async fn write_frame_header(
     mut writer: impl AsyncWrite + Unpin,
@@ -243,40 +248,31 @@ async fn write_frame_header(
     Ok(())
 }
 
-/// AsyncWrites a complete frame. Does not flush.
-async fn write_frame<'a>(
-    mut writer: impl AsyncWrite + Unpin,
-    frame_type: FrameType,
-    bytes: &[&[u8]],
-) -> Result<()> {
-    let bytes_len: usize = bytes.iter().map(|b| b.len()).sum();
-    ensure!(
-        bytes_len <= MAX_FRAME_SIZE,
-        "unreasonably large frame write"
-    );
-    write_frame_header(&mut writer, frame_type, bytes_len).await?;
-    for b in bytes {
-        writer.write_all(b).await?;
-    }
-    Ok(())
-}
-
 /// AsyncWrites a complete frame, errors if it is unable to write within the given `timeout`.
 /// Ignores the timeout if `timeout.is_zero()`
 ///
 /// Does not flush.
-async fn write_frame_timeout(
-    writer: impl AsyncWrite + Unpin,
+async fn write_frame_timeout<
+    'a,
+    'b,
+    S: Sink<WriteFrame<'a, 'b>, Error = std::io::Error> + Unpin,
+>(
+    mut writer: S,
     frame_type: FrameType,
-    bytes: &[&[u8]],
+    bytes: &'a [&'b [u8]],
     timeout: Option<Duration>,
 ) -> Result<()> {
+    let frame = WriteFrame {
+        typ: frame_type,
+        content: bytes,
+    };
     if let Some(duration) = timeout {
-        tokio::time::timeout(duration, write_frame(writer, frame_type, bytes)).await??;
-        Ok(())
+        tokio::time::timeout(duration, writer.send(frame)).await??;
     } else {
-        write_frame(writer, frame_type, bytes).await
+        writer.send(frame).await?;
     }
+
+    Ok(())
 }
 
 /// Writes a `FrameType::ClientInfo`, including the client's [`PublicKey`],
@@ -303,30 +299,26 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-async fn recv_client_key<R: AsyncRead + Unpin>(
+async fn recv_client_key<S: Stream<Item = std::io::Result<Frame>> + Unpin>(
     secret_key: SecretKey,
     mut reader: R,
+    stream: S,
 ) -> Result<(PublicKey, ClientInfo, SharedSecret)> {
-    let mut buf = BytesMut::new();
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
-    let (frame_type, _) = read_frame_timeout(
-        &mut reader,
-        256 * 1024,
-        &mut buf,
-        Some(Duration::from_secs(10)),
-    )
-    .await
-    .context("read frame")?;
-    ensure!(
-        frame_type == FrameType::ClientInfo,
-        "expected FrameType::ClientInfo frame got {frame_type}"
-    );
+
+    // TODO: timeout: Some(Duration::from_secs(10)),
+    // TODO: variable recv size: 256 * 1024
+    let buf = recv_frame(FrameType::ClientInfo, stream)
+        .await
+        .context("recv_frame")?;
+
     let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH]).context("public key")?;
     let mut msg = buf[PUBLIC_KEY_LENGTH..].to_vec();
     let shared_secret = secret_key.shared(&key);
     shared_secret.open(&mut msg).context("shared secret")?;
     let info: ClientInfo = postcard::from_bytes(&msg).context("deserialization")?;
+
     Ok((key, info, shared_secret))
 }
 
