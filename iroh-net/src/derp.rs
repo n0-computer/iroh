@@ -235,11 +235,14 @@ async fn recv_client_key<S: Stream<Item = std::io::Result<Frame>> + Unpin>(
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
-    // TODO: timeout: Some(Duration::from_secs(10)),
     // TODO: variable recv size: 256 * 1024
-    let buf = recv_frame(FrameType::ClientInfo, stream)
-        .await
-        .context("recv_frame")?;
+    let buf = tokio::time::timeout(
+        Duration::from_secs(10),
+        recv_frame(FrameType::ClientInfo, stream),
+    )
+    .await
+    .context("recv_frame timeout")?
+    .context("recv_frame")?;
 
     let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH]).context("public key")?;
     let mut msg = buf[PUBLIC_KEY_LENGTH..].to_vec();
