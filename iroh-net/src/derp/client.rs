@@ -20,7 +20,7 @@ use super::{
     PROTOCOL_VERSION,
 };
 
-use crate::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -61,7 +61,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        debug!(%dstkey, len=packet.len(), "[DERP] send");
+        debug!(%dstkey, len = packet.len(), "[DERP] send");
 
         self.inner
             .writer_channel
@@ -297,12 +297,13 @@ impl Client {
 
     /// The [`PublicKey`] of the [`super::server::Server`] this [`Client`] is connected with.
     pub fn server_public_key(self) -> PublicKey {
-        self.inner.server_public_key.clone()
+        self.inner.server_public_key
     }
 }
 
 /// The kinds of messages we can send to the [`super::server::Server`]
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),
@@ -466,10 +467,11 @@ where
             is_prober: self.is_prober,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
+        let shared_secret = self.secret_key.shared(&server_key);
         crate::derp::send_client_key(
             &mut self.writer,
-            &self.secret_key,
-            &server_key,
+            &shared_secret,
+            &self.secret_key.public(),
             &client_info,
         )
         .await?;
@@ -477,8 +479,8 @@ where
         let (frame_type, _) =
             crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(FrameType::ServerInfo, frame_type);
-        let msg = self.secret_key.open_from(&server_key, &buf)?;
-        let info: ServerInfo = postcard::from_bytes(&msg)?;
+        shared_secret.open(&mut buf)?;
+        let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
                 "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
@@ -546,7 +548,8 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
 
 // errors if `frame_len` is less than the expected [`PUBLIC_KEY_LENGTH`]
 fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
-    Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
+    let key = PublicKey::try_from(&payload[..PUBLIC_KEY_LENGTH])?;
+    Ok(key)
 }
 
 #[derive(derive_more::Debug, Clone)]

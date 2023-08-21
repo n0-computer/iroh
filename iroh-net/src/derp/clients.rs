@@ -1,7 +1,7 @@
 //! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
-use crate::key::node::PublicKey;
+use crate::key::PublicKey;
 use std::collections::{HashMap, HashSet};
 
 use futures::future::join_all;
@@ -211,13 +211,13 @@ impl Clients {
 
     pub fn register(&mut self, client: ClientConnManager) {
         // this builds the client handler & starts the read & write loops to that client connection
-        let key = client.key.clone();
+        let key = client.key;
         tracing::trace!("registering client: {:?}", key);
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when mulitple connections exist.
         let client = Client::new(client);
-        if let Some(old_client) = self.inner.insert(key.clone(), client) {
+        if let Some(old_client) = self.inner.insert(key, client) {
             tracing::warn!("multiple connections found for {key:?}, pruning old connection",);
             old_client.shutdown();
         }
@@ -231,7 +231,7 @@ impl Clients {
         if let Some(client) = self.inner.remove(peer) {
             // go impl `notePeerGoneFromRegion`
             for key in client.sent_to.iter() {
-                self.send_peer_gone(key, peer.clone());
+                self.send_peer_gone(key, *peer);
             }
             tracing::warn!("pruning connection {peer:?}");
             client.shutdown();
@@ -296,8 +296,11 @@ impl Clients {
 mod tests {
     use super::*;
 
-    use crate::derp::{
-        client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
+    use crate::{
+        derp::{
+            client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
+        },
+        key::SecretKey,
     };
 
     use anyhow::Result;
@@ -334,10 +337,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_clients() -> Result<()> {
-        let a_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let b_key = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
+        let a_key = SecretKey::generate().public();
+        let b_key = SecretKey::generate().public();
 
-        let (builder_a, mut a_rw) = test_client_builder(a_key.clone(), 0);
+        let (builder_a, mut a_rw) = test_client_builder(a_key, 0);
 
         let mut clients = Clients::new();
         clients.register(builder_a.build());
@@ -345,7 +348,7 @@ mod tests {
         // send packet
         let data = b"hello world!";
         let expect_packet = Packet {
-            src: b_key.clone(),
+            src: b_key,
             bytes: Bytes::from(&data[..]),
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
@@ -365,7 +368,7 @@ mod tests {
         assert_eq!(data, &got_frame[..]);
 
         // send peer_gone
-        clients.send_peer_gone(&a_key.clone(), b_key.clone());
+        clients.send_peer_gone(&a_key, b_key);
         let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::PeerGone);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
@@ -374,11 +377,11 @@ mod tests {
         // send mesh_update
         let updates = vec![
             PeerConnState {
-                peer: b_key.clone(),
+                peer: b_key,
                 present: true,
             },
             PeerConnState {
-                peer: b_key.clone(),
+                peer: b_key,
                 present: false,
             },
         ];
