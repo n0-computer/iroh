@@ -28,6 +28,7 @@ use iroh_net::{
     key::SecretKey,
     stun,
 };
+use serde_with::{serde_as, DisplayFromStr};
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -160,9 +161,11 @@ fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
     );
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize)]
 struct Config {
     /// [`SecretKey`] for this Derper.
+    #[serde_as(as = "DisplayFromStr")]
     secret_key: SecretKey,
     /// Server listen address.
     ///
