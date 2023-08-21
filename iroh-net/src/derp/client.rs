@@ -6,12 +6,12 @@ use std::time::Duration;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::Stream;
-use futures::StreamExt;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use futures::{Sink, SinkExt, StreamExt};
+use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio_util::codec::FramedRead;
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
 use super::client_conn::Io;
@@ -19,9 +19,11 @@ use super::codec::{recv_frame, DerpCodec, Frame};
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    FrameType, MAGIC, MAX_PACKET_SIZE, NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
+    FrameType, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
+use crate::derp::codec::WriteFrame;
+use crate::derp::write_frame_timeout;
 use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -340,7 +342,7 @@ enum ClientWriterMessage {
 /// the server.
 struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
     recv_msgs: mpsc::Receiver<ClientWriterMessage>,
-    writer: W,
+    writer: FramedWrite<W, DerpCodec>,
     rate_limiter: Option<RateLimiter>,
 }
 
@@ -365,10 +367,10 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                     .await??;
                 }
                 Some(ClientWriterMessage::Pong(msg)) => {
-                    send_pong(&mut self.writer, &msg).await?;
+                    send_pong(&mut self.writer, msg).await?;
                 }
                 Some(ClientWriterMessage::Ping(msg)) => {
-                    send_ping(&mut self.writer, &msg).await?;
+                    send_ping(&mut self.writer, msg).await?;
                 }
                 Some(ClientWriterMessage::NotePreferred(preferred)) => {
                     send_note_preferred(&mut self.writer, preferred).await?;
@@ -394,7 +396,7 @@ where
 {
     secret_key: SecretKey,
     reader: DerpReader,
-    writer: W,
+    writer: FramedWrite<W, DerpCodec>,
     local_addr: SocketAddr,
     mesh_key: Option<MeshKey>,
     is_prober: bool,
@@ -415,7 +417,7 @@ where
         Self {
             secret_key,
             reader: FramedRead::new(reader, DerpCodec::default()),
-            writer,
+            writer: FramedWrite::new(writer, DerpCodec::default()),
             local_addr,
             mesh_key: None,
             is_prober: false,
@@ -474,12 +476,12 @@ where
             &client_info,
         )
         .await?;
+
+        let mut buf = recv_frame(FrameType::ServerInfo, &mut self.reader)
+            .await?
+            .to_vec();
         shared_secret.open(&mut buf)?;
         let info: ServerInfo = postcard::from_bytes(&buf)?;
-
-        let buf = recv_frame(FrameType::ServerInfo, &mut self.reader).await?;
-        let msg = self.secret_key.open_from(&server_key, &buf)?;
-        let info: ServerInfo = postcard::from_bytes(&msg)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
                 "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
@@ -616,39 +618,36 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
-    mut writer: W,
+pub(crate) async fn send_packet<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+    mut writer: S,
     rate_limiter: &Option<RateLimiter>,
-    dstkey: PublicKey,
-    packet: &[u8],
+    dst_key: PublicKey,
+    packet: &'a [u8],
 ) -> Result<()> {
     ensure!(
         packet.len() <= MAX_PACKET_SIZE,
         "packet too big: {}",
         packet.len()
     );
-    let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+
+    let frame = WriteFrame::SendPacket { dst_key, packet };
     if let Some(rate_limiter) = rate_limiter {
-        if rate_limiter.check_n(frame_len).is_err() {
+        if rate_limiter.check_n(frame.len()).is_err() {
             tracing::warn!("dropping send: rate limit reached");
             return Ok(());
         }
     }
-    write_frame(
-        &mut writer,
-        FrameType::SendPacket,
-        &[dstkey.as_bytes(), packet],
-    )
-    .await?;
+    writer.send(frame).await?;
     writer.flush().await?;
+
     Ok(())
 }
 
-pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    srckey: PublicKey,
-    dstkey: PublicKey,
-    packet: &[u8],
+pub(crate) async fn forward_packet<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+    mut writer: S,
+    src_key: PublicKey,
+    dst_key: PublicKey,
+    packet: &'a [u8],
 ) -> Result<()> {
     ensure!(
         packet.len() <= MAX_PACKET_SIZE,
@@ -656,66 +655,79 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
         packet.len()
     );
 
-    write_frame(
+    write_frame_timeout(
         &mut writer,
-        FrameType::ForwardPacket,
-        &[srckey.as_bytes(), dstkey.as_bytes(), packet],
+        WriteFrame::ForwardPacket {
+            src_key,
+            dst_key,
+            packet,
+        },
+        None,
     )
     .await?;
     writer.flush().await?;
     Ok(())
 }
 
-pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    send_ping_or_pong(&mut writer, FrameType::Ping, data).await
-}
-
-async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    send_ping_or_pong(&mut writer, FrameType::Pong, data).await
-}
-
-async fn send_ping_or_pong<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    frame_type: FrameType,
-    data: &[u8; 8],
+pub(crate) async fn send_ping<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+    mut writer: S,
+    data: [u8; 8],
 ) -> Result<()> {
-    write_frame(&mut writer, frame_type, &[data]).await?;
+    send_ping_or_pong(&mut writer, WriteFrame::Ping { data }).await
+}
+
+async fn send_pong<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+    mut writer: S,
+    data: [u8; 8],
+) -> Result<()> {
+    send_ping_or_pong(&mut writer, WriteFrame::Pong { data }).await
+}
+
+async fn send_ping_or_pong<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+    mut writer: S,
+    frame: WriteFrame<'a>,
+) -> Result<()> {
+    write_frame_timeout(&mut writer, frame, None).await?;
     writer.flush().await?;
+
     Ok(())
 }
 
-pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
-    mut writer: W,
+pub(crate) async fn send_note_preferred<
+    'a,
+    S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin,
+>(
+    mut writer: S,
     preferred: bool,
 ) -> Result<()> {
-    let byte = {
-        if preferred {
-            [PREFERRED]
-        } else {
-            [NOT_PREFERRED]
-        }
-    };
-    write_frame(&mut writer, FrameType::NotePreferred, &[&byte]).await?;
+    write_frame_timeout(&mut writer, WriteFrame::NotePreferred { preferred }, None).await?;
     writer.flush().await?;
+
     Ok(())
 }
 
-pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
-    write_frame(&mut writer, FrameType::WatchConns, &[]).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    target: PublicKey,
+pub(crate) async fn watch_connection_changes<
+    'a,
+    S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin,
+>(
+    mut writer: S,
 ) -> Result<()> {
-    write_frame(&mut writer, FrameType::ClosePeer, &[target.as_bytes()]).await?;
+    write_frame_timeout(&mut writer, WriteFrame::WatchConns, None).await?;
     writer.flush().await?;
     Ok(())
 }
 
-pub(crate) fn parse_recv_frame(frame: Bytes) -> Result<(PublicKey, Bytes)> {
+pub(crate) async fn close_peer<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+    mut writer: S,
+    peer: PublicKey,
+) -> Result<()> {
+    write_frame_timeout(&mut writer, WriteFrame::ClosePeer { peer }, None).await?;
+    writer.flush().await?;
+
+    Ok(())
+}
+
+pub(crate) fn parse_recv_frame(mut frame: Bytes) -> Result<(PublicKey, Bytes)> {
     ensure!(
         frame.len() >= PUBLIC_KEY_LENGTH,
         "frame is shorter than expected"

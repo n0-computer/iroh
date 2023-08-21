@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
@@ -19,7 +19,7 @@ use crate::{
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, Frame};
+use super::codec::{DerpCodec, Frame, WriteFrame};
 use super::server::MaybeTlsStream;
 use super::{
     metrics::Metrics,
@@ -87,7 +87,7 @@ where
 {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) io: MaybeTlsStream,
+    pub(crate) io: Framed<MaybeTlsStream, DerpCodec>,
     pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
@@ -121,7 +121,7 @@ impl ClientConnManager {
     pub fn new<P>(
         key: PublicKey,
         conn_num: usize,
-        io: MaybeTlsStream,
+        io: Framed<MaybeTlsStream, DerpCodec>,
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
@@ -344,7 +344,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.io, FrameType::KeepAlive, &[], self.timeout).await
+        write_frame_timeout(&mut self.io, WriteFrame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -353,7 +353,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame_timeout(&mut self.io, FrameType::Pong, &[&data], self.timeout).await
+        write_frame_timeout(&mut self.io, WriteFrame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -362,26 +362,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(
-            &mut self.io,
-            FrameType::PeerGone,
-            &[peer.as_bytes()],
-            self.timeout,
-        )
-        .await
+        write_frame_timeout(&mut self.io, WriteFrame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame_timeout(
-            &mut self.io,
-            FrameType::PeerPresent,
-            &[peer.as_bytes()],
-            self.timeout,
-        )
-        .await
+        write_frame_timeout(&mut self.io, WriteFrame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -430,13 +418,12 @@ where
     /// are only valid until this function returns, do not retain the slices.
     /// Does not flush.
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
-        let srckey = packet.src;
-        let contents = packet.bytes;
-        inc_by!(Metrics, bytes_sent, contents.len().try_into().unwrap());
+        let src_key = packet.src;
+        let content = packet.bytes;
+        inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
         write_frame_timeout(
             &mut self.io,
-            FrameType::RecvPacket,
-            &[srckey.as_bytes(), &contents],
+            WriteFrame::RecvPacket { src_key, content },
             self.timeout,
         )
         .await
@@ -665,7 +652,6 @@ mod tests {
     use super::*;
 
     use anyhow::bail;
-    use tokio_util::codec::FramedRead;
 
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
@@ -683,8 +669,8 @@ mod tests {
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
-        let (io, mut io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = FramedRead::new(io_rw, DerpCodec::default());
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, DerpCodec::default());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo::<MockPacketForwarder> {
@@ -752,14 +738,12 @@ mod tests {
         ];
 
         mesh_update_s.send(updates.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::PeerPresent, frame_type);
-        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
+        let buf = recv_frame(FrameType::PeerPresent, &mut io_rw).await?;
+        assert_eq!(PUBLIC_KEY_LENGTH, buf.len());
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
 
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::PeerGone, frame_type);
-        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
+        let buf = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(PUBLIC_KEY_LENGTH, buf.len());
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
 
         // Read tests
@@ -767,13 +751,12 @@ mod tests {
 
         // send ping, expect pong
         let data = b"pingpong";
-        crate::derp::client::send_ping(&mut io_rw, data).await?;
+        crate::derp::client::send_ping(&mut io_rw, *data).await?;
 
         // recv pong
         println!(" recv pong");
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::Pong, frame_type);
-        assert_eq!(8, frame_len);
+        let buf = recv_frame(FrameType::Pong, &mut io_rw).await?;
+        assert_eq!(8, buf.len());
         assert_eq!(data, &buf[..]);
 
         // change preferred to false
@@ -890,13 +873,14 @@ mod tests {
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
-        let (io, mut io_rw) = tokio::io::duplex(1024);
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, DerpCodec::default());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: MaybeTlsStream::Test(io),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,

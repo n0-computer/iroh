@@ -7,14 +7,17 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
+use futures::SinkExt;
 use hyper::HeaderMap;
 use iroh_metrics::inc;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
+use crate::derp::codec::{DerpCodec, WriteFrame};
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
@@ -25,8 +28,8 @@ use super::{
     MeshKey,
 };
 use super::{
-    recv_client_key, types::ServerInfo, write_frame_timeout, FrameType, MAGIC,
-    PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+    recv_client_key, types::ServerInfo, write_frame_timeout, PER_CLIENT_SEND_QUEUE_DEPTH,
+    PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 
 // TODO: skiping `verboseDropKeys` for now
@@ -305,7 +308,8 @@ where
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
-    pub async fn accept(&self, mut io: MaybeTlsStream) -> Result<()> {
+    pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
+        let mut io = Framed::new(io, DerpCodec::default());
         trace!("accept: start");
         self.send_server_key(&mut io)
             .await
@@ -340,18 +344,15 @@ where
         Ok(())
     }
 
-    async fn send_server_key<T>(&self, mut writer: &mut T) -> Result<()>
+    async fn send_server_key<T>(&self, mut writer: &mut Framed<T, DerpCodec>) -> Result<()>
     where
         T: AsyncWrite + Unpin,
     {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(MAGIC.as_bytes());
-        buf.extend_from_slice(self.secret_key.public().as_bytes());
-        let content = &[buf.as_slice()];
         write_frame_timeout(
             &mut writer,
-            FrameType::ServerKey,
-            content,
+            WriteFrame::ServerKey {
+                key: self.secret_key.public(),
+            },
             Some(Duration::from_secs(10)),
         )
         .await?;
@@ -361,7 +362,7 @@ where
 
     async fn send_server_info<T>(
         &self,
-        mut writer: &mut T,
+        mut writer: &mut Framed<T, DerpCodec>,
         shared_secret: &SharedSecret,
     ) -> Result<()>
     where
@@ -369,7 +370,14 @@ where
     {
         let mut msg = postcard::to_stdvec(&self.server_info)?;
         shared_secret.seal(&mut msg);
-        write_frame(&mut writer, FrameType::ServerInfo, &[&msg]).await?;
+        write_frame_timeout(
+            &mut writer,
+            WriteFrame::ServerInfo {
+                encrypted_message: msg,
+            },
+            None,
+        )
+        .await?;
         writer.flush().await?;
         Ok(())
     }
@@ -682,11 +690,11 @@ mod tests {
             client_conn::{ClientConnBuilder, Io},
             codec::{recv_frame, DerpCodec},
             types::ClientInfo,
-            ReceivedMessage,
+            FrameType, ReceivedMessage,
         },
         key::PUBLIC_KEY_LENGTH,
     };
-    use tokio_util::codec::FramedRead;
+    use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
@@ -716,20 +724,20 @@ mod tests {
         server_channel: mpsc::Sender<ServerMessage<MockPacketForwarder>>,
     ) -> (
         ClientConnBuilder<MockPacketForwarder>,
-        FramedRead<DuplexStream, DerpCodec>,
+        Framed<DuplexStream, DerpCodec>,
     ) {
         let (test_io, io) = tokio::io::duplex(1024);
         (
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: MaybeTlsStream::Test(io),
+                io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            FramedRead::new(test_io, DerpCodec::default()),
+            Framed::new(test_io, DerpCodec::default()),
         )
     }
 
@@ -889,7 +897,9 @@ mod tests {
 
         // create the parts needed for a client
         let (client, server_io) = tokio::io::duplex(10);
-        let (mut client_reader, mut client_writer) = tokio::io::split(client);
+        let (client_reader, client_writer) = tokio::io::split(client);
+        let mut client_reader = FramedRead::new(client_reader, DerpCodec::default());
+        let mut client_writer = FramedWrite::new(client_writer, DerpCodec::default());
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();
@@ -916,10 +926,11 @@ mod tests {
             .await?;
 
             // get the server info
+            let mut buf = recv_frame(FrameType::ServerInfo, &mut client_reader)
+                .await?
+                .to_vec();
             shared_secret.open(&mut buf)?;
-            let buf = recv_frame(FrameType::ServerInfo, &mut client_reader).await?;
-            let msg = client_key.open_from(&got_server_key, &buf)?;
-            let _info: ServerInfo = postcard::from_bytes(&msg)?;
+            let _info: ServerInfo = postcard::from_bytes(&buf)?;
             Ok(())
         });
 

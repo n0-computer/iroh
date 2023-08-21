@@ -297,7 +297,11 @@ mod tests {
     use super::*;
 
     use crate::{
-        derp::{client_conn::ClientConnBuilder, codec::recv_frame, FrameType, PacketForwarder},
+        derp::{
+            client_conn::ClientConnBuilder,
+            codec::{recv_frame, DerpCodec},
+            FrameType, PacketForwarder,
+        },
         key::SecretKey,
     };
 
@@ -305,6 +309,7 @@ mod tests {
     use bytes::Bytes;
     use ed25519_dalek::PUBLIC_KEY_LENGTH;
     use tokio::io::DuplexStream;
+    use tokio_util::codec::{Framed, FramedRead};
 
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
@@ -316,20 +321,26 @@ mod tests {
     fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
-    ) -> (ClientConnBuilder<MockPacketForwarder>, DuplexStream) {
+    ) -> (
+        ClientConnBuilder<MockPacketForwarder>,
+        FramedRead<DuplexStream, DerpCodec>,
+    ) {
         let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: crate::derp::server::MaybeTlsStream::Test(io),
+                io: Framed::new(
+                    crate::derp::server::MaybeTlsStream::Test(io),
+                    DerpCodec::default(),
+                ),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            test_io,
+            FramedRead::new(test_io, DerpCodec::default()),
         )
     }
 
@@ -381,13 +392,11 @@ mod tests {
         ];
 
         clients.send_mesh_updates(&a_key.clone(), updates);
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
+        let buf = recv_frame(FrameType::PeerPresent, &mut a_rw).await?;
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
+        let buf = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 
