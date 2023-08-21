@@ -141,11 +141,11 @@ fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
 }
 
 fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
-    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open private key file")?;
+    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader).context("cannot parse private key .pem file")? {
+        match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
             Some(rustls_pemfile::Item::RSAKey(key)) => return Ok(rustls::PrivateKey(key)),
             Some(rustls_pemfile::Item::PKCS8Key(key)) => return Ok(rustls::PrivateKey(key)),
             Some(rustls_pemfile::Item::ECKey(key)) => return Ok(rustls::PrivateKey(key)),
@@ -209,7 +209,7 @@ struct MeshConfig {
 #[derive(Serialize, Deserialize)]
 struct TlsConfig {
     /// Mode for getting a cert. possible options: 'Manual', 'LetsEncrypt'
-    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a private key from
+    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a secret key from
     /// `<hostname>.key`, with the `<hostname>` being the escaped hostname.
     cert_mode: CertMode,
     /// Whether to use the LetsEncrypt production or staging server.

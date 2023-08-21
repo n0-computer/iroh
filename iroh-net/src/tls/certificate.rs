@@ -208,7 +208,7 @@ impl P2pCertificate<'_> {
         self.extension.public_key.into()
     }
 
-    /// Verify the `signature` of the `message` signed by the private key corresponding to the public key stored
+    /// Verify the `signature` of the `message` signed by the secret key corresponding to the public key stored
     /// in the certificate.
     pub fn verify_signature(
         &self,

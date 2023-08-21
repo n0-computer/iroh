@@ -147,7 +147,7 @@ where
         self.mesh_key
     }
 
-    /// Returns the server's private key.
+    /// Returns the server's secret key.
     pub fn secret_key(&self) -> &SecretKey {
         &self.secret_key
     }

@@ -21,6 +21,7 @@ use self::encryption::{public_ed_box, secret_ed_box};
 pub struct PublicKey {
     public: VerifyingKey,
     /// Cached version of `crypto_box::PublicKey` matching `public`.
+    /// Stored as raw array, as `crypto_box::PublicKey` is not `Copy`.
     public_crypto_box: [u8; 32],
 }
 
@@ -106,7 +107,6 @@ impl Display for PublicKey {
 }
 
 /// A secret key.
-// TODO: rename to `SecretKey`.
 #[derive(Clone)]
 pub struct SecretKey {
     secret: SigningKey,

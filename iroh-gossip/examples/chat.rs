@@ -26,14 +26,14 @@ use url::Url;
 /// on received messages.
 ///
 /// By default a new peer id is created when starting the example. To reuse your identity,
-/// set the `--private-key` flag with the private key printed on a previous invocation.
+/// set the `--secret-key` flag with the secret key printed on a previous invocation.
 ///
 /// By default, the DERP server run by n0 is used. To use a local DERP server, run
 ///     cargo run --bin derper --features derper -- --dev
 /// in another terminal and then set the `-d http://localhost:3340` flag on this example.
 #[derive(Parser, Debug)]
 struct Args {
-    /// Private key to derive our peer id from.
+    /// secret key to derive our peer id from.
     #[clap(long)]
     secret_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
         None => SecretKey::generate(),
         Some(key) => parse_secret_key(&key)?,
     };
-    println!("> our private key: {}", base32::fmt(secret_key.to_bytes()));
+    println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
 
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {

@@ -119,7 +119,7 @@ pub struct Options {
     /// Zero means to pick one automatically.
     pub port: u16,
 
-    /// Private key for this node.
+    /// Secret key for this node.
     pub secret_key: SecretKey,
 
     /// The [`DerpMap`] to use.
