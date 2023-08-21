@@ -1176,6 +1176,27 @@ impl Actor {
         out
     }
 
+    /// Split a number of transmits into individual packets.
+    ///
+    /// For each transmit, if it has a segment size, it will be split into
+    /// multiple packets according to that segment size. If it does not have a
+    /// segment size, the contents will be sent as a single packet.
+    fn split_packets(transmits: Vec<quinn_udp::Transmit>) -> Vec<Bytes> {
+        let mut res = Vec::with_capacity(transmits.len());
+        for transmit in transmits {
+            if let Some(segment_size) = transmit.segment_size {
+                let len = transmit.contents.len();
+                for min in (0..len).step_by(segment_size) {
+                    let max = (min + segment_size).min(len);
+                    res.push(transmit.contents.slice(min..max));
+                }
+            } else {
+                res.push(transmit.contents);
+            }
+        }
+        res
+    }
+
     async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
         trace!(
             "sending:\n{}",
@@ -1217,11 +1238,7 @@ impl Actor {
                 match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
-                        self.send_derp(
-                            derp_addr,
-                            public_key,
-                            transmits.into_iter().map(|t| t.contents).collect(),
-                        );
+                        self.send_derp(derp_addr, public_key, Self::split_packets(transmits));
 
                         if let Err(err) = res {
                             warn!("failed to send UDP: {:?}", err);
@@ -1231,7 +1248,7 @@ impl Actor {
                         self.send_derp(
                             derp_addr,
                             public_key.clone(),
-                            transmits.into_iter().map(|t| t.contents).collect(),
+                            Self::split_packets(transmits),
                         );
                     }
                     Ok((Some(udp_addr), None)) => {
