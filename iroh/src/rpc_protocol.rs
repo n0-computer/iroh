@@ -11,7 +11,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
 use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
-use iroh_net::key::PeerId;
+use iroh_net::key::PublicKey;
 
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -54,7 +54,7 @@ pub struct ShareRequest {
     /// children are downloaded and shared as well.
     pub recursive: bool,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: PeerId,
+    pub peer: PublicKey,
     /// This vec contains possible candidate addresses of the peer.
     pub addrs: Vec<SocketAddr>,
     /// This optional field contains a request token that can be used to authorize
@@ -227,7 +227,7 @@ pub struct WatchResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdResponse {
     /// The peer id of the node
-    pub peer_id: Box<PeerId>,
+    pub peer_id: Box<PublicKey>,
     /// The addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node

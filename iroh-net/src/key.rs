@@ -106,6 +106,30 @@ impl Display for PublicKey {
     }
 }
 
+/// Error when deserialising a [`PublicKey`].
+#[derive(thiserror::Error, Debug)]
+pub enum PublicKeyParsingError {
+    /// Error when decoding the base32.
+    #[error("decoding: {0}")]
+    Base32(#[from] data_encoding::DecodeError),
+    /// Error when decoding the public key.
+    #[error("key: {0}")]
+    Key(#[from] ed25519_dalek::SignatureError),
+}
+
+/// Deserialises the [`PublicKey`] from it's base32 encoding.
+///
+/// [`Display`] is capable of serialising this format.
+impl FromStr for PublicKey {
+    type Err = PublicKeyParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        let key = PublicKey::try_from(&bytes[..])?;
+        Ok(key)
+    }
+}
+
 /// A secret key.
 #[derive(Clone)]
 pub struct SecretKey {
@@ -228,94 +252,6 @@ impl TryFrom<&[u8]> for SecretKey {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let secret = SigningKey::try_from(bytes)?;
         Ok(secret.into())
-    }
-}
-
-// TODO: probably needs a version field
-/// An identifier for networked peers.
-///
-/// Each network node has a cryptographic identifier which can be used to make sure you are
-/// connecting to the right peer.
-///
-/// # `Display` and `FromStr`
-///
-/// The [`PeerId`] implements both `Display` and `FromStr` which can be used to
-/// (de)serialise to human-readable and relatively safely transferrable strings.
-#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize, Hash)]
-pub struct PeerId(PublicKey);
-
-impl PeerId {
-    /// Get this peer id as a byte array.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl TryFrom<&[u8]> for PeerId {
-    type Error = SignatureError;
-
-    #[inline]
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let public = PublicKey::try_from(bytes)?;
-        Ok(public.into())
-    }
-}
-
-impl From<PublicKey> for PeerId {
-    fn from(key: PublicKey) -> Self {
-        PeerId(key)
-    }
-}
-
-impl From<PeerId> for PublicKey {
-    fn from(key: PeerId) -> Self {
-        key.0
-    }
-}
-
-impl Debug for PeerId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(self.0.as_bytes());
-        text.make_ascii_lowercase();
-        write!(f, "PeerId({text})")
-    }
-}
-
-/// Serialises the [`PeerId`] to base32.
-///
-/// [`FromStr`] is capable of deserialising this format.
-impl Display for PeerId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(self.0.as_bytes());
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
-    }
-}
-
-/// Error when deserialising a [`PeerId`].
-#[derive(thiserror::Error, Debug)]
-pub enum PeerIdError {
-    /// Error when decoding the base32.
-    #[error("decoding: {0}")]
-    Base32(#[from] data_encoding::DecodeError),
-    /// Error when decoding the public key.
-    #[error("key: {0}")]
-    Key(#[from] ed25519_dalek::SignatureError),
-    /// Invalid length of the id.
-    #[error("decoding size")]
-    DecodingSize,
-}
-
-/// Deserialises the [`PeerId`] from it's base32 encoding.
-///
-/// [`Display`] is capable of serialising this format.
-impl FromStr for PeerId {
-    type Err = PeerIdError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let key = PublicKey::try_from(&bytes[..])?;
-        Ok(PeerId(key))
     }
 }
 

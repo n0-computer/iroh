@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::key::{PeerId, SecretKey};
+use crate::key::{PublicKey, SecretKey};
 
 pub mod certificate;
 mod verifier;
@@ -17,7 +17,7 @@ mod verifier;
 /// debugging purposes.
 pub fn make_client_config(
     secret_key: &SecretKey,
-    remote_peer_id: Option<PeerId>,
+    remote_peer_id: Option<PublicKey>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> Result<rustls::ClientConfig, certificate::GenError> {

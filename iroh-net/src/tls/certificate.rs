@@ -8,7 +8,7 @@
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use x509_parser::prelude::*;
 
-use crate::key::{PeerId, PublicKey, SecretKey, Signature};
+use crate::key::{PublicKey, SecretKey, Signature};
 
 /// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identier 1.3.6.1.4.1.53594.1.1,
@@ -203,9 +203,9 @@ fn make_libp2p_extension(
 }
 
 impl P2pCertificate<'_> {
-    /// The [`PeerId`] of the remote peer.
-    pub fn peer_id(&self) -> PeerId {
-        self.extension.public_key.into()
+    /// The [`PublicKey`] of the remote peer.
+    pub fn peer_id(&self) -> PublicKey {
+        self.extension.public_key
     }
 
     /// Verify the `signature` of the `message` signed by the secret key corresponding to the public key stored

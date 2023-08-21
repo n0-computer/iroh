@@ -42,7 +42,7 @@ use iroh_bytes::{
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
-    key::{PeerId, SecretKey},
+    key::{PublicKey, SecretKey},
     tls, MagicEndpoint,
 };
 use quic_rpc::server::RpcChannel;
@@ -228,7 +228,7 @@ where
         self
     }
 
-    /// Uses the given [`SecretKey`] for the [`PeerId`] instead of a newly generated one.
+    /// Uses the given [`SecretKey`] for the [`PublicKey`] instead of a newly generated one.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
         self.secret_key = secret_key;
         self
@@ -539,9 +539,9 @@ impl<D: ReadableStore> Node<D> {
         self.inner.local_endpoint_addresses().await
     }
 
-    /// Returns the [`PeerId`] of the node.
-    pub fn peer_id(&self) -> PeerId {
-        self.inner.secret_key.public().into()
+    /// Returns the [`PublicKey`] of the node.
+    pub fn peer_id(&self) -> PublicKey {
+        self.inner.secret_key.public()
     }
 
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
@@ -975,7 +975,7 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
     }
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
-            peer_id: Box::new(self.inner.secret_key.public().into()),
+            peer_id: Box::new(self.inner.secret_key.public()),
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()

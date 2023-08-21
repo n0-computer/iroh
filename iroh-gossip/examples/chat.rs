@@ -11,7 +11,7 @@ use iroh_gossip::{
 use iroh_net::{
     defaults::default_derp_map,
     derp::DerpMap,
-    key::{PeerId, PublicKey, SecretKey},
+    key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
     MagicEndpoint,
 };
@@ -253,15 +253,15 @@ fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> 
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SignedMessage {
-    from: PeerId,
+    from: PublicKey,
     data: Bytes,
     signature: Signature,
 }
 
 impl SignedMessage {
-    pub fn verify_and_decode(bytes: &[u8]) -> anyhow::Result<(PeerId, Message)> {
+    pub fn verify_and_decode(bytes: &[u8]) -> anyhow::Result<(PublicKey, Message)> {
         let signed_message: Self = postcard::from_bytes(bytes)?;
-        let key: PublicKey = signed_message.from.into();
+        let key: PublicKey = signed_message.from;
         key.verify(&signed_message.data, &signed_message.signature)?;
         let message: Message = postcard::from_bytes(&signed_message.data)?;
         Ok((signed_message.from, message))
@@ -270,7 +270,7 @@ impl SignedMessage {
     pub fn sign_and_encode(secret_key: &SecretKey, message: &Message) -> anyhow::Result<Bytes> {
         let data: Bytes = postcard::to_stdvec(&message)?.into();
         let signature = secret_key.sign(&data);
-        let from: PeerId = secret_key.public().into();
+        let from: PublicKey = secret_key.public();
         let signed_message = Self {
             from,
             data,
@@ -305,7 +305,7 @@ impl Ticket {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PeerAddr {
-    peer_id: PeerId,
+    peer_id: PublicKey,
     addrs: Vec<SocketAddr>,
     derp_region: Option<u16>,
 }
@@ -342,7 +342,7 @@ impl FromStr for Ticket {
 
 // helpers
 
-fn fmt_peer_id(input: &PeerId) -> String {
+fn fmt_peer_id(input: &PublicKey) -> String {
     base32::fmt_short(input.as_bytes())
 }
 fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {

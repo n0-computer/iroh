@@ -10,7 +10,7 @@ use futures::StreamExt;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::key::{PeerId, SecretKey};
+use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
@@ -304,14 +304,14 @@ pub enum Commands {
         /// The hash to retrieve, as a Blake3 CID
         #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
         hash: Option<Hash>,
-        /// PeerId of the provider
+        /// PublicKey of the provider
         #[clap(
             long,
             short,
             conflicts_with = "ticket",
             required_unless_present = "ticket"
         )]
-        peer: Option<PeerId>,
+        peer: Option<PublicKey>,
         /// Addresses of the provider
         #[clap(long, short)]
         addrs: Vec<SocketAddr>,
@@ -349,14 +349,14 @@ pub enum Commands {
         /// treat as collection, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         recursive: Option<bool>,
-        /// PeerId of the provider
+        /// PublicKey of the provider
         #[clap(
             long,
             short,
             conflicts_with = "ticket",
             required_unless_present = "ticket"
         )]
-        peer: Option<PeerId>,
+        peer: Option<PublicKey>,
         /// Addresses of the provider
         #[clap(
             long,

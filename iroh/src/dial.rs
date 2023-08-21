@@ -11,7 +11,7 @@ use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
-use iroh_net::key::{PeerId, SecretKey};
+use iroh_net::key::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 
 /// Options for the client
@@ -22,7 +22,7 @@ pub struct Options {
     /// The addresses to connect to
     pub addrs: Vec<SocketAddr>,
     /// The peer id to dial
-    pub peer_id: PeerId,
+    pub peer_id: PublicKey,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
     /// The configuration of the derp services
@@ -63,7 +63,7 @@ pub struct Ticket {
     /// The hash to retrieve.
     hash: Hash,
     /// The peer ID identifying the provider.
-    peer: PeerId,
+    peer: PublicKey,
     /// Optional Request token.
     token: Option<RequestToken>,
     /// The socket addresses the provider is listening on.
@@ -80,7 +80,7 @@ impl Ticket {
     /// Creates a new ticket.
     pub fn new(
         hash: Hash,
-        peer: PeerId,
+        peer: PublicKey,
         addrs: Vec<SocketAddr>,
         token: Option<RequestToken>,
         recursive: bool,
@@ -114,8 +114,8 @@ impl Ticket {
         self.hash
     }
 
-    /// The [`PeerId`] of the provider for this ticket.
-    pub fn peer(&self) -> PeerId {
+    /// The [`PublicKey`] of the provider for this ticket.
+    pub fn peer(&self) -> PublicKey {
         self.peer
     }
 
@@ -156,7 +156,7 @@ impl Ticket {
         self,
     ) -> (
         Hash,
-        PeerId,
+        PublicKey,
         Vec<SocketAddr>,
         Option<RequestToken>,
         bool,
@@ -217,7 +217,7 @@ mod tests {
     fn test_ticket_base32_roundtrip() {
         let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
-        let peer = PeerId::from(SecretKey::generate().public());
+        let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let derp_region = Some(0);

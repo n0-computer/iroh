@@ -19,7 +19,7 @@ use iroh::{
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
-    key::{PeerId, SecretKey},
+    key::{PublicKey, SecretKey},
     MagicEndpoint,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -139,7 +139,7 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given peer id and addresses, using a
 /// randomly generated secret key.
-fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     iroh::dial::Options {
         secret_key: SecretKey::generate(),
         peer_id,

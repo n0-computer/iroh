@@ -13,7 +13,7 @@ use tracing::{debug, trace};
 use crate::{
     config,
     derp::DerpMap,
-    key::{PeerId, PublicKey, SecretKey},
+    key::{PublicKey, SecretKey},
     magicsock::{self, Callbacks, MagicSock},
     netmap::NetworkMap,
     tls,
@@ -34,7 +34,7 @@ pub struct MagicEndpointBuilder {
 impl MagicEndpointBuilder {
     /// Set a secret key to authenticate with other peers.
     ///
-    /// This secret key's public key will be the [PeerId] of this endpoint.
+    /// This secret key's public key will be the [PublicKey] of this endpoint.
     ///
     /// If not set, a new secret key will be generated.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
@@ -58,7 +58,7 @@ impl MagicEndpointBuilder {
 
     /// Specify the DERP servers that are used by this endpoint.
     ///
-    /// DERP servers are used to discover other peers by [`PeerId`] and also
+    /// DERP servers are used to discover other peers by [`PublicKey`] and also
     /// help establish connections between peers by being an initial relay
     /// for traffic while assisting in holepunching to establish a direct
     /// connection between the peers.
@@ -214,8 +214,8 @@ impl MagicEndpoint {
     }
 
     /// Get the peer id of this endpoint.
-    pub fn peer_id(&self) -> PeerId {
-        self.secret_key.public().into()
+    pub fn peer_id(&self) -> PublicKey {
+        self.secret_key.public()
     }
 
     /// Get the secret_key of this endpoint.
@@ -249,7 +249,7 @@ impl MagicEndpoint {
 
     /// Connect to a remote endpoint.
     ///
-    /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
+    /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
     /// the remote endpoint, they can be specified and will be used to try and establish a direct
     /// connection without involving a DERP server. If no addresses are specified, the endpoint
     /// will try to dial the peer through the configured DERP servers.
@@ -259,30 +259,25 @@ impl MagicEndpoint {
     /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(
         &self,
-        peer_id: PeerId,
+        node_id: PublicKey,
         alpn: &[u8],
         derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
         if derp_region.is_some() || !known_addrs.is_empty() {
-            self.add_known_addrs(peer_id, derp_region, known_addrs)
+            self.add_known_addrs(node_id, derp_region, known_addrs)
                 .await?;
         }
 
-        let node_key: PublicKey = peer_id.into();
-        let addr = self
-            .msock
-            .get_mapping_addr(&node_key)
-            .await
-            .ok_or_else(|| {
-                anyhow!("failed to retrieve the mapped address from the magic socket")
-            })?;
+        let addr = self.msock.get_mapping_addr(&node_id).await.ok_or_else(|| {
+            anyhow!("failed to retrieve the mapped address from the magic socket")
+        })?;
 
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
                 &self.secret_key,
-                Some(peer_id),
+                Some(node_id),
                 alpn_protocols,
                 self.keylog,
             )?;
@@ -295,7 +290,7 @@ impl MagicEndpoint {
 
         debug!(
             "connecting to {}: (via {} - {:?})",
-            peer_id, addr, known_addrs
+            node_id, addr, known_addrs
         );
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
@@ -315,14 +310,14 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     pub async fn add_known_addrs(
         &self,
-        peer_id: PeerId,
+        node_id: PublicKey,
         derp_region: Option<u16>,
         endpoints: &[SocketAddr],
     ) -> anyhow::Result<()> {
         match (endpoints.is_empty(), derp_region) {
             (true, None) => {
                 anyhow::bail!(
-                    "No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}"
+                    "No UDP addresses or DERP region provided. Unable to dial peer {node_id:?}"
                 );
             }
             (true, Some(region)) if !self.msock.has_derp_region(region).await => {
@@ -337,10 +332,9 @@ impl MagicEndpoint {
             _ => {}
         }
 
-        let node_key: PublicKey = peer_id.into();
         let netmap = {
             let mut netmap = self.netmap.lock().unwrap();
-            let node = netmap.peers.iter_mut().find(|peer| peer.key == node_key);
+            let node = netmap.peers.iter_mut().find(|peer| peer.key == node_id);
             if let Some(node) = node {
                 for endpoint in endpoints {
                     if !node.endpoints.contains(endpoint) {
@@ -355,7 +349,7 @@ impl MagicEndpoint {
                     name: None,
                     addresses,
                     endpoints,
-                    key: node_key,
+                    key: node_id,
                     derp: derp_region,
                 };
                 netmap.peers.push(node)
@@ -394,10 +388,10 @@ impl MagicEndpoint {
     }
 }
 
-/// Accept an incoming connection and extract the client-provided [`PeerId`] and ALPN protocol.
+/// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
 pub async fn accept_conn(
     mut conn: quinn::Connecting,
-) -> anyhow::Result<(PeerId, String, quinn::Connection)> {
+) -> anyhow::Result<(PublicKey, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
     let peer_id = get_peer_id(&conn).await?;
@@ -416,8 +410,8 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> anyhow::Result<Stri
     }
 }
 
-/// Extract the [`PeerId`] from the peer's TLS certificate.
-pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerId> {
+/// Extract the [`PublicKey`] from the peer's TLS certificate.
+pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => anyhow::bail!("no peer certificate found"),
@@ -455,7 +449,7 @@ mod tests {
         let _guard = setup_logging();
         let (derp_map, region_id, _guard) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
         let server_secret_key = SecretKey::generate();
-        let server_peer_id = PeerId::from(server_secret_key.public());
+        let server_peer_id = server_secret_key.public();
 
         let server = {
             let derp_map = derp_map.clone();
