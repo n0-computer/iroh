@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
-publish = false
+publish = true
 
 [dependencies]
 tokio = { version = "1", features = ["rt"] }
