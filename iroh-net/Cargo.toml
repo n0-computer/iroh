@@ -71,6 +71,7 @@ zeroize = "1.5"
 clap = { version = "4", features = ["derive"], optional = true }
 regex = { version = "1.7.1", optional = true }
 rustls-pemfile = { version = "1.0.2", optional = true }
+serde_with = { version = "3.3", optional = true }
 toml = { version = "0.7.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
@@ -102,7 +103,7 @@ duct = "0.13.6"
 
 [features]
 default = ["metrics"]
-derper = ["clap", "toml", "rustls-pemfile", "regex", "tracing-subscriber"]
+derper = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics"]
 
 [[bin]]

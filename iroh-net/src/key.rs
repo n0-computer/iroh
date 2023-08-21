@@ -106,9 +106,9 @@ impl Display for PublicKey {
     }
 }
 
-/// Error when deserialising a [`PublicKey`].
+/// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
 #[derive(thiserror::Error, Debug)]
-pub enum PublicKeyParsingError {
+pub enum KeyParsingError {
     /// Error when decoding the base32.
     #[error("decoding: {0}")]
     Base32(#[from] data_encoding::DecodeError),
@@ -121,7 +121,7 @@ pub enum PublicKeyParsingError {
 ///
 /// [`Display`] is capable of serialising this format.
 impl FromStr for PublicKey {
-    type Err = PublicKeyParsingError;
+    type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
@@ -150,6 +150,16 @@ impl Display for SecretKey {
         let mut text = data_encoding::BASE32_NOPAD.encode(&self.to_bytes());
         text.make_ascii_lowercase();
         write!(f, "{text}")
+    }
+}
+
+impl FromStr for SecretKey {
+    type Err = KeyParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        let key = SecretKey::try_from(&bytes[..])?;
+        Ok(key)
     }
 }
 
@@ -265,5 +275,19 @@ mod tests {
         let ser = kp.to_openssh().unwrap();
         let de = SecretKey::try_from_openssh(&ser).unwrap();
         assert_eq!(kp.to_bytes(), de.to_bytes());
+    }
+
+    #[test]
+    fn test_display_from_str() {
+        let key = SecretKey::generate();
+        assert_eq!(
+            SecretKey::from_str(&key.to_string()).unwrap().to_bytes(),
+            key.to_bytes()
+        );
+
+        assert_eq!(
+            PublicKey::from_str(&key.public().to_string()).unwrap(),
+            key.public()
+        );
     }
 }
