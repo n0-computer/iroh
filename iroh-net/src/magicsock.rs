@@ -1184,14 +1184,13 @@ impl Actor {
     fn split_packets(transmits: Vec<quinn_udp::Transmit>) -> Vec<Bytes> {
         let mut res = Vec::with_capacity(transmits.len());
         for transmit in transmits {
+            let contents = transmit.contents;
             if let Some(segment_size) = transmit.segment_size {
-                let len = transmit.contents.len();
-                for min in (0..len).step_by(segment_size) {
-                    let max = (min + segment_size).min(len);
-                    res.push(transmit.contents.slice(min..max));
+                for chunk in contents.chunks(segment_size) {
+                    res.push(contents.slice_ref(chunk));
                 }
             } else {
-                res.push(transmit.contents);
+                res.push(contents);
             }
         }
         res
