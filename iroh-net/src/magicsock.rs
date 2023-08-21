@@ -1176,6 +1176,26 @@ impl Actor {
         out
     }
 
+    /// Split a number of transmits into individual packets.
+    ///
+    /// For each transmit, if it has a segment size, it will be split into
+    /// multiple packets according to that segment size. If it does not have a
+    /// segment size, the contents will be sent as a single packet.
+    fn split_packets(transmits: Vec<quinn_udp::Transmit>) -> Vec<Bytes> {
+        let mut res = Vec::with_capacity(transmits.len());
+        for transmit in transmits {
+            let contents = transmit.contents;
+            if let Some(segment_size) = transmit.segment_size {
+                for chunk in contents.chunks(segment_size) {
+                    res.push(contents.slice_ref(chunk));
+                }
+            } else {
+                res.push(contents);
+            }
+        }
+        res
+    }
+
     async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
         trace!(
             "sending:\n{}",
@@ -1217,11 +1237,7 @@ impl Actor {
                 match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
-                        self.send_derp(
-                            derp_addr,
-                            public_key,
-                            transmits.into_iter().map(|t| t.contents).collect(),
-                        );
+                        self.send_derp(derp_addr, public_key, Self::split_packets(transmits));
 
                         if let Err(err) = res {
                             warn!("failed to send UDP: {:?}", err);
@@ -1231,7 +1247,7 @@ impl Actor {
                         self.send_derp(
                             derp_addr,
                             public_key.clone(),
-                            transmits.into_iter().map(|t| t.contents).collect(),
+                            Self::split_packets(transmits),
                         );
                     }
                     Ok((Some(udp_addr), None)) => {
@@ -3341,5 +3357,56 @@ pub(crate) mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn split_packets() {
+        fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit {
+            let destination = "127.0.0.1:12345".parse().unwrap();
+            quinn_udp::Transmit {
+                destination,
+                ecn: None,
+                contents: contents.to_vec().into(),
+                segment_size,
+                src_ip: None,
+            }
+        }
+        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> Vec<Bytes> {
+            parts
+                .into_iter()
+                .map(|p| p.as_bytes().to_vec().into())
+                .collect()
+        }
+        // no packets
+        assert_eq!(Actor::split_packets(vec![]), Vec::<Bytes>::default());
+        // no split
+        assert_eq!(
+            Actor::split_packets(vec![
+                mk_transmit(b"hello", None),
+                mk_transmit(b"world", None)
+            ]),
+            mk_expected(["hello", "world"])
+        );
+        // split without rest
+        assert_eq!(
+            Actor::split_packets(vec![mk_transmit(b"helloworld", Some(5)),]),
+            mk_expected(["hello", "world"])
+        );
+        // split with rest and second transmit
+        assert_eq!(
+            Actor::split_packets(vec![
+                mk_transmit(b"hello world", Some(5)),
+                mk_transmit(b"!", None)
+            ]),
+            mk_expected(["hello", " worl", "d", "!"])
+        );
+        // split that results in 1 packet
+        assert_eq!(
+            Actor::split_packets(vec![
+                mk_transmit(b"hello world", Some(1000)),
+                mk_transmit(b"!", None)
+            ]),
+            mk_expected(["hello world", "!"])
+        );
     }
 }
