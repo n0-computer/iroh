@@ -297,14 +297,12 @@ mod tests {
     use super::*;
 
     use crate::{
-        derp::{
-            client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
-        },
+        derp::{client_conn::ClientConnBuilder, codec::recv_frame, FrameType, PacketForwarder},
         key::SecretKey,
     };
 
     use anyhow::Result;
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use ed25519_dalek::PUBLIC_KEY_LENGTH;
     use tokio::io::DuplexStream;
 
@@ -352,25 +350,21 @@ mod tests {
             bytes: Bytes::from(&data[..]),
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
-        let mut buf = BytesMut::new();
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::RecvPacket);
+        let buf = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
         assert_eq!(data, &got_frame[..]);
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::RecvPacket);
+        let buf = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
         assert_eq!(data, &got_frame[..]);
 
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
+        let buf = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 

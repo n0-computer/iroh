@@ -4,20 +4,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
-use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use bytes::{BufMut, Bytes, BytesMut};
+use futures::stream::Stream;
+use futures::StreamExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_util::codec::FramedRead;
 use tracing::{debug, info_span, Instrument};
 
 use super::client_conn::Io;
+use super::codec::{recv_frame, DerpCodec, Frame};
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
-    read_frame,
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    write_frame, FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, NOT_PREFERRED, PREFERRED,
-    PROTOCOL_VERSION,
+    FrameType, MAGIC, MAX_PACKET_SIZE, NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
 };
 
 use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
@@ -40,6 +42,8 @@ pub struct Client {
     inner: Arc<InnerClient>,
 }
 
+type DerpReader = FramedRead<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>, DerpCodec>;
+
 #[derive(Debug)]
 pub struct InnerClient {
     // our local addrs
@@ -51,7 +55,7 @@ pub struct InnerClient {
     /// JoinHandle for the [`ClientWriter`] task
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
-    reader: Mutex<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>>,
+    reader: Mutex<DerpReader>,
     /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
 }
@@ -178,66 +182,69 @@ impl Client {
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
             let mut reader = self.inner.reader.lock().await;
-            let (frame_type, frame_len) =
-                match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
-                    Ok((t, l)) => (t, l),
-                    Err(e) => {
-                        self.close().await;
-                        bail!(e);
-                    }
-                };
+            let frame = match reader.next().await {
+                Some(Ok(frame)) => frame,
+                Some(Err(err)) => {
+                    self.close().await;
+                    bail!(err);
+                }
+                None => {
+                    self.close().await;
+                    bail!("EOF: reader stream ended");
+                }
+            };
 
-            match frame_type {
+            match frame.typ {
                 FrameType::KeepAlive => {
                     // A one-way keep-alive message that doesn't require an ack.
                     // This predated FrameType::Ping/FrameType::Pong.
                     return Ok(ReceivedMessage::KeepAlive);
                 }
                 FrameType::PeerGone => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
+                    if frame.content.len() < PUBLIC_KEY_LENGTH {
                         tracing::warn!(
                             "unexpected: dropping short PEER_GONE frame from DERP server"
                         );
                         continue;
                     }
                     return Ok(ReceivedMessage::PeerGone(PublicKey::try_from(
-                        &frame_payload[..PUBLIC_KEY_LENGTH],
+                        &frame.content[..PUBLIC_KEY_LENGTH],
                     )?));
                 }
                 FrameType::PeerPresent => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
+                    if frame.content.len() < PUBLIC_KEY_LENGTH {
                         tracing::warn!(
                             "unexpected: dropping short PEER_PRESENT frame from DERP server"
                         );
                         continue;
                     }
                     return Ok(ReceivedMessage::PeerPresent(PublicKey::try_from(
-                        &frame_payload[..PUBLIC_KEY_LENGTH],
+                        &frame.content[..PUBLIC_KEY_LENGTH],
                     )?));
                 }
                 FrameType::RecvPacket => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
+                    if frame.content.len() < PUBLIC_KEY_LENGTH {
                         tracing::warn!("unexpected: dropping short packet from DERP server");
                         continue;
                     }
-                    let (source, data) = parse_recv_frame(frame_payload)?;
+                    let (source, data) = parse_recv_frame(frame.content)?;
                     let packet = ReceivedMessage::ReceivedPacket { source, data };
                     return Ok(packet);
                 }
                 FrameType::Ping => {
-                    if frame_len < 8 {
+                    if frame.content.len() < 8 {
                         tracing::warn!("unexpected: dropping short PING frame");
                         continue;
                     }
-                    let ping = <[u8; 8]>::try_from(&frame_payload[..8])?;
+                    let ping = <[u8; 8]>::try_from(&frame.content[..8])?;
                     return Ok(ReceivedMessage::Ping(ping));
                 }
                 FrameType::Pong => {
-                    if frame_len < 8 {
+                    if frame.content.len() < 8 {
                         tracing::warn!("unexpected: dropping short PONG frame");
                         continue;
                     }
-                    let pong = <[u8; 8]>::try_from(&frame_payload[..8])?;
+                    let pong = <[u8; 8]>::try_from(&frame.content[..8])?;
                     return Ok(ReceivedMessage::Pong(pong));
                 }
                 FrameType::Health => {
@@ -245,7 +252,7 @@ impl Client {
                     return Ok(ReceivedMessage::Health { problem });
                 }
                 FrameType::Restarting => {
-                    if frame_len < 8 {
+                    if frame.content.len() < 8 {
                         tracing::warn!("unexpected: dropping short server restarting frame");
                         continue;
                     }
@@ -386,7 +393,7 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     secret_key: SecretKey,
-    reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
+    reader: DerpReader,
     writer: W,
     local_addr: SocketAddr,
     mesh_key: Option<MeshKey>,
@@ -407,7 +414,7 @@ where
     ) -> Self {
         Self {
             secret_key,
-            reader,
+            reader: FramedRead::new(reader, DerpCodec::default()),
             writer,
             local_addr,
             mesh_key: None,
@@ -439,20 +446,12 @@ where
         self
     }
 
-    async fn server_handshake(
-        &mut self,
-        buf: Option<Bytes>,
-    ) -> Result<(PublicKey, Option<RateLimiter>)> {
+    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>)> {
         debug!("server_handshake: started");
-        let server_key = if let Some(buf) = buf {
-            recv_server_key(buf.chain(&mut self.reader))
-                .await
-                .context("failed to receive server key")?
-        } else {
-            recv_server_key(&mut self.reader)
-                .await
-                .context("failed to receive server key")?
-        };
+        let server_key = recv_server_key(&mut self.reader)
+            .await
+            .context("failed to receive server key")?;
+
         debug!("server_handshake: received server_key: {:?}", server_key);
 
         if let Some(expected_key) = &self.server_public_key {
@@ -475,12 +474,12 @@ where
             &client_info,
         )
         .await?;
-        let mut buf = BytesMut::new();
-        let (frame_type, _) =
-            crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::ServerInfo, frame_type);
         shared_secret.open(&mut buf)?;
         let info: ServerInfo = postcard::from_bytes(&buf)?;
+
+        let buf = recv_frame(FrameType::ServerInfo, &mut self.reader).await?;
+        let msg = self.secret_key.open_from(&server_key, &buf)?;
+        let info: ServerInfo = postcard::from_bytes(&msg)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
                 "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
@@ -497,8 +496,13 @@ where
     }
 
     pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client> {
+        // Inject potentially existing buffer into the reader stream
+        if let Some(buf) = buf {
+            self.reader.read_buffer_mut().put(buf);
+        }
+
         // exchange information with the server
-        let (server_public_key, rate_limiter) = self.server_handshake(buf).await?;
+        let (server_public_key, rate_limiter) = self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -529,17 +533,16 @@ where
     }
 }
 
-pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Result<PublicKey> {
+pub(crate) async fn recv_server_key<S: Stream<Item = std::io::Result<Frame>> + Unpin>(
+    stream: S,
+) -> Result<PublicKey> {
     // expecting MAGIC followed by 32 bytes that contain the server key
     let magic_len = MAGIC.len();
     let expected_frame_len = magic_len + 32;
-    let mut buf = BytesMut::with_capacity(expected_frame_len);
-    let (frame_type, frame_len) = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await?;
 
-    if expected_frame_len != frame_len
-        || frame_type != FrameType::ServerKey
-        || buf[..magic_len] != *MAGIC.as_bytes()
-    {
+    let buf = recv_frame(FrameType::ServerKey, stream).await?;
+
+    if expected_frame_len != buf.len() || buf.starts_with(MAGIC.as_bytes()) {
         bail!("invalid server greeting");
     }
 
@@ -712,13 +715,13 @@ pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-pub(crate) fn parse_recv_frame(frame: BytesMut) -> Result<(PublicKey, Bytes)> {
+pub(crate) fn parse_recv_frame(frame: Bytes) -> Result<(PublicKey, Bytes)> {
     ensure!(
         frame.len() >= PUBLIC_KEY_LENGTH,
         "frame is shorter than expected"
     );
-    Ok((
-        PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
-        frame.freeze().slice(PUBLIC_KEY_LENGTH..),
-    ))
+
+    let key_raw = frame.split_to(PUBLIC_KEY_LENGTH);
+
+    Ok((PublicKey::try_from(&key_raw[..])?, frame))
 }
