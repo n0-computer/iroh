@@ -150,6 +150,8 @@ impl Endpoint {
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
+        // TODO: remove - force derper only
+        return (None, self.derp_addr, false);
         match self.best_addr {
             Some(ref best_addr) => {
                 if !self.is_best_addr_valid(*now) {
