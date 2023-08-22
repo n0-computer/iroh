@@ -1,7 +1,6 @@
-use anyhow::{bail, ensure};
+use anyhow::ensure;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
-use futures::{Stream, StreamExt};
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::{derp::MAX_PACKET_SIZE, key::PublicKey};
@@ -199,7 +198,7 @@ impl WriteFrame {
         }
     }
 
-    fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
+    pub(super) fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
         let res = match frame_type {
             FrameType::ServerKey => {
                 ensure!(
@@ -210,7 +209,7 @@ impl WriteFrame {
                     &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
                     "invalid server key frame magic"
                 );
-                let key = PublicKey::try_from(&content[PUBLIC_KEY_LENGTH..])?;
+                let key = PublicKey::try_from(&content[MAGIC.as_bytes().len()..])?;
                 Self::ServerKey { key }
             }
             FrameType::ClientInfo => {
@@ -307,7 +306,7 @@ impl WriteFrame {
                 data.copy_from_slice(&content[..8]);
                 Self::Pong { data }
             }
-            FrameType::Health => Self::Health { problem: content },
+            FrameType::Health => Self::Health { problem: content.to_vec().into() },
             FrameType::Restarting => {
                 ensure!(
                     content.len() == 4 + 4,
@@ -336,7 +335,7 @@ impl WriteFrame {
                 let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
                 let dst_key =
                     PublicKey::try_from(&content[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
-                let packet = content.slice(64..);
+                let packet = content[64..].to_vec().into();
                 Self::ForwardPacket {
                     src_key,
                     dst_key,
@@ -381,8 +380,8 @@ impl Decoder for DerpCodec {
         // advance the header
         src.advance(HEADER_LEN);
 
-        let content = src.split_to(frame_len).freeze();
-        let frame = WriteFrame::from_bytes(frame_type, content)?;
+        let mut content = src.split_to(frame_len);
+        let frame = WriteFrame::from_bytes(frame_type, content.to_vec().into())?;
 
         Ok(Some(frame))
     }
@@ -409,26 +408,5 @@ impl Encoder<WriteFrame> for DerpCodec {
         tracing::error!("wrote {}", frame_len_u32 + 5);
 
         Ok(())
-    }
-}
-
-/// Receives the next frame and matches the frame type. If the correct type is found returns the content,
-/// otherwise an error.
-pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<WriteFrame>> + Unpin>(
-    frame_type: FrameType,
-    mut stream: S,
-) -> anyhow::Result<WriteFrame> {
-    match stream.next().await {
-        Some(Ok(frame)) => {
-            ensure!(
-                frame_type == frame.typ(),
-                "expected frame {}, found {}",
-                frame_type,
-                frame.typ()
-            );
-            Ok(frame)
-        }
-        Some(Err(err)) => Err(err.into()),
-        None => bail!("EOF: unexpected stream end, expected frame {}", frame_type),
     }
 }

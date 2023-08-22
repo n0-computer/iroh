@@ -103,11 +103,11 @@ mod tests {
         let (a_key, mut a_recv, client_a_task, client_a) =
             create_test_client(a_key, region.clone(), Some(derp_addr.clone()));
         println!("created client {a_key:?}");
+        client_a.ping().await?;
+
         let (b_key, mut b_recv, client_b_task, client_b) =
             create_test_client(b_key, region, Some(derp_addr));
         println!("created client {b_key:?}");
-
-        client_a.ping().await?;
         client_b.ping().await?;
 
         println!("sending message from a to b");

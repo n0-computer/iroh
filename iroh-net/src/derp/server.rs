@@ -19,7 +19,7 @@ use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
 use super::codec::WriteFrame;
-use super::write_frame2;
+use super::write_frame;
 use super::{
     clients::Clients,
     metrics::Metrics,
@@ -368,7 +368,7 @@ where
     {
         let mut msg = postcard::to_stdvec(&self.server_info)?;
         shared_secret.seal(&mut msg);
-        write_frame2(
+        write_frame(
             &mut writer,
             WriteFrame::ServerInfo {
                 encrypted_message: msg.into(),
@@ -681,15 +681,14 @@ impl AsyncWrite for MaybeTlsStream {
 mod tests {
     use super::*;
 
-    use crate::{
+    use crate::
         derp::{
             client::ClientBuilder,
             client_conn::{ClientConnBuilder, Io},
             types::ClientInfo,
-            ReceivedMessage, MAX_FRAME_SIZE, FrameType,
-        },
-        key::PUBLIC_KEY_LENGTH,
-    };
+            ReceivedMessage, MAX_FRAME_SIZE,
+        }
+    ;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
@@ -767,9 +766,8 @@ mod tests {
 
         // a expects mesh peer update about itself, aka the only peer in the network currently
         let mut buf = BytesMut::new();
-        let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        assert_eq!(key_a.as_bytes()[..], buf[..]);
+        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerPresent { peer: key_a });
 
         let key_b = SecretKey::generate().public();
 
@@ -781,9 +779,8 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client a about client b joining the network
-        let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        assert_eq!(key_b.as_bytes()[..], buf[..]);
+        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerPresent { peer: key_b });
 
         // server message: create client c
         let key_c = SecretKey::generate().public();
@@ -794,10 +791,9 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client_a about client_c joining the network
-        let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        assert_eq!(key_c.as_bytes()[..], buf[..]);
-
+        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerPresent { peer: key_c });
+    
         // server message: add client c as watcher
         server_channel
             .send(ServerMessage::AddWatcher(key_c))
@@ -805,18 +801,15 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client c about all peers in the network (a, b, & c)
-        let (frame_type, _) = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        let mut peers = vec![buf[..PUBLIC_KEY_LENGTH].to_vec()];
-        let (frame_type, _) = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        peers.push(buf[..PUBLIC_KEY_LENGTH].to_vec());
-        let (frame_type, _) = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        peers.push(buf[..PUBLIC_KEY_LENGTH].to_vec());
-        assert!(peers.contains(&key_a.as_bytes().to_vec()));
-        assert!(peers.contains(&key_b.as_bytes().to_vec()));
-        assert!(peers.contains(&key_c.as_bytes().to_vec()));
+        let WriteFrame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected PeerPresent") };
+        let mut peers = vec![peer];
+        let WriteFrame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected PeerPresent") };
+        peers.push(peer);
+        let WriteFrame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected PeerPresent") };
+        peers.push(peer);
+        assert!(peers.contains(&key_a));
+        assert!(peers.contains(&key_b));
+        assert!(peers.contains(&key_c));
 
         // add packet forwarder for client d
         let key_d = SecretKey::generate().public();
@@ -835,11 +828,8 @@ mod tests {
         crate::derp::client::send_packet(&mut b_io, &None, key_a, &msg[..]).await?;
 
         // get message on a's reader
-        let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        let (key, frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(FrameType::RecvPacket, frame_type);
-        assert_eq!(key_b, key);
-        assert_eq!(msg, &frame[..]);
+        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::RecvPacket { src_key: key_b, content: msg.to_vec().into() });
 
         // write disco message from b to d
         let mut disco_msg = crate::disco::MAGIC.as_bytes().to_vec();
@@ -861,19 +851,16 @@ mod tests {
 
         // get peer gone message on a about b leaving the network
         // (we get this message because b has sent us a packet before)
-        let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
-        assert_eq!(&key_b.as_bytes()[..], &buf[..]);
+        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: key_b });
 
         // get mesh update on a & c about b leaving the network
         // (we get this message on a & c because they are "watchers")
-        let (frame_type, _) = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
-        assert_eq!(&key_b.as_bytes()[..], &buf[..]);
+        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: key_b });
 
-        let (frame_type, _) = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
-        assert_eq!(&key_b.as_bytes()[..], &buf[..]);
+        let frame = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: key_b });
 
         // close gracefully
         server_channel
@@ -928,9 +915,9 @@ mod tests {
 
             // get the server info
             let mut buf = BytesMut::new();
-            let (frame_type, _) =
-                crate::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
-            assert_eq!(FrameType::ServerInfo, frame_type);
+            let WriteFrame::ServerInfo { encrypted_message } =
+                crate::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected ServerInfo") };
+            let mut buf = encrypted_message.to_vec();
             shared_secret.open(&mut buf)?;
             let _info: ServerInfo = postcard::from_bytes(&buf)?;
             Ok(())

@@ -16,11 +16,11 @@ use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
 use crate::derp::codec::WriteFrame;
-use crate::derp::write_frame2;
+use crate::derp::write_frame;
 use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -179,82 +179,45 @@ impl Client {
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
             let mut reader = self.inner.reader.lock().await;
-            let (frame_type, frame_len) =
+            let frame =
                 match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
-                    Ok((t, l)) => (t, l),
+                    Ok(f) => f,
                     Err(e) => {
                         self.close().await;
                         bail!(e);
                     }
                 };
 
-            match frame_type {
-                FrameType::KeepAlive => {
+            match frame {
+                WriteFrame::KeepAlive => {
                     // A one-way keep-alive message that doesn't require an ack.
                     // This predated FrameType::Ping/FrameType::Pong.
                     return Ok(ReceivedMessage::KeepAlive);
                 }
-                FrameType::PeerGone => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
-                        tracing::warn!(
-                            "unexpected: dropping short PEER_GONE frame from DERP server"
-                        );
-                        continue;
-                    }
-                    return Ok(ReceivedMessage::PeerGone(PublicKey::try_from(
-                        &frame_payload[..PUBLIC_KEY_LENGTH],
-                    )?));
+                WriteFrame::PeerGone { peer } => {
+                    return Ok(ReceivedMessage::PeerGone(peer));
                 }
-                FrameType::PeerPresent => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
-                        tracing::warn!(
-                            "unexpected: dropping short PEER_PRESENT frame from DERP server"
-                        );
-                        continue;
-                    }
-                    return Ok(ReceivedMessage::PeerPresent(PublicKey::try_from(
-                        &frame_payload[..PUBLIC_KEY_LENGTH],
-                    )?));
+                WriteFrame::PeerPresent { peer } => {
+                    return Ok(ReceivedMessage::PeerPresent(peer));
                 }
-                FrameType::RecvPacket => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
-                        tracing::warn!("unexpected: dropping short packet from DERP server");
-                        continue;
-                    }
-                    let (source, data) = parse_recv_frame(frame_payload)?;
-                    let packet = ReceivedMessage::ReceivedPacket { source, data };
+                WriteFrame::RecvPacket { src_key, content } => {
+                    let packet = ReceivedMessage::ReceivedPacket { source: src_key, data: content };
                     return Ok(packet);
                 }
-                FrameType::Ping => {
-                    if frame_len < 8 {
-                        tracing::warn!("unexpected: dropping short PING frame");
-                        continue;
-                    }
-                    let ping = <[u8; 8]>::try_from(&frame_payload[..8])?;
-                    return Ok(ReceivedMessage::Ping(ping));
+                WriteFrame::Ping { data } => {
+                    return Ok(ReceivedMessage::Ping(data));
                 }
-                FrameType::Pong => {
-                    if frame_len < 8 {
-                        tracing::warn!("unexpected: dropping short PONG frame");
-                        continue;
-                    }
-                    let pong = <[u8; 8]>::try_from(&frame_payload[..8])?;
-                    return Ok(ReceivedMessage::Pong(pong));
+                WriteFrame::Pong { data } => {
+                    return Ok(ReceivedMessage::Pong(data));
                 }
-                FrameType::Health => {
-                    let problem = Some(String::from_utf8_lossy(&frame_payload).into());
+                WriteFrame::Health { problem } => {
+                    let problem = Some(std::str::from_utf8(&problem).context("problem not a string")?.to_string());
                     return Ok(ReceivedMessage::Health { problem });
                 }
-                FrameType::Restarting => {
-                    if frame_len < 8 {
-                        tracing::warn!("unexpected: dropping short server restarting frame");
-                        continue;
-                    }
-                    let reconnect_in = <[u8; 4]>::try_from(&frame_payload[..4])?;
-                    let try_for = <[u8; 4]>::try_from(&frame_payload[4..8])?;
+                WriteFrame::Restarting { reconnect_in, try_for } => {
                     let reconnect_in =
-                        Duration::from_millis(u32::from_be_bytes(reconnect_in) as u64);
-                    let try_for = Duration::from_millis(u32::from_be_bytes(try_for) as u64);
+                        Duration::from_millis(reconnect_in as u64);
+                    let try_for = Duration::from_millis(try_for as u64);
                     return Ok(ReceivedMessage::ServerRestarting {
                         reconnect_in,
                         try_for,
@@ -446,6 +409,8 @@ where
     ) -> Result<(PublicKey, Option<RateLimiter>)> {
         debug!("server_handshake: started");
         let server_key = if let Some(buf) = buf {
+            let bl = buf.len();
+            println!("buf len {}", bl);
             recv_server_key(buf.chain(&mut self.reader))
                 .await
                 .context("failed to receive server key")?
@@ -477,9 +442,11 @@ where
         )
         .await?;
         let mut buf = BytesMut::new();
-        let (frame_type, _) =
-            crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::ServerInfo, frame_type);
+        let WriteFrame::ServerInfo { encrypted_message } =
+            crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await? else {
+                anyhow::bail!("expected ServerInfo");
+            };
+        let mut buf = encrypted_message.to_vec();
         shared_secret.open(&mut buf)?;
         let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
@@ -535,21 +502,9 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
     let magic_len = MAGIC.len();
     let expected_frame_len = magic_len + 32;
     let mut buf = BytesMut::with_capacity(expected_frame_len);
-    let (frame_type, frame_len) = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await?;
-
-    if expected_frame_len != frame_len
-        || frame_type != FrameType::ServerKey
-        || buf[..magic_len] != *MAGIC.as_bytes()
-    {
-        bail!("invalid server greeting");
-    }
-
-    get_key_from_slice(&buf[magic_len..expected_frame_len])
-}
-
-// errors if `frame_len` is less than the expected [`PUBLIC_KEY_LENGTH`]
-fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
-    let key = PublicKey::try_from(&payload[..PUBLIC_KEY_LENGTH])?;
+    let WriteFrame::ServerKey {key } = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await? else {
+        anyhow::bail!("expected ServerKey");
+    };
     Ok(key)
 }
 
@@ -632,7 +587,7 @@ pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
             return Ok(());
         }
     }
-    write_frame2(
+    write_frame(
         &mut writer,
         WriteFrame::SendPacket {
             dst_key: dstkey,
@@ -656,7 +611,7 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
         packet.len()
     );
 
-    write_frame2(
+    write_frame(
         &mut writer,
         WriteFrame::ForwardPacket {
             src_key: srckey,
@@ -670,13 +625,13 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
 }
 
 pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    write_frame2(&mut writer, WriteFrame::Ping { data: *data }).await?;
+    write_frame(&mut writer, WriteFrame::Ping { data: *data }).await?;
     writer.flush().await?;
     Ok(())
 }
 
 async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    write_frame2(&mut writer, WriteFrame::Pong { data: *data }).await?;
+    write_frame(&mut writer, WriteFrame::Pong { data: *data }).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -685,13 +640,13 @@ pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
     mut writer: W,
     preferred: bool,
 ) -> Result<()> {
-    write_frame2(&mut writer, WriteFrame::NotePreferred { preferred }).await?;
+    write_frame(&mut writer, WriteFrame::NotePreferred { preferred }).await?;
     writer.flush().await?;
     Ok(())
 }
 
 pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
-    write_frame2(&mut writer, WriteFrame::WatchConns).await?;
+    write_frame(&mut writer, WriteFrame::WatchConns).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -700,7 +655,7 @@ pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
     mut writer: W,
     target: PublicKey,
 ) -> Result<()> {
-    write_frame2(&mut writer, WriteFrame::ClosePeer { peer: target }).await?;
+    write_frame(&mut writer, WriteFrame::ClosePeer { peer: target }).await?;
     writer.flush().await?;
     Ok(())
 }

@@ -298,14 +298,13 @@ mod tests {
 
     use crate::{
         derp::{
-            client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
+            client_conn::ClientConnBuilder, read_frame, PacketForwarder, MAX_PACKET_SIZE, codec::WriteFrame,
         },
         key::SecretKey,
     };
 
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
-    use ed25519_dalek::PUBLIC_KEY_LENGTH;
     use tokio::io::DuplexStream;
 
     struct MockPacketForwarder {}
@@ -353,26 +352,18 @@ mod tests {
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let mut buf = BytesMut::new();
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::RecvPacket);
-        let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(b_key, got_key);
-        assert_eq!(data, &got_frame[..]);
+        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::RecvPacket { src_key: b_key, content: data.to_vec().into() });
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::RecvPacket);
-        let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(b_key, got_key);
-        assert_eq!(data, &got_frame[..]);
+        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::RecvPacket { src_key: b_key, content: data.to_vec().into() });
 
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
-        let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        assert_eq!(got_key, b_key);
+        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: b_key });
 
         // send mesh_update
         let updates = vec![
@@ -387,15 +378,11 @@ mod tests {
         ];
 
         clients.send_mesh_updates(&a_key.clone(), updates);
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerPresent);
-        let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        assert_eq!(got_key, b_key);
+        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerPresent { peer: b_key });
 
-        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FrameType::PeerGone);
-        let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        assert_eq!(got_key, b_key);
+        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: b_key });
 
         clients.unregister(&a_key.clone());
 

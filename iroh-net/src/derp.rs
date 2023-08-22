@@ -36,7 +36,7 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::key::{PublicKey, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey, SharedSecret};
 use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
@@ -203,7 +203,7 @@ async fn read_frame(
     mut reader: impl AsyncRead + Unpin,
     max_size: usize,
     buf: &mut BytesMut,
-) -> Result<(FrameType, usize)> {
+) -> Result<WriteFrame> {
     let (frame_type, frame_len) = read_frame_header(&mut reader)
         .await
         .context("frame header")?;
@@ -214,7 +214,7 @@ async fn read_frame(
     );
     buf.resize(frame_len, 0u8);
     reader.read_exact(buf).await.context("read exact")?;
-    Ok((frame_type, frame_len))
+    WriteFrame::from_bytes(frame_type, buf.to_vec().into()).context("frame")
 }
 
 async fn read_frame_timeout(
@@ -222,18 +222,19 @@ async fn read_frame_timeout(
     max_size: usize,
     buf: &mut BytesMut,
     timeout: Option<Duration>,
-) -> Result<(FrameType, usize)> {
+) -> Result<WriteFrame> {
     if let Some(duration) = timeout {
-        let (frame_type, frame_len) =
+        let frame =
             tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
                 .await
                 .context("timeout")??;
-        Ok((frame_type, frame_len))
+        Ok(frame)
     } else {
         read_frame(&mut reader, max_size, buf).await
     }
 }
 
+#[cfg(test)]
 async fn write_frame_header(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
@@ -246,24 +247,7 @@ async fn write_frame_header(
 }
 
 /// AsyncWrites a complete frame. Does not flush.
-async fn write_frame<'a>(
-    mut writer: impl AsyncWrite + Unpin,
-    frame_type: FrameType,
-    bytes: &[&[u8]],
-) -> Result<()> {
-    let bytes_len: usize = bytes.iter().map(|b| b.len()).sum();
-    ensure!(
-        bytes_len <= MAX_FRAME_SIZE,
-        "unreasonably large frame write"
-    );
-    write_frame_header(&mut writer, frame_type, bytes_len).await?;
-    for b in bytes {
-        writer.write_all(b).await?;
-    }
-    Ok(())
-}
-
-async fn write_frame2(mut writer: impl AsyncWrite + Unpin, frame: WriteFrame) -> Result<()> {
+async fn write_frame(mut writer: impl AsyncWrite + Unpin, frame: WriteFrame) -> Result<()> {
     writer.write_all(frame.to_bytes().as_ref()).await?;
     Ok(())
 }
@@ -278,10 +262,10 @@ async fn write_frame_timeout(
     timeout: Option<Duration>,
 ) -> Result<()> {
     if let Some(duration) = timeout {
-        tokio::time::timeout(duration, write_frame2(writer, frame)).await??;
+        tokio::time::timeout(duration, write_frame(writer, frame)).await??;
         Ok(())
     } else {
-        write_frame2(writer, frame).await
+        write_frame(writer, frame).await
     }
 }
 
@@ -297,7 +281,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 ) -> Result<()> {
     let mut msg = postcard::to_stdvec(client_info)?;
     shared_secret.seal(&mut msg);
-    write_frame2(
+    write_frame(
         &mut writer,
         WriteFrame::ClientInfo {
             client_public_key: *client_public_key,
@@ -318,7 +302,7 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
     let mut buf = BytesMut::new();
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
-    let (frame_type, _) = read_frame_timeout(
+    let frame = read_frame_timeout(
         &mut reader,
         256 * 1024,
         &mut buf,
@@ -326,12 +310,10 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
     )
     .await
     .context("read frame")?;
-    ensure!(
-        frame_type == FrameType::ClientInfo,
-        "expected FrameType::ClientInfo frame got {frame_type}"
-    );
-    let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH]).context("public key")?;
-    let mut msg = buf[PUBLIC_KEY_LENGTH..].to_vec();
+    let WriteFrame::ClientInfo { client_public_key: key, encrypted_message: msg } = frame else {
+        anyhow::bail!("expected ClientInfo");
+    };
+    let mut msg = msg.to_vec();
     let shared_secret = secret_key.shared(&key);
     shared_secret.open(&mut msg).context("shared secret")?;
     let info: ClientInfo = postcard::from_bytes(&msg).context("deserialization")?;
@@ -352,7 +334,7 @@ mod tests {
         assert_eq!(frame_len, 301);
 
         let expect_buf = b"hello world!";
-        write_frame2(
+        write_frame(
             &mut writer,
             WriteFrame::Health {
                 problem: expect_buf.to_vec().into(),
@@ -362,10 +344,8 @@ mod tests {
         writer.flush().await?;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();
-        let (frame_type, frame_len) = read_frame(&mut reader, 1024, &mut got_buf).await?;
-        assert_eq!(FrameType::Health, frame_type);
-        assert_eq!(expect_buf.len(), frame_len);
-        assert_eq!(expect_buf.as_slice(), &got_buf);
+        let frame = read_frame(&mut reader, 1024, &mut got_buf).await?;
+        assert_eq!(frame, WriteFrame::Health { problem: expect_buf.to_vec().into() });
         Ok(())
     }
 
