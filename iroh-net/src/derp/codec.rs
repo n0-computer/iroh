@@ -17,7 +17,7 @@ pub(crate) struct Frame {
 }
 
 #[derive(Debug)]
-pub(crate) enum WriteFrame<'a> {
+pub(crate) enum WriteFrame {
     ServerKey {
         key: PublicKey,
     },
@@ -30,7 +30,7 @@ pub(crate) enum WriteFrame<'a> {
     },
     SendPacket {
         dst_key: PublicKey,
-        packet: &'a [u8],
+        packet: Bytes,
     },
     RecvPacket {
         src_key: PublicKey,
@@ -56,21 +56,22 @@ pub(crate) enum WriteFrame<'a> {
     Pong {
         data: [u8; 8],
     },
-    #[allow(dead_code)]
     Health {
-        data: Vec<u8>,
+        problem: String,
     },
-    #[allow(dead_code)]
-    Restarting {},
+    Restarting {
+        reconnect_in: u32,
+        try_for: u32,
+    },
     ForwardPacket {
         src_key: PublicKey,
         dst_key: PublicKey,
-        packet: &'a [u8],
+        packet: Bytes,
     },
 }
 
-impl WriteFrame<'_> {
-    fn typ(&self) -> FrameType {
+impl WriteFrame {
+    pub(super) fn typ(&self) -> FrameType {
         match self {
             WriteFrame::ServerKey { .. } => FrameType::ServerKey,
             WriteFrame::ClientInfo { .. } => FrameType::ClientInfo,
@@ -113,8 +114,8 @@ impl WriteFrame<'_> {
             WriteFrame::ClosePeer { .. } => 32,
             WriteFrame::Ping { .. } => 8,
             WriteFrame::Pong { .. } => 8,
-            WriteFrame::Health { data } => data.len(),
-            WriteFrame::Restarting {} => 0,
+            WriteFrame::Health { problem } => problem.as_bytes().len(),
+            WriteFrame::Restarting { .. } => 4 + 4,
             WriteFrame::ForwardPacket {
                 src_key: _,
                 dst_key: _,
@@ -142,7 +143,7 @@ impl WriteFrame<'_> {
             }
             WriteFrame::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
-                dst.put(*packet);
+                dst.put(packet.as_ref());
             }
             WriteFrame::RecvPacket { src_key, content } => {
                 dst.put(src_key.as_ref());
@@ -172,10 +173,16 @@ impl WriteFrame<'_> {
             WriteFrame::Pong { data } => {
                 dst.put(&data[..]);
             }
-            WriteFrame::Health { data } => {
-                dst.put(&data[..]);
+            WriteFrame::Health { problem } => {
+                dst.put(problem.as_bytes());
             }
-            WriteFrame::Restarting {} => {}
+            WriteFrame::Restarting {
+                reconnect_in,
+                try_for,
+            } => {
+                dst.put_u32(reconnect_in);
+                dst.put_u32(try_for);
+            }
             WriteFrame::ForwardPacket {
                 src_key,
                 dst_key,
@@ -183,8 +190,29 @@ impl WriteFrame<'_> {
             } => {
                 dst.put(src_key.as_ref());
                 dst.put(dst_key.as_ref());
-                dst.put(*packet);
+                dst.put(packet.as_ref());
             }
+        }
+    }
+
+    fn from_bytes(typ: FrameType, content: BytesMut) -> std::io::Result<Self> {
+        match typ {
+            FrameType::ServerKey => todo!(),
+            FrameType::ClientInfo => todo!(),
+            FrameType::ServerInfo => todo!(),
+            FrameType::SendPacket => todo!(),
+            FrameType::RecvPacket => todo!(),
+            FrameType::KeepAlive => todo!(),
+            FrameType::NotePreferred => todo!(),
+            FrameType::PeerGone => todo!(),
+            FrameType::PeerPresent => todo!(),
+            FrameType::WatchConns => todo!(),
+            FrameType::ClosePeer => todo!(),
+            FrameType::Ping => todo!(),
+            FrameType::Pong => todo!(),
+            FrameType::Health => todo!(),
+            FrameType::Restarting => todo!(),
+            FrameType::ForwardPacket => todo!(),
         }
     }
 }
@@ -192,7 +220,7 @@ impl WriteFrame<'_> {
 const HEADER_LEN: usize = 5;
 
 impl Decoder for DerpCodec {
-    type Item = Frame;
+    type Item = WriteFrame;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -223,18 +251,16 @@ impl Decoder for DerpCodec {
         src.advance(HEADER_LEN);
 
         let content = src.split_to(frame_len).freeze();
+        let frame = WriteFrame::from_bytes(frame_type, content)?;
 
-        Ok(Some(Frame {
-            typ: frame_type,
-            content,
-        }))
+        Ok(Some(frame))
     }
 }
 
-impl Encoder<WriteFrame<'_>> for DerpCodec {
+impl Encoder<WriteFrame> for DerpCodec {
     type Error = std::io::Error;
 
-    fn encode(&mut self, frame: WriteFrame<'_>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, frame: WriteFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let frame_len: usize = frame.len();
         if frame_len > MAX_FRAME_SIZE {
             return Err(std::io::Error::new(
@@ -256,19 +282,19 @@ impl Encoder<WriteFrame<'_>> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
-pub(super) async fn recv_frame<S: Stream<Item = std::io::Result<Frame>> + Unpin>(
+pub(super) async fn recv_frame<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
-) -> anyhow::Result<Bytes> {
+) -> anyhow::Result<WriteFrame> {
     match stream.next().await {
         Some(Ok(frame)) => {
             ensure!(
-                frame_type == frame.typ,
+                frame_type == frame.typ(),
                 "expected frame {}, found {}",
                 frame_type,
-                frame.typ
+                frame.typ()
             );
-            Ok(frame.content)
+            Ok(frame)
         }
         Some(Err(err)) => Err(err.into()),
         None => bail!("EOF: unexpected stream end, expected frame {}", frame_type),

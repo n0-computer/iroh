@@ -20,7 +20,7 @@ pub(crate) mod server;
 pub(crate) mod types;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
-use self::codec::{Frame, WriteFrame};
+use self::codec::WriteFrame;
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::metrics::Metrics;
@@ -190,9 +190,9 @@ impl From<FrameType> for u8 {
 /// Ignores the timeout if `timeout.is_zero()`
 ///
 /// Does not flush.
-async fn write_frame_timeout<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+async fn write_frame_timeout<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
-    frame: WriteFrame<'a>,
+    frame: WriteFrame,
     timeout: Option<Duration>,
 ) -> Result<()> {
     if let Some(duration) = timeout {
@@ -208,7 +208,7 @@ async fn write_frame_timeout<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error>
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_client_key<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     shared_secret: &SharedSecret,
     client_public_key: &PublicKey,
@@ -228,7 +228,7 @@ pub(crate) async fn send_client_key<'a, S: Sink<WriteFrame<'a>, Error = std::io:
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-async fn recv_client_key<S: Stream<Item = std::io::Result<Frame>> + Unpin>(
+async fn recv_client_key<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
     secret_key: SecretKey,
     stream: S,
 ) -> Result<(PublicKey, ClientInfo, SharedSecret)> {

@@ -833,7 +833,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::derp::client::send_packet(&mut b_io, &None, key_a, &msg[..]).await?;
+        crate::derp::client::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
 
         // get message on a's reader
         let buf = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
@@ -845,7 +845,7 @@ mod tests {
         let mut disco_msg = crate::disco::MAGIC.as_bytes().to_vec();
         disco_msg.extend_from_slice(key_b.as_bytes());
         disco_msg.extend_from_slice(msg);
-        crate::derp::client::send_packet(&mut b_io, &None, key_d, &disco_msg).await?;
+        crate::derp::client::send_packet(&mut b_io, &None, key_d, disco_msg.clone().into()).await?;
 
         // get message on d's reader
         let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();

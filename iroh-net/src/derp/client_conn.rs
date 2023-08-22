@@ -796,7 +796,8 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::derp::client::send_packet(&mut io_rw, &None, target, data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -815,7 +816,8 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::derp::client::send_packet(&mut io_rw, &None, target, &disco_data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -831,7 +833,8 @@ mod tests {
         // forward packet
         println!("  forward packet");
         let fwd_key = SecretKey::generate().public();
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, data).await?;
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, Bytes::from_static(data))
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -846,7 +849,8 @@ mod tests {
 
         // forward disco packet
         println!("  forward disco packet");
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, &disco_data).await?;
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, disco_data.clone().into())
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -904,7 +908,8 @@ mod tests {
         let data = b"hello world!";
         let target = SecretKey::generate().public();
 
-        crate::derp::client::send_packet(&mut io_rw, &None, target, data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {

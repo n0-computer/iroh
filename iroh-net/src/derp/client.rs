@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 use futures::stream::Stream;
 use futures::{Sink, SinkExt, StreamExt};
 use tokio::io::AsyncWrite;
@@ -15,7 +15,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
 use super::client_conn::Io;
-use super::codec::{recv_frame, DerpCodec, Frame};
+use super::codec::{recv_frame, DerpCodec};
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
@@ -180,98 +180,52 @@ impl Client {
     }
 
     async fn recv_0(&self) -> Result<ReceivedMessage> {
-        // in practice, quic packets (and thus DERP frames) are under 1.5 KiB
-        let mut frame_payload = BytesMut::with_capacity(1024 + 512);
-        loop {
-            let mut reader = self.inner.reader.lock().await;
-            let frame = match reader.next().await {
-                Some(Ok(frame)) => frame,
-                Some(Err(err)) => {
-                    self.close().await;
-                    bail!(err);
-                }
-                None => {
-                    self.close().await;
-                    bail!("EOF: reader stream ended");
-                }
-            };
-
-            match frame.typ {
-                FrameType::KeepAlive => {
-                    // A one-way keep-alive message that doesn't require an ack.
-                    // This predated FrameType::Ping/FrameType::Pong.
-                    return Ok(ReceivedMessage::KeepAlive);
-                }
-                FrameType::PeerGone => {
-                    if frame.content.len() < PUBLIC_KEY_LENGTH {
-                        tracing::warn!(
-                            "unexpected: dropping short PEER_GONE frame from DERP server"
-                        );
-                        continue;
-                    }
-                    return Ok(ReceivedMessage::PeerGone(PublicKey::try_from(
-                        &frame.content[..PUBLIC_KEY_LENGTH],
-                    )?));
-                }
-                FrameType::PeerPresent => {
-                    if frame.content.len() < PUBLIC_KEY_LENGTH {
-                        tracing::warn!(
-                            "unexpected: dropping short PEER_PRESENT frame from DERP server"
-                        );
-                        continue;
-                    }
-                    return Ok(ReceivedMessage::PeerPresent(PublicKey::try_from(
-                        &frame.content[..PUBLIC_KEY_LENGTH],
-                    )?));
-                }
-                FrameType::RecvPacket => {
-                    if frame.content.len() < PUBLIC_KEY_LENGTH {
-                        tracing::warn!("unexpected: dropping short packet from DERP server");
-                        continue;
-                    }
-                    let (source, data) = parse_recv_frame(frame.content)?;
-                    let packet = ReceivedMessage::ReceivedPacket { source, data };
-                    return Ok(packet);
-                }
-                FrameType::Ping => {
-                    if frame.content.len() < 8 {
-                        tracing::warn!("unexpected: dropping short PING frame");
-                        continue;
-                    }
-                    let ping = <[u8; 8]>::try_from(&frame.content[..8])?;
-                    return Ok(ReceivedMessage::Ping(ping));
-                }
-                FrameType::Pong => {
-                    if frame.content.len() < 8 {
-                        tracing::warn!("unexpected: dropping short PONG frame");
-                        continue;
-                    }
-                    let pong = <[u8; 8]>::try_from(&frame.content[..8])?;
-                    return Ok(ReceivedMessage::Pong(pong));
-                }
-                FrameType::Health => {
-                    let problem = Some(String::from_utf8_lossy(&frame_payload).into());
-                    return Ok(ReceivedMessage::Health { problem });
-                }
-                FrameType::Restarting => {
-                    if frame.content.len() < 8 {
-                        tracing::warn!("unexpected: dropping short server restarting frame");
-                        continue;
-                    }
-                    let reconnect_in = <[u8; 4]>::try_from(&frame_payload[..4])?;
-                    let try_for = <[u8; 4]>::try_from(&frame_payload[4..8])?;
-                    let reconnect_in =
-                        Duration::from_millis(u32::from_be_bytes(reconnect_in) as u64);
-                    let try_for = Duration::from_millis(u32::from_be_bytes(try_for) as u64);
-                    return Ok(ReceivedMessage::ServerRestarting {
-                        reconnect_in,
-                        try_for,
-                    });
-                }
-                _ => {
-                    frame_payload.clear();
-                }
+        let mut reader = self.inner.reader.lock().await;
+        let frame = match reader.next().await {
+            Some(Ok(frame)) => frame,
+            Some(Err(err)) => {
+                self.close().await;
+                bail!(err);
             }
+            None => {
+                self.close().await;
+                bail!("EOF: reader stream ended");
+            }
+        };
+
+        match frame {
+            WriteFrame::KeepAlive => {
+                // A one-way keep-alive message that doesn't require an ack.
+                // This predated FrameType::Ping/FrameType::Pong.
+                Ok(ReceivedMessage::KeepAlive)
+            }
+            WriteFrame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
+            WriteFrame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
+            WriteFrame::RecvPacket { src_key, content } => {
+                let packet = ReceivedMessage::ReceivedPacket {
+                    source: src_key,
+                    data: content,
+                };
+                Ok(packet)
+            }
+            WriteFrame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+            WriteFrame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+            WriteFrame::Health { problem } => {
+                let problem = Some(problem);
+                Ok(ReceivedMessage::Health { problem })
+            }
+            WriteFrame::Restarting {
+                reconnect_in,
+                try_for,
+            } => {
+                let reconnect_in = Duration::from_millis(reconnect_in as u64);
+                let try_for = Duration::from_millis(try_for as u64);
+                Ok(ReceivedMessage::ServerRestarting {
+                    reconnect_in,
+                    try_for,
+                })
+            }
+            _ => bail!("unexpected packet: {:?}", frame.typ()),
         }
     }
 
@@ -357,12 +311,12 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                     // TODO: the rate limiter is only used on this method, is it because it's the only method that
                     // theoretically sends a bunch of data, or is it an oversight? For example,
                     // the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
-                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
+                    send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
                 }
                 Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
                     tokio::time::timeout(
                         Duration::from_secs(5),
-                        forward_packet(&mut self.writer, srckey, dstkey, &bytes),
+                        forward_packet(&mut self.writer, srckey, dstkey, bytes),
                     )
                     .await??;
                 }
@@ -535,7 +489,7 @@ where
     }
 }
 
-pub(crate) async fn recv_server_key<S: Stream<Item = std::io::Result<Frame>> + Unpin>(
+pub(crate) async fn recv_server_key<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
     stream: S,
 ) -> Result<PublicKey> {
     // expecting MAGIC followed by 32 bytes that contain the server key
@@ -618,11 +572,11 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packet<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_packet<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     rate_limiter: &Option<RateLimiter>,
     dst_key: PublicKey,
-    packet: &'a [u8],
+    packet: Bytes,
 ) -> Result<()> {
     ensure!(
         packet.len() <= MAX_PACKET_SIZE,
@@ -643,11 +597,11 @@ pub(crate) async fn send_packet<'a, S: Sink<WriteFrame<'a>, Error = std::io::Err
     Ok(())
 }
 
-pub(crate) async fn forward_packet<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+pub(crate) async fn forward_packet<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     src_key: PublicKey,
     dst_key: PublicKey,
-    packet: &'a [u8],
+    packet: Bytes,
 ) -> Result<()> {
     ensure!(
         packet.len() <= MAX_PACKET_SIZE,
@@ -669,23 +623,23 @@ pub(crate) async fn forward_packet<'a, S: Sink<WriteFrame<'a>, Error = std::io::
     Ok(())
 }
 
-pub(crate) async fn send_ping<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_ping<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     data: [u8; 8],
 ) -> Result<()> {
     send_ping_or_pong(&mut writer, WriteFrame::Ping { data }).await
 }
 
-async fn send_pong<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+async fn send_pong<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     data: [u8; 8],
 ) -> Result<()> {
     send_ping_or_pong(&mut writer, WriteFrame::Pong { data }).await
 }
 
-async fn send_ping_or_pong<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+async fn send_ping_or_pong<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
-    frame: WriteFrame<'a>,
+    frame: WriteFrame,
 ) -> Result<()> {
     write_frame_timeout(&mut writer, frame, None).await?;
     writer.flush().await?;
@@ -693,10 +647,7 @@ async fn send_ping_or_pong<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> +
     Ok(())
 }
 
-pub(crate) async fn send_note_preferred<
-    'a,
-    S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin,
->(
+pub(crate) async fn send_note_preferred<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     preferred: bool,
 ) -> Result<()> {
@@ -707,8 +658,7 @@ pub(crate) async fn send_note_preferred<
 }
 
 pub(crate) async fn watch_connection_changes<
-    'a,
-    S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin,
+    S: Sink<WriteFrame, Error = std::io::Error> + Unpin,
 >(
     mut writer: S,
 ) -> Result<()> {
@@ -717,7 +667,7 @@ pub(crate) async fn watch_connection_changes<
     Ok(())
 }
 
-pub(crate) async fn close_peer<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
+pub(crate) async fn close_peer<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     peer: PublicKey,
 ) -> Result<()> {
