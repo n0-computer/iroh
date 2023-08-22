@@ -2007,7 +2007,7 @@ dependencies = [
  "rtnetlink",
  "rustls",
  "rustls-pemfile",
- "rustls-webpki 0.101.4",
+ "rustls-webpki",
  "serde",
  "serde_with",
  "serdect",
@@ -2028,7 +2028,7 @@ dependencies = [
  "trust-dns-resolver",
  "ucd-parse",
  "url",
- "webpki-roots 0.25.2",
+ "webpki-roots",
  "wg",
  "wmi",
  "x509-parser",
@@ -3361,7 +3361,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 0.25.2",
+ "webpki-roots",
  "winreg",
 ]
 
@@ -3504,7 +3504,7 @@ checksum = "1d1feddffcfcc0b33f5c6ce9a29e341e4cd59c3f78e7ee45f4a40c038b1d6cbb"
 dependencies = [
  "log",
  "ring",
- "rustls-webpki 0.101.4",
+ "rustls-webpki",
  "sct",
 ]
 
@@ -3527,16 +3527,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d3987094b1d07b653b7dfdc3f70ce9a1da9c51ac18c1b06b662e4f9a0e9f4b2"
 dependencies = [
  "base64 0.21.2",
-]
-
-[[package]]
-name = "rustls-webpki"
-version = "0.100.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6207cd5ed3d8dca7816f8f3725513a34609c0c765bf652b8c3cb4cfd87db46b"
-dependencies = [
- "ring",
- "untrusted",
 ]
 
 [[package]]
@@ -4244,9 +4234,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls-acme"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "550afe930502a9d56f2a753d5958a1fe98e6c698a617d5de8497616286323ea4"
+checksum = "dfb6f50b5523d014ba161512c37457acb16fd8218c883c7152e0a67ab763f2d4"
 dependencies = [
  "async-trait",
  "base64 0.21.2",
@@ -4264,7 +4254,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
- "webpki-roots 0.23.1",
+ "webpki-roots",
  "x509-parser",
 ]
 
@@ -4710,15 +4700,6 @@ checksum = "9b85cbef8c220a6abc02aefd892dfc0fc23afb1c6a426316ec33253a3877249b"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b03058f88386e5ff5310d9111d53f48b17d732b401aeb83a8d5190f2ac459338"
-dependencies = [
- "rustls-webpki 0.100.1",
 ]
 
 [[package]]
