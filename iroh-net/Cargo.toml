@@ -58,8 +58,8 @@ tokio-rustls-acme = { version = "0.1" }
 tokio-stream = { version = "0.1", features = ["sync"]}
 ucd-parse = "=0.1.10" # pinned to avoid having to bump MSRV to 1.70 (recursive dep of stun-rs)
 url = { version = "2.4", features = ["serde"] }
-webpki = { version = "0.22", features = ["std"] }
-webpki-roots = "0.23.0"
+webpki = { package = "rustls-webpki", version = "0.101.4", features = ["std"] }
+webpki-roots = "0.25"
 wg = "0.3.1"
 quinn = "0.10"
 quinn-proto = "0.10"
