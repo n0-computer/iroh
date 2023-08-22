@@ -7,7 +7,6 @@
 //! Technologies (UK) Ltd.
 use std::sync::Arc;
 
-use super::{certificate, PeerId};
 use rustls::{
     cipher_suite::{
         TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256,
@@ -17,6 +16,10 @@ use rustls::{
     Certificate, CertificateError, DigitallySignedStruct, DistinguishedName, PeerMisbehaved,
     SignatureScheme, SupportedCipherSuite, SupportedProtocolVersion,
 };
+
+use crate::key::PublicKey;
+
+use super::certificate;
 
 /// The protocol versions supported by this verifier.
 ///
@@ -41,7 +44,7 @@ pub static CIPHERSUITES: &[SupportedCipherSuite] = &[
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 pub struct Libp2pCertificateVerifier {
     /// The peer ID we intend to connect to
-    remote_peer_id: Option<PeerId>,
+    remote_peer_id: Option<PublicKey>,
 }
 
 /// libp2p requires the following of X.509 server certificate chains:
@@ -56,7 +59,7 @@ impl Libp2pCertificateVerifier {
             remote_peer_id: None,
         }
     }
-    pub fn with_remote_peer_id(remote_peer_id: Option<PeerId>) -> Self {
+    pub fn with_remote_peer_id(remote_peer_id: Option<PublicKey>) -> Self {
         Self { remote_peer_id }
     }
 
@@ -185,7 +188,7 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
 fn verify_presented_certs(
     end_entity: &Certificate,
     intermediates: &[Certificate],
-) -> Result<PeerId, rustls::Error> {
+) -> Result<PublicKey, rustls::Error> {
     if !intermediates.is_empty() {
         return Err(rustls::Error::General(
             "libp2p-tls requires exactly one certificate".into(),

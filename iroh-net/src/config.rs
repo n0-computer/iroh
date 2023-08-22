@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
-use super::{key, portmapper};
+use super::{key::PublicKey, portmapper};
 
 /// Fake WireGuard endpoint IP address that means to
 /// use DERP. When used (in the Node.DERP field), the port number of
@@ -156,7 +156,7 @@ pub struct PingResult {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     /// The public key or PeerID, the primary identifier of this node.
-    pub key: key::node::PublicKey,
+    pub key: PublicKey,
     /// DNS name of the peer.
     pub name: Option<String>,
     /// Direct IP addresses of this Node.
