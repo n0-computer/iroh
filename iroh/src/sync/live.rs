@@ -22,7 +22,7 @@ use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
 };
-use iroh_net::{tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PublicKey, MagicEndpoint};
 use iroh_sync::{
     store,
     sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
@@ -41,7 +41,7 @@ const CHANNEL_CAP: usize = 8;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeerSource {
     /// The peer id (required)
-    pub peer_id: PeerId,
+    pub peer_id: PublicKey,
     /// Socket addresses for this peer (may be empty)
     pub addrs: Vec<SocketAddr>,
     /// Derp region for this peer
@@ -152,7 +152,7 @@ pub enum LiveEvent {
     /// Received a remote insert.
     InsertRemote {
         /// The peer that sent us the entry.
-        from: PeerId,
+        from: PublicKey,
         /// The inserted entry.
         entry: Entry,
         /// If the content is available at the local node
@@ -306,11 +306,11 @@ struct Actor<S: store::Store, B: baomap::Store> {
         flume::r#async::RecvStream<'static, (InsertOrigin, SignedEntry)>,
     >,
     subscription: BoxStream<'static, Result<(TopicId, Event)>>,
-    sync_state: HashMap<(TopicId, PeerId), SyncState>,
+    sync_state: HashMap<(TopicId, PublicKey), SyncState>,
 
     to_actor_rx: mpsc::Receiver<ToActor<S>>,
 
-    pending_syncs: FuturesUnordered<BoxFuture<'static, (TopicId, PeerId, Result<()>)>>,
+    pending_syncs: FuturesUnordered<BoxFuture<'static, (TopicId, PublicKey, Result<()>)>>,
     pending_joins: FuturesUnordered<BoxFuture<'static, (TopicId, Result<()>)>>,
 
     event_subscriptions: HashMap<TopicId, HashMap<u64, OnLiveEventCallback>>,
@@ -415,7 +415,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
-    fn sync_with_peer(&mut self, topic: TopicId, peer: PeerId) {
+    fn sync_with_peer(&mut self, topic: TopicId, peer: PublicKey) {
         let Some(replica) = self.replicas.get(&topic) else {
             return;
         };
@@ -495,7 +495,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         peers: Vec<PeerSource>,
     ) -> anyhow::Result<()> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
-        let peer_ids: Vec<PeerId> = peers.iter().map(|p| p.peer_id).collect();
+        let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.peer_id).collect();
 
         // add addresses of initial peers to our endpoint address book
         for peer in &peers {
@@ -550,7 +550,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
-    fn on_sync_finished(&mut self, topic: TopicId, peer: PeerId, res: Result<()>) {
+    fn on_sync_finished(&mut self, topic: TopicId, peer: PublicKey, res: Result<()>) {
         let state = match res {
             Ok(_) => SyncState::Finished,
             Err(err) => SyncState::Failed(err),
@@ -569,7 +569,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 match op {
                     Op::Put(entry) => {
                         debug!(peer = ?prev_peer, topic = ?topic, "received entry via gossip");
-                        replica.insert_remote_entry(entry, prev_peer.to_bytes())?
+                        replica.insert_remote_entry(entry, *prev_peer.as_bytes())?
                     }
                 }
             }
@@ -611,7 +611,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
             }
             InsertOrigin::Sync(peer_id) => {
-                let from = PeerId::from_bytes(&peer_id)?;
+                let from = PublicKey::from_bytes(&peer_id)?;
                 let entry = signed_entry.entry();
                 let hash = *entry.record().content_hash();
 

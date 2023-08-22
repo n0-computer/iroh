@@ -26,8 +26,8 @@ pub const ENV_PREFIX: &str = "IROH";
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum IrohPaths {
-    /// Path to the node's private key for the [`iroh_net::PeerId`].
-    Keypair,
+    /// Path to the node's secret key for the [`iroh_net::PublicKey`].
+    SecretKey,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for complete blobs.
     BaoFlatStoreComplete,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
@@ -38,7 +38,7 @@ pub enum IrohPaths {
 impl From<&IrohPaths> for &'static str {
     fn from(value: &IrohPaths) -> Self {
         match value {
-            IrohPaths::Keypair => "keypair",
+            IrohPaths::SecretKey => "keypair",
             IrohPaths::BaoFlatStoreComplete => "blobs.v0",
             IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
             IrohPaths::DocsDatabase => "docs.redb",
@@ -49,7 +49,7 @@ impl FromStr for IrohPaths {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
         Ok(match s {
-            "keypair" => Self::Keypair,
+            "keypair" => Self::SecretKey,
             "blobs.v0" => Self::BaoFlatStoreComplete,
             "blobs-partial.v0" => Self::BaoFlatStorePartial,
             "docs.redb" => Self::DocsDatabase,
@@ -263,9 +263,9 @@ mod tests {
     #[test]
     fn test_iroh_paths_parse_roundtrip() {
         let kinds = [
+            IrohPaths::SecretKey,
             IrohPaths::BaoFlatStoreComplete,
             IrohPaths::BaoFlatStorePartial,
-            IrohPaths::Keypair,
             IrohPaths::DocsDatabase,
         ];
         for iroh_path in &kinds {

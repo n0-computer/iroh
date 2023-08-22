@@ -5,7 +5,7 @@ use tracing::{info_span, Instrument};
 
 use crate::{
     derp::{http::ClientBuilder, DerpMap, MeshKey, PacketForwarderHandler},
-    key::node::SecretKey,
+    key::SecretKey,
 };
 
 use super::Client;
@@ -127,7 +127,7 @@ mod tests {
     async fn test_mesh_network_once() -> Result<()> {
         let mesh_key: MeshKey = [1; 32];
         let a_key = SecretKey::generate();
-        println!("derp server a: {:?}", a_key.public_key());
+        println!("derp server a: {:?}", a_key.public());
         let mut derp_server_a = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(a_key))
             .mesh_key(Some(mesh_key))
@@ -135,7 +135,7 @@ mod tests {
             .await?;
 
         let b_key = SecretKey::generate();
-        println!("derp server b: {:?}", b_key.public_key());
+        println!("derp server b: {:?}", b_key.public());
         let mut derp_server_b = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(b_key))
             .mesh_key(Some(mesh_key))
@@ -168,14 +168,14 @@ mod tests {
         .await??;
 
         let alice_key = SecretKey::generate();
-        println!("client alice: {:?}", alice_key.public_key());
+        println!("client alice: {:?}", alice_key.public());
         let alice = ClientBuilder::new()
             .server_url(a_url)
             .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
-        println!("client bob: {:?}", bob_key.public_key());
+        println!("client bob: {:?}", bob_key.public());
         let bob = ClientBuilder::new()
             .server_url(b_url)
             .build(bob_key.clone())?;
@@ -183,12 +183,12 @@ mod tests {
 
         let msg = "howdy, bob!";
         println!("send message from alice to bob");
-        alice.send(bob_key.public_key(), msg.into()).await?;
+        alice.send(bob_key.public(), msg.into()).await?;
 
         // ensure we get the message, but allow other chatter between the
         // client and the server
         let b = bob.clone();
-        let alice_pub_key = alice_key.public_key();
+        let alice_pub_key = alice_key.public();
         tokio::time::timeout(std::time::Duration::from_secs(5), async move {
             loop {
                 let (recv, _) = b.recv_detail().await?;
@@ -207,7 +207,7 @@ mod tests {
         // send alice a message from bob
         let msg = "why hello, alice!";
         println!("send message from bob to alice");
-        bob.send(alice_key.public_key(), msg.into()).await?;
+        bob.send(alice_key.public(), msg.into()).await?;
 
         // ensure alice gets the message, but allow other chatter between the
         // client and the server
@@ -215,7 +215,7 @@ mod tests {
             loop {
                 let (recv, _) = alice.recv_detail().await?;
                 if let ReceivedMessage::ReceivedPacket { source, data } = recv {
-                    assert_eq!(bob_key.public_key(), source);
+                    assert_eq!(bob_key.public(), source);
                     assert_eq!(msg, data);
                     println!("alice received packet from alice");
                     return Ok::<(), anyhow::Error>(());

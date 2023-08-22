@@ -15,7 +15,7 @@ use iroh::{
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
-use iroh_net::{derp::DerpMap, tls::Keypair};
+use iroh_net::{derp::DerpMap, key::SecretKey};
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
@@ -58,7 +58,7 @@ pub async fn run(
     let db = flat::Store::load(&blob_dir, &partial_blob_dir, rt)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let key = Some(IrohPaths::Keypair.with_env()?);
+    let key = Some(IrohPaths::SecretKey.with_env()?);
     let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), store, rt, key, opts).await?;
@@ -135,7 +135,7 @@ async fn provide<B: BaoStore, D: DocStore>(
     key: Option<PathBuf>,
     opts: ProvideOptions,
 ) -> Result<Node<B, D>> {
-    let keypair = get_keypair(key).await?;
+    let secret_key = get_secret_key(key).await?;
 
     let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
@@ -147,14 +147,14 @@ async fn provide<B: BaoStore, D: DocStore>(
     let builder = builder.bind_addr(opts.addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = opts.rpc_port.into() {
-        let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
+        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port)?;
         builder
             .rpc_endpoint(rpc_endpoint)
-            .keypair(keypair)
+            .secret_key(secret_key)
             .spawn()
             .await?
     } else {
-        builder.keypair(keypair).spawn().await?
+        builder.secret_key(secret_key).spawn().await?
     };
     let eps = provider.local_endpoints().await?;
     println!("Listening addresses:");
@@ -171,16 +171,16 @@ async fn provide<B: BaoStore, D: DocStore>(
     Ok(provider)
 }
 
-async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
+async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
     match key {
         Some(key_path) => {
             if key_path.exists() {
                 let keystr = tokio::fs::read(key_path).await?;
-                let keypair = Keypair::try_from_openssh(keystr).context("invalid keyfile")?;
-                Ok(keypair)
+                let secret_key = SecretKey::try_from_openssh(keystr).context("invalid keyfile")?;
+                Ok(secret_key)
             } else {
-                let keypair = Keypair::generate();
-                let ser_key = keypair.to_openssh()?;
+                let secret_key = SecretKey::generate();
+                let ser_key = secret_key.to_openssh()?;
 
                 // Try to canoncialize if possible
                 let key_path = key_path.canonicalize().unwrap_or(key_path);
@@ -205,25 +205,25 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
                     .await
                     .context("failed to rename keyfile")?;
 
-                Ok(keypair)
+                Ok(secret_key)
             }
         }
         None => {
             // No path provided, just generate one
-            Ok(Keypair::generate())
+            Ok(SecretKey::generate())
         }
     }
 }
 
 /// Makes a an RPC endpoint that uses a QUIC transport
 fn make_rpc_endpoint(
-    keypair: &Keypair,
+    secret_key: &SecretKey,
     rpc_port: u16,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
         iroh::node::make_server_config(
-            keypair,
+            secret_key,
             MAX_RPC_STREAMS,
             MAX_RPC_CONNECTIONS,
             vec![RPC_ALPN.to_vec()],

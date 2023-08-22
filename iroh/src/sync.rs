@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
-use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
 use iroh_sync::{
     store,
     sync::{NamespaceId, Replica},
@@ -49,7 +49,7 @@ enum Message {
 pub async fn connect_and_sync<S: store::Store>(
     endpoint: &MagicEndpoint,
     doc: &Replica<S::Instance>,
-    peer_id: PeerId,
+    peer_id: PublicKey,
     derp_region: Option<u16>,
     addrs: &[SocketAddr],
 ) -> anyhow::Result<()> {
@@ -77,9 +77,9 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
     writer: &mut W,
     reader: &mut R,
     alice: &Replica<S::Instance>,
-    other_peer_id: PeerId,
+    other_peer_id: PublicKey,
 ) -> Result<()> {
-    let other_peer_id = other_peer_id.to_bytes();
+    let other_peer_id = *other_peer_id.as_bytes();
     let mut buffer = BytesMut::with_capacity(1024);
 
     // Init message
@@ -148,9 +148,9 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
     writer: &mut W,
     reader: &mut R,
     replica_store: S,
-    other_peer_id: PeerId,
+    other_peer_id: PublicKey,
 ) -> Result<()> {
-    let other_peer_id = other_peer_id.to_bytes();
+    let other_peer_id = *other_peer_id.as_bytes();
     let mut buffer = BytesMut::with_capacity(1024);
 
     let mut replica = None;
@@ -223,8 +223,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_simple() -> Result<()> {
         let mut rng = rand::thread_rng();
-        let alice_peer_id = PeerId::from(Keypair::from_bytes(&[1u8; 32]).public());
-        let bob_peer_id = PeerId::from(Keypair::from_bytes(&[2u8; 32]).public());
+        let alice_peer_id = PublicKey::from(Keypair::from_bytes(&[1u8; 32]).public());
+        let bob_peer_id = PublicKey::from(Keypair::from_bytes(&[2u8; 32]).public());
 
         let alice_replica_store = store::memory::Store::default();
         // For now uses same author on both sides.

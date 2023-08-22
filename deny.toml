@@ -25,5 +25,4 @@ license-files = [
 
 [advisories]
 ignore = [
-       "RUSTSEC-2022-0093",
 ]

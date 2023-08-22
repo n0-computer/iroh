@@ -40,8 +40,8 @@ use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
-    tls::{self, Keypair, PeerId},
-    MagicEndpoint,
+    key::{PublicKey, SecretKey},
+    tls, MagicEndpoint,
 };
 use iroh_sync::store::Store as DocStore;
 use once_cell::sync::OnceCell;
@@ -115,7 +115,7 @@ pub struct Builder<
     C: CollectionParser,
 {
     bind_addr: SocketAddr,
-    keypair: Keypair,
+    secret_key: SecretKey,
     rpc_endpoint: E,
     db: D,
     keylog: bool,
@@ -173,7 +173,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
     fn with_db_and_store(db: D, docs: S) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
-            keypair: Keypair::generate(),
+            secret_key: SecretKey::generate(),
             db,
             keylog: false,
             derp_map: None,
@@ -202,7 +202,7 @@ where
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
-            keypair: self.keypair,
+            secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
@@ -224,7 +224,7 @@ where
         Builder {
             collection_parser,
             bind_addr: self.bind_addr,
-            keypair: self.keypair,
+            secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
@@ -266,9 +266,9 @@ where
         self
     }
 
-    /// Uses the given [`Keypair`] for the [`PeerId`] instead of a newly generated one.
-    pub fn keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = keypair;
+    /// Uses the given [`SecretKey`] for the [`PublicKey`] instead of a newly generated one.
+    pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
+        self.secret_key = secret_key;
         self
     }
 
@@ -314,7 +314,7 @@ where
         let gossip_cell2 = gossip_cell.clone();
 
         let endpoint = MagicEndpoint::builder()
-            .keypair(self.keypair.clone())
+            .secret_key(self.secret_key.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
             .derp_map(self.derp_map)
@@ -364,7 +364,7 @@ where
         let inner = Arc::new(NodeInner {
             db: self.db,
             endpoint: endpoint.clone(),
-            keypair: self.keypair,
+            secret_key: self.secret_key,
             controller,
             cancel_token,
             callbacks: callbacks.clone(),
@@ -584,7 +584,7 @@ pub struct Node<D: Map, S: DocStore> {
 struct NodeInner<D, S: DocStore> {
     db: D,
     endpoint: MagicEndpoint,
-    keypair: Keypair,
+    secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
@@ -629,9 +629,9 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
         self.inner.local_endpoint_addresses().await
     }
 
-    /// Returns the [`PeerId`] of the node.
-    pub fn peer_id(&self) -> PeerId {
-        self.inner.keypair.public().into()
+    /// Returns the [`PublicKey`] of the node.
+    pub fn peer_id(&self) -> PublicKey {
+        self.inner.secret_key.public()
     }
 
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
@@ -1079,7 +1079,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
-            peer_id: Box::new(self.inner.keypair.public().into()),
+            peer_id: Box::new(self.inner.secret_key.public()),
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
@@ -1263,14 +1263,14 @@ fn handle_rpc_request<
     });
 }
 
-/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
+/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
 pub fn make_server_config(
-    keypair: &Keypair,
+    secret_key: &SecretKey,
     max_streams: u64,
     max_connections: u32,
     alpn_protocols: Vec<Vec<u8>>,
 ) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
+    let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, false)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     let mut transport_config = quinn::TransportConfig::default();
     transport_config

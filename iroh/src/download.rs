@@ -20,7 +20,7 @@ use iroh_bytes::{
 use iroh_gossip::net::util::Dialer;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
-use iroh_net::{tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{oneshot, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
@@ -68,10 +68,10 @@ impl Downloader {
 
     /// Add a new download request to the download queue.
     ///
-    /// Note: This method takes only [`PeerId`]s and will attempt to connect to those peers. For
+    /// Note: This method takes only [`PublicKey`]s and will attempt to connect to those peers. For
     /// this to succeed, you need to add addresses for these peers to the magic endpoint's
     /// addressbook yourself. See [`MagicEndpoint::add_known_addrs`].
-    pub async fn push(&self, hash: Hash, peers: Vec<PeerId>) {
+    pub async fn push(&self, hash: Hash, peers: Vec<PublicKey>) {
         let (reply, reply_rx) = oneshot::channel();
         let req = DownloadRequest { hash, peers, reply };
 
@@ -107,12 +107,12 @@ impl Downloader {
 
 type DownloadReply = oneshot::Sender<Option<(Hash, u64)>>;
 type PendingDownloadsFutures =
-    FuturesUnordered<LocalBoxFuture<'static, (PeerId, Hash, anyhow::Result<Option<u64>>)>>;
+    FuturesUnordered<LocalBoxFuture<'static, (PublicKey, Hash, anyhow::Result<Option<u64>>)>>;
 
 #[derive(Debug)]
 struct DownloadRequest {
     hash: Hash,
-    peers: Vec<PeerId>,
+    peers: Vec<PublicKey>,
     reply: DownloadReply,
 }
 
@@ -120,7 +120,7 @@ struct DownloadRequest {
 struct DownloadActor<B> {
     dialer: Dialer,
     db: B,
-    conns: HashMap<PeerId, quinn::Connection>,
+    conns: HashMap<PublicKey, quinn::Connection>,
     replies: HashMap<Hash, VecDeque<DownloadReply>>,
     pending_download_futs: PendingDownloadsFutures,
     queue: DownloadQueue,
@@ -189,7 +189,7 @@ impl<B: BaoStore> DownloadActor<B> {
         }
     }
 
-    fn on_peer_fail(&mut self, peer: &PeerId, err: anyhow::Error) {
+    fn on_peer_fail(&mut self, peer: &PublicKey, err: anyhow::Error) {
         warn!("download from {peer} failed: {err:?}");
         for hash in self.queue.on_peer_fail(peer) {
             self.reply(hash, None);
@@ -197,14 +197,14 @@ impl<B: BaoStore> DownloadActor<B> {
         self.conns.remove(peer);
     }
 
-    fn on_not_found(&mut self, peer: &PeerId, hash: Hash) {
+    fn on_not_found(&mut self, peer: &PublicKey, hash: Hash) {
         self.queue.on_not_found(hash, *peer);
         if self.queue.has_no_candidates(&hash) {
             self.reply(hash, None);
         }
     }
 
-    fn on_peer_ready(&mut self, peer: PeerId) {
+    fn on_peer_ready(&mut self, peer: PublicKey) {
         if let Some(hash) = self.queue.try_next_for_peer(peer) {
             debug!(peer = ?peer, hash = ?hash, "on_peer_ready: get next");
             self.start_download_unchecked(peer, hash);
@@ -214,7 +214,7 @@ impl<B: BaoStore> DownloadActor<B> {
         }
     }
 
-    fn start_download_unchecked(&mut self, peer: PeerId, hash: Hash) {
+    fn start_download_unchecked(&mut self, peer: PublicKey, hash: Hash) {
         let conn = self.conns.get(&peer).unwrap().clone();
         let db = self.db.clone();
         let progress_sender = IgnoreProgressSender::default();
@@ -275,14 +275,14 @@ impl<B: BaoStore> DownloadActor<B> {
 
 #[derive(Debug, Default)]
 struct DownloadQueue {
-    candidates_by_hash: HashMap<Hash, VecDeque<PeerId>>,
-    candidates_by_peer: HashMap<PeerId, VecDeque<Hash>>,
-    running_by_hash: HashMap<Hash, PeerId>,
-    running_by_peer: HashMap<PeerId, Hash>,
+    candidates_by_hash: HashMap<Hash, VecDeque<PublicKey>>,
+    candidates_by_peer: HashMap<PublicKey, VecDeque<Hash>>,
+    running_by_hash: HashMap<Hash, PublicKey>,
+    running_by_peer: HashMap<PublicKey, Hash>,
 }
 
 impl DownloadQueue {
-    pub fn push_candidate(&mut self, hash: Hash, peer: PeerId) {
+    pub fn push_candidate(&mut self, hash: Hash, peer: PublicKey) {
         self.candidates_by_hash
             .entry(hash)
             .or_default()
@@ -293,7 +293,7 @@ impl DownloadQueue {
             .push_back(hash);
     }
 
-    pub fn try_next_for_peer(&mut self, peer: PeerId) -> Option<Hash> {
+    pub fn try_next_for_peer(&mut self, peer: PublicKey) -> Option<Hash> {
         let mut next = None;
         for (idx, hash) in self.candidates_by_peer.get(&peer)?.iter().enumerate() {
             if !self.running_by_hash.contains_key(hash) {
@@ -320,7 +320,7 @@ impl DownloadQueue {
     }
 
     /// Mark a download as successfull.
-    pub fn on_success(&mut self, hash: Hash, peer: PeerId) {
+    pub fn on_success(&mut self, hash: Hash, peer: PublicKey) {
         let peer2 = self.running_by_hash.remove(&hash);
         debug_assert_eq!(peer2, Some(peer));
         self.running_by_peer.remove(&peer);
@@ -335,7 +335,7 @@ impl DownloadQueue {
     ///
     /// Returns a list of hashes that have no other peers queue. Those hashes should thus be
     /// considered failed.
-    pub fn on_peer_fail(&mut self, peer: &PeerId) -> Vec<Hash> {
+    pub fn on_peer_fail(&mut self, peer: &PublicKey) -> Vec<Hash> {
         let mut failed = vec![];
         for hash in self
             .candidates_by_peer
@@ -360,14 +360,14 @@ impl DownloadQueue {
         failed
     }
 
-    pub fn on_not_found(&mut self, hash: Hash, peer: PeerId) {
+    pub fn on_not_found(&mut self, hash: Hash, peer: PublicKey) {
         let peer2 = self.running_by_hash.remove(&hash);
         debug_assert_eq!(peer2, Some(peer));
         self.running_by_peer.remove(&peer);
         self.ensure_no_empty(hash, peer);
     }
 
-    fn ensure_no_empty(&mut self, hash: Hash, peer: PeerId) {
+    fn ensure_no_empty(&mut self, hash: Hash, peer: PublicKey) {
         if self
             .candidates_by_peer
             .get(&peer)

@@ -15,7 +15,7 @@ use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
 use iroh_gossip::proto::util::base32;
-use iroh_net::tls::PeerId;
+use iroh_net::key::PublicKey;
 
 use iroh_sync::{
     store::GetFilter,
@@ -67,7 +67,7 @@ pub struct ShareRequest {
     /// children are downloaded and shared as well.
     pub recursive: bool,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: PeerId,
+    pub peer: PublicKey,
     /// This vec contains possible candidate addresses of the peer.
     pub addrs: Vec<SocketAddr>,
     /// This optional field contains a request token that can be used to authorize
@@ -240,7 +240,7 @@ pub struct WatchResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdResponse {
     /// The peer id of the node
-    pub peer_id: Box<PeerId>,
+    pub peer_id: Box<PublicKey>,
     /// The addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
@@ -274,7 +274,7 @@ pub struct VersionResponse {
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PeerAddRequest {
-    pub peer_id: PeerId,
+    pub peer_id: PublicKey,
     pub addrs: Vec<SocketAddr>,
     pub region: Option<u16>,
 }
@@ -302,7 +302,7 @@ impl ServerStreamingMsg<ProviderService> for PeerListRequest {
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PeerListResponse {
-    pub peer_id: PeerId,
+    pub peer_id: PublicKey,
 }
 
 // author
