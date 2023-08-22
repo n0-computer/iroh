@@ -19,12 +19,12 @@ use super::codec::{recv_frame, DerpCodec};
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    FrameType, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    FrameType, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
 use crate::derp::codec::WriteFrame;
 use crate::derp::write_frame_timeout;
-use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -211,6 +211,7 @@ impl Client {
             WriteFrame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
             WriteFrame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
             WriteFrame::Health { problem } => {
+                let problem = std::str::from_utf8(&problem)?.to_owned();
                 let problem = Some(problem);
                 Ok(ReceivedMessage::Health { problem })
             }
@@ -431,9 +432,10 @@ where
         )
         .await?;
 
-        let mut buf = recv_frame(FrameType::ServerInfo, &mut self.reader)
-            .await?
-            .to_vec();
+        let WriteFrame::ServerInfo { encrypted_message } = recv_frame(FrameType::ServerInfo, &mut self.reader).await? else {
+            bail!("expected server info");
+        };
+        let mut buf = encrypted_message.to_vec();
         shared_secret.open(&mut buf)?;
         let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
@@ -489,26 +491,14 @@ where
     }
 }
 
-pub(crate) async fn recv_server_key<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
+pub(crate) async fn recv_server_key<S: Stream<Item = anyhow::Result<WriteFrame>> + Unpin>(
     stream: S,
 ) -> Result<PublicKey> {
-    // expecting MAGIC followed by 32 bytes that contain the server key
-    let magic_len = MAGIC.len();
-    let expected_frame_len = magic_len + 32;
-
-    let buf = recv_frame(FrameType::ServerKey, stream).await?;
-
-    if expected_frame_len != buf.len() || buf.starts_with(MAGIC.as_bytes()) {
-        bail!("invalid server greeting");
+    if let WriteFrame::ServerKey { key } = recv_frame(FrameType::ServerKey, stream).await? {
+        Ok(key)
+    } else {
+        bail!("expected server key");
     }
-
-    get_key_from_slice(&buf[magic_len..expected_frame_len])
-}
-
-// errors if `frame_len` is less than the expected [`PUBLIC_KEY_LENGTH`]
-fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
-    let key = PublicKey::try_from(&payload[..PUBLIC_KEY_LENGTH])?;
-    Ok(key)
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -675,15 +665,4 @@ pub(crate) async fn close_peer<S: Sink<WriteFrame, Error = std::io::Error> + Unp
     writer.flush().await?;
 
     Ok(())
-}
-
-pub(crate) fn parse_recv_frame(mut frame: Bytes) -> Result<(PublicKey, Bytes)> {
-    ensure!(
-        frame.len() >= PUBLIC_KEY_LENGTH,
-        "frame is shorter than expected"
-    );
-
-    let key_raw = frame.split_to(PUBLIC_KEY_LENGTH);
-
-    Ok((PublicKey::try_from(&key_raw[..])?, frame))
 }

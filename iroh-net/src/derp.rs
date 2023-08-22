@@ -35,7 +35,7 @@ use anyhow::{Context, Result};
 use futures::{Sink, SinkExt, Stream};
 
 use crate::derp::codec::recv_frame;
-use crate::key::{PublicKey, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use self::types::ClientInfo;
 
@@ -219,7 +219,7 @@ pub(crate) async fn send_client_key<S: Sink<WriteFrame, Error = std::io::Error> 
     writer
         .send(WriteFrame::ClientInfo {
             client_public_key: *client_public_key,
-            encrypted_message: msg,
+            encrypted_message: msg.into(),
         })
         .await?;
     writer.flush().await?;
@@ -228,7 +228,7 @@ pub(crate) async fn send_client_key<S: Sink<WriteFrame, Error = std::io::Error> 
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-async fn recv_client_key<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
+async fn recv_client_key<S: Stream<Item = anyhow::Result<WriteFrame>> + Unpin>(
     secret_key: SecretKey,
     stream: S,
 ) -> Result<(PublicKey, ClientInfo, SharedSecret)> {
@@ -244,13 +244,22 @@ async fn recv_client_key<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
     .context("recv_frame timeout")?
     .context("recv_frame")?;
 
-    let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH]).context("public key")?;
-    let mut msg = buf[PUBLIC_KEY_LENGTH..].to_vec();
-    let shared_secret = secret_key.shared(&key);
-    shared_secret.open(&mut msg).context("shared secret")?;
-    let info: ClientInfo = postcard::from_bytes(&msg).context("deserialization")?;
-
-    Ok((key, info, shared_secret))
+    if let WriteFrame::ClientInfo {
+        client_public_key,
+        encrypted_message,
+    } = buf
+    {
+        let mut encrypted_message = encrypted_message.to_vec();
+        let shared_secret = secret_key.shared(&client_public_key);
+        shared_secret
+            .open(&mut encrypted_message)
+            .context("shared secret")?;
+        let info: ClientInfo =
+            postcard::from_bytes(&encrypted_message).context("deserialization")?;
+        Ok((client_public_key, info, shared_secret))
+    } else {
+        anyhow::bail!("expected FrameType::ClientInfo");
+    }
 }
 
 #[cfg(test)]
@@ -268,19 +277,15 @@ mod tests {
         let mut writer = FramedWrite::new(writer, DerpCodec::default());
 
         let expect_buf = b"hello world!";
-        write_frame_timeout(
-            &mut writer,
-            WriteFrame::Health {
-                data: expect_buf.to_vec(),
-            },
-            None,
-        )
-        .await?;
+        let expected_frame = WriteFrame::Health {
+            problem: expect_buf.to_vec().into(),
+        };
+        write_frame_timeout(&mut writer, expected_frame.clone(), None).await?;
         writer.flush().await?;
         println!("{:?}", reader);
         let buf = recv_frame(FrameType::Health, &mut reader).await?;
         assert_eq!(expect_buf.len(), buf.len());
-        assert_eq!(expect_buf.as_slice(), &buf);
+        assert_eq!(expected_frame, buf);
 
         Ok(())
     }

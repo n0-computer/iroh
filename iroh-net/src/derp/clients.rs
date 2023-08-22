@@ -299,7 +299,7 @@ mod tests {
     use crate::{
         derp::{
             client_conn::ClientConnBuilder,
-            codec::{recv_frame, DerpCodec},
+            codec::{recv_frame, DerpCodec, WriteFrame},
             FrameType, PacketForwarder,
         },
         key::SecretKey,
@@ -307,7 +307,6 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use ed25519_dalek::PUBLIC_KEY_LENGTH;
     use tokio::io::DuplexStream;
     use tokio_util::codec::{Framed, FramedRead};
 
@@ -361,23 +360,30 @@ mod tests {
             bytes: Bytes::from(&data[..]),
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
-        let buf = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
-        let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(b_key, got_key);
-        assert_eq!(data, &got_frame[..]);
+        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: b_key,
+                content: data.to_vec().into(),
+            }
+        );
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
-        let buf = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
-        let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(b_key, got_key);
-        assert_eq!(data, &got_frame[..]);
+        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: b_key,
+                content: data.to_vec().into(),
+            }
+        );
 
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
-        let buf = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
-        let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        assert_eq!(got_key, b_key);
+        let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: b_key });
 
         // send mesh_update
         let updates = vec![
@@ -392,13 +398,11 @@ mod tests {
         ];
 
         clients.send_mesh_updates(&a_key.clone(), updates);
-        let buf = recv_frame(FrameType::PeerPresent, &mut a_rw).await?;
-        let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        assert_eq!(got_key, b_key);
+        let frame = recv_frame(FrameType::PeerPresent, &mut a_rw).await?;
+        assert_eq!(frame, WriteFrame::PeerPresent { peer: b_key });
 
-        let buf = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
-        let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        assert_eq!(got_key, b_key);
+        let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: b_key });
 
         clients.unregister(&a_key.clone());
 

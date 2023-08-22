@@ -1,32 +1,27 @@
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use futures::{Stream, StreamExt};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::key::PublicKey;
+use crate::{derp::MAX_PACKET_SIZE, key::PublicKey};
 
 use super::{FrameType, MAGIC, MAX_FRAME_SIZE, NOT_PREFERRED, PREFERRED};
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct DerpCodec;
 
-#[derive(Debug)]
-pub(crate) struct Frame {
-    pub(crate) typ: FrameType,
-    pub(crate) content: Bytes,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WriteFrame {
     ServerKey {
         key: PublicKey,
     },
     ClientInfo {
         client_public_key: PublicKey,
-        encrypted_message: Vec<u8>,
+        encrypted_message: Bytes,
     },
     ServerInfo {
-        encrypted_message: Vec<u8>,
+        encrypted_message: Bytes,
     },
     SendPacket {
         dst_key: PublicKey,
@@ -57,7 +52,7 @@ pub(crate) enum WriteFrame {
         data: [u8; 8],
     },
     Health {
-        problem: String,
+        problem: Bytes,
     },
     Restarting {
         reconnect_in: u32,
@@ -95,32 +90,32 @@ impl WriteFrame {
     /// Serialized length (without the frame header)
     pub(super) fn len(&self) -> usize {
         match self {
-            WriteFrame::ServerKey { .. } => MAGIC.as_bytes().len() + 32,
+            WriteFrame::ServerKey { .. } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH,
             WriteFrame::ClientInfo {
                 client_public_key: _,
                 encrypted_message,
-            } => 32 + encrypted_message.len(),
+            } => PUBLIC_KEY_LENGTH + encrypted_message.len(),
             WriteFrame::ServerInfo { encrypted_message } => encrypted_message.len(),
-            WriteFrame::SendPacket { dst_key: _, packet } => 32 + packet.len(),
+            WriteFrame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
             WriteFrame::RecvPacket {
                 src_key: _,
                 content,
-            } => 32 + content.len(),
+            } => PUBLIC_KEY_LENGTH + content.len(),
             WriteFrame::KeepAlive => 0,
             WriteFrame::NotePreferred { .. } => 1,
-            WriteFrame::PeerGone { .. } => 32,
-            WriteFrame::PeerPresent { .. } => 32,
+            WriteFrame::PeerGone { .. } => PUBLIC_KEY_LENGTH,
+            WriteFrame::PeerPresent { .. } => PUBLIC_KEY_LENGTH,
             WriteFrame::WatchConns => 0,
-            WriteFrame::ClosePeer { .. } => 32,
+            WriteFrame::ClosePeer { .. } => PUBLIC_KEY_LENGTH,
             WriteFrame::Ping { .. } => 8,
             WriteFrame::Pong { .. } => 8,
-            WriteFrame::Health { problem } => problem.as_bytes().len(),
+            WriteFrame::Health { problem } => problem.len(),
             WriteFrame::Restarting { .. } => 4 + 4,
             WriteFrame::ForwardPacket {
                 src_key: _,
                 dst_key: _,
                 packet,
-            } => 32 + 32 + packet.len(),
+            } => PUBLIC_KEY_LENGTH * 2 + packet.len(),
         }
     }
 
@@ -174,14 +169,14 @@ impl WriteFrame {
                 dst.put(&data[..]);
             }
             WriteFrame::Health { problem } => {
-                dst.put(problem.as_bytes());
+                dst.put(problem.as_ref());
             }
             WriteFrame::Restarting {
                 reconnect_in,
                 try_for,
             } => {
-                dst.put_u32(reconnect_in);
-                dst.put_u32(try_for);
+                dst.put_u32(*reconnect_in);
+                dst.put_u32(*try_for);
             }
             WriteFrame::ForwardPacket {
                 src_key,
@@ -195,25 +190,155 @@ impl WriteFrame {
         }
     }
 
-    fn from_bytes(typ: FrameType, content: BytesMut) -> std::io::Result<Self> {
-        match typ {
-            FrameType::ServerKey => todo!(),
-            FrameType::ClientInfo => todo!(),
-            FrameType::ServerInfo => todo!(),
-            FrameType::SendPacket => todo!(),
-            FrameType::RecvPacket => todo!(),
-            FrameType::KeepAlive => todo!(),
-            FrameType::NotePreferred => todo!(),
-            FrameType::PeerGone => todo!(),
-            FrameType::PeerPresent => todo!(),
-            FrameType::WatchConns => todo!(),
-            FrameType::ClosePeer => todo!(),
-            FrameType::Ping => todo!(),
-            FrameType::Pong => todo!(),
-            FrameType::Health => todo!(),
-            FrameType::Restarting => todo!(),
-            FrameType::ForwardPacket => todo!(),
-        }
+    fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
+        let res = match frame_type {
+            FrameType::ServerKey => {
+                ensure!(
+                    content.len() == 32 + MAGIC.as_bytes().len(),
+                    "invalid server key frame length"
+                );
+                ensure!(
+                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
+                    "invalid server key frame magic"
+                );
+                let key = PublicKey::try_from(&content[PUBLIC_KEY_LENGTH..])?;
+                Self::ServerKey { key }
+            }
+            FrameType::ClientInfo => {
+                ensure!(
+                    content.len() >= PUBLIC_KEY_LENGTH,
+                    "invalid client info frame length: {}",
+                    content.len()
+                );
+                let client_public_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
+                let encrypted_message = content.slice(PUBLIC_KEY_LENGTH..);
+                Self::ClientInfo {
+                    client_public_key,
+                    encrypted_message,
+                }
+            }
+            FrameType::ServerInfo => Self::ServerInfo {
+                encrypted_message: content,
+            },
+            FrameType::SendPacket => {
+                ensure!(
+                    content.len() >= PUBLIC_KEY_LENGTH,
+                    "invalid send packet frame length: {}",
+                    content.len()
+                );
+                let packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                ensure!(
+                    packet_len <= MAX_PACKET_SIZE,
+                    "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
+                );
+                let dst_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
+                let packet = content.slice(PUBLIC_KEY_LENGTH..);
+                Self::SendPacket { dst_key, packet }
+            }
+            FrameType::RecvPacket => {
+                ensure!(
+                    content.len() >= PUBLIC_KEY_LENGTH,
+                    "invalid recv packet frame length: {}",
+                    content.len()
+                );
+                let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
+                let content = content.slice(PUBLIC_KEY_LENGTH..);
+                Self::RecvPacket { src_key, content }
+            }
+            FrameType::KeepAlive => {
+                anyhow::ensure!(content.is_empty(), "invalid keep alive frame length");
+                Self::KeepAlive
+            }
+            FrameType::NotePreferred => {
+                anyhow::ensure!(content.len() == 1, "invalid note preferred frame length");
+                let preferred = match content[0] {
+                    PREFERRED => true,
+                    NOT_PREFERRED => false,
+                    _ => anyhow::bail!("invalid note preferred frame content"),
+                };
+                Self::NotePreferred { preferred }
+            }
+            FrameType::PeerGone => {
+                anyhow::ensure!(
+                    content.len() == PUBLIC_KEY_LENGTH,
+                    "invalid peer gone frame length"
+                );
+                let peer = PublicKey::try_from(&content[..32])?;
+                Self::PeerGone { peer }
+            }
+            FrameType::PeerPresent => {
+                anyhow::ensure!(
+                    content.len() == PUBLIC_KEY_LENGTH,
+                    "invalid peer present frame length"
+                );
+                let peer = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
+                Self::PeerPresent { peer }
+            }
+            FrameType::WatchConns => {
+                anyhow::ensure!(content.is_empty(), "invalid watch conns frame length");
+                Self::WatchConns
+            }
+            FrameType::ClosePeer => {
+                anyhow::ensure!(
+                    content.len() == PUBLIC_KEY_LENGTH,
+                    "invalid close peer frame length"
+                );
+                let peer = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
+                Self::ClosePeer { peer }
+            }
+            FrameType::Ping => {
+                anyhow::ensure!(content.len() == 8, "invalid ping frame length");
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Ping { data }
+            }
+            FrameType::Pong => {
+                anyhow::ensure!(content.len() == 8, "invalid pong frame length");
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Pong { data }
+            }
+            FrameType::Health => Self::Health { problem: content },
+            FrameType::Restarting => {
+                ensure!(
+                    content.len() == 4 + 4,
+                    "invalid restarting frame length: {}",
+                    content.len()
+                );
+                let reconnect_in = u32::from_be_bytes(content[..4].try_into().unwrap());
+                let try_for = u32::from_be_bytes(content[4..].try_into().unwrap());
+                Self::Restarting {
+                    reconnect_in,
+                    try_for,
+                }
+            }
+            FrameType::ForwardPacket => {
+                ensure!(
+                    content.len() >= PUBLIC_KEY_LENGTH * 2,
+                    "invalid forward packet frame length: {}",
+                    content.len()
+                );
+                let packet_len = content.len() - PUBLIC_KEY_LENGTH * 2;
+                ensure!(
+                    packet_len <= MAX_PACKET_SIZE * 2,
+                    "data packet longer ({packet_len}) than {MAX_PACKET_SIZE}"
+                );
+
+                let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
+                let dst_key =
+                    PublicKey::try_from(&content[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
+                let packet = content.slice(64..);
+                Self::ForwardPacket {
+                    src_key,
+                    dst_key,
+                    packet,
+                }
+            }
+            _ => {
+                anyhow::bail!("invalid frame type: {:?}", frame_type);
+            }
+        };
+        Ok(res)
     }
 }
 
@@ -221,7 +346,7 @@ const HEADER_LEN: usize = 5;
 
 impl Decoder for DerpCodec {
     type Item = WriteFrame;
-    type Error = std::io::Error;
+    type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // Need at least 5 bytes
@@ -234,10 +359,7 @@ impl Decoder for DerpCodec {
         let frame_len = u32::from_be_bytes(src[1..5].try_into().unwrap()) as usize;
 
         if frame_len > MAX_FRAME_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Frame of length {} is too large.", frame_len),
-            ));
+            anyhow::bail!("Frame of length {} is too large.", frame_len);
         }
 
         if src.len() < HEADER_LEN + frame_len {
@@ -282,7 +404,7 @@ impl Encoder<WriteFrame> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
-pub(super) async fn recv_frame<S: Stream<Item = std::io::Result<WriteFrame>> + Unpin>(
+pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<WriteFrame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
 ) -> anyhow::Result<WriteFrame> {

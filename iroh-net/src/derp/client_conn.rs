@@ -12,19 +12,16 @@ use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
-use crate::{
-    disco::looks_like_disco_wrapper,
-    key::{PublicKey, PUBLIC_KEY_LENGTH},
-};
+use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, Frame, WriteFrame};
+use super::codec::{DerpCodec, WriteFrame};
 use super::server::MaybeTlsStream;
 use super::{
     metrics::Metrics,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, FrameType, KEEP_ALIVE, MAX_PACKET_SIZE, PREFERRED,
+    write_frame_timeout, KEEP_ALIVE,
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -430,43 +427,49 @@ where
     }
 
     /// Handles read results.
-    async fn handle_read(&mut self, read_res: Option<std::io::Result<Frame>>) -> Result<()> {
+    async fn handle_read(&mut self, read_res: Option<anyhow::Result<WriteFrame>>) -> Result<()> {
         match read_res {
             Some(Ok(frame)) => {
                 // TODO: "note client activity", meaning we update the server that the client with this
                 // public key was the last one to receive data
                 // it will be relevant when we add the ability to hold onto multiple clients
                 // for the same public key
-                match frame.typ {
-                    FrameType::NotePreferred => {
-                        self.handle_frame_note_preferred(&frame.content)?;
+                match frame {
+                    WriteFrame::NotePreferred { preferred } => {
+                        self.handle_frame_note_preferred(preferred)?;
                         inc!(Metrics, other_packets_recv);
                     }
-                    FrameType::SendPacket => {
-                        self.handle_frame_send_packet(&frame.content).await?;
-                        inc_by!(Metrics, bytes_recv, frame.content.len() as u64);
+                    WriteFrame::SendPacket { dst_key, packet } => {
+                        let packet_len = packet.len();
+                        self.handle_frame_send_packet(dst_key, packet).await?;
+                        inc_by!(Metrics, bytes_recv, packet_len as u64);
                     }
-                    FrameType::ForwardPacket => {
-                        self.handle_frame_forward_packet(&frame.content).await?;
+                    WriteFrame::ForwardPacket {
+                        src_key,
+                        dst_key,
+                        packet,
+                    } => {
+                        self.handle_frame_forward_packet(src_key, dst_key, packet)
+                            .await?;
                         inc!(Metrics, packets_forwarded_in);
                     }
-                    FrameType::WatchConns => {
-                        self.handle_frame_watch_conns(&frame.content).await?;
+                    WriteFrame::WatchConns => {
+                        self.handle_frame_watch_conns().await?;
                         inc!(Metrics, other_packets_recv);
                     }
-                    FrameType::ClosePeer => {
-                        self.handle_frame_close_peer(&frame.content).await?;
+                    WriteFrame::ClosePeer { peer } => {
+                        self.handle_frame_close_peer(peer).await?;
                         inc!(Metrics, other_packets_recv);
                     }
-                    FrameType::Ping => {
-                        self.handle_frame_ping(&frame.content).await?;
+                    WriteFrame::Ping { data } => {
+                        self.handle_frame_ping(data).await?;
                         inc!(Metrics, got_ping);
                     }
-                    FrameType::Unknown => {
-                        inc!(Metrics, unknown_frames);
+                    WriteFrame::Health { .. } => {
+                        inc!(Metrics, other_packets_recv);
                     }
                     _ => {
-                        inc!(Metrics, other_packets_recv);
+                        inc!(Metrics, unknown_frames);
                     }
                 }
                 Ok(())
@@ -505,19 +508,11 @@ where
         Ok(())
     }
 
-    fn handle_frame_note_preferred(&mut self, data: &[u8]) -> Result<()> {
-        ensure!(
-            data.len() == 1,
-            "FrameType::NotePreferred content is an unexpected size"
-        );
-        self.set_preferred(data[0] == PREFERRED)
+    fn handle_frame_note_preferred(&mut self, preferred: bool) -> Result<()> {
+        self.set_preferred(preferred)
     }
 
-    async fn handle_frame_watch_conns(&mut self, data: &[u8]) -> Result<()> {
-        ensure!(
-            data.is_empty(),
-            "FrameType::WatchConns content is an unexpected size"
-        );
+    async fn handle_frame_watch_conns(&mut self) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
         self.send_server(ServerMessage::AddWatcher(self.key))
             .await?;
@@ -534,26 +529,18 @@ where
     }
 
     // assumes ping is 8 bytes
-    async fn handle_frame_ping(&mut self, data: &[u8]) -> Result<()> {
-        ensure!(
-            data.len() == 8,
-            "FrameType::Ping unexpected length {}",
-            data.len()
-        );
+    async fn handle_frame_ping(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO:stats
         // c.s.gotPing.Add(1)
 
         // TODO: add rate limiter
-
-        let data = <[u8; 8]>::try_from(data).unwrap();
         self.send_pong(data).await?;
         inc!(Metrics, sent_pong);
         Ok(())
     }
 
-    async fn handle_frame_close_peer(&self, data: &[u8]) -> Result<()> {
+    async fn handle_frame_close_peer(&self, key: PublicKey) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
-        let key = PublicKey::try_from(data)?;
         self.send_server(ServerMessage::ClosePeer(key)).await?;
         Ok(())
     }
@@ -564,9 +551,13 @@ where
     ///
     /// Errors if this client is not a trusted mesh peer, or if the keys cannot
     /// be parsed correctly, or if the packet is larger than MAX_PACKET_SIZE
-    async fn handle_frame_forward_packet(&self, data: &[u8]) -> Result<()> {
+    async fn handle_frame_forward_packet(
+        &self,
+        srckey: PublicKey,
+        dstkey: PublicKey,
+        data: Bytes,
+    ) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
-        let (srckey, dstkey, data) = parse_forward_packet(data)?;
 
         // TODO: stats:
         // s.packetsRecv.Add(1)
@@ -585,13 +576,12 @@ where
     ///
     /// Errors if the key cannot be parsed correctly, or if the packet is
     /// larger than MAX_PACKET_SIZE
-    async fn handle_frame_send_packet(&self, data: &[u8]) -> Result<()> {
-        let (dstkey, data) = parse_send_packet(data)?;
+    async fn handle_frame_send_packet(&self, dst_key: PublicKey, data: Bytes) -> Result<()> {
         let packet = Packet {
             src: self.key,
             bytes: Bytes::from(data.to_owned()),
         };
-        self.transfer_packet(dstkey, packet).await
+        self.transfer_packet(dst_key, packet).await
     }
 
     /// Send the given packet to the server. The server will attempt to
@@ -612,41 +602,12 @@ where
     }
 }
 
-fn parse_forward_packet(data: &[u8]) -> Result<(PublicKey, PublicKey, &[u8])> {
-    ensure!(
-        data.len() >= PUBLIC_KEY_LENGTH * 2,
-        "short FORWARD_PACKET frame"
-    );
-
-    let packet_len = data.len() - (PUBLIC_KEY_LENGTH * 2);
-    ensure!(
-        packet_len <= MAX_PACKET_SIZE,
-        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-    );
-    let srckey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
-    let dstkey = PublicKey::try_from(&data[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
-    let data = &data[PUBLIC_KEY_LENGTH * 2..];
-
-    Ok((srckey, dstkey, data))
-}
-
-fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
-    ensure!(data.len() >= PUBLIC_KEY_LENGTH, "short SEND_PACKET frame");
-    let packet_len = data.len() - PUBLIC_KEY_LENGTH;
-    ensure!(
-        packet_len <= MAX_PACKET_SIZE,
-        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-    );
-    let dstkey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
-    let data = &data[PUBLIC_KEY_LENGTH..];
-    Ok((dstkey, data))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use crate::derp::codec::recv_frame;
+    use crate::derp::FrameType;
     use crate::key::SecretKey;
 
     use super::*;
@@ -703,27 +664,32 @@ mod tests {
             bytes: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
-        let buf = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
-        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, buf.len());
-        let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(key, got_key);
-        assert_eq!(&data[..], got_data);
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: key,
+                content: data.to_vec().into()
+            }
+        );
 
         // send disco packet
         println!("  send disco packet");
         disco_send_queue_s.send(packet.clone()).await?;
-        let buf = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
-        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, buf.len());
-        let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(key, got_key);
-        assert_eq!(&data[..], got_data);
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: key,
+                content: data.to_vec().into()
+            }
+        );
 
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(key).await?;
-        let buf = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(PUBLIC_KEY_LENGTH, buf.len());
-        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: key });
 
         // send mesh_upate
         let updates = vec![
@@ -738,13 +704,11 @@ mod tests {
         ];
 
         mesh_update_s.send(updates.clone()).await?;
-        let buf = recv_frame(FrameType::PeerPresent, &mut io_rw).await?;
-        assert_eq!(PUBLIC_KEY_LENGTH, buf.len());
-        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let frame = recv_frame(FrameType::PeerPresent, &mut io_rw).await?;
+        assert_eq!(frame, WriteFrame::PeerPresent { peer: key });
 
-        let buf = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(PUBLIC_KEY_LENGTH, buf.len());
-        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(frame, WriteFrame::PeerGone { peer: key });
 
         // Read tests
         println!("--read");
@@ -755,9 +719,8 @@ mod tests {
 
         // recv pong
         println!(" recv pong");
-        let buf = recv_frame(FrameType::Pong, &mut io_rw).await?;
-        assert_eq!(8, buf.len());
-        assert_eq!(data, &buf[..]);
+        let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
+        assert_eq!(frame, WriteFrame::Pong { data: *data });
 
         // change preferred to false
         println!("  preferred: false");
