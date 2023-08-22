@@ -12,12 +12,12 @@
 pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
+mod codec;
 pub mod http;
 mod map;
 mod metrics;
 pub(crate) mod server;
 pub(crate) mod types;
-mod codec;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
 use self::codec::WriteFrame;
@@ -263,10 +263,7 @@ async fn write_frame<'a>(
     Ok(())
 }
 
-async fn write_frame2(
-    mut writer: impl AsyncWrite + Unpin,
-    frame: WriteFrame,
-) -> Result<()> {
+async fn write_frame2(mut writer: impl AsyncWrite + Unpin, frame: WriteFrame) -> Result<()> {
     writer.write_all(frame.to_bytes().as_ref()).await?;
     Ok(())
 }
@@ -301,10 +298,12 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 ) -> Result<()> {
     let mut msg = postcard::to_stdvec(client_info)?;
     shared_secret.seal(&mut msg);
-    write_frame(
+    write_frame2(
         &mut writer,
-        FrameType::ClientInfo,
-        &[client_public_key.as_bytes(), &msg],
+        WriteFrame::ClientInfo {
+            client_public_key: *client_public_key,
+            encrypted_message: msg.into(),
+        },
     )
     .await?;
     writer.flush().await?;

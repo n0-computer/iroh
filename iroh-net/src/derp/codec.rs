@@ -119,6 +119,7 @@ impl WriteFrame {
         }
     }
 
+    /// Write the packet to bytes including type and length header.
     pub(crate) fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(self.len() + 5);
         buf.put_u8(self.typ().into());

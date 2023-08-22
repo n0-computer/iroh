@@ -638,7 +638,7 @@ pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
         WriteFrame::SendPacket {
             dst_key: dstkey,
             packet: packet.to_vec().into(),
-        }
+        },
     )
     .await?;
     writer.flush().await?;
