@@ -223,8 +223,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_simple() -> Result<()> {
         let mut rng = rand::thread_rng();
-        let alice_peer_id = PublicKey::from(SecretKey::from_bytes(&[1u8; 32]).public());
-        let bob_peer_id = PublicKey::from(SecretKey::from_bytes(&[2u8; 32]).public());
+        let alice_peer_id = SecretKey::from_bytes(&[1u8; 32]).public();
+        let bob_peer_id = SecretKey::from_bytes(&[2u8; 32]).public();
 
         let alice_replica_store = store::memory::Store::default();
         // For now uses same author on both sides.
