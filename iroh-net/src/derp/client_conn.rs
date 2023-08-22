@@ -348,7 +348,7 @@ where
         }
     }
 
-    /// Send  [`FrameType::KeepAlive`], does not flush
+    /// Sends a `keep alive` frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
@@ -635,12 +635,12 @@ mod tests {
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec::default());
+        let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -845,13 +845,13 @@ mod tests {
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec::default());
+        let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,

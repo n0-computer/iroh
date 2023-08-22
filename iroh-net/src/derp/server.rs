@@ -309,7 +309,7 @@ where
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
     pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
-        let mut io = Framed::new(io, DerpCodec::default());
+        let mut io = Framed::new(io, DerpCodec);
         trace!("accept: start");
         self.send_server_key(&mut io)
             .await
@@ -728,13 +728,13 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
+                io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            Framed::new(test_io, DerpCodec::default()),
+            Framed::new(test_io, DerpCodec),
         )
     }
 
@@ -899,8 +899,8 @@ mod tests {
         // create the parts needed for a client
         let (client, server_io) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
-        let mut client_reader = FramedRead::new(client_reader, DerpCodec::default());
-        let mut client_writer = FramedWrite::new(client_writer, DerpCodec::default());
+        let mut client_reader = FramedRead::new(client_reader, DerpCodec);
+        let mut client_writer = FramedWrite::new(client_writer, DerpCodec);
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();

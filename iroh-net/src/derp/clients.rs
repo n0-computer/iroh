@@ -330,16 +330,13 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Framed::new(
-                    crate::derp::server::MaybeTlsStream::Test(io),
-                    DerpCodec::default(),
-                ),
+                io: Framed::new(crate::derp::server::MaybeTlsStream::Test(io), DerpCodec),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            FramedRead::new(test_io, DerpCodec::default()),
+            FramedRead::new(test_io, DerpCodec),
         )
     }
 

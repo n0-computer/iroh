@@ -214,8 +214,8 @@ mod tests {
     #[tokio::test]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec::default());
-        let mut writer = FramedWrite::new(writer, DerpCodec::default());
+        let mut reader = FramedRead::new(reader, DerpCodec);
+        let mut writer = FramedWrite::new(writer, DerpCodec);
 
         let expect_buf = b"hello world!";
         let expected_frame = Frame::Health {
@@ -234,8 +234,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec::default());
-        let mut writer = FramedWrite::new(writer, DerpCodec::default());
+        let mut reader = FramedRead::new(reader, DerpCodec);
+        let mut writer = FramedWrite::new(writer, DerpCodec);
 
         let server_key = SecretKey::generate();
         let client_key = SecretKey::generate();
