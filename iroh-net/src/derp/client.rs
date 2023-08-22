@@ -16,7 +16,7 @@ use tracing::{debug, info_span, Instrument};
 
 use super::{
     codec::{
-        recv_frame, write_frame, DerpCodec, FrameType, WriteFrame, MAX_PACKET_SIZE,
+        recv_frame, write_frame, DerpCodec, Frame, FrameType, MAX_PACKET_SIZE,
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
@@ -193,28 +193,28 @@ impl Client {
         };
 
         match frame {
-            WriteFrame::KeepAlive => {
+            Frame::KeepAlive => {
                 // A one-way keep-alive message that doesn't require an ack.
                 // This predated FrameType::Ping/FrameType::Pong.
                 Ok(ReceivedMessage::KeepAlive)
             }
-            WriteFrame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
-            WriteFrame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
-            WriteFrame::RecvPacket { src_key, content } => {
+            Frame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
+            Frame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
+            Frame::RecvPacket { src_key, content } => {
                 let packet = ReceivedMessage::ReceivedPacket {
                     source: src_key,
                     data: content,
                 };
                 Ok(packet)
             }
-            WriteFrame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
-            WriteFrame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
-            WriteFrame::Health { problem } => {
+            Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+            Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+            Frame::Health { problem } => {
                 let problem = std::str::from_utf8(&problem)?.to_owned();
                 let problem = Some(problem);
                 Ok(ReceivedMessage::Health { problem })
             }
-            WriteFrame::Restarting {
+            Frame::Restarting {
                 reconnect_in,
                 try_for,
             } => {
@@ -318,28 +318,23 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                     .await??;
                 }
                 ClientWriterMessage::Pong(data) => {
-                    write_frame(&mut self.writer, WriteFrame::Pong { data }, None).await?;
+                    write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::Ping(data) => {
-                    write_frame(&mut self.writer, WriteFrame::Ping { data }, None).await?;
+                    write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::NotePreferred(preferred) => {
-                    write_frame(
-                        &mut self.writer,
-                        WriteFrame::NotePreferred { preferred },
-                        None,
-                    )
-                    .await?;
+                    write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::WatchConnectionChanges => {
-                    write_frame(&mut self.writer, WriteFrame::WatchConns, None).await?;
+                    write_frame(&mut self.writer, Frame::WatchConns, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::ClosePeer(peer) => {
-                    write_frame(&mut self.writer, WriteFrame::ClosePeer { peer }, None).await?;
+                    write_frame(&mut self.writer, Frame::ClosePeer { peer }, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::Shutdown => {
@@ -434,7 +429,7 @@ impl ClientBuilder {
         )
         .await?;
 
-        let WriteFrame::ServerInfo { encrypted_message } = recv_frame(FrameType::ServerInfo, &mut self.reader).await? else {
+        let Frame::ServerInfo { encrypted_message } = recv_frame(FrameType::ServerInfo, &mut self.reader).await? else {
             bail!("expected server info");
         };
         let mut buf = encrypted_message.to_vec();
@@ -488,10 +483,10 @@ impl ClientBuilder {
     }
 }
 
-pub(crate) async fn recv_server_key<S: Stream<Item = anyhow::Result<WriteFrame>> + Unpin>(
+pub(crate) async fn recv_server_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> Result<PublicKey> {
-    if let WriteFrame::ServerKey { key } = recv_frame(FrameType::ServerKey, stream).await? {
+    if let Frame::ServerKey { key } = recv_frame(FrameType::ServerKey, stream).await? {
         Ok(key)
     } else {
         bail!("expected server key");
@@ -559,7 +554,7 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packet<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     rate_limiter: &Option<RateLimiter>,
     dst_key: PublicKey,
@@ -571,7 +566,7 @@ pub(crate) async fn send_packet<S: Sink<WriteFrame, Error = std::io::Error> + Un
         packet.len()
     );
 
-    let frame = WriteFrame::SendPacket { dst_key, packet };
+    let frame = Frame::SendPacket { dst_key, packet };
     if let Some(rate_limiter) = rate_limiter {
         if rate_limiter.check_n(frame.len()).is_err() {
             tracing::warn!("dropping send: rate limit reached");
@@ -584,7 +579,7 @@ pub(crate) async fn send_packet<S: Sink<WriteFrame, Error = std::io::Error> + Un
     Ok(())
 }
 
-pub(crate) async fn forward_packet<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn forward_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     src_key: PublicKey,
     dst_key: PublicKey,
@@ -598,7 +593,7 @@ pub(crate) async fn forward_packet<S: Sink<WriteFrame, Error = std::io::Error> +
 
     write_frame(
         &mut writer,
-        WriteFrame::ForwardPacket {
+        Frame::ForwardPacket {
             src_key,
             dst_key,
             packet,

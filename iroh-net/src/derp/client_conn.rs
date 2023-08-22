@@ -16,7 +16,7 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, WriteFrame};
+use super::codec::{DerpCodec, Frame};
 use super::server::MaybeTlsStream;
 use super::{
     codec::{write_frame, KEEP_ALIVE},
@@ -352,7 +352,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame(&mut self.io, WriteFrame::KeepAlive, self.timeout).await
+        write_frame(&mut self.io, Frame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -361,7 +361,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame(&mut self.io, WriteFrame::Pong { data }, self.timeout).await
+        write_frame(&mut self.io, Frame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -370,14 +370,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame(&mut self.io, WriteFrame::PeerGone { peer }, self.timeout).await
+        write_frame(&mut self.io, Frame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame(&mut self.io, WriteFrame::PeerPresent { peer }, self.timeout).await
+        write_frame(&mut self.io, Frame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -431,29 +431,29 @@ where
         inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
         write_frame(
             &mut self.io,
-            WriteFrame::RecvPacket { src_key, content },
+            Frame::RecvPacket { src_key, content },
             self.timeout,
         )
         .await
     }
 
     /// Handles read results.
-    async fn handle_read(&mut self, frame: WriteFrame) -> Result<()> {
+    async fn handle_read(&mut self, frame: Frame) -> Result<()> {
         // TODO: "note client activity", meaning we update the server that the client with this
         // public key was the last one to receive data
         // it will be relevant when we add the ability to hold onto multiple clients
         // for the same public key
         match frame {
-            WriteFrame::NotePreferred { preferred } => {
+            Frame::NotePreferred { preferred } => {
                 self.handle_frame_note_preferred(preferred)?;
                 inc!(Metrics, other_packets_recv);
             }
-            WriteFrame::SendPacket { dst_key, packet } => {
+            Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
                 self.handle_frame_send_packet(dst_key, packet).await?;
                 inc_by!(Metrics, bytes_recv, packet_len as u64);
             }
-            WriteFrame::ForwardPacket {
+            Frame::ForwardPacket {
                 src_key,
                 dst_key,
                 packet,
@@ -462,19 +462,19 @@ where
                     .await?;
                 inc!(Metrics, packets_forwarded_in);
             }
-            WriteFrame::WatchConns => {
+            Frame::WatchConns => {
                 self.handle_frame_watch_conns().await?;
                 inc!(Metrics, other_packets_recv);
             }
-            WriteFrame::ClosePeer { peer } => {
+            Frame::ClosePeer { peer } => {
                 self.handle_frame_close_peer(peer).await?;
                 inc!(Metrics, other_packets_recv);
             }
-            WriteFrame::Ping { data } => {
+            Frame::Ping { data } => {
                 self.handle_frame_ping(data).await?;
                 inc!(Metrics, got_ping);
             }
-            WriteFrame::Health { .. } => {
+            Frame::Health { .. } => {
                 inc!(Metrics, other_packets_recv);
             }
             _ => {
@@ -671,7 +671,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
         assert_eq!(
             frame,
-            WriteFrame::RecvPacket {
+            Frame::RecvPacket {
                 src_key: key,
                 content: data.to_vec().into()
             }
@@ -683,7 +683,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
         assert_eq!(
             frame,
-            WriteFrame::RecvPacket {
+            Frame::RecvPacket {
                 src_key: key,
                 content: data.to_vec().into()
             }
@@ -693,7 +693,7 @@ mod tests {
         println!("send peer gone");
         peer_gone_s.send(key).await?;
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, WriteFrame::PeerGone { peer: key });
+        assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // send mesh_upate
         let updates = vec![
@@ -709,47 +709,37 @@ mod tests {
 
         mesh_update_s.send(updates.clone()).await?;
         let frame = recv_frame(FrameType::PeerPresent, &mut io_rw).await?;
-        assert_eq!(frame, WriteFrame::PeerPresent { peer: key });
+        assert_eq!(frame, Frame::PeerPresent { peer: key });
 
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, WriteFrame::PeerGone { peer: key });
+        assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // Read tests
         println!("--read");
 
         // send ping, expect pong
         let data = b"pingpong";
-        write_frame(&mut io_rw, WriteFrame::Ping { data: *data }, None).await?;
+        write_frame(&mut io_rw, Frame::Ping { data: *data }, None).await?;
 
         // recv pong
         println!(" recv pong");
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
-        assert_eq!(frame, WriteFrame::Pong { data: *data });
+        assert_eq!(frame, Frame::Pong { data: *data });
 
         // change preferred to false
         println!("  preferred: false");
-        write_frame(
-            &mut io_rw,
-            WriteFrame::NotePreferred { preferred: false },
-            None,
-        )
-        .await?;
+        write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         println!("  preferred: true");
-        write_frame(
-            &mut io_rw,
-            WriteFrame::NotePreferred { preferred: true },
-            None,
-        )
-        .await?;
+        write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
         // add this client as a watcher
-        write_frame(&mut io_rw, WriteFrame::WatchConns, None).await?;
+        write_frame(&mut io_rw, Frame::WatchConns, None).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
@@ -761,7 +751,7 @@ mod tests {
         // send message to close a peer
         println!("  close peer");
         let target = SecretKey::generate().public();
-        write_frame(&mut io_rw, WriteFrame::ClosePeer { peer: target }, None).await?;
+        write_frame(&mut io_rw, Frame::ClosePeer { peer: target }, None).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
