@@ -306,7 +306,9 @@ impl WriteFrame {
                 data.copy_from_slice(&content[..8]);
                 Self::Pong { data }
             }
-            FrameType::Health => Self::Health { problem: content.to_vec().into() },
+            FrameType::Health => Self::Health {
+                problem: content.to_vec().into(),
+            },
             FrameType::Restarting => {
                 ensure!(
                     content.len() == 4 + 4,

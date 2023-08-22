@@ -179,14 +179,13 @@ impl Client {
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
             let mut reader = self.inner.reader.lock().await;
-            let frame =
-                match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
-                    Ok(f) => f,
-                    Err(e) => {
-                        self.close().await;
-                        bail!(e);
-                    }
-                };
+            let frame = match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
+                Ok(f) => f,
+                Err(e) => {
+                    self.close().await;
+                    bail!(e);
+                }
+            };
 
             match frame {
                 WriteFrame::KeepAlive => {
@@ -201,7 +200,10 @@ impl Client {
                     return Ok(ReceivedMessage::PeerPresent(peer));
                 }
                 WriteFrame::RecvPacket { src_key, content } => {
-                    let packet = ReceivedMessage::ReceivedPacket { source: src_key, data: content };
+                    let packet = ReceivedMessage::ReceivedPacket {
+                        source: src_key,
+                        data: content,
+                    };
                     return Ok(packet);
                 }
                 WriteFrame::Ping { data } => {
@@ -211,12 +213,18 @@ impl Client {
                     return Ok(ReceivedMessage::Pong(data));
                 }
                 WriteFrame::Health { problem } => {
-                    let problem = Some(std::str::from_utf8(&problem).context("problem not a string")?.to_string());
+                    let problem = Some(
+                        std::str::from_utf8(&problem)
+                            .context("problem not a string")?
+                            .to_string(),
+                    );
                     return Ok(ReceivedMessage::Health { problem });
                 }
-                WriteFrame::Restarting { reconnect_in, try_for } => {
-                    let reconnect_in =
-                        Duration::from_millis(reconnect_in as u64);
+                WriteFrame::Restarting {
+                    reconnect_in,
+                    try_for,
+                } => {
+                    let reconnect_in = Duration::from_millis(reconnect_in as u64);
                     let try_for = Duration::from_millis(try_for as u64);
                     return Ok(ReceivedMessage::ServerRestarting {
                         reconnect_in,
@@ -409,8 +417,6 @@ where
     ) -> Result<(PublicKey, Option<RateLimiter>)> {
         debug!("server_handshake: started");
         let server_key = if let Some(buf) = buf {
-            let bl = buf.len();
-            println!("buf len {}", bl);
             recv_server_key(buf.chain(&mut self.reader))
                 .await
                 .context("failed to receive server key")?

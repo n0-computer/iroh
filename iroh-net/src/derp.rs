@@ -224,10 +224,9 @@ async fn read_frame_timeout(
     timeout: Option<Duration>,
 ) -> Result<WriteFrame> {
     if let Some(duration) = timeout {
-        let frame =
-            tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
-                .await
-                .context("timeout")??;
+        let frame = tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
+            .await
+            .context("timeout")??;
         Ok(frame)
     } else {
         read_frame(&mut reader, max_size, buf).await
@@ -345,7 +344,12 @@ mod tests {
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();
         let frame = read_frame(&mut reader, 1024, &mut got_buf).await?;
-        assert_eq!(frame, WriteFrame::Health { problem: expect_buf.to_vec().into() });
+        assert_eq!(
+            frame,
+            WriteFrame::Health {
+                problem: expect_buf.to_vec().into()
+            }
+        );
         Ok(())
     }
 

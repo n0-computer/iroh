@@ -27,8 +27,8 @@ use super::{
     MeshKey,
 };
 use super::{
-    recv_client_key, types::ServerInfo, write_frame_timeout,
-    PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+    recv_client_key, types::ServerInfo, write_frame_timeout, PER_CLIENT_SEND_QUEUE_DEPTH,
+    PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 
 // TODO: skiping `verboseDropKeys` for now
@@ -681,14 +681,12 @@ impl AsyncWrite for MaybeTlsStream {
 mod tests {
     use super::*;
 
-    use crate::
-        derp::{
-            client::ClientBuilder,
-            client_conn::{ClientConnBuilder, Io},
-            types::ClientInfo,
-            ReceivedMessage, MAX_FRAME_SIZE,
-        }
-    ;
+    use crate::derp::{
+        client::ClientBuilder,
+        client_conn::{ClientConnBuilder, Io},
+        types::ClientInfo,
+        ReceivedMessage, MAX_FRAME_SIZE,
+    };
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
@@ -793,7 +791,7 @@ mod tests {
         // expect mesh update message on client_a about client_c joining the network
         let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame, WriteFrame::PeerPresent { peer: key_c });
-    
+
         // server message: add client c as watcher
         server_channel
             .send(ServerMessage::AddWatcher(key_c))
@@ -829,7 +827,13 @@ mod tests {
 
         // get message on a's reader
         let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::RecvPacket { src_key: key_b, content: msg.to_vec().into() });
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: key_b,
+                content: msg.to_vec().into()
+            }
+        );
 
         // write disco message from b to d
         let mut disco_msg = crate::disco::MAGIC.as_bytes().to_vec();

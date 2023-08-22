@@ -298,7 +298,8 @@ mod tests {
 
     use crate::{
         derp::{
-            client_conn::ClientConnBuilder, read_frame, PacketForwarder, MAX_PACKET_SIZE, codec::WriteFrame,
+            client_conn::ClientConnBuilder, codec::WriteFrame, read_frame, PacketForwarder,
+            MAX_PACKET_SIZE,
         },
         key::SecretKey,
     };
@@ -353,12 +354,24 @@ mod tests {
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let mut buf = BytesMut::new();
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::RecvPacket { src_key: b_key, content: data.to_vec().into() });
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: b_key,
+                content: data.to_vec().into()
+            }
+        );
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::RecvPacket { src_key: b_key, content: data.to_vec().into() });
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: b_key,
+                content: data.to_vec().into()
+            }
+        );
 
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);

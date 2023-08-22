@@ -452,8 +452,13 @@ where
                         self.handle_frame_send_packet(dst_key, packet).await?;
                         inc_by!(Metrics, bytes_recv, packet_len as u64);
                     }
-                    WriteFrame::ForwardPacket { src_key, dst_key, packet }=> {
-                        self.handle_frame_forward_packet(src_key, dst_key, packet).await?;
+                    WriteFrame::ForwardPacket {
+                        src_key,
+                        dst_key,
+                        packet,
+                    } => {
+                        self.handle_frame_forward_packet(src_key, dst_key, packet)
+                            .await?;
                         inc!(Metrics, packets_forwarded_in);
                     }
                     WriteFrame::WatchConns => {
@@ -533,7 +538,7 @@ where
     }
 
     // assumes ping is 8 bytes
-    async fn handle_frame_ping(&mut self, data: [u8;8]) -> Result<()> {
+    async fn handle_frame_ping(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO:stats
         // c.s.gotPing.Add(1)
 
@@ -556,7 +561,12 @@ where
     ///
     /// Errors if this client is not a trusted mesh peer, or if the keys cannot
     /// be parsed correctly, or if the packet is larger than MAX_PACKET_SIZE
-    async fn handle_frame_forward_packet(&self,src_key: PublicKey, dst_key: PublicKey, packet: Bytes) -> Result<()> {
+    async fn handle_frame_forward_packet(
+        &self,
+        src_key: PublicKey,
+        dst_key: PublicKey,
+        packet: Bytes,
+    ) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
 
         // TODO: stats:
@@ -693,19 +703,25 @@ mod tests {
         };
         send_queue_s.send(packet.clone()).await?;
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::RecvPacket {
-            src_key: key,
-            content: Bytes::from(&data[..]),
-        });
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: key,
+                content: Bytes::from(&data[..]),
+            }
+        );
 
         // send disco packet
         println!("  send disco packet");
         disco_send_queue_s.send(packet.clone()).await?;
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::RecvPacket {
-            src_key: key,
-            content: Bytes::from(&data[..]),
-        });
+        assert_eq!(
+            frame,
+            WriteFrame::RecvPacket {
+                src_key: key,
+                content: Bytes::from(&data[..]),
+            }
+        );
 
         // send peer_gone
         println!("send peer gone");
