@@ -274,15 +274,14 @@ async fn write_frame2(mut writer: impl AsyncWrite + Unpin, frame: WriteFrame) ->
 /// Does not flush.
 async fn write_frame_timeout(
     writer: impl AsyncWrite + Unpin,
-    frame_type: FrameType,
-    bytes: &[&[u8]],
+    frame: WriteFrame,
     timeout: Option<Duration>,
 ) -> Result<()> {
     if let Some(duration) = timeout {
-        tokio::time::timeout(duration, write_frame(writer, frame_type, bytes)).await??;
+        tokio::time::timeout(duration, write_frame2(writer, frame)).await??;
         Ok(())
     } else {
-        write_frame(writer, frame_type, bytes).await
+        write_frame2(writer, frame).await
     }
 }
 
@@ -353,7 +352,13 @@ mod tests {
         assert_eq!(frame_len, 301);
 
         let expect_buf = b"hello world!";
-        write_frame2(&mut writer, WriteFrame::Health { problem: expect_buf.to_vec().into() }).await?;
+        write_frame2(
+            &mut writer,
+            WriteFrame::Health {
+                problem: expect_buf.to_vec().into(),
+            },
+        )
+        .await?;
         writer.flush().await?;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();

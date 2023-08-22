@@ -16,8 +16,7 @@ use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE,
-    PROTOCOL_VERSION,
+    FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
 use crate::derp::codec::WriteFrame;
@@ -663,7 +662,7 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
             src_key: srckey,
             dst_key: dstkey,
             packet: packet.to_vec().into(),
-        }
+        },
     )
     .await?;
     writer.flush().await?;

@@ -27,7 +27,7 @@ use super::{
     MeshKey,
 };
 use super::{
-    recv_client_key, types::ServerInfo, write_frame_timeout, FrameType, MAGIC,
+    recv_client_key, types::ServerInfo, write_frame_timeout,
     PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 
@@ -346,14 +346,11 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(MAGIC.as_bytes());
-        buf.extend_from_slice(self.secret_key.public().as_bytes());
-        let content = &[buf.as_slice()];
         write_frame_timeout(
             &mut writer,
-            FrameType::ServerKey,
-            content,
+            WriteFrame::ServerKey {
+                key: self.secret_key.public(),
+            },
             Some(Duration::from_secs(10)),
         )
         .await?;
@@ -371,9 +368,13 @@ where
     {
         let mut msg = postcard::to_stdvec(&self.server_info)?;
         shared_secret.seal(&mut msg);
-        write_frame2(&mut writer, WriteFrame::ServerInfo {
-            encrypted_message: msg.into(),
-        }).await?;
+        write_frame2(
+            &mut writer,
+            WriteFrame::ServerInfo {
+                encrypted_message: msg.into(),
+            },
+        )
+        .await?;
         writer.flush().await?;
         Ok(())
     }
@@ -685,7 +686,7 @@ mod tests {
             client::ClientBuilder,
             client_conn::{ClientConnBuilder, Io},
             types::ClientInfo,
-            ReceivedMessage, MAX_FRAME_SIZE,
+            ReceivedMessage, MAX_FRAME_SIZE, FrameType,
         },
         key::PUBLIC_KEY_LENGTH,
     };

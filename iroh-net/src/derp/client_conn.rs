@@ -17,6 +17,7 @@ use crate::{
 
 use iroh_metrics::{inc, inc_by};
 
+use super::codec::WriteFrame;
 use super::server::MaybeTlsStream;
 use super::{
     metrics::Metrics,
@@ -344,7 +345,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.io, FrameType::KeepAlive, &[], self.timeout).await
+        write_frame_timeout(&mut self.io, WriteFrame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -353,7 +354,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame_timeout(&mut self.io, FrameType::Pong, &[&data], self.timeout).await
+        write_frame_timeout(&mut self.io, WriteFrame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -362,26 +363,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(
-            &mut self.io,
-            FrameType::PeerGone,
-            &[peer.as_bytes()],
-            self.timeout,
-        )
-        .await
+        write_frame_timeout(&mut self.io, WriteFrame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame_timeout(
-            &mut self.io,
-            FrameType::PeerPresent,
-            &[peer.as_bytes()],
-            self.timeout,
-        )
-        .await
+        write_frame_timeout(&mut self.io, WriteFrame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -430,13 +419,12 @@ where
     /// are only valid until this function returns, do not retain the slices.
     /// Does not flush.
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
-        let srckey = packet.src;
-        let contents = packet.bytes;
-        inc_by!(Metrics, bytes_sent, contents.len().try_into().unwrap());
+        let src_key = packet.src;
+        let content = packet.bytes;
+        inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
         write_frame_timeout(
             &mut self.io,
-            FrameType::RecvPacket,
-            &[srckey.as_bytes(), &contents],
+            WriteFrame::RecvPacket { src_key, content },
             self.timeout,
         )
         .await
