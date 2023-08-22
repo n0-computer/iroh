@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(frame_len, 301);
 
         let expect_buf = b"hello world!";
-        write_frame(&mut writer, FrameType::Health, &[expect_buf]).await?;
+        write_frame2(&mut writer, WriteFrame::Health { problem: expect_buf.to_vec().into() }).await?;
         writer.flush().await?;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();

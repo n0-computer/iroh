@@ -18,6 +18,8 @@ use tracing::{info_span, instrument, trace, Instrument};
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
+use super::codec::WriteFrame;
+use super::write_frame2;
 use super::{
     clients::Clients,
     metrics::Metrics,
@@ -25,7 +27,7 @@ use super::{
     MeshKey,
 };
 use super::{
-    recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FrameType, MAGIC,
+    recv_client_key, types::ServerInfo, write_frame_timeout, FrameType, MAGIC,
     PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 
@@ -369,7 +371,9 @@ where
     {
         let mut msg = postcard::to_stdvec(&self.server_info)?;
         shared_secret.seal(&mut msg);
-        write_frame(&mut writer, FrameType::ServerInfo, &[&msg]).await?;
+        write_frame2(&mut writer, WriteFrame::ServerInfo {
+            encrypted_message: msg.into(),
+        }).await?;
         writer.flush().await?;
         Ok(())
     }

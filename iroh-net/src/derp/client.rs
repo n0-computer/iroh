@@ -16,7 +16,7 @@ use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    write_frame, FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, NOT_PREFERRED, PREFERRED,
+    FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE,
     PROTOCOL_VERSION,
 };
 
@@ -686,20 +686,13 @@ pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
     mut writer: W,
     preferred: bool,
 ) -> Result<()> {
-    let byte = {
-        if preferred {
-            [PREFERRED]
-        } else {
-            [NOT_PREFERRED]
-        }
-    };
-    write_frame(&mut writer, FrameType::NotePreferred, &[&byte]).await?;
+    write_frame2(&mut writer, WriteFrame::NotePreferred { preferred }).await?;
     writer.flush().await?;
     Ok(())
 }
 
 pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
-    write_frame(&mut writer, FrameType::WatchConns, &[]).await?;
+    write_frame2(&mut writer, WriteFrame::WatchConns).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -708,7 +701,7 @@ pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
     mut writer: W,
     target: PublicKey,
 ) -> Result<()> {
-    write_frame(&mut writer, FrameType::ClosePeer, &[target.as_bytes()]).await?;
+    write_frame2(&mut writer, WriteFrame::ClosePeer { peer: target }).await?;
     writer.flush().await?;
     Ok(())
 }
