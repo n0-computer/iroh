@@ -14,15 +14,14 @@ use tokio::task::JoinHandle;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
-use super::codec::{recv_frame, DerpCodec};
-use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
+    codec::{
+        recv_frame, write_frame, DerpCodec, FrameType, WriteFrame, MAX_PACKET_SIZE,
+        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+    },
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    FrameType, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
-use crate::derp::codec::WriteFrame;
-use crate::derp::write_frame_timeout;
 use crate::key::{PublicKey, SecretKey};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -418,7 +417,7 @@ impl ClientBuilder {
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
         let shared_secret = self.secret_key.shared(&server_key);
-        crate::derp::send_client_key(
+        crate::derp::codec::send_client_key(
             &mut self.writer,
             &shared_secret,
             &self.secret_key.public(),
@@ -588,7 +587,7 @@ pub(crate) async fn forward_packet<S: Sink<WriteFrame, Error = std::io::Error> +
         packet.len()
     );
 
-    write_frame_timeout(
+    write_frame(
         &mut writer,
         WriteFrame::ForwardPacket {
             src_key,
@@ -620,7 +619,7 @@ async fn send_ping_or_pong<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: WriteFrame,
 ) -> Result<()> {
-    write_frame_timeout(&mut writer, frame, None).await?;
+    write_frame(&mut writer, frame, None).await?;
     writer.flush().await?;
 
     Ok(())
@@ -630,7 +629,7 @@ pub(crate) async fn send_note_preferred<S: Sink<WriteFrame, Error = std::io::Err
     mut writer: S,
     preferred: bool,
 ) -> Result<()> {
-    write_frame_timeout(&mut writer, WriteFrame::NotePreferred { preferred }, None).await?;
+    write_frame(&mut writer, WriteFrame::NotePreferred { preferred }, None).await?;
     writer.flush().await?;
 
     Ok(())
@@ -641,7 +640,7 @@ pub(crate) async fn watch_connection_changes<
 >(
     mut writer: S,
 ) -> Result<()> {
-    write_frame_timeout(&mut writer, WriteFrame::WatchConns, None).await?;
+    write_frame(&mut writer, WriteFrame::WatchConns, None).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -650,7 +649,7 @@ pub(crate) async fn close_peer<S: Sink<WriteFrame, Error = std::io::Error> + Unp
     mut writer: S,
     peer: PublicKey,
 ) -> Result<()> {
-    write_frame_timeout(&mut writer, WriteFrame::ClosePeer { peer }, None).await?;
+    write_frame(&mut writer, WriteFrame::ClosePeer { peer }, None).await?;
     writer.flush().await?;
 
     Ok(())

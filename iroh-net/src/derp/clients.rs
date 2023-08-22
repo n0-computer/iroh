@@ -299,8 +299,8 @@ mod tests {
     use crate::{
         derp::{
             client_conn::ClientConnBuilder,
-            codec::{recv_frame, DerpCodec, WriteFrame},
-            FrameType, PacketForwarder,
+            codec::{recv_frame, DerpCodec, FrameType, WriteFrame},
+            PacketForwarder,
         },
         key::SecretKey,
     };

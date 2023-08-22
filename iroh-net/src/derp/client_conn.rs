@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -19,9 +19,9 @@ use iroh_metrics::{inc, inc_by};
 use super::codec::{DerpCodec, WriteFrame};
 use super::server::MaybeTlsStream;
 use super::{
+    codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, KEEP_ALIVE,
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -299,7 +299,18 @@ where
                 }
                 read_res = self.io.next() => {
                     trace!("handle read");
-                    self.handle_read(read_res).await?;
+                    match read_res {
+                        Some(Ok(frame)) => {
+                            self.handle_read(frame).await?;
+                        }
+                        Some(Err(err)) => {
+                            return Err(err.into());
+                        }
+                        None => {
+                            // Unexpected EOF
+                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "read stream ended").into());
+                        }
+                    }
                 }
                 peer = self.peer_gone.recv() => {
                     let peer = peer.context("Server.peer_gone dropped")?;
@@ -341,7 +352,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.io, WriteFrame::KeepAlive, self.timeout).await
+        write_frame(&mut self.io, WriteFrame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -350,7 +361,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame_timeout(&mut self.io, WriteFrame::Pong { data }, self.timeout).await
+        write_frame(&mut self.io, WriteFrame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -359,14 +370,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(&mut self.io, WriteFrame::PeerGone { peer }, self.timeout).await
+        write_frame(&mut self.io, WriteFrame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame_timeout(&mut self.io, WriteFrame::PeerPresent { peer }, self.timeout).await
+        write_frame(&mut self.io, WriteFrame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -418,7 +429,7 @@ where
         let src_key = packet.src;
         let content = packet.bytes;
         inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
-        write_frame_timeout(
+        write_frame(
             &mut self.io,
             WriteFrame::RecvPacket { src_key, content },
             self.timeout,
@@ -427,56 +438,50 @@ where
     }
 
     /// Handles read results.
-    async fn handle_read(&mut self, read_res: Option<anyhow::Result<WriteFrame>>) -> Result<()> {
-        match read_res {
-            Some(Ok(frame)) => {
-                // TODO: "note client activity", meaning we update the server that the client with this
-                // public key was the last one to receive data
-                // it will be relevant when we add the ability to hold onto multiple clients
-                // for the same public key
-                match frame {
-                    WriteFrame::NotePreferred { preferred } => {
-                        self.handle_frame_note_preferred(preferred)?;
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    WriteFrame::SendPacket { dst_key, packet } => {
-                        let packet_len = packet.len();
-                        self.handle_frame_send_packet(dst_key, packet).await?;
-                        inc_by!(Metrics, bytes_recv, packet_len as u64);
-                    }
-                    WriteFrame::ForwardPacket {
-                        src_key,
-                        dst_key,
-                        packet,
-                    } => {
-                        self.handle_frame_forward_packet(src_key, dst_key, packet)
-                            .await?;
-                        inc!(Metrics, packets_forwarded_in);
-                    }
-                    WriteFrame::WatchConns => {
-                        self.handle_frame_watch_conns().await?;
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    WriteFrame::ClosePeer { peer } => {
-                        self.handle_frame_close_peer(peer).await?;
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    WriteFrame::Ping { data } => {
-                        self.handle_frame_ping(data).await?;
-                        inc!(Metrics, got_ping);
-                    }
-                    WriteFrame::Health { .. } => {
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    _ => {
-                        inc!(Metrics, unknown_frames);
-                    }
-                }
-                Ok(())
+    async fn handle_read(&mut self, frame: WriteFrame) -> Result<()> {
+        // TODO: "note client activity", meaning we update the server that the client with this
+        // public key was the last one to receive data
+        // it will be relevant when we add the ability to hold onto multiple clients
+        // for the same public key
+        match frame {
+            WriteFrame::NotePreferred { preferred } => {
+                self.handle_frame_note_preferred(preferred)?;
+                inc!(Metrics, other_packets_recv);
             }
-            Some(Err(err)) => Err(err.into()),
-            None => bail!("EOF: reader stream ended"),
+            WriteFrame::SendPacket { dst_key, packet } => {
+                let packet_len = packet.len();
+                self.handle_frame_send_packet(dst_key, packet).await?;
+                inc_by!(Metrics, bytes_recv, packet_len as u64);
+            }
+            WriteFrame::ForwardPacket {
+                src_key,
+                dst_key,
+                packet,
+            } => {
+                self.handle_frame_forward_packet(src_key, dst_key, packet)
+                    .await?;
+                inc!(Metrics, packets_forwarded_in);
+            }
+            WriteFrame::WatchConns => {
+                self.handle_frame_watch_conns().await?;
+                inc!(Metrics, other_packets_recv);
+            }
+            WriteFrame::ClosePeer { peer } => {
+                self.handle_frame_close_peer(peer).await?;
+                inc!(Metrics, other_packets_recv);
+            }
+            WriteFrame::Ping { data } => {
+                self.handle_frame_ping(data).await?;
+                inc!(Metrics, got_ping);
+            }
+            WriteFrame::Health { .. } => {
+                inc!(Metrics, other_packets_recv);
+            }
+            _ => {
+                inc!(Metrics, unknown_frames);
+            }
         }
+        Ok(())
     }
 
     /// Preferred indicates if this is the preferred connection to the client with
@@ -606,8 +611,7 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use crate::derp::codec::recv_frame;
-    use crate::derp::FrameType;
+    use crate::derp::codec::{recv_frame, FrameType};
     use crate::key::SecretKey;
 
     use super::*;

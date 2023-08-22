@@ -17,19 +17,19 @@ use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
-use crate::derp::codec::{DerpCodec, WriteFrame};
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
-use super::client_conn::ClientConnBuilder;
 use super::{
+    client_conn::ClientConnBuilder,
     clients::Clients,
+    codec::{
+        recv_client_key, write_frame, DerpCodec, WriteFrame, PER_CLIENT_SEND_QUEUE_DEPTH,
+        PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+    },
     metrics::Metrics,
+    types::ServerInfo,
     types::{PacketForwarder, PeerConnState, ServerMessage},
     MeshKey,
-};
-use super::{
-    recv_client_key, types::ServerInfo, write_frame_timeout, PER_CLIENT_SEND_QUEUE_DEPTH,
-    PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 
 // TODO: skiping `verboseDropKeys` for now
@@ -348,7 +348,7 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        write_frame_timeout(
+        write_frame(
             &mut writer,
             WriteFrame::ServerKey {
                 key: self.secret_key.public(),
@@ -370,7 +370,7 @@ where
     {
         let mut msg = postcard::to_stdvec(&self.server_info)?;
         shared_secret.seal(&mut msg);
-        write_frame_timeout(
+        write_frame(
             &mut writer,
             WriteFrame::ServerInfo {
                 encrypted_message: msg.into(),
@@ -687,9 +687,9 @@ mod tests {
     use crate::derp::{
         client::ClientBuilder,
         client_conn::ClientConnBuilder,
-        codec::{recv_frame, DerpCodec},
+        codec::{recv_frame, DerpCodec, FrameType},
         types::ClientInfo,
-        FrameType, ReceivedMessage,
+        ReceivedMessage,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -918,7 +918,7 @@ mod tests {
                 is_prober: true,
             };
             let shared_secret = client_key.shared(&got_server_key);
-            crate::derp::send_client_key(
+            crate::derp::codec::send_client_key(
                 &mut client_writer,
                 &shared_secret,
                 &client_key.public(),
