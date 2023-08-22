@@ -8,10 +8,11 @@ use std::time::Duration;
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use hyper::upgrade::Upgraded;
+use hyper::upgrade::{Parts, Upgraded};
 use hyper::{header::UPGRADE, Body, Request};
 use iroh_metrics::inc;
 use rand::Rng;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
@@ -21,9 +22,9 @@ use tracing::{debug, info_span, instrument, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
-    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, client_conn::Io,
-    metrics::Metrics, server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey,
-    PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, metrics::Metrics,
+    server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey, PacketForwarder,
+    ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
 use crate::key::{PublicKey, SecretKey};
@@ -536,11 +537,8 @@ impl Client {
         };
 
         debug!("connection upgraded");
-        let (io, read_buf) =
+        let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
-
-        // TODO: unify client loop
-        let (reader, writer) = tokio::io::split(io);
 
         let derp_client =
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
@@ -548,7 +546,7 @@ impl Client {
                 .can_ack_pings(self.inner.can_ack_pings)
                 .prober(self.inner.is_prober)
                 .server_public_key(self.inner.server_public_key)
-                .build(Some(read_buf))
+                .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
@@ -1128,14 +1126,27 @@ enum UseIp {
 
 fn downcast_upgrade(
     upgraded: Upgraded,
-) -> anyhow::Result<(Box<dyn Io + Send + Sync + 'static>, Bytes)> {
+) -> anyhow::Result<(
+    Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
+    Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
+)> {
     match upgraded.downcast::<tokio::net::TcpStream>() {
-        Ok(parts) => Ok((Box::new(parts.io), parts.read_buf)),
+        Ok(Parts { read_buf, io, .. }) => {
+            let (reader, writer) = tokio::io::split(io);
+            // Prepend data to the reader to avoid data loss
+            let reader = std::io::Cursor::new(read_buf).chain(reader);
+
+            Ok((Box::new(reader), Box::new(writer)))
+        }
         Err(upgraded) => {
-            if let Ok(parts) =
+            if let Ok(Parts { read_buf, io, .. }) =
                 upgraded.downcast::<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>()
             {
-                return Ok((Box::new(parts.io), parts.read_buf));
+                let (reader, writer) = tokio::io::split(io);
+                // Prepend data to the reader to avoid data loss
+                let reader = std::io::Cursor::new(read_buf).chain(reader);
+
+                return Ok((Box::new(reader), Box::new(writer)));
             }
 
             bail!(

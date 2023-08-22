@@ -686,7 +686,7 @@ mod tests {
 
     use crate::derp::{
         client::ClientBuilder,
-        client_conn::{ClientConnBuilder, Io},
+        client_conn::ClientConnBuilder,
         codec::{recv_frame, DerpCodec},
         types::ClientInfo,
         FrameType, ReceivedMessage,
@@ -949,23 +949,16 @@ mod tests {
         Ok(())
     }
 
-    fn make_test_client(
-        secret_key: SecretKey,
-    ) -> (
-        tokio::io::DuplexStream,
-        ClientBuilder<tokio::io::WriteHalf<Box<dyn Io + Send + Sync + 'static>>>,
-    ) {
+    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
         let (client, server) = tokio::io::duplex(10);
-
-        let boxed: Box<dyn Io + Send + Sync + 'static> = Box::new(client);
-        let (client_reader, client_writer) = tokio::io::split(boxed);
+        let (client_reader, client_writer) = tokio::io::split(client);
         (
             server,
             ClientBuilder::new(
                 secret_key,
                 "127.0.0.1:0".parse().unwrap(),
-                client_reader,
-                client_writer,
+                Box::new(client_reader),
+                Box::new(client_writer),
             ),
         )
     }
@@ -984,7 +977,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
-        let client_a = client_a_builder.build(None).await?;
+        let client_a = client_a_builder.build().await?;
         handler_task.await??;
 
         // create client b and connect it to the server
@@ -994,7 +987,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
-        let client_b = client_b_builder.build(None).await?;
+        let client_b = client_b_builder.build().await?;
         handler_task.await??;
 
         // create a packet forwarder for client c and add it to the server
@@ -1076,7 +1069,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
-        let client_a = client_a_builder.build(None).await?;
+        let client_a = client_a_builder.build().await?;
         handler_task.await??;
 
         // create client b and connect it to the server
@@ -1086,7 +1079,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
-        let client_b = client_b_builder.build(None).await?;
+        let client_b = client_b_builder.build().await?;
         handler_task.await??;
 
         // send message from a to b!
@@ -1120,7 +1113,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(new_rw_b)).await });
-        let new_client_b = new_client_b_builder.build(None).await?;
+        let new_client_b = new_client_b_builder.build().await?;
         handler_task.await??;
 
         // assert!(client_b.recv().await.is_err());

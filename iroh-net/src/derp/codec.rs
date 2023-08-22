@@ -201,7 +201,7 @@ impl WriteFrame {
                     &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
                     "invalid server key frame magic"
                 );
-                let key = PublicKey::try_from(&content[PUBLIC_KEY_LENGTH..])?;
+                let key = PublicKey::try_from(&content[MAGIC.as_bytes().len()..])?;
                 Self::ServerKey { key }
             }
             FrameType::ClientInfo => {

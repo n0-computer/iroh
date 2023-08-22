@@ -4,17 +4,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use futures::stream::Stream;
 use futures::{Sink, SinkExt, StreamExt};
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
-use super::client_conn::Io;
 use super::codec::{recv_frame, DerpCodec};
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
@@ -44,9 +43,9 @@ pub struct Client {
     inner: Arc<InnerClient>,
 }
 
-type DerpReader = FramedRead<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>, DerpCodec>;
+type DerpReader = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>, DerpCodec>;
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct InnerClient {
     // our local addrs
     local_addr: SocketAddr,
@@ -57,6 +56,7 @@ pub struct InnerClient {
     /// JoinHandle for the [`ClientWriter`] task
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
+    #[debug("Mutex<DerpReader>")]
     reader: Mutex<DerpReader>,
     /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
@@ -345,13 +345,10 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
 }
 
 /// The Builder returns a [`Client`] starts a [`ClientWriter`] run task.
-pub struct ClientBuilder<W>
-where
-    W: AsyncWrite + Send + Unpin + 'static,
-{
+pub struct ClientBuilder {
     secret_key: SecretKey,
     reader: DerpReader,
-    writer: FramedWrite<W, DerpCodec>,
+    writer: FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>, DerpCodec>,
     local_addr: SocketAddr,
     mesh_key: Option<MeshKey>,
     is_prober: bool,
@@ -359,15 +356,12 @@ where
     can_ack_pings: bool,
 }
 
-impl<W> ClientBuilder<W>
-where
-    W: AsyncWrite + Send + Unpin + 'static,
-{
+impl ClientBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: SocketAddr,
-        reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
-        writer: W,
+        reader: Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
+        writer: Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
     ) -> Self {
         Self {
             secret_key,
@@ -453,12 +447,7 @@ where
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client> {
-        // Inject potentially existing buffer into the reader stream
-        if let Some(buf) = buf {
-            self.reader.read_buffer_mut().put(buf);
-        }
-
+    pub async fn build(mut self) -> Result<Client> {
         // exchange information with the server
         let (server_public_key, rate_limiter) = self.server_handshake().await?;
 
