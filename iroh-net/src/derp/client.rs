@@ -302,44 +302,53 @@ struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
 
 impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
     async fn run(mut self) -> Result<()> {
-        loop {
-            match self.recv_msgs.recv().await {
-                None => {
-                    bail!("channel unexpectedly closed");
-                }
-                Some(ClientWriterMessage::Packet((key, bytes))) => {
+        while let Some(msg) = self.recv_msgs.recv().await {
+            match msg {
+                ClientWriterMessage::Packet((key, bytes)) => {
                     // TODO: the rate limiter is only used on this method, is it because it's the only method that
                     // theoretically sends a bunch of data, or is it an oversight? For example,
                     // the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
                     send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
                 }
-                Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
+                ClientWriterMessage::FwdPacket((srckey, dstkey, bytes)) => {
                     tokio::time::timeout(
                         Duration::from_secs(5),
                         forward_packet(&mut self.writer, srckey, dstkey, bytes),
                     )
                     .await??;
                 }
-                Some(ClientWriterMessage::Pong(msg)) => {
-                    send_pong(&mut self.writer, msg).await?;
+                ClientWriterMessage::Pong(data) => {
+                    write_frame(&mut self.writer, WriteFrame::Pong { data }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::Ping(msg)) => {
-                    send_ping(&mut self.writer, msg).await?;
+                ClientWriterMessage::Ping(data) => {
+                    write_frame(&mut self.writer, WriteFrame::Ping { data }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::NotePreferred(preferred)) => {
-                    send_note_preferred(&mut self.writer, preferred).await?;
+                ClientWriterMessage::NotePreferred(preferred) => {
+                    write_frame(
+                        &mut self.writer,
+                        WriteFrame::NotePreferred { preferred },
+                        None,
+                    )
+                    .await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::WatchConnectionChanges) => {
-                    watch_connection_changes(&mut self.writer).await?;
+                ClientWriterMessage::WatchConnectionChanges => {
+                    write_frame(&mut self.writer, WriteFrame::WatchConns, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::ClosePeer(target)) => {
-                    close_peer(&mut self.writer, target).await?;
+                ClientWriterMessage::ClosePeer(peer) => {
+                    write_frame(&mut self.writer, WriteFrame::ClosePeer { peer }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::Shutdown) => {
+                ClientWriterMessage::Shutdown => {
                     return Ok(());
                 }
             }
         }
+
+        bail!("channel unexpectedly closed");
     }
 }
 
@@ -598,59 +607,5 @@ pub(crate) async fn forward_packet<S: Sink<WriteFrame, Error = std::io::Error> +
     )
     .await?;
     writer.flush().await?;
-    Ok(())
-}
-
-pub(crate) async fn send_ping<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    data: [u8; 8],
-) -> Result<()> {
-    send_ping_or_pong(&mut writer, WriteFrame::Ping { data }).await
-}
-
-async fn send_pong<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    data: [u8; 8],
-) -> Result<()> {
-    send_ping_or_pong(&mut writer, WriteFrame::Pong { data }).await
-}
-
-async fn send_ping_or_pong<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    frame: WriteFrame,
-) -> Result<()> {
-    write_frame(&mut writer, frame, None).await?;
-    writer.flush().await?;
-
-    Ok(())
-}
-
-pub(crate) async fn send_note_preferred<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    preferred: bool,
-) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::NotePreferred { preferred }, None).await?;
-    writer.flush().await?;
-
-    Ok(())
-}
-
-pub(crate) async fn watch_connection_changes<
-    S: Sink<WriteFrame, Error = std::io::Error> + Unpin,
->(
-    mut writer: S,
-) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::WatchConns, None).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-pub(crate) async fn close_peer<S: Sink<WriteFrame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    peer: PublicKey,
-) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::ClosePeer { peer }, None).await?;
-    writer.flush().await?;
-
     Ok(())
 }

@@ -719,7 +719,7 @@ mod tests {
 
         // send ping, expect pong
         let data = b"pingpong";
-        crate::derp::client::send_ping(&mut io_rw, *data).await?;
+        write_frame(&mut io_rw, WriteFrame::Ping { data: *data }, None).await?;
 
         // recv pong
         println!(" recv pong");
@@ -728,18 +728,28 @@ mod tests {
 
         // change preferred to false
         println!("  preferred: false");
-        crate::derp::client::send_note_preferred(&mut io_rw, false).await?;
+        write_frame(
+            &mut io_rw,
+            WriteFrame::NotePreferred { preferred: false },
+            None,
+        )
+        .await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         println!("  preferred: true");
-        crate::derp::client::send_note_preferred(&mut io_rw, true).await?;
+        write_frame(
+            &mut io_rw,
+            WriteFrame::NotePreferred { preferred: true },
+            None,
+        )
+        .await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
         // add this client as a watcher
-        crate::derp::client::watch_connection_changes(&mut io_rw).await?;
+        write_frame(&mut io_rw, WriteFrame::WatchConns, None).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
@@ -751,7 +761,7 @@ mod tests {
         // send message to close a peer
         println!("  close peer");
         let target = SecretKey::generate().public();
-        crate::derp::client::close_peer(&mut io_rw, target).await?;
+        write_frame(&mut io_rw, WriteFrame::ClosePeer { peer: target }, None).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
