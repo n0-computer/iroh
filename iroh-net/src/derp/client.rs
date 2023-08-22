@@ -19,7 +19,7 @@ use super::{
     MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
-use crate::derp::codec::WriteFrame;
+use crate::derp::codec::Frame;
 use crate::derp::write_frame;
 use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
@@ -188,31 +188,31 @@ impl Client {
             };
 
             match frame {
-                WriteFrame::KeepAlive => {
+                Frame::KeepAlive => {
                     // A one-way keep-alive message that doesn't require an ack.
                     // This predated FrameType::Ping/FrameType::Pong.
                     return Ok(ReceivedMessage::KeepAlive);
                 }
-                WriteFrame::PeerGone { peer } => {
+                Frame::PeerGone { peer } => {
                     return Ok(ReceivedMessage::PeerGone(peer));
                 }
-                WriteFrame::PeerPresent { peer } => {
+                Frame::PeerPresent { peer } => {
                     return Ok(ReceivedMessage::PeerPresent(peer));
                 }
-                WriteFrame::RecvPacket { src_key, content } => {
+                Frame::RecvPacket { src_key, content } => {
                     let packet = ReceivedMessage::ReceivedPacket {
                         source: src_key,
                         data: content,
                     };
                     return Ok(packet);
                 }
-                WriteFrame::Ping { data } => {
+                Frame::Ping { data } => {
                     return Ok(ReceivedMessage::Ping(data));
                 }
-                WriteFrame::Pong { data } => {
+                Frame::Pong { data } => {
                     return Ok(ReceivedMessage::Pong(data));
                 }
-                WriteFrame::Health { problem } => {
+                Frame::Health { problem } => {
                     let problem = Some(
                         std::str::from_utf8(&problem)
                             .context("problem not a string")?
@@ -220,7 +220,7 @@ impl Client {
                     );
                     return Ok(ReceivedMessage::Health { problem });
                 }
-                WriteFrame::Restarting {
+                Frame::Restarting {
                     reconnect_in,
                     try_for,
                 } => {
@@ -448,7 +448,7 @@ where
         )
         .await?;
         let mut buf = BytesMut::new();
-        let WriteFrame::ServerInfo { encrypted_message } =
+        let Frame::ServerInfo { encrypted_message } =
             crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await? else {
                 anyhow::bail!("expected ServerInfo");
             };
@@ -508,7 +508,7 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
     let magic_len = MAGIC.len();
     let expected_frame_len = magic_len + 32;
     let mut buf = BytesMut::with_capacity(expected_frame_len);
-    let WriteFrame::ServerKey {key } = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await? else {
+    let Frame::ServerKey {key } = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await? else {
         anyhow::bail!("expected ServerKey");
     };
     Ok(key)
@@ -595,7 +595,7 @@ pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
     }
     write_frame(
         &mut writer,
-        WriteFrame::SendPacket {
+        Frame::SendPacket {
             dst_key: dstkey,
             packet: packet.to_vec().into(),
         },
@@ -619,7 +619,7 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
 
     write_frame(
         &mut writer,
-        WriteFrame::ForwardPacket {
+        Frame::ForwardPacket {
             src_key: srckey,
             dst_key: dstkey,
             packet: packet.to_vec().into(),
@@ -631,13 +631,13 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
 }
 
 pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::Ping { data: *data }).await?;
+    write_frame(&mut writer, Frame::Ping { data: *data }).await?;
     writer.flush().await?;
     Ok(())
 }
 
 async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::Pong { data: *data }).await?;
+    write_frame(&mut writer, Frame::Pong { data: *data }).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -646,13 +646,13 @@ pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
     mut writer: W,
     preferred: bool,
 ) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::NotePreferred { preferred }).await?;
+    write_frame(&mut writer, Frame::NotePreferred { preferred }).await?;
     writer.flush().await?;
     Ok(())
 }
 
 pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::WatchConns).await?;
+    write_frame(&mut writer, Frame::WatchConns).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -661,7 +661,7 @@ pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
     mut writer: W,
     target: PublicKey,
 ) -> Result<()> {
-    write_frame(&mut writer, WriteFrame::ClosePeer { peer: target }).await?;
+    write_frame(&mut writer, Frame::ClosePeer { peer: target }).await?;
     writer.flush().await?;
     Ok(())
 }

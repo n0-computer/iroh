@@ -10,14 +10,11 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
-use crate::{
-    disco::looks_like_disco_wrapper,
-    key::PublicKey,
-};
+use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::WriteFrame;
+use super::codec::Frame;
 use super::server::MaybeTlsStream;
 use super::{
     metrics::Metrics,
@@ -345,7 +342,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.io, WriteFrame::KeepAlive, self.timeout).await
+        write_frame_timeout(&mut self.io, Frame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -354,7 +351,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame_timeout(&mut self.io, WriteFrame::Pong { data }, self.timeout).await
+        write_frame_timeout(&mut self.io, Frame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -363,14 +360,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(&mut self.io, WriteFrame::PeerGone { peer }, self.timeout).await
+        write_frame_timeout(&mut self.io, Frame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame_timeout(&mut self.io, WriteFrame::PeerPresent { peer }, self.timeout).await
+        write_frame_timeout(&mut self.io, Frame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -424,18 +421,14 @@ where
         inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
         write_frame_timeout(
             &mut self.io,
-            WriteFrame::RecvPacket { src_key, content },
+            Frame::RecvPacket { src_key, content },
             self.timeout,
         )
         .await
     }
 
     /// Handles read results.
-    async fn handle_read(
-        &mut self,
-        read_res: Result<WriteFrame>,
-        buf: &mut BytesMut,
-    ) -> Result<()> {
+    async fn handle_read(&mut self, read_res: Result<Frame>, buf: &mut BytesMut) -> Result<()> {
         match read_res {
             Ok(frame) => {
                 // TODO: "note client activity", meaning we update the server that the client with this
@@ -443,16 +436,16 @@ where
                 // it will be relevant when we add the ability to hold onto multiple clients
                 // for the same public key
                 match frame {
-                    WriteFrame::NotePreferred { preferred } => {
+                    Frame::NotePreferred { preferred } => {
                         self.handle_frame_note_preferred(preferred)?;
                         inc!(Metrics, other_packets_recv);
                     }
-                    WriteFrame::SendPacket { dst_key, packet } => {
+                    Frame::SendPacket { dst_key, packet } => {
                         let packet_len = packet.len();
                         self.handle_frame_send_packet(dst_key, packet).await?;
                         inc_by!(Metrics, bytes_recv, packet_len as u64);
                     }
-                    WriteFrame::ForwardPacket {
+                    Frame::ForwardPacket {
                         src_key,
                         dst_key,
                         packet,
@@ -461,15 +454,15 @@ where
                             .await?;
                         inc!(Metrics, packets_forwarded_in);
                     }
-                    WriteFrame::WatchConns => {
+                    Frame::WatchConns => {
                         self.handle_frame_watch_conns().await?;
                         inc!(Metrics, other_packets_recv);
                     }
-                    WriteFrame::ClosePeer { peer } => {
+                    Frame::ClosePeer { peer } => {
                         self.handle_frame_close_peer(peer).await?;
                         inc!(Metrics, other_packets_recv);
                     }
-                    WriteFrame::Ping { data } => {
+                    Frame::Ping { data } => {
                         self.handle_frame_ping(data).await?;
                         inc!(Metrics, got_ping);
                     }
@@ -616,7 +609,7 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use crate::{key::SecretKey, derp::MAX_PACKET_SIZE};
+    use crate::{derp::MAX_PACKET_SIZE, key::SecretKey};
 
     use super::*;
 
@@ -675,7 +668,7 @@ mod tests {
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(
             frame,
-            WriteFrame::RecvPacket {
+            Frame::RecvPacket {
                 src_key: key,
                 content: Bytes::from(&data[..]),
             }
@@ -687,7 +680,7 @@ mod tests {
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(
             frame,
-            WriteFrame::RecvPacket {
+            Frame::RecvPacket {
                 src_key: key,
                 content: Bytes::from(&data[..]),
             }
@@ -697,7 +690,7 @@ mod tests {
         println!("send peer gone");
         peer_gone_s.send(key).await?;
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::PeerGone { peer: key });
+        assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // send mesh_upate
         let updates = vec![
@@ -713,10 +706,10 @@ mod tests {
 
         mesh_update_s.send(updates.clone()).await?;
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::PeerPresent { peer: key });
+        assert_eq!(frame, Frame::PeerPresent { peer: key });
 
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::PeerGone { peer: key });
+        assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // Read tests
         println!("--read");
@@ -728,7 +721,7 @@ mod tests {
         // recv pong
         println!(" recv pong");
         let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::Pong { data: *data });
+        assert_eq!(frame, Frame::Pong { data: *data });
 
         // change preferred to false
         println!("  preferred: false");

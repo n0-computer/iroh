@@ -298,7 +298,7 @@ mod tests {
 
     use crate::{
         derp::{
-            client_conn::ClientConnBuilder, codec::WriteFrame, read_frame, PacketForwarder,
+            client_conn::ClientConnBuilder, codec::Frame, read_frame, PacketForwarder,
             MAX_PACKET_SIZE,
         },
         key::SecretKey,
@@ -356,7 +356,7 @@ mod tests {
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(
             frame,
-            WriteFrame::RecvPacket {
+            Frame::RecvPacket {
                 src_key: b_key,
                 content: data.to_vec().into()
             }
@@ -367,7 +367,7 @@ mod tests {
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(
             frame,
-            WriteFrame::RecvPacket {
+            Frame::RecvPacket {
                 src_key: b_key,
                 content: data.to_vec().into()
             }
@@ -376,7 +376,7 @@ mod tests {
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::PeerGone { peer: b_key });
+        assert_eq!(frame, Frame::PeerGone { peer: b_key });
 
         // send mesh_update
         let updates = vec![
@@ -392,10 +392,10 @@ mod tests {
 
         clients.send_mesh_updates(&a_key.clone(), updates);
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::PeerPresent { peer: b_key });
+        assert_eq!(frame, Frame::PeerPresent { peer: b_key });
 
         let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame, WriteFrame::PeerGone { peer: b_key });
+        assert_eq!(frame, Frame::PeerGone { peer: b_key });
 
         clients.unregister(&a_key.clone());
 

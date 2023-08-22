@@ -20,7 +20,7 @@ pub(crate) mod server;
 pub(crate) mod types;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
-use self::codec::WriteFrame;
+use self::codec::Frame;
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::metrics::Metrics;
@@ -203,7 +203,7 @@ async fn read_frame(
     mut reader: impl AsyncRead + Unpin,
     max_size: usize,
     buf: &mut BytesMut,
-) -> Result<WriteFrame> {
+) -> Result<Frame> {
     let (frame_type, frame_len) = read_frame_header(&mut reader)
         .await
         .context("frame header")?;
@@ -214,7 +214,7 @@ async fn read_frame(
     );
     buf.resize(frame_len, 0u8);
     reader.read_exact(buf).await.context("read exact")?;
-    WriteFrame::from_bytes(frame_type, buf.to_vec().into()).context("frame")
+    Frame::from_bytes(frame_type, buf.to_vec().into()).context("frame")
 }
 
 async fn read_frame_timeout(
@@ -222,7 +222,7 @@ async fn read_frame_timeout(
     max_size: usize,
     buf: &mut BytesMut,
     timeout: Option<Duration>,
-) -> Result<WriteFrame> {
+) -> Result<Frame> {
     if let Some(duration) = timeout {
         let frame = tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
             .await
@@ -246,7 +246,7 @@ async fn write_frame_header(
 }
 
 /// AsyncWrites a complete frame. Does not flush.
-async fn write_frame(mut writer: impl AsyncWrite + Unpin, frame: WriteFrame) -> Result<()> {
+async fn write_frame(mut writer: impl AsyncWrite + Unpin, frame: Frame) -> Result<()> {
     writer.write_all(frame.to_bytes().as_ref()).await?;
     Ok(())
 }
@@ -257,7 +257,7 @@ async fn write_frame(mut writer: impl AsyncWrite + Unpin, frame: WriteFrame) -> 
 /// Does not flush.
 async fn write_frame_timeout(
     writer: impl AsyncWrite + Unpin,
-    frame: WriteFrame,
+    frame: Frame,
     timeout: Option<Duration>,
 ) -> Result<()> {
     if let Some(duration) = timeout {
@@ -282,7 +282,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     shared_secret.seal(&mut msg);
     write_frame(
         &mut writer,
-        WriteFrame::ClientInfo {
+        Frame::ClientInfo {
             client_public_key: *client_public_key,
             encrypted_message: msg.into(),
         },
@@ -309,7 +309,7 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
     )
     .await
     .context("read frame")?;
-    let WriteFrame::ClientInfo { client_public_key: key, encrypted_message: msg } = frame else {
+    let Frame::ClientInfo { client_public_key: key, encrypted_message: msg } = frame else {
         anyhow::bail!("expected ClientInfo");
     };
     let mut msg = msg.to_vec();
@@ -335,7 +335,7 @@ mod tests {
         let expect_buf = b"hello world!";
         write_frame(
             &mut writer,
-            WriteFrame::Health {
+            Frame::Health {
                 problem: expect_buf.to_vec().into(),
             },
         )
@@ -346,7 +346,7 @@ mod tests {
         let frame = read_frame(&mut reader, 1024, &mut got_buf).await?;
         assert_eq!(
             frame,
-            WriteFrame::Health {
+            Frame::Health {
                 problem: expect_buf.to_vec().into()
             }
         );
