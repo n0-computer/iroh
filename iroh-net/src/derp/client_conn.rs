@@ -12,7 +12,7 @@ use tracing::{trace, Instrument};
 
 use crate::{
     disco::looks_like_disco_wrapper,
-    key::{PublicKey, PUBLIC_KEY_LENGTH},
+    key::PublicKey,
 };
 
 use iroh_metrics::{inc, inc_by};
@@ -23,7 +23,7 @@ use super::{
     metrics::Metrics,
     read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
+    write_frame_timeout, KEEP_ALIVE, MAX_FRAME_SIZE,
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -612,41 +612,11 @@ where
     }
 }
 
-fn parse_forward_packet(data: &[u8]) -> Result<(PublicKey, PublicKey, &[u8])> {
-    ensure!(
-        data.len() >= PUBLIC_KEY_LENGTH * 2,
-        "short FORWARD_PACKET frame"
-    );
-
-    let packet_len = data.len() - (PUBLIC_KEY_LENGTH * 2);
-    ensure!(
-        packet_len <= MAX_PACKET_SIZE,
-        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-    );
-    let srckey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
-    let dstkey = PublicKey::try_from(&data[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
-    let data = &data[PUBLIC_KEY_LENGTH * 2..];
-
-    Ok((srckey, dstkey, data))
-}
-
-fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
-    ensure!(data.len() >= PUBLIC_KEY_LENGTH, "short SEND_PACKET frame");
-    let packet_len = data.len() - PUBLIC_KEY_LENGTH;
-    ensure!(
-        packet_len <= MAX_PACKET_SIZE,
-        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-    );
-    let dstkey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
-    let data = &data[PUBLIC_KEY_LENGTH..];
-    Ok((dstkey, data))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use crate::key::SecretKey;
+    use crate::{key::SecretKey, derp::MAX_PACKET_SIZE};
 
     use super::*;
 

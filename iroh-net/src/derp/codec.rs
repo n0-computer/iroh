@@ -382,8 +382,8 @@ impl Decoder for DerpCodec {
         // advance the header
         src.advance(HEADER_LEN);
 
-        let mut content = src.split_to(frame_len);
-        let frame = WriteFrame::from_bytes(frame_type, content.to_vec().into())?;
+        let content = src.split_to(frame_len).freeze();
+        let frame = WriteFrame::from_bytes(frame_type, content)?;
 
         Ok(Some(frame))
     }
