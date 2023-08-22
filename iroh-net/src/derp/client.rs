@@ -15,14 +15,13 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
 use super::client_conn::Io;
-use super::codec::{recv_frame, DerpCodec, Frame};
+use super::codec::{recv_frame, DerpCodec, Frame, WriteFrame};
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
     FrameType, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
-use crate::derp::codec::WriteFrame;
 use crate::derp::write_frame_timeout;
 use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 

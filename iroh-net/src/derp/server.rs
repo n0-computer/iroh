@@ -17,10 +17,11 @@ use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
-use crate::derp::codec::{DerpCodec, WriteFrame};
+use crate::derp::codec::DerpCodec;
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
+use super::codec::WriteFrame;
 use super::{
     clients::Clients,
     metrics::Metrics,
@@ -373,7 +374,7 @@ where
         write_frame_timeout(
             &mut writer,
             WriteFrame::ServerInfo {
-                encrypted_message: msg,
+                encrypted_message: &msg,
             },
             None,
         )

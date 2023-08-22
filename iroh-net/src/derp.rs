@@ -20,7 +20,7 @@ pub(crate) mod server;
 pub(crate) mod types;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
-use self::codec::{Frame, WriteFrame};
+use self::codec::{DerpCodec, Frame, WriteFrame};
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::metrics::Metrics;
@@ -33,6 +33,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::{Sink, SinkExt, Stream};
+use tokio::io::AsyncWrite;
+use tokio_util::codec::FramedWrite;
 
 use crate::derp::codec::recv_frame;
 use crate::key::{PublicKey, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
@@ -208,8 +210,8 @@ async fn write_frame_timeout<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error>
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<'a, S: Sink<WriteFrame<'a>, Error = std::io::Error> + Unpin>(
-    mut writer: S,
+pub(crate) async fn send_client_key<'a, W: AsyncWrite + Unpin>(
+    writer: &mut FramedWrite<W, DerpCodec>,
     shared_secret: &SharedSecret,
     client_public_key: &PublicKey,
     client_info: &ClientInfo,
@@ -219,7 +221,7 @@ pub(crate) async fn send_client_key<'a, S: Sink<WriteFrame<'a>, Error = std::io:
     writer
         .send(WriteFrame::ClientInfo {
             client_public_key: *client_public_key,
-            encrypted_message: msg,
+            encrypted_message: &msg,
         })
         .await?;
     writer.flush().await?;
@@ -268,14 +270,7 @@ mod tests {
         let mut writer = FramedWrite::new(writer, DerpCodec::default());
 
         let expect_buf = b"hello world!";
-        write_frame_timeout(
-            &mut writer,
-            WriteFrame::Health {
-                data: expect_buf.to_vec(),
-            },
-            None,
-        )
-        .await?;
+        write_frame_timeout(&mut writer, WriteFrame::Health { data: expect_buf }, None).await?;
         writer.flush().await?;
         println!("{:?}", reader);
         let buf = recv_frame(FrameType::Health, &mut reader).await?;

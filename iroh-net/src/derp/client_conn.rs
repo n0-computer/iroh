@@ -423,7 +423,10 @@ where
         inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
         write_frame_timeout(
             &mut self.io,
-            WriteFrame::RecvPacket { src_key, content },
+            WriteFrame::RecvPacket {
+                src_key,
+                content: &content,
+            },
             self.timeout,
         )
         .await
