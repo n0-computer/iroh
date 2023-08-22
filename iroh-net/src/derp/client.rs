@@ -20,6 +20,8 @@ use super::{
     PROTOCOL_VERSION,
 };
 
+use crate::derp::codec::WriteFrame;
+use crate::derp::write_frame2;
 use crate::key::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -631,10 +633,12 @@ pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
             return Ok(());
         }
     }
-    write_frame(
+    write_frame2(
         &mut writer,
-        FrameType::SendPacket,
-        &[dstkey.as_bytes(), packet],
+        WriteFrame::SendPacket {
+            dst_key: dstkey,
+            packet: packet.to_vec().into(),
+        }
     )
     .await?;
     writer.flush().await?;

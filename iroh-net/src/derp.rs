@@ -17,8 +17,10 @@ mod map;
 mod metrics;
 pub(crate) mod server;
 pub(crate) mod types;
+mod codec;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
+use self::codec::WriteFrame;
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::metrics::Metrics;
@@ -258,6 +260,14 @@ async fn write_frame<'a>(
     for b in bytes {
         writer.write_all(b).await?;
     }
+    Ok(())
+}
+
+async fn write_frame2(
+    mut writer: impl AsyncWrite + Unpin,
+    frame: WriteFrame,
+) -> Result<()> {
+    writer.write_all(frame.to_bytes().as_ref()).await?;
     Ok(())
 }
 
