@@ -244,7 +244,7 @@ impl SignedEntry {
         &self.entry
     }
 
-    /// Get the content [`Hash`] of the entry.
+    /// Get the content [`struct@Hash`] of the entry.
     pub fn content_hash(&self) -> &Hash {
         self.entry().record().content_hash()
     }
@@ -491,7 +491,7 @@ impl Record {
         self.len
     }
 
-    /// Get the [`Hash`] of the content data of this record.
+    /// Get the [`struct@Hash`] of the content data of this record.
     pub fn content_hash(&self) -> &Hash {
         &self.hash
     }

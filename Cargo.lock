@@ -1868,7 +1868,6 @@ dependencies = [
  "derive_more",
  "dirs-next",
  "duct",
- "ed25519-dalek",
  "flume",
  "futures",
  "genawaiter",
