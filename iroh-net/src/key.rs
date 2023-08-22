@@ -254,6 +254,12 @@ impl SecretKey {
         self.secret.to_bytes()
     }
 
+    /// Create a secret key from its byte representation.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let secret = SigningKey::from_bytes(bytes);
+        secret.into()
+    }
+
     fn secret_crypto_box(&self) -> &crypto_box::SecretKey {
         self.secret_crypto_box
             .get_or_init(|| secret_ed_box(&self.secret))
@@ -271,8 +277,7 @@ impl From<SigningKey> for SecretKey {
 
 impl From<[u8; 32]> for SecretKey {
     fn from(value: [u8; 32]) -> Self {
-        let secret = SigningKey::from(value);
-        secret.into()
+        Self::from_bytes(&value)
     }
 }
 
