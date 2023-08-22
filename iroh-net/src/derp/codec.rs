@@ -10,11 +10,16 @@ use super::{FrameType, MAGIC, MAX_FRAME_SIZE, NOT_PREFERRED, PREFERRED};
 #[derive(Debug, Default, Clone)]
 pub(crate) struct DerpCodec;
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct DerpCodec2;
+
 #[derive(Debug)]
 pub(crate) struct Frame {
     pub(crate) typ: FrameType,
     pub(crate) content: Bytes,
 }
+
+pub(crate) type ReadFrame = DecodedFrame<Bytes>;
 
 pub(crate) type WriteFrame<'a> = DecodedFrame<&'a [u8]>;
 
@@ -191,6 +196,129 @@ impl<T: AsRef<[u8]>> DecodedFrame<T> {
     }
 }
 
+impl ReadFrame {
+    fn parse_from(frame_type: FrameType, content: Bytes) -> anyhow::Result<Option<Self>> {
+        let res = match frame_type {
+            FrameType::ServerKey => {
+                ensure!(
+                    content.len() == 32 + MAGIC.as_bytes().len(),
+                    "invalid server key frame length"
+                );
+                ensure!(
+                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
+                    "invalid server key frame magic"
+                );
+                let key = PublicKey::try_from(&content[32..])?;
+                Self::ServerKey { key }
+            }
+            FrameType::ClientInfo => {
+                ensure!(
+                    content.len() >= 32,
+                    "invalid client info frame length: {}",
+                    content.len()
+                );
+                let client_public_key = PublicKey::try_from(&content[..32])?;
+                let encrypted_message = content.slice(32..);
+                Self::ClientInfo {
+                    client_public_key,
+                    encrypted_message,
+                }
+            }
+            FrameType::ServerInfo => Self::ServerInfo {
+                encrypted_message: content,
+            },
+            FrameType::SendPacket => {
+                ensure!(
+                    content.len() >= 32,
+                    "invalid send packet frame length: {}",
+                    content.len()
+                );
+                let dst_key = PublicKey::try_from(&content[..32])?;
+                let packet = content.slice(32..);
+                Self::SendPacket { dst_key, packet }
+            }
+            FrameType::RecvPacket => {
+                ensure!(
+                    content.len() >= 32,
+                    "invalid recv packet frame length: {}",
+                    content.len()
+                );
+                let src_key = PublicKey::try_from(&content[..32])?;
+                let content = content.slice(32..);
+                Self::RecvPacket { src_key, content }
+            }
+            FrameType::KeepAlive => {
+                anyhow::ensure!(content.is_empty(), "invalid keep alive frame length");
+                Self::KeepAlive
+            }
+            FrameType::NotePreferred => {
+                anyhow::ensure!(content.len() == 1, "invalid note preferred frame length");
+                let preferred = match content[0] {
+                    PREFERRED => true,
+                    NOT_PREFERRED => false,
+                    _ => anyhow::bail!("invalid note preferred frame content"),
+                };
+                Self::NotePreferred { preferred }
+            }
+            FrameType::PeerGone => {
+                anyhow::ensure!(content.len() == 32, "invalid peer gone frame length");
+                let peer = PublicKey::try_from(&content[..32])?;
+                Self::PeerGone { peer }
+            }
+            FrameType::PeerPresent => {
+                anyhow::ensure!(content.len() == 32, "invalid peer present frame length");
+                let peer = PublicKey::try_from(&content[..32])?;
+                Self::PeerPresent { peer }
+            }
+            FrameType::WatchConns => {
+                anyhow::ensure!(content.is_empty(), "invalid watch conns frame length");
+                Self::WatchConns
+            }
+            FrameType::ClosePeer => {
+                anyhow::ensure!(content.len() == 32, "invalid close peer frame length");
+                let peer = PublicKey::try_from(&content[..32])?;
+                Self::ClosePeer { peer }
+            }
+            FrameType::Ping => {
+                anyhow::ensure!(content.len() == 8, "invalid ping frame length");
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Ping { data }
+            }
+            FrameType::Pong => {
+                anyhow::ensure!(content.len() == 8, "invalid pong frame length");
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Pong { data }
+            }
+            FrameType::Health => Self::Health { data: content },
+            FrameType::Restarting => {
+                anyhow::ensure!(content.is_empty(), "invalid restarting frame length");
+                Self::Restarting {}
+            }
+            FrameType::ForwardPacket => {
+                ensure!(
+                    content.len() >= 32 + 32,
+                    "invalid forward packet frame length: {}",
+                    content.len()
+                );
+                let src_key = PublicKey::try_from(&content[..32])?;
+                let dst_key = PublicKey::try_from(&content[32..64])?;
+                let packet = content.slice(64..);
+                Self::ForwardPacket {
+                    src_key,
+                    dst_key,
+                    packet,
+                }
+            }
+            _ => {
+                anyhow::bail!("invalid frame type: {:?}", frame_type);
+            }
+        };
+        Ok(Some(res))
+    }
+}
+
 const HEADER_LEN: usize = 5;
 
 impl Decoder for DerpCodec {
@@ -233,10 +361,49 @@ impl Decoder for DerpCodec {
     }
 }
 
+impl Decoder for DerpCodec2 {
+    type Item = ReadFrame;
+    type Error = anyhow::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        // Need at least 5 bytes
+        if src.len() < HEADER_LEN {
+            return Ok(None);
+        }
+
+        // Can't use the `get_` Buf api, as that advances the buffer
+        let frame_type: FrameType = src[0].into();
+        let frame_len = u32::from_be_bytes(src[1..5].try_into().unwrap()) as usize;
+
+        anyhow::ensure!(
+            frame_len <= MAX_FRAME_SIZE,
+            "frame too large: {}",
+            frame_len
+        );
+        if src.len() < HEADER_LEN + frame_len {
+            // Optimization: prereserve the buffer space
+            src.reserve(HEADER_LEN + frame_len - src.len());
+
+            return Ok(None);
+        }
+
+        // advance the header
+        src.advance(HEADER_LEN);
+
+        let content = src.split_to(frame_len).freeze();
+
+        ReadFrame::parse_from(frame_type, content)
+    }
+}
+
 impl Encoder<DecodedFrame<&[u8]>> for DerpCodec {
     type Error = std::io::Error;
 
-    fn encode(&mut self, frame: DecodedFrame<&[u8]>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(
+        &mut self,
+        frame: DecodedFrame<&[u8]>,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
         let frame_len: usize = frame.len();
         if frame_len > MAX_FRAME_SIZE {
             return Err(std::io::Error::new(
