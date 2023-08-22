@@ -5,6 +5,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::derp::{
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, client_conn::Io,
+    metrics::Metrics, server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey,
+    PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
+};
+use crate::dns::DNS_RESOLVER;
+use crate::key::{PublicKey, SecretKey};
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -19,14 +26,6 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, trace, warn, Instrument};
 use url::Url;
-
-use crate::derp::{
-    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, client_conn::Io,
-    metrics::Metrics, server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey,
-    PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
-};
-use crate::dns::DNS_RESOLVER;
-use crate::key::{PublicKey, SecretKey};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);

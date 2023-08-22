@@ -12,9 +12,11 @@ use iroh_metrics::inc;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, instrument, trace, Instrument};
 
+use crate::derp::codec::DerpCodec;
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::client_conn::ClientConnBuilder;
@@ -307,9 +309,10 @@ where
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
-    pub async fn accept(&self, mut io: MaybeTlsStream) -> Result<()> {
+    pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
+        let mut io = Framed::new(io, DerpCodec);
         trace!("accept: start");
-        self.send_server_key(&mut io)
+        self.send_server_key(io.get_mut())
             .await
             .context("unable to send server key to client")?;
         trace!("accept: recv client key");
@@ -318,7 +321,7 @@ where
                 .await
                 .context("unable to receive client information")?;
         trace!("accept: send server info");
-        self.send_server_info(&mut io, &shared_secret)
+        self.send_server_info(io.get_mut(), &shared_secret)
             .await
             .context("unable to sent server info to client {client_key}")?;
         trace!("accept: build client conn");
@@ -685,12 +688,13 @@ mod tests {
         client::ClientBuilder,
         client_conn::{ClientConnBuilder, Io},
         types::ClientInfo,
-        ReceivedMessage, MAX_FRAME_SIZE,
+        ReceivedMessage,
     };
+    use tokio_util::codec::FramedRead;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use tokio::io::DuplexStream;
 
     struct MockPacketForwarder {
@@ -714,19 +718,22 @@ mod tests {
         key: PublicKey,
         conn_num: usize,
         server_channel: mpsc::Sender<ServerMessage<MockPacketForwarder>>,
-    ) -> (ClientConnBuilder<MockPacketForwarder>, DuplexStream) {
+    ) -> (
+        ClientConnBuilder<MockPacketForwarder>,
+        Framed<DuplexStream, DerpCodec>,
+    ) {
         let (test_io, io) = tokio::io::duplex(1024);
         (
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: MaybeTlsStream::Test(io),
+                io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            test_io,
+            Framed::new(test_io, DerpCodec::default()),
         )
     }
 
@@ -763,8 +770,7 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // a expects mesh peer update about itself, aka the only peer in the network currently
-        let mut buf = BytesMut::new();
-        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut a_io).await?;
         assert_eq!(frame, Frame::PeerPresent { peer: key_a });
 
         let key_b = SecretKey::generate().public();
@@ -777,7 +783,7 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client a about client b joining the network
-        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut a_io).await?;
         assert_eq!(frame, Frame::PeerPresent { peer: key_b });
 
         // server message: create client c
@@ -789,7 +795,7 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client_a about client_c joining the network
-        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut a_io).await?;
         assert_eq!(frame, Frame::PeerPresent { peer: key_c });
 
         // server message: add client c as watcher
@@ -799,11 +805,11 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client c about all peers in the network (a, b, & c)
-        let Frame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected PeerPresent") };
+        let Frame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io).await? else { anyhow::bail!("expected PeerPresent") };
         let mut peers = vec![peer];
-        let Frame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected PeerPresent") };
+        let Frame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io).await? else { anyhow::bail!("expected PeerPresent") };
         peers.push(peer);
-        let Frame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected PeerPresent") };
+        let Frame::PeerPresent { peer } = crate::derp::read_frame(&mut c_io).await? else { anyhow::bail!("expected PeerPresent") };
         peers.push(peer);
         assert!(peers.contains(&key_a));
         assert!(peers.contains(&key_b));
@@ -823,10 +829,10 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::derp::client::send_packet(&mut b_io, &None, key_a, &msg[..]).await?;
+        crate::derp::client::send_packet(b_io.get_mut(), &None, key_a, &msg[..]).await?;
 
         // get message on a's reader
-        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut a_io).await?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -839,7 +845,7 @@ mod tests {
         let mut disco_msg = crate::disco::MAGIC.as_bytes().to_vec();
         disco_msg.extend_from_slice(key_b.as_bytes());
         disco_msg.extend_from_slice(msg);
-        crate::derp::client::send_packet(&mut b_io, &None, key_d, &disco_msg).await?;
+        crate::derp::client::send_packet(b_io.get_mut(), &None, key_d, &disco_msg).await?;
 
         // get message on d's reader
         let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();
@@ -855,15 +861,15 @@ mod tests {
 
         // get peer gone message on a about b leaving the network
         // (we get this message because b has sent us a packet before)
-        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut a_io).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key_b });
 
         // get mesh update on a & c about b leaving the network
         // (we get this message on a & c because they are "watchers")
-        let frame = crate::derp::read_frame(&mut a_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut a_io).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key_b });
 
-        let frame = crate::derp::read_frame(&mut c_io, MAX_FRAME_SIZE, &mut buf).await?;
+        let frame = crate::derp::read_frame(&mut c_io).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key_b });
 
         // close gracefully
@@ -891,7 +897,8 @@ mod tests {
 
         // create the parts needed for a client
         let (client, server_io) = tokio::io::duplex(10);
-        let (mut client_reader, mut client_writer) = tokio::io::split(client);
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+        let mut client_reader = FramedRead::new(client_reader, DerpCodec);
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();
@@ -918,9 +925,8 @@ mod tests {
             .await?;
 
             // get the server info
-            let mut buf = BytesMut::new();
             let Frame::ServerInfo { encrypted_message } =
-                crate::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await? else { anyhow::bail!("expected ServerInfo") };
+                crate::derp::read_frame(&mut client_reader).await? else { anyhow::bail!("expected ServerInfo") };
             let mut buf = encrypted_message.to_vec();
             shared_secret.open(&mut buf)?;
             let _info: ServerInfo = postcard::from_bytes(&buf)?;

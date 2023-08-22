@@ -31,10 +31,9 @@ pub use self::types::{MeshKey, PacketForwarder};
 
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
-use bytes::BytesMut;
+use anyhow::{Context, Result};
+use futures::{Stream, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::debug;
 
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 use types::ClientInfo;
@@ -186,6 +185,7 @@ impl From<FrameType> for u8 {
     }
 }
 
+#[allow(dead_code)]
 async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, usize)> {
     let frame_type = reader.read_u8().await?;
     let frame_len = reader.read_u32().await?;
@@ -200,36 +200,26 @@ async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameT
 ///
 /// Also errors if we receive EOF before the end of the expected length of the frame.
 async fn read_frame(
-    mut reader: impl AsyncRead + Unpin,
-    max_size: usize,
-    buf: &mut BytesMut,
+    mut reader: impl Stream<Item = anyhow::Result<Frame>> + Unpin,
 ) -> Result<Frame> {
-    let (frame_type, frame_len) = read_frame_header(&mut reader)
-        .await
-        .context("frame header")?;
-    debug!("read frame header: {:?} - {:?}", frame_type, frame_len);
-    ensure!(
-        frame_len < max_size,
-        "frame header size {frame_len} exceeds reader limit of {max_size}"
-    );
-    buf.resize(frame_len, 0u8);
-    reader.read_exact(buf).await.context("read exact")?;
-    Frame::from_bytes(frame_type, buf.to_vec().into()).context("frame")
+    if let Some(frame) = reader.next().await {
+        frame
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no more frames").into())
+    }
 }
 
 async fn read_frame_timeout(
-    mut reader: impl AsyncRead + Unpin,
-    max_size: usize,
-    buf: &mut BytesMut,
+    mut reader: impl Stream<Item = Result<Frame>> + Unpin,
     timeout: Option<Duration>,
 ) -> Result<Frame> {
     if let Some(duration) = timeout {
-        let frame = tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
+        let frame = tokio::time::timeout(duration, read_frame(&mut reader))
             .await
             .context("timeout")??;
         Ok(frame)
     } else {
-        read_frame(&mut reader, max_size, buf).await
+        read_frame(&mut reader).await
     }
 }
 
@@ -294,21 +284,15 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-async fn recv_client_key<R: AsyncRead + Unpin>(
+async fn recv_client_key<R: Stream<Item = Result<Frame>> + Unpin>(
     secret_key: SecretKey,
     mut reader: R,
 ) -> Result<(PublicKey, ClientInfo, SharedSecret)> {
-    let mut buf = BytesMut::new();
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
-    let frame = read_frame_timeout(
-        &mut reader,
-        256 * 1024,
-        &mut buf,
-        Some(Duration::from_secs(10)),
-    )
-    .await
-    .context("read frame")?;
+    let frame = read_frame_timeout(&mut reader, Some(Duration::from_secs(10)))
+        .await
+        .context("read frame")?;
     let Frame::ClientInfo { client_public_key: key, encrypted_message: msg } = frame else {
         anyhow::bail!("expected ClientInfo");
     };
@@ -321,14 +305,19 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    use tokio_util::codec::Framed;
+
+    use crate::derp::codec::DerpCodec;
+
     use super::*;
 
     #[tokio::test]
     async fn test_basic_read_write() -> Result<()> {
-        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        let (reader, mut writer) = tokio::io::duplex(1024);
+        let mut reader = Framed::new(reader, DerpCodec);
 
         write_frame_header(&mut writer, FrameType::PeerGone, 301).await?;
-        let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
+        let (frame_type, frame_len) = read_frame_header(reader.get_mut()).await?;
         assert_eq!(frame_type, FrameType::PeerGone);
         assert_eq!(frame_len, 301);
 
@@ -342,8 +331,7 @@ mod tests {
         .await?;
         writer.flush().await?;
         println!("{:?}", reader);
-        let mut got_buf = BytesMut::new();
-        let frame = read_frame(&mut reader, 1024, &mut got_buf).await?;
+        let frame = read_frame(&mut reader).await?;
         assert_eq!(
             frame,
             Frame::Health {
@@ -355,7 +343,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_recv_client_key() -> Result<()> {
-        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        let (reader, mut writer) = tokio::io::duplex(1024);
+        let mut reader = Framed::new(reader, DerpCodec);
         let server_key = SecretKey::generate();
         let client_key = SecretKey::generate();
         let client_info = ClientInfo {

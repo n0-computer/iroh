@@ -3,10 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
-use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use bytes::Bytes;
+use futures::SinkExt;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
@@ -14,13 +16,13 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::Frame;
+use super::codec::{DerpCodec, Frame};
 use super::server::MaybeTlsStream;
 use super::{
     metrics::Metrics,
     read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, KEEP_ALIVE, MAX_FRAME_SIZE,
+    write_frame_timeout, KEEP_ALIVE,
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -83,7 +85,7 @@ where
 {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) io: MaybeTlsStream,
+    pub(crate) io: Framed<MaybeTlsStream, DerpCodec>,
     pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
@@ -117,7 +119,7 @@ impl ClientConnManager {
     pub fn new<P>(
         key: PublicKey,
         conn_num: usize,
-        io: MaybeTlsStream,
+        io: Framed<MaybeTlsStream, DerpCodec>,
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
@@ -242,7 +244,7 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     /// Indicates whether this client can mesh
     can_mesh: bool,
     /// Io to talk to the client
-    io: MaybeTlsStream,
+    io: Framed<MaybeTlsStream, DerpCodec>,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -285,8 +287,6 @@ where
         // ticks immediately
         keep_alive.tick().await;
 
-        let mut read_buf = BytesMut::new();
-
         loop {
             trace!("tick");
             tokio::select! {
@@ -298,9 +298,9 @@ where
                     self.io.flush().await?;
                     return Ok(());
                 }
-                read_res = read_frame(&mut self.io, MAX_FRAME_SIZE, &mut read_buf) => {
+                read_res = read_frame(&mut self.io) => {
                     trace!("handle read");
-                    self.handle_read(read_res, &mut read_buf).await?;
+                    self.handle_read(read_res).await?;
                 }
                 peer = self.peer_gone.recv() => {
                     let peer = peer.context("Server.peer_gone dropped")?;
@@ -342,7 +342,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.io, Frame::KeepAlive, self.timeout).await
+        write_frame_timeout(self.io.get_mut(), Frame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -351,7 +351,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame_timeout(&mut self.io, Frame::Pong { data }, self.timeout).await
+        write_frame_timeout(self.io.get_mut(), Frame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -360,14 +360,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(&mut self.io, Frame::PeerGone { peer }, self.timeout).await
+        write_frame_timeout(self.io.get_mut(), Frame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame_timeout(&mut self.io, Frame::PeerPresent { peer }, self.timeout).await
+        write_frame_timeout(self.io.get_mut(), Frame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -420,7 +420,7 @@ where
         let content = packet.bytes;
         inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
         write_frame_timeout(
-            &mut self.io,
+            self.io.get_mut(),
             Frame::RecvPacket { src_key, content },
             self.timeout,
         )
@@ -428,7 +428,7 @@ where
     }
 
     /// Handles read results.
-    async fn handle_read(&mut self, read_res: Result<Frame>, buf: &mut BytesMut) -> Result<()> {
+    async fn handle_read(&mut self, read_res: Result<Frame>) -> Result<()> {
         match read_res {
             Ok(frame) => {
                 // TODO: "note client activity", meaning we update the server that the client with this
@@ -472,7 +472,6 @@ where
                     // }
                     _ => {
                         inc!(Metrics, other_packets_recv);
-                        buf.clear();
                     }
                 }
                 Ok(())
@@ -609,7 +608,7 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use crate::{derp::MAX_PACKET_SIZE, key::SecretKey};
+    use crate::key::SecretKey;
 
     use super::*;
 
@@ -624,7 +623,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
-        let mut buf = BytesMut::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
@@ -632,12 +630,13 @@ mod tests {
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
-        let (io, mut io_rw) = tokio::io::duplex(1024);
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: MaybeTlsStream::Test(io),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -665,7 +664,7 @@ mod tests {
             bytes: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
-        let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut io_rw).await?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -677,7 +676,7 @@ mod tests {
         // send disco packet
         println!("  send disco packet");
         disco_send_queue_s.send(packet.clone()).await?;
-        let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut io_rw).await?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -689,7 +688,7 @@ mod tests {
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(key).await?;
-        let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut io_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // send mesh_upate
@@ -705,10 +704,10 @@ mod tests {
         ];
 
         mesh_update_s.send(updates.clone()).await?;
-        let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut io_rw).await?;
         assert_eq!(frame, Frame::PeerPresent { peer: key });
 
-        let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut io_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // Read tests
@@ -716,27 +715,27 @@ mod tests {
 
         // send ping, expect pong
         let data = b"pingpong";
-        crate::derp::client::send_ping(&mut io_rw, data).await?;
+        crate::derp::client::send_ping(io_rw.get_mut(), data).await?;
 
         // recv pong
         println!(" recv pong");
-        let frame = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut io_rw).await?;
         assert_eq!(frame, Frame::Pong { data: *data });
 
         // change preferred to false
         println!("  preferred: false");
-        crate::derp::client::send_note_preferred(&mut io_rw, false).await?;
+        crate::derp::client::send_note_preferred(io_rw.get_mut(), false).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         println!("  preferred: true");
-        crate::derp::client::send_note_preferred(&mut io_rw, true).await?;
+        crate::derp::client::send_note_preferred(io_rw.get_mut(), true).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
         // add this client as a watcher
-        crate::derp::client::watch_connection_changes(&mut io_rw).await?;
+        crate::derp::client::watch_connection_changes(io_rw.get_mut()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
@@ -748,7 +747,7 @@ mod tests {
         // send message to close a peer
         println!("  close peer");
         let target = SecretKey::generate().public();
-        crate::derp::client::close_peer(&mut io_rw, target).await?;
+        crate::derp::client::close_peer(io_rw.get_mut(), target).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
@@ -760,7 +759,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::derp::client::send_packet(&mut io_rw, &None, target, data).await?;
+        crate::derp::client::send_packet(io_rw.get_mut(), &None, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -779,7 +778,7 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::derp::client::send_packet(&mut io_rw, &None, target, &disco_data).await?;
+        crate::derp::client::send_packet(io_rw.get_mut(), &None, target, &disco_data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -795,7 +794,7 @@ mod tests {
         // forward packet
         println!("  forward packet");
         let fwd_key = SecretKey::generate().public();
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, data).await?;
+        crate::derp::client::forward_packet(io_rw.get_mut(), fwd_key, target, data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -810,7 +809,7 @@ mod tests {
 
         // forward disco packet
         println!("  forward disco packet");
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, &disco_data).await?;
+        crate::derp::client::forward_packet(io_rw.get_mut(), fwd_key, target, &disco_data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -843,7 +842,7 @@ mod tests {
         println!("-- create client conn");
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: MaybeTlsStream::Test(io),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -886,6 +885,7 @@ mod tests {
 
         // expect task to complete after encountering an error
         if let Err(err) = tokio::time::timeout(Duration::from_secs(1), io_handle).await?? {
+            println!("err {}", err);
             if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
                 if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
                     println!("   task closed successfully with `UnexpectedEof` error");

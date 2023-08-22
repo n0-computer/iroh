@@ -298,15 +298,17 @@ mod tests {
 
     use crate::{
         derp::{
-            client_conn::ClientConnBuilder, codec::Frame, read_frame, PacketForwarder,
-            MAX_PACKET_SIZE,
+            client_conn::ClientConnBuilder,
+            codec::{DerpCodec, Frame},
+            read_frame, PacketForwarder,
         },
         key::SecretKey,
     };
 
     use anyhow::Result;
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use tokio::io::DuplexStream;
+    use tokio_util::codec::Framed;
 
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
@@ -318,20 +320,26 @@ mod tests {
     fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
-    ) -> (ClientConnBuilder<MockPacketForwarder>, DuplexStream) {
+    ) -> (
+        ClientConnBuilder<MockPacketForwarder>,
+        Framed<DuplexStream, DerpCodec>,
+    ) {
         let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: crate::derp::server::MaybeTlsStream::Test(io),
+                io: Framed::new(
+                    crate::derp::server::MaybeTlsStream::Test(io),
+                    DerpCodec::default(),
+                ),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            test_io,
+            Framed::new(test_io, DerpCodec::default()),
         )
     }
 
@@ -352,8 +360,7 @@ mod tests {
             bytes: Bytes::from(&data[..]),
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
-        let mut buf = BytesMut::new();
-        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut a_rw).await?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -364,7 +371,7 @@ mod tests {
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
-        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut a_rw).await?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -375,7 +382,7 @@ mod tests {
 
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
-        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut a_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: b_key });
 
         // send mesh_update
@@ -391,10 +398,10 @@ mod tests {
         ];
 
         clients.send_mesh_updates(&a_key.clone(), updates);
-        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut a_rw).await?;
         assert_eq!(frame, Frame::PeerPresent { peer: b_key });
 
-        let frame = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
+        let frame = read_frame(&mut a_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: b_key });
 
         clients.unregister(&a_key.clone());

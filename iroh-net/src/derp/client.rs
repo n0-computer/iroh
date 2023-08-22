@@ -1,22 +1,28 @@
 //! based on tailscale/derp/derp_client.go
+use std::fmt;
+use std::io::Cursor;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
+use futures::Stream;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_util::codec::FramedRead;
 use tracing::{debug, info_span, Instrument};
 
 use super::client_conn::Io;
+use super::codec::DerpCodec;
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 
 use crate::derp::codec::Frame;
@@ -41,7 +47,8 @@ pub struct Client {
     inner: Arc<InnerClient>,
 }
 
-#[derive(Debug)]
+type BoxAsyncRead = Pin<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>>;
+
 pub struct InnerClient {
     // our local addrs
     local_addr: SocketAddr,
@@ -52,9 +59,20 @@ pub struct InnerClient {
     /// JoinHandle for the [`ClientWriter`] task
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
-    reader: Mutex<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>>,
+    reader: Mutex<FramedRead<BoxAsyncRead, DerpCodec>>,
     /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
+}
+
+impl fmt::Debug for InnerClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InnerClient")
+            .field("local_addr", &self.local_addr)
+            .field("writer_channel", &self.writer_channel)
+            .field("writer_task", &self.writer_task)
+            .field("server_public_key", &self.server_public_key)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Client {
@@ -179,7 +197,7 @@ impl Client {
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
             let mut reader = self.inner.reader.lock().await;
-            let frame = match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
+            let frame = match read_frame(&mut *reader).await {
                 Ok(f) => f,
                 Err(e) => {
                     self.close().await;
@@ -367,6 +385,17 @@ where
     can_ack_pings: bool,
 }
 
+struct AfterHandshake<W>
+where
+    W: AsyncWrite + Send + Unpin + 'static,
+{
+    reader: FramedRead<BoxAsyncRead, DerpCodec>,
+    writer: W,
+    local_addr: SocketAddr,
+    server_public_key: PublicKey,
+    rate_limiter: Option<RateLimiter>,
+}
+
 impl<W> ClientBuilder<W>
 where
     W: AsyncWrite + Send + Unpin + 'static,
@@ -411,20 +440,17 @@ where
         self
     }
 
-    async fn server_handshake(
-        &mut self,
-        buf: Option<Bytes>,
-    ) -> Result<(PublicKey, Option<RateLimiter>)> {
+    async fn server_handshake(mut self, buf: Option<Bytes>) -> Result<AfterHandshake<W>> {
         debug!("server_handshake: started");
-        let server_key = if let Some(buf) = buf {
-            recv_server_key(buf.chain(&mut self.reader))
-                .await
-                .context("failed to receive server key")?
+        let reader: BoxAsyncRead = if let Some(buf) = buf {
+            Box::pin(Cursor::new(buf).chain(self.reader))
         } else {
-            recv_server_key(&mut self.reader)
-                .await
-                .context("failed to receive server key")?
+            Box::pin(self.reader)
         };
+        let mut reader = FramedRead::new(reader, DerpCodec);
+        let server_key = recv_server_key(&mut reader)
+            .await
+            .context("failed to receive server key")?;
         debug!("server_handshake: received server_key: {:?}", server_key);
 
         if let Some(expected_key) = &self.server_public_key {
@@ -447,9 +473,8 @@ where
             &client_info,
         )
         .await?;
-        let mut buf = BytesMut::new();
         let Frame::ServerInfo { encrypted_message } =
-            crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await? else {
+            crate::derp::read_frame(&mut reader).await? else {
                 anyhow::bail!("expected ServerInfo");
             };
         let mut buf = encrypted_message.to_vec();
@@ -467,12 +492,25 @@ where
         )?;
 
         debug!("server_handshake: done");
-        Ok((server_key, rate_limiter))
+        Ok(AfterHandshake {
+            writer: self.writer,
+            local_addr: self.local_addr,
+            server_public_key: server_key,
+            reader,
+            rate_limiter,
+        })
     }
 
-    pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client> {
+    pub async fn build(self, buf: Option<Bytes>) -> Result<Client> {
         // exchange information with the server
-        let (server_public_key, rate_limiter) = self.server_handshake(buf).await?;
+        let AfterHandshake {
+            writer,
+            local_addr,
+            server_public_key,
+            reader,
+            rate_limiter,
+            ..
+        } = self.server_handshake(buf).await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -480,7 +518,7 @@ where
             async move {
                 let client_writer = ClientWriter {
                     rate_limiter,
-                    writer: self.writer,
+                    writer,
                     recv_msgs: writer_recv,
                 };
                 client_writer.run().await?;
@@ -491,10 +529,10 @@ where
 
         let client = Client {
             inner: Arc::new(InnerClient {
-                local_addr: self.local_addr,
+                local_addr,
                 writer_channel: writer_sender,
                 writer_task: Mutex::new(Some(writer_task)),
-                reader: Mutex::new(self.reader),
+                reader: Mutex::new(reader),
                 server_public_key,
             }),
         };
@@ -503,12 +541,11 @@ where
     }
 }
 
-pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Result<PublicKey> {
+pub(crate) async fn recv_server_key<R: Stream<Item = Result<Frame>> + Unpin>(
+    reader: R,
+) -> Result<PublicKey> {
     // expecting MAGIC followed by 32 bytes that contain the server key
-    let magic_len = MAGIC.len();
-    let expected_frame_len = magic_len + 32;
-    let mut buf = BytesMut::with_capacity(expected_frame_len);
-    let Frame::ServerKey {key } = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await? else {
+    let Frame::ServerKey {key } = read_frame(reader).await? else {
         anyhow::bail!("expected ServerKey");
     };
     Ok(key)
