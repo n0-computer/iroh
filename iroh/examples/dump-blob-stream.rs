@@ -14,7 +14,7 @@ use iroh::collection::Collection;
 use iroh::dial::Ticket;
 use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
-use iroh_net::tls::Keypair;
+use iroh_net::key::SecretKey;
 use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -160,11 +160,11 @@ async fn main() -> anyhow::Result<()> {
     let ticket = args().nth(1).expect("missing ticket");
     let ticket = Ticket::from_str(&ticket)?;
 
-    // generate a transient keypair for this connection
+    // generate a transient secret key for this connection
     //
-    // in real applications, it would be very much preferable to use a persistent keypair
-    let keypair = Keypair::generate();
-    let dial_options = ticket.as_get_options(keypair, None);
+    // in real applications, it would be very much preferable to use a persistent secret key
+    let secret_key = SecretKey::generate();
+    let dial_options = ticket.as_get_options(secret_key, None);
 
     // connect to the peer
     //

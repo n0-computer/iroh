@@ -36,7 +36,7 @@ use crate::{
         types::PacketForwarder,
         MaybeTlsStreamServer,
     },
-    key::node::SecretKey,
+    key::SecretKey,
 };
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -114,7 +114,7 @@ impl Server {
             } else {
                 bail!("no mesh key, unable to mesh with other derp servers");
             };
-            let server_key = server.private_key();
+            let server_key = server.secret_key();
             let packet_fwd = server.packet_forwarder_handler();
             (mesh_key, server_key, packet_fwd)
         } else {
@@ -124,7 +124,8 @@ impl Server {
             mesh_clients.shutdown().await;
         }
 
-        let mut mesh_clients = MeshClients::new(mesh_key, server_key, mesh_addrs, packet_fwd);
+        let mut mesh_clients =
+            MeshClients::new(mesh_key, server_key.clone(), mesh_addrs, packet_fwd);
 
         let recvs = mesh_clients.mesh().await?;
         self.mesh_clients = Some(mesh_clients);
@@ -150,7 +151,7 @@ pub struct TlsConfig {
 /// result in an error on `spawn`.
 #[derive(derive_more::Debug)]
 pub struct ServerBuilder {
-    /// The SecretKey for this Server.
+    /// The secret key for this Server.
     ///
     /// When `None`, you must also provide a `derp_override` function that
     /// will be run when someone hits the derp endpoint.
