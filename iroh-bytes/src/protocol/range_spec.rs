@@ -80,6 +80,9 @@ impl RangeSpec {
     }
 
     /// Creates a [`RangeSet2`] from this [`RangeSpec`].
+    ///
+    /// The [`RangeSet2`] is the same as a [`RangeSet`] but is used because it can store up
+    /// to two 2 span boundaries without allocating.
     pub fn to_chunk_ranges(&self) -> RangeSet2<ChunkNum> {
         // this is zero allocation for single ranges
         // todo: optimize this in range collections
