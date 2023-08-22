@@ -59,7 +59,9 @@ impl RangeSpec {
         Self(res)
     }
 
-    /// A [`RangeSpec`] deselecting the entire blob.
+    /// A [`RangeSpec`] selecting nothing from the blob.
+    ///
+    /// This is called "emtpy" because the representation is an empty set.
     pub const EMPTY: Self = Self(SmallVec::new_const());
 
     /// Creates a [`RangeSpec`] selecting the entire blob.
