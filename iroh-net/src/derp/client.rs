@@ -657,10 +657,13 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
         packet.len()
     );
 
-    write_frame(
+    write_frame2(
         &mut writer,
-        FrameType::ForwardPacket,
-        &[srckey.as_bytes(), dstkey.as_bytes(), packet],
+        WriteFrame::ForwardPacket {
+            src_key: srckey,
+            dst_key: dstkey,
+            packet: packet.to_vec().into(),
+        }
     )
     .await?;
     writer.flush().await?;
@@ -668,19 +671,13 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
 }
 
 pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    send_ping_or_pong(&mut writer, FrameType::Ping, data).await
+    write_frame2(&mut writer, WriteFrame::Ping { data: *data }).await?;
+    writer.flush().await?;
+    Ok(())
 }
 
 async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    send_ping_or_pong(&mut writer, FrameType::Pong, data).await
-}
-
-async fn send_ping_or_pong<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    frame_type: FrameType,
-    data: &[u8; 8],
-) -> Result<()> {
-    write_frame(&mut writer, frame_type, &[data]).await?;
+    write_frame2(&mut writer, WriteFrame::Pong { data: *data }).await?;
     writer.flush().await?;
     Ok(())
 }
