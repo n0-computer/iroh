@@ -304,7 +304,7 @@ where
                             self.handle_read(frame).await?;
                         }
                         Some(Err(err)) => {
-                            return Err(err.into());
+                            return Err(err);
                         }
                         None => {
                             // Unexpected EOF
@@ -571,7 +571,7 @@ where
 
         let packet = Packet {
             src: srckey,
-            bytes: Bytes::from(data.to_owned()),
+            bytes: data,
         };
         self.transfer_packet(dstkey, packet).await
     }
@@ -584,7 +584,7 @@ where
     async fn handle_frame_send_packet(&self, dst_key: PublicKey, data: Bytes) -> Result<()> {
         let packet = Packet {
             src: self.key,
-            bytes: Bytes::from(data.to_owned()),
+            bytes: data,
         };
         self.transfer_packet(dst_key, packet).await
     }

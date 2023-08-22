@@ -265,6 +265,7 @@ mod tests {
 pub(crate) struct DerpCodec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)] // TODO: reevaluate
 pub(crate) enum WriteFrame {
     ServerKey {
         key: PublicKey,
@@ -671,7 +672,7 @@ pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<WriteFrame>> + Un
             );
             Ok(frame)
         }
-        Some(Err(err)) => Err(err.into()),
+        Some(Err(err)) => Err(err),
         None => bail!("EOF: unexpected stream end, expected frame {}", frame_type),
     }
 }
