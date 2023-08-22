@@ -12,6 +12,7 @@ pub mod get;
 pub mod node;
 pub mod rpc_protocol;
 pub mod util;
+pub mod downloader;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]
