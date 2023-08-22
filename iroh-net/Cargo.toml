@@ -38,7 +38,7 @@ os_info = "3.6.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8"
 rcgen = "0.11"
-reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11.19", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
@@ -54,12 +54,12 @@ time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tokio-rustls = { version = "0.24" }
-tokio-rustls-acme = { version = "0.1" }
+tokio-rustls-acme = { version = "0.2" }
 tokio-stream = { version = "0.1", features = ["sync"]}
 ucd-parse = "=0.1.10" # pinned to avoid having to bump MSRV to 1.70 (recursive dep of stun-rs)
 url = { version = "2.4", features = ["serde"] }
-webpki = { version = "0.22", features = ["std"] }
-webpki-roots = "0.23.0"
+webpki = { package = "rustls-webpki", version = "0.101.4", features = ["std"] }
+webpki-roots = "0.25"
 wg = "0.3.1"
 quinn = "0.10"
 quinn-proto = "0.10"

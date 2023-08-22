@@ -1,7 +1,7 @@
 //! Live edit a p2p document
 //!
 //! By default a new peer id is created when starting the example. To reuse your identity,
-//! set the `--private-key` CLI flag with the private key printed on a previous invocation.
+//! set the `--secret-key` CLI flag with the secret key printed on a previous invocation.
 //!
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
@@ -15,7 +15,6 @@ use std::{
 use anyhow::{anyhow, bail};
 use bytes::Bytes;
 use clap::{CommandFactory, FromArgMatches, Parser};
-use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
 use iroh::{
     download::Downloader,
@@ -32,7 +31,7 @@ use iroh_gossip::{
 };
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
-    defaults::default_derp_map, derp::DerpMap, magic_endpoint::get_alpn, tls::Keypair,
+    defaults::default_derp_map, derp::DerpMap, key::SecretKey, magic_endpoint::get_alpn,
     MagicEndpoint,
 };
 use iroh_sync::{
@@ -58,9 +57,9 @@ type Doc = Replica<<store::fs::Store as store::Store>::Instance>;
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// Private key to derive our peer id from
+    /// Secret key for this node
     #[clap(long)]
-    private_key: Option<String>,
+    secret_key: Option<String>,
     /// Path to a data directory where blobs will be persisted
     #[clap(short, long)]
     storage_path: Option<PathBuf>,
@@ -117,12 +116,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let metrics_fut = init_metrics_collection(args.metrics_addr);
 
-    // parse or generate our keypair
-    let keypair = match args.private_key {
-        None => Keypair::generate(),
-        Some(key) => parse_keypair(&key)?,
+    // parse or generate our secret_key
+    let secret_key = match args.secret_key {
+        None => SecretKey::generate(),
+        Some(key) => SecretKey::from_str(&key)?,
     };
-    println!("> our private key: {}", fmt_secret(&keypair));
+    println!("> our secret key: {}", secret_key);
 
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {
@@ -141,7 +140,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
         // build the magic endpoint
         let endpoint = MagicEndpoint::builder()
-            .keypair(keypair.clone())
+            .secret_key(secret_key.clone())
             .alpns(vec![
                 GOSSIP_ALPN.to_vec(),
                 SYNC_ALPN.to_vec(),
@@ -219,7 +218,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
 
     // create a doc store for the iroh-sync docs
-    let author = Author::from(keypair.secret().clone());
+    let author = Author::from_bytes(&secret_key.to_bytes());
     let docs_path = storage_path.join("docs.db");
     let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
 
@@ -919,19 +918,6 @@ fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(hash.as_ref());
     text.make_ascii_lowercase();
     format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
-}
-fn fmt_secret(keypair: &Keypair) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
-    text.make_ascii_lowercase();
-    text
-}
-fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
-    let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
-        .decode(secret.to_ascii_uppercase().as_bytes())?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
-    let key = SigningKey::from_bytes(&bytes);
-    Ok(key.into())
 }
 fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     match derp_map {

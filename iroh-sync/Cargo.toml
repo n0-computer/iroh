@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 [dependencies]
-anyhow = "1.0.71"
+anyhow = "1"
 blake3 = { package = "iroh-blake3", version = "1.4.3"}
 crossbeam = "0.8.2"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
@@ -22,8 +22,8 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 rand = "0.8.5"
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
-url = "2.4.0"
-bytes = "1.4.0"
+url = "2.4"
+bytes = "1"
 parking_lot = "0.12.1"
 hex = "0.4"
 
@@ -32,7 +32,7 @@ redb = { version = "1.0.5", optional = true }
 ouroboros = { version = "0.17", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.28.2", features = ["sync", "macros"] }
+tokio = { version = "1", features = ["sync", "macros"] }
 tempfile = "3.4"
 
 [features]

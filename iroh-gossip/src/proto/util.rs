@@ -56,20 +56,20 @@ macro_rules! idbytes_impls {
             }
         }
 
-        impl<T: Into<[u8; 32]>> std::convert::From<T> for $ty {
+        impl<T: ::std::convert::Into<[u8; 32]>> ::std::convert::From<T> for $ty {
             fn from(value: T) -> Self {
                 Self::from_bytes(value.into())
             }
         }
 
-        impl std::fmt::Display for $ty {
-            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        impl ::std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 write!(f, "{}", $crate::proto::util::base32::fmt(&self.0))
             }
         }
 
-        impl std::fmt::Debug for $ty {
-            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        impl ::std::fmt::Debug for $ty {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 write!(
                     f,
                     "{}({})",
@@ -79,22 +79,22 @@ macro_rules! idbytes_impls {
             }
         }
 
-        impl std::str::FromStr for $ty {
+        impl ::std::str::FromStr for $ty {
             type Err = ::anyhow::Error;
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
                 Ok(Self::from_bytes($crate::proto::util::base32::parse_array(
                     s,
                 )?))
             }
         }
 
-        impl AsRef<[u8]> for $ty {
+        impl ::std::convert::AsRef<[u8]> for $ty {
             fn as_ref(&self) -> &[u8] {
                 &self.0
             }
         }
 
-        impl AsRef<[u8; 32]> for $ty {
+        impl ::std::convert::AsRef<[u8; 32]> for $ty {
             fn as_ref(&self) -> &[u8; 32] {
                 &self.0
             }
