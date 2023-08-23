@@ -131,16 +131,18 @@ impl ReplState {
     pub fn prompt(&self) -> String {
         let bang = Colour::Blue.paint("> ");
         let mut pwd = String::new();
-        if let Some(doc) = &self.env.doc {
-            pwd.push_str(&format!(
-                "doc:{} ",
-                Style::new().bold().paint(fmt_short(doc.as_bytes()))
-            ));
-        }
         if let Some(author) = &self.env.author {
             pwd.push_str(&format!(
-                "author:{} ",
-                Style::new().bold().paint(fmt_short(author.as_bytes()))
+                "{}{} ",
+                Colour::Blue.paint("author:"),
+                Colour::Blue.bold().paint(fmt_short(author.as_bytes())),
+            ));
+        }
+        if let Some(doc) = &self.env.doc {
+            pwd.push_str(&format!(
+                "{}{} ",
+                Colour::Blue.paint("doc:"),
+                Colour::Blue.bold().paint(fmt_short(doc.as_bytes())),
             ));
         }
         if !pwd.is_empty() {
