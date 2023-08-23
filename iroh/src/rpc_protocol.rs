@@ -315,12 +315,6 @@ pub enum ShareMode {
     /// Write access
     Write,
 }
-/// Response to [`AuthorShareRequest`]
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorShareResponse {
-    /// The secret key of the author
-    pub key: KeyBytes,
-}
 
 /// Subscribe to events for a document.
 #[derive(Serialize, Deserialize, Debug)]
