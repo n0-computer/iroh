@@ -154,7 +154,7 @@ impl Endpoint {
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
     #[cfg(feature = "derp-only")]
     fn addr_for_send(&mut self, _now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
-        return (None, self.derp_addr, false);
+        (None, self.derp_addr, false)
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
