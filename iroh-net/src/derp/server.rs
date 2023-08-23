@@ -334,9 +334,8 @@ where
             server_channel: self.server_channel.clone(),
         };
         trace!("accept: create client");
-        let client = client_conn_builder.build();
         self.server_channel
-            .send(ServerMessage::CreateClient(client))
+            .send(ServerMessage::CreateClient(client_conn_builder))
             .await
             .map_err(|_| {
                 anyhow::anyhow!("server channel closed, the server is probably shutdown")
@@ -412,7 +411,7 @@ where
     P: PacketForwarder,
 {
     pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage<P>>) -> Self {
-        let name = format!("derp-{}", hex::encode(&key.as_ref()[..8]));
+        let name = format!("derp-{}", &key.to_string()[..8]);
         Self {
             key,
             receiver,
@@ -760,7 +759,7 @@ mod tests {
 
         // create client a
         server_channel
-            .send(ServerMessage::CreateClient(client_a.build()))
+            .send(ServerMessage::CreateClient(client_a))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
@@ -779,7 +778,7 @@ mod tests {
         // server message: create client b
         let (client_b, mut b_io) = test_client_builder(key_b, 2, server_channel.clone());
         server_channel
-            .send(ServerMessage::CreateClient(client_b.build()))
+            .send(ServerMessage::CreateClient(client_b))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
@@ -791,7 +790,7 @@ mod tests {
         let key_c = SecretKey::generate().public();
         let (client_c, mut c_io) = test_client_builder(key_c, 3, server_channel.clone());
         server_channel
-            .send(ServerMessage::CreateClient(client_c.build()))
+            .send(ServerMessage::CreateClient(client_c))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 

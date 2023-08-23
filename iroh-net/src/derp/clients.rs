@@ -11,9 +11,10 @@ use iroh_metrics::inc;
 use tracing::{Instrument, Span};
 
 use super::{
-    client_conn::ClientConnManager,
+    client_conn::{ClientConnBuilder, ClientConnManager},
     metrics::Metrics,
     types::{Packet, PeerConnState},
+    PacketForwarder,
 };
 
 /// Number of times we try to send to a client connection before dropping the data;
@@ -161,6 +162,7 @@ impl Clients {
     }
 
     pub async fn shutdown(&mut self) {
+        tracing::trace!("shutting down conn");
         let mut handles = Vec::new();
         for (_, client) in self.inner.drain() {
             handles.push(tokio::spawn(
@@ -184,7 +186,7 @@ impl Clients {
         }
     }
 
-    pub fn all_clients(&mut self) -> impl Iterator<Item = &PublicKey> {
+    pub fn all_clients(&self) -> impl Iterator<Item = &PublicKey> {
         self.inner.keys()
     }
 
@@ -209,10 +211,11 @@ impl Clients {
         }
     }
 
-    pub fn register(&mut self, client: ClientConnManager) {
+    pub fn register<P: PacketForwarder>(&mut self, client_builder: ClientConnBuilder<P>) {
         // this builds the client handler & starts the read & write loops to that client connection
-        let key = client.key;
+        let key = client_builder.key;
         tracing::trace!("registering client: {:?}", key);
+        let client = client_builder.build();
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when mulitple connections exist.
@@ -253,7 +256,7 @@ impl Clients {
             let res = client.send_disco_packet(packet);
             return self.process_result(key, res);
         };
-        tracing::warn!("Could not find client for {key:?}, dropping packet");
+        tracing::warn!("Could not find client for {key:?}, dropping disco packet");
         anyhow::bail!("Could not find client for {key:?}, dropped packet");
     }
 
@@ -261,16 +264,18 @@ impl Clients {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_peer_gone(peer);
             let _ = self.process_result(key, res);
+            return;
         };
-        tracing::warn!("Could not find client for {key:?}, dropping packet");
+        tracing::warn!("Could not find client for {key:?}, dropping peer gone packet");
     }
 
     pub fn send_mesh_updates(&mut self, key: &PublicKey, updates: Vec<PeerConnState>) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_mesh_updates(updates);
             let _ = self.process_result(key, res);
+            return;
         };
-        tracing::warn!("Could not find client for {key:?}, dropping packet");
+        tracing::warn!("Could not find client for {key:?}, dropping mesh update packet",);
     }
 
     fn process_result(
@@ -348,7 +353,7 @@ mod tests {
         let (builder_a, mut a_rw) = test_client_builder(a_key, 0);
 
         let mut clients = Clients::new();
-        clients.register(builder_a.build());
+        clients.register(builder_a);
 
         // send packet
         let data = b"hello world!";

@@ -271,6 +271,14 @@ impl ClientBuilder {
     }
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum MeshClientEvent {
+    Meshed,
+    PeerPresent { peer: PublicKey },
+    PeerGone { peer: PublicKey },
+}
+
 impl Client {
     /// The public key for this client
     pub fn public_key(&self) -> PublicKey {
@@ -337,10 +345,7 @@ impl Client {
             let mut derp_client_lock = self.inner.derp_client.lock().await;
             if let Some(derp_client) = &*derp_client_lock {
                 trace!("already had connection");
-                return Ok((
-                    derp_client.clone(),
-                    self.inner.conn_gen.load(Ordering::SeqCst),
-                ));
+                return Ok((derp_client.clone(), self.current_conn()));
             }
 
             trace!("no connection, trying to connect");
@@ -350,12 +355,21 @@ impl Client {
 
             let derp_client_clone = derp_client.clone();
             *derp_client_lock = Some(derp_client_clone);
-            let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
+            let conn_gen = self.next_conn();
+
             trace!("got connection, conn num {conn_gen}");
             Ok((derp_client, conn_gen))
         }
         .instrument(info_span!("client-connect", %key))
         .await
+    }
+
+    fn current_conn(&self) -> usize {
+        self.inner.conn_gen.load(Ordering::SeqCst)
+    }
+
+    fn next_conn(&self) -> usize {
+        self.inner.conn_gen.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     async fn current_region(&self) -> Result<DerpRegion, ClientError> {
@@ -933,18 +947,18 @@ impl Client {
     ///
     /// This `meshed_once` sender is typically used for aligning the mesh network
     /// during tests.
-    pub async fn run_mesh_client(
+    pub(crate) async fn run_mesh_client(
         self,
         packet_forwarder_handler: PacketForwarderHandler<Client>,
-        mut meshed_once: Option<tokio::sync::oneshot::Sender<()>>,
+        meshed_once: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
     ) -> anyhow::Result<()> {
         // connect to the remote server & request to watching the remote's state changes
         let own_key = self.public_key();
         loop {
             let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
                 Ok(key) => {
-                    if let Some(sender) = meshed_once.take() {
-                        if let Err(e) = sender.send(()) {
+                    if let Some(ref sender) = meshed_once {
+                        if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
                             bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
                         }
                     }
@@ -982,6 +996,7 @@ impl Client {
                     // for the same peer key in the derp server in the future, we may
                     // be okay to just listen for future peer present
                     // messages without re establishing this connection as a "watcher"
+                    tracing::trace!("new connection: {} != {}", conn_gen, last_conn_gen);
                     break;
                 }
                 match msg {
@@ -992,6 +1007,10 @@ impl Client {
                         }
                         peers_present.insert(key).await?;
                         packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
+                        if let Some(ref chan) = meshed_once {
+                            chan.send(MeshClientEvent::PeerPresent { peer: key })
+                                .await?;
+                        }
                     }
                     ReceivedMessage::PeerGone(key) => {
                         // ignore notifications about ourself
@@ -1000,8 +1019,13 @@ impl Client {
                         }
                         peers_present.remove(key).await?;
                         packet_forwarder_handler.remove_packet_forwarder(key)?;
+                        if let Some(ref chan) = meshed_once {
+                            chan.send(MeshClientEvent::PeerGone { peer: key }).await?;
+                        }
                     }
-                    _ => {}
+                    other => {
+                        warn!("mesh: received unexpected message: {:?}", other);
+                    }
                 }
             }
         }
@@ -1254,7 +1278,7 @@ mod tests {
         let mesh_client_key = mesh_client.public_key();
         tracing::info!("mesh client public key: {mesh_client_key:?}");
 
-        let (send, recv) = tokio::sync::oneshot::channel();
+        let (send, mut recv) = tokio::sync::mpsc::channel(32);
         // spawn a task to run the mesh client
         let mesh_task = tokio::spawn(
             async move {
@@ -1265,7 +1289,8 @@ mod tests {
             .instrument(info_span!("mesh-client")),
         );
 
-        tokio::time::timeout(Duration::from_secs(5), recv).await??;
+        let msg = tokio::time::timeout(Duration::from_secs(5), recv.recv()).await?;
+        assert!(matches!(msg, Some(MeshClientEvent::Meshed)));
 
         // create another client that will become a normal peer for the derp server
         let normal_client = ClientBuilder::new()
