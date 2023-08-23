@@ -58,10 +58,7 @@ impl<S: Store> SyncEngine<S> {
         })
     }
 
-    pub fn doc_list(
-        &self,
-        _req: DocListRequest,
-    ) -> impl Stream<Item = RpcResult<DocListResponse>> {
+    pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let store = self.store.clone();
         self.rt.main().spawn_blocking(move || {
