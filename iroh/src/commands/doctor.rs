@@ -1,13 +1,12 @@
 //! Tool to get information about the current network environment of a node,
 //! and to test connectivity to specific other nodes.
 use std::{
-    collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
     time::{Duration, Instant},
 };
 
-use crate::config::{iroh_config_path, Config, IrohPaths, CONFIG_FILE_NAME, ENV_PREFIX};
+use crate::config::{IrohPaths, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
@@ -233,7 +232,11 @@ async fn send_blocks(
     Ok(())
 }
 
-async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
+async fn report(
+    stun_host: Option<String>,
+    stun_port: u16,
+    config: &NodeConfig,
+) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default().await;
     let mut client = netcheck::Client::new(Some(port_mapper)).await?;
 
@@ -653,7 +656,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn derp_regions(config: Config) -> anyhow::Result<()> {
+async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
     let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
@@ -789,7 +792,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
+pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     match command {
         Commands::Report {
             stun_host,
@@ -844,19 +847,7 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             port_map_probe(config).await
         }
         Commands::DerpRegions => {
-            let default_config_path =
-                iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
-
-            let sources = [Some(default_config_path.as_path())];
-            let config = Config::load(
-                // potential config files
-                &sources,
-                // env var prefix for this config
-                ENV_PREFIX,
-                // map of present command line arguments
-                // args.make_overrides_map(),
-                HashMap::<String, String>::new(),
-            )?;
+            let config = NodeConfig::from_env(None)?;
             derp_regions(config).await
         }
     }

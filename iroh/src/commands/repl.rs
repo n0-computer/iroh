@@ -1,45 +1,39 @@
-use ansi_term::Colour;
+use ansi_term::{Colour, Style};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh::client::quic::{Iroh, RpcClient};
+use iroh::client::quic::RpcClient;
 use iroh_gossip::proto::util::base32;
 use iroh_sync::sync::{AuthorId, NamespaceId};
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
-use super::sync::SyncEnv;
+use crate::config::{ConsoleEnv, ConsolePaths};
 
-pub async fn run(client: RpcClient, env: SyncEnv) -> Result<()> {
-    println!("Welcome to the Iroh console!");
-    println!("Type `help` for a list of commands.");
-    let mut state = ReplState::with_env(env);
-    let mut repl_rx = Repl::spawn(state.clone());
+pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
+    println!(
+        "{}",
+        Colour::Purple.bold().paint("Welcome to the Iroh console!")
+    );
+    println!(
+        "Type `{}` for a list of commands.",
+        Style::new().bold().paint("help")
+    );
+    let mut repl_rx = Repl::spawn(ReplState::with_env(env.clone()));
     while let Some((event, reply)) = repl_rx.recv().await {
         let (next, res) = match event {
-            FromRepl::DocCmd { id, cmd, env } => {
-                let iroh = Iroh::new(client.clone());
-                let res = cmd.run(&iroh, id, env).await;
+            ReplCmd::Rpc(cmd) => {
+                let res = cmd.run(client.clone(), env.clone()).await;
                 (ToRepl::Continue, res)
             }
-            FromRepl::RpcCmd { cmd } => {
-                let res = cmd.run(client.clone()).await;
-                (ToRepl::Continue, res)
+            ReplCmd::SetDoc { id } => {
+                env.set_doc(id);
+                (ToRepl::UpdateEnv(env.clone()), Ok(()))
             }
-            FromRepl::ReplCmd { cmd } => match cmd {
-                ReplCmd::SetDoc { id } => {
-                    state.pwd = Pwd::Doc { id };
-                    (ToRepl::UpdateState(state.clone()), Ok(()))
-                }
-                ReplCmd::SetAuthor { id } => {
-                    let res = state.env.set_author(id).await;
-                    (ToRepl::UpdateState(state.clone()), res)
-                }
-                ReplCmd::Close => {
-                    state.pwd = Pwd::Home;
-                    (ToRepl::UpdateState(state.clone()), Ok(()))
-                }
-                ReplCmd::Exit => (ToRepl::Exit, Ok(())),
-            },
+            ReplCmd::SetAuthor { id } => {
+                let res = env.save_author(id);
+                (ToRepl::UpdateEnv(env.clone()), res)
+            }
+            ReplCmd::Exit => (ToRepl::Exit, Ok(())),
         };
 
         if let Err(err) = res {
@@ -55,38 +49,23 @@ pub async fn run(client: RpcClient, env: SyncEnv) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
-pub enum FromRepl {
-    RpcCmd {
-        cmd: super::RpcCommands,
-    },
-    DocCmd {
-        id: NamespaceId,
-        env: SyncEnv,
-        cmd: super::sync::Doc,
-    },
-    ReplCmd {
-        cmd: ReplCmd,
-    },
-}
-
 /// Reply to the repl after a command completed
 #[derive(Debug)]
 pub enum ToRepl {
     /// Continue execution by reading the next command
     Continue,
     /// Continue execution by reading the next command, and update the repl state
-    UpdateState(ReplState),
+    UpdateEnv(ConsoleEnv),
     /// Exit the repl
     Exit,
 }
 
 pub struct Repl {
     state: ReplState,
-    cmd_tx: mpsc::Sender<(FromRepl, oneshot::Sender<ToRepl>)>,
+    cmd_tx: mpsc::Sender<(ReplCmd, oneshot::Sender<ToRepl>)>,
 }
 impl Repl {
-    pub fn spawn(state: ReplState) -> mpsc::Receiver<(FromRepl, oneshot::Sender<ToRepl>)> {
+    pub fn spawn(state: ReplState) -> mpsc::Receiver<(ReplCmd, oneshot::Sender<ToRepl>)> {
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
         let repl = Repl { state, cmd_tx };
         std::thread::spawn(move || {
@@ -99,7 +78,8 @@ impl Repl {
     pub fn run(mut self) -> anyhow::Result<()> {
         let mut rl =
             DefaultEditor::with_config(Config::builder().check_cursor_position(true).build())?;
-        rl.load_history(&self.state.env.repl_history_path).ok();
+        let history_path = ConsolePaths::History.with_env()?;
+        rl.load_history(&history_path).ok();
         loop {
             // prepare a channel to receive a signal from the main thread when a command completed
             let (to_repl_tx, to_repl_rx) = oneshot::channel();
@@ -108,7 +88,7 @@ impl Repl {
                 Ok(line) if line.is_empty() => continue,
                 Ok(line) => {
                     rl.add_history_entry(line.as_str())?;
-                    let cmd = self.state.handle_command(&line);
+                    let cmd = parse_cmd::<ReplCmd>(&line);
                     if let Some(cmd) = cmd {
                         self.cmd_tx.blocking_send((cmd, to_repl_tx))?;
                     } else {
@@ -116,122 +96,72 @@ impl Repl {
                     }
                 }
                 Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
-                    self.cmd_tx
-                        .blocking_send((FromRepl::ReplCmd { cmd: ReplCmd::Exit }, to_repl_tx))?;
+                    self.cmd_tx.blocking_send((ReplCmd::Exit, to_repl_tx))?;
                 }
                 Err(ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }
             // wait for reply from main thread
             match to_repl_rx.blocking_recv()? {
-                ToRepl::UpdateState(state) => {
-                    self.state = state;
+                ToRepl::UpdateEnv(env) => {
+                    self.state.env = env;
                     continue;
                 }
                 ToRepl::Continue => continue,
                 ToRepl::Exit => break,
             }
         }
-        rl.save_history(&self.state.env.repl_history_path).ok();
+        rl.save_history(&history_path).ok();
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ReplState {
-    pwd: Pwd,
-    env: SyncEnv,
+    env: ConsoleEnv,
 }
 
 impl ReplState {
-    fn with_env(env: SyncEnv) -> Self {
-        Self {
-            pwd: Pwd::Home,
-            env,
-        }
+    fn with_env(env: ConsoleEnv) -> Self {
+        Self { env }
     }
-}
-
-#[derive(Debug, Clone)]
-enum Pwd {
-    Home,
-    Doc { id: NamespaceId },
 }
 
 impl ReplState {
     pub fn prompt(&self) -> String {
         let bang = Colour::Blue.paint("> ");
-        let pwd = match self.pwd {
-            Pwd::Home => None,
-            Pwd::Doc { id } => {
-                let author = match self.env.author().as_ref() {
-                    Some(author) => fmt_short(author.as_bytes()),
-                    None => "<unset>".to_string(),
-                };
-                let pwd = format!("doc:{} author:{}", fmt_short(id.as_bytes()), author);
-                let pwd = Colour::Blue.paint(pwd);
-                Some(pwd.to_string())
-            }
-        };
-        let pwd = pwd.map(|pwd| format!("{}\n", pwd)).unwrap_or_default();
-        format!("\n{pwd}{bang}")
-    }
-
-    pub fn handle_command(&mut self, line: &str) -> Option<FromRepl> {
-        match self.pwd {
-            Pwd::Home => match parse_cmd::<HomeCommands>(line)? {
-                HomeCommands::Repl(cmd) => Some(FromRepl::ReplCmd { cmd }),
-                HomeCommands::Rpc(cmd) => Some(FromRepl::RpcCmd { cmd }),
-            },
-            Pwd::Doc { id } => match parse_cmd::<DocCommands>(line)? {
-                DocCommands::Repl(cmd) => Some(FromRepl::ReplCmd { cmd }),
-                DocCommands::Sync(cmd) => Some(FromRepl::RpcCmd {
-                    cmd: super::RpcCommands::Sync(cmd),
-                }),
-                DocCommands::Doc(cmd) => Some(FromRepl::DocCmd {
-                    id,
-                    cmd,
-                    env: self.env.clone(),
-                }),
-            },
+        let mut pwd = String::new();
+        if let Some(doc) = &self.env.doc {
+            pwd.push_str(&format!(
+                "doc:{} ",
+                Style::new().bold().paint(fmt_short(doc.as_bytes()))
+            ));
         }
+        if let Some(author) = &self.env.author {
+            pwd.push_str(&format!(
+                "author:{} ",
+                Style::new().bold().paint(fmt_short(author.as_bytes()))
+            ));
+        }
+        if !pwd.is_empty() {
+            pwd = format!("{}\n", Colour::Blue.paint(pwd));
+        }
+        format!("\n{pwd}{bang}")
     }
 }
 
 #[derive(Debug, Parser)]
 pub enum ReplCmd {
-    /// Open a document
+    /// Set the active document
     #[clap(next_help_heading = "foo")]
     SetDoc { id: NamespaceId },
-    /// Set the active author for doc insertion
+    /// Set the active author
     SetAuthor { id: AuthorId },
-    /// Close the open document
-    Close,
-
+    #[clap(flatten)]
+    Rpc(#[clap(subcommand)] super::RpcCommands),
     /// Quit the Iroh console
     #[clap(alias = "quit")]
     Exit,
-}
-
-#[derive(Debug, Parser)]
-pub enum DocCommands {
-    #[clap(flatten)]
-    Doc(#[clap(subcommand)] super::sync::Doc),
-    #[clap(flatten)]
-    Repl(#[clap(subcommand)] ReplCmd),
-    // TODO: We can't embed RpcCommand here atm because there'd be a conflict between
-    // `list` top level and `list` doc command
-    // Thus for now only embedding sync commands
-    #[clap(flatten)]
-    Sync(#[clap(subcommand)] super::sync::Commands),
-}
-
-#[derive(Debug, Parser)]
-pub enum HomeCommands {
-    #[clap(flatten)]
-    Repl(#[clap(subcommand)] ReplCmd),
-    #[clap(flatten)]
-    Rpc(#[clap(subcommand)] super::RpcCommands),
 }
 
 fn try_parse_cmd<C: Subcommand>(s: &str) -> anyhow::Result<C> {
@@ -258,6 +188,7 @@ fn parse_cmd<C: Subcommand>(s: &str) -> Option<C> {
 
 fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
     let bytes = bytes.as_ref();
+    // we use 5 bytes because this always results in 8 character string in base32
     let len = bytes.len().min(5);
     base32::fmt(&bytes[..len])
 }

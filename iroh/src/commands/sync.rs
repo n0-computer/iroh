@@ -1,7 +1,5 @@
-use std::{path::PathBuf, str::FromStr};
-
-use anyhow::{anyhow, Result};
-use clap::Parser;
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
 use iroh::{
@@ -13,159 +11,67 @@ use iroh_sync::{
     store::GetFilter,
     sync::{AuthorId, NamespaceId, SignedEntry},
 };
-use tokio::fs;
 
-use crate::config::{ConsolePaths, IrohPaths};
+use crate::config::ConsoleEnv;
 
 use super::RpcClient;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
-#[derive(Debug, Clone, Default)]
-pub struct SyncEnv {
-    pub dir: PathBuf,
-    pub author: Option<AuthorId>,
-    pub repl_history_path: PathBuf,
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Manage documents
+    Doc {
+        #[clap(subcommand)]
+        command: DocCommands,
+    },
+
+    /// Manage document authors
+    Author {
+        #[clap(subcommand)]
+        command: AuthorCommands,
+    },
 }
 
-impl SyncEnv {
-    pub async fn load_from_env(_client: &Iroh) -> Result<Self> {
-        let dir: PathBuf = IrohPaths::Console.with_env()?;
-        if std::fs::metadata(&dir).is_err() {
-            std::fs::create_dir_all(&dir)?;
-        };
-        let repl_history_path = ConsolePaths::History.with_root(&dir);
-        let author_path = ConsolePaths::DefaultAuthor.with_root(&dir);
-        let author = match fs::read(author_path).await {
-            Ok(s) => Some(AuthorId::from_str(&String::from_utf8(s)?)?),
-            Err(_err) => None,
-        };
-        let slf = Self {
-            dir,
-            author,
-            repl_history_path,
-        };
-        Ok(slf)
-    }
-
-    async fn persist(&self) -> Result<()> {
-        if let Some(author) = &self.author {
-            let author_path = ConsolePaths::DefaultAuthor.with_root(&self.dir);
-            fs::write(author_path, format!("{}", author)).await?;
+impl Commands {
+    pub async fn run(self, client: RpcClient, env: ConsoleEnv) -> Result<()> {
+        let iroh = Iroh::new(client);
+        match self {
+            Self::Doc { command } => command.run(&iroh, env).await,
+            Self::Author { command } => command.run(&iroh).await,
         }
-        Ok(())
-    }
-
-    pub async fn set_author(&mut self, author: AuthorId) -> Result<()> {
-        self.author = Some(author);
-        self.persist().await
-    }
-
-    pub fn author(&self) -> &Option<AuthorId> {
-        &self.author
     }
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Parser)]
-pub enum Commands {
-    /// Manage document authors
-    Author {
-        #[clap(subcommand)]
-        command: Author,
-    },
-    /// Manage documents
-    Docs {
-        #[clap(subcommand)]
-        command: Docs,
-    },
-    /// Manage a single document
-    Doc {
-        id: NamespaceId,
-        #[clap(subcommand)]
-        command: Doc,
-    },
-}
-
-impl Commands {
-    pub async fn run(self, client: RpcClient, env: SyncEnv) -> Result<()> {
-        let iroh = Iroh::new(client);
-        match self {
-            Commands::Author { command } => command.run(&iroh).await,
-            Commands::Docs { command } => command.run(&iroh).await,
-            Commands::Doc { command, id } => command.run(&iroh, id, env).await,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Parser)]
-pub enum Author {
-    /// List authors
-    #[clap(alias = "ls")]
-    List,
-    /// Create a new author
-    Create,
-}
-
-impl Author {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
-        match self {
-            Author::List => {
-                let mut stream = iroh.list_authors().await?;
-                while let Some(author_id) = stream.try_next().await? {
-                    println!("{}", author_id);
-                }
-            }
-            Author::Create => {
-                let author_id = iroh.create_author().await?;
-                println!("{}", author_id);
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Parser)]
-pub enum Docs {
-    /// List documents
-    #[clap(alias = "ls")]
-    List,
+pub enum DocCommands {
     /// Create a new document
-    Create,
+    Init,
     /// Import a document from peers
     Import { ticket: DocTicket },
-}
-
-impl Docs {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
-        match self {
-            Docs::Create => {
-                let doc = iroh.create_doc().await?;
-                println!("created {}", doc.id());
-            }
-            Docs::Import { ticket } => {
-                let doc = iroh.import_doc(ticket).await?;
-                println!("imported {}", doc.id());
-            }
-            Docs::List => {
-                let mut stream = iroh.list_docs().await?;
-                while let Some(id) = stream.try_next().await? {
-                    println!("{}", id)
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Parser)]
-pub enum Doc {
+    /// List documents
+    List,
     /// Start to synchronize a document with peers
-    StartSync { peers: Vec<PeerSource> },
+    Sync {
+        /// Set the document
+        #[clap(short, long)]
+        doc_id: Option<NamespaceId>,
+
+        peers: Vec<PeerSource>,
+    },
     /// Share a document and print a ticket to share with peers
-    Share { mode: ShareMode },
+    Share {
+        /// Set the document
+        #[clap(short, long)]
+        doc_id: Option<NamespaceId>,
+        mode: ShareMode,
+    },
     /// Set an entry
     Set {
+        /// Set the document
+        #[clap(short, long)]
+        doc_id: Option<NamespaceId>,
         /// Author of this entry.
         ///
         /// Required unless the author is set through the REPL environment or the IROH_AUTHOR
@@ -181,6 +87,9 @@ pub enum Doc {
     ///
     /// Shows the author, content hash and content length for all entries for this key.
     Get {
+        /// Set the document
+        #[clap(short, long)]
+        doc_id: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
         /// If true, get all entries that start with KEY.
@@ -200,7 +109,10 @@ pub enum Doc {
     },
     /// List all entries in the document
     #[clap(alias = "ls")]
-    List {
+    Keys {
+        /// Set the document
+        #[clap(short, long)]
+        doc_id: Option<NamespaceId>,
         /// If true, old entries will be included. By default only the latest value for each key is
         /// shown.
         #[clap(short, long)]
@@ -210,44 +122,55 @@ pub enum Doc {
     },
 }
 
-impl Doc {
-    pub async fn run(self, iroh: &Iroh, doc_id: NamespaceId, env: SyncEnv) -> Result<()> {
-        let doc = iroh.get_doc(doc_id)?;
+impl DocCommands {
+    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
-            Doc::StartSync { peers } => {
+            Self::Init => {
+                let doc = iroh.create_doc().await?;
+                println!("{}", doc.id());
+            }
+            Self::Import { ticket } => {
+                let doc = iroh.import_doc(ticket).await?;
+                println!("{}", doc.id());
+            }
+            Self::List => {
+                let mut stream = iroh.list_docs().await?;
+                while let Some(id) = stream.try_next().await? {
+                    println!("{}", id)
+                }
+            }
+            Self::Sync { doc_id, peers } => {
+                let doc = iroh.get_doc(env.doc(doc_id)?)?;
                 doc.start_sync(peers).await?;
                 println!("ok");
             }
-            Doc::Share { mode } => {
+            Self::Share { doc_id, mode } => {
+                let doc = iroh.get_doc(env.doc(doc_id)?)?;
                 let ticket = doc.share(mode).await?;
-                // println!("key:    {}", hex::encode(ticket.key));
-                // println!(
-                //     "peers:  {}",
-                //     ticket
-                //         .peers
-                //         .iter()
-                //         .map(|p| p.to_string())
-                //         .collect::<Vec<_>>()
-                //         .join(", ")
-                // );
-                println!("ticket: {}", ticket);
+                println!("{}", ticket);
             }
-            Doc::Set { author, key, value } => {
+            Self::Set {
+                doc_id,
+                author,
+                key,
+                value,
+            } => {
+                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
-                let author = author
-                    .or_else(|| *env.author())
-                    .ok_or_else(|| anyhow!("No author provided"))?;
                 let entry = doc.set_bytes(author, key, value).await?;
                 println!("{}", fmt_entry(&entry));
             }
-            Doc::Get {
+            Self::Get {
+                doc_id,
                 key,
                 prefix,
                 author,
                 old,
                 content,
             } => {
+                let doc = iroh.get_doc(env.doc(doc_id)?)?;
                 let mut filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
@@ -282,7 +205,12 @@ impl Doc {
                     println!();
                 }
             }
-            Doc::List { old, prefix } => {
+            Self::Keys {
+                doc_id,
+                old,
+                prefix,
+            } => {
+                let doc = iroh.get_doc(env.doc(doc_id)?)?;
                 let filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
@@ -295,6 +223,33 @@ impl Doc {
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
                 }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+pub enum AuthorCommands {
+    /// Create a new author
+    Create,
+    /// List authors
+    #[clap(alias = "ls")]
+    List,
+}
+
+impl AuthorCommands {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+        match self {
+            AuthorCommands::List => {
+                let mut stream = iroh.list_authors().await?;
+                while let Some(author_id) = stream.try_next().await? {
+                    println!("{}", author_id);
+                }
+            }
+            AuthorCommands::Create => {
+                let author_id = iroh.create_author().await?;
+                println!("{}", author_id);
             }
         }
         Ok(())

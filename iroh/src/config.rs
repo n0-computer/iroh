@@ -13,18 +13,22 @@ use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},
 };
-use serde::{Deserialize, Serialize};
+use iroh_sync::{AuthorId, NamespaceId};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tracing::debug;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
+
 /// ENV_PREFIX should be used along side the config field name to set a config field using
 /// environment variables
 /// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
 pub const ENV_PREFIX: &str = "IROH";
 
+const ENV_AUTHOR: &str = "AUTHOR";
+const ENV_DOC: &str = "DOC";
+
 /// Fetches the environment variable `IROH_<key>` from the current process.
-#[allow(dead_code)]
 pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
     env::var(&format!("{ENV_PREFIX}_{key}"))
 }
@@ -40,7 +44,7 @@ pub enum IrohPaths {
     BaoFlatStorePartial,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
     DocsDatabase,
-    /// Path to a directory with the [`ConsolePaths`]
+    /// Path to the console state
     Console,
 }
 
@@ -140,19 +144,36 @@ impl ConsolePaths {
         PathBuf::from(root.as_ref()).join(self)
     }
     pub fn with_env(self) -> Result<PathBuf> {
+        Self::ensure_env_dir()?;
         Ok(self.with_root(IrohPaths::Console.with_env()?))
+    }
+    pub fn ensure_env_dir() -> Result<()> {
+        let p = IrohPaths::Console.with_env()?;
+        match std::fs::metadata(&p) {
+            Ok(meta) => match meta.is_dir() {
+                true => Ok(()),
+                false => Err(anyhow!(format!(
+                    "Expected directory but found file at `{}`",
+                    p.to_string_lossy()
+                ))),
+            },
+            Err(_) => {
+                std::fs::create_dir_all(&p)?;
+                Ok(())
+            }
+        }
     }
 }
 
-/// The configuration for the iroh cli.
+/// The configuration for an iroh node.
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
-pub struct Config {
+pub struct NodeConfig {
     /// The regions for DERP to use.
     pub derp_regions: Vec<DerpRegion>,
 }
 
-impl Default for Config {
+impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             // TODO(ramfox): this should probably just be a derp map
@@ -161,14 +182,14 @@ impl Default for Config {
     }
 }
 
-impl Config {
+impl NodeConfig {
     /// Make a config from the default environment variables.
     ///
     /// Optionally provide an additional configuration source.
     pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
         let sources = [Some(config_path.as_path()), additional_config_source];
-        let config = Config::load(
+        let config = load_config(
             // potential config files
             &sources,
             // env var prefix for this config
@@ -179,54 +200,6 @@ impl Config {
         )?;
         Ok(config)
     }
-    /// Make a config using a default, files, environment variables, and commandline flags.
-    ///
-    /// Later items in the *file_paths* slice will have a higher priority than earlier ones.
-    ///
-    /// Environment variables are expected to start with the *env_prefix*. Nested fields can be
-    /// accessed using `.`, if your environment allows env vars with `.`
-    ///
-    /// Note: For the metrics configuration env vars, it is recommended to use the metrics
-    /// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
-    /// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
-    /// only if your environment allows it
-    pub fn load<S, V>(
-        file_paths: &[Option<&Path>],
-        env_prefix: &str,
-        flag_overrides: HashMap<S, V>,
-    ) -> Result<Config>
-    where
-        S: AsRef<str>,
-        V: Into<Value>,
-    {
-        let mut builder = config::Config::builder();
-
-        // layer on config options from files
-        for path in file_paths.iter().flatten() {
-            if path.exists() {
-                let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
-                builder = builder.add_source(File::with_name(p));
-            }
-        }
-
-        // next, add any environment variables
-        builder = builder.add_source(
-            Environment::with_prefix(env_prefix)
-                .separator("__")
-                .try_parsing(true),
-        );
-
-        // finally, override any values
-        for (flag, val) in flag_overrides.into_iter() {
-            builder = builder.set_override(flag, val)?;
-        }
-
-        let cfg = builder.build()?;
-        debug!("make_config:\n{:#?}\n", cfg);
-        let cfg = cfg.try_deserialize()?;
-        Ok(cfg)
-    }
-
     /// Constructs a `DerpMap` based on the current configuration.
     pub fn derp_map(&self) -> Option<DerpMap> {
         if self.derp_regions.is_empty() {
@@ -236,6 +209,142 @@ impl Config {
         let dm: DerpMap = self.derp_regions.iter().cloned().into();
         Some(dm)
     }
+}
+
+#[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
+pub struct ConsoleEnv {
+    pub author: Option<AuthorId>,
+    pub doc: Option<NamespaceId>,
+}
+impl ConsoleEnv {
+    /// Read from environment variables and the console config file.
+    pub fn from_env_and_peristent_state() -> Result<Self> {
+        let author = match Self::read_author_from_persistent_state()? {
+            Some(author) => Some(author),
+            None => env_author()?,
+        };
+        Ok(Self {
+            author,
+            doc: env_doc()?,
+        })
+    }
+
+    fn read_author_from_persistent_state() -> anyhow::Result<Option<AuthorId>> {
+        let author_path = ConsolePaths::DefaultAuthor.with_env()?;
+        if let Ok(s) = std::fs::read(&author_path) {
+            let author = String::from_utf8(s)
+                .map_err(Into::into)
+                .and_then(|s| AuthorId::from_str(&s))
+                .with_context(|| {
+                    format!(
+                        "Failed to parse author file at {}",
+                        author_path.to_string_lossy()
+                    )
+                })?;
+            Ok(Some(author))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Read only from environment variables.
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            author: env_author()?,
+            doc: env_doc()?,
+        })
+    }
+
+    pub fn save_author(&mut self, author: AuthorId) -> anyhow::Result<()> {
+        self.author = Some(author);
+        std::fs::write(
+            ConsolePaths::DefaultAuthor.with_env()?,
+            author.to_string().as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    pub fn set_doc(&mut self, doc: NamespaceId) {
+        self.doc = Some(doc);
+    }
+
+    pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
+        let doc_id = arg.or(self.doc).ok_or_else(|| {
+            anyhow!("Missing document id. Set the current document with the `IROH_DOC` environment variable or by passing the `-d` flag. In the console, you can set the active document with `set-doc`.")
+        })?;
+        Ok(doc_id)
+    }
+
+    pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
+        let author_id = arg.or(self.author).ok_or_else(|| {
+            anyhow!("Missing author id. Set the current author with the `IROH_AUTHOR` environment variable or by passing the `-a` flag. In the console, you can set the active author with `set-author`.")
+
+})?;
+        Ok(author_id)
+    }
+}
+
+pub fn env_author() -> Result<Option<AuthorId>> {
+    match env_var(ENV_AUTHOR) {
+        Ok(s) => Ok(Some(AuthorId::from_str(&s)?)),
+        Err(_) => Ok(None),
+    }
+}
+
+pub fn env_doc() -> Result<Option<NamespaceId>> {
+    match env_var(ENV_DOC) {
+        Ok(s) => Ok(Some(NamespaceId::from_str(&s)?)),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Make a config using a default, files, environment variables, and commandline flags.
+///
+/// Later items in the *file_paths* slice will have a higher priority than earlier ones.
+///
+/// Environment variables are expected to start with the *env_prefix*. Nested fields can be
+/// accessed using `.`, if your environment allows env vars with `.`
+///
+/// Note: For the metrics configuration env vars, it is recommended to use the metrics
+/// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
+/// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
+/// only if your environment allows it
+pub fn load_config<C, S, V>(
+    file_paths: &[Option<&Path>],
+    env_prefix: &str,
+    flag_overrides: HashMap<S, V>,
+) -> Result<C>
+where
+    C: DeserializeOwned,
+    S: AsRef<str>,
+    V: Into<Value>,
+{
+    let mut builder = config::Config::builder();
+
+    // layer on config options from files
+    for path in file_paths.iter().flatten() {
+        if path.exists() {
+            let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
+            builder = builder.add_source(File::with_name(p));
+        }
+    }
+
+    // next, add any environment variables
+    builder = builder.add_source(
+        Environment::with_prefix(env_prefix)
+            .separator("__")
+            .try_parsing(true),
+    );
+
+    // finally, override any values
+    for (flag, val) in flag_overrides.into_iter() {
+        builder = builder.set_override(flag, val)?;
+    }
+
+    let cfg = builder.build()?;
+    debug!("make_config:\n{:#?}\n", cfg);
+    let cfg = cfg.try_deserialize()?;
+    Ok(cfg)
 }
 
 /// Name of directory that wraps all iroh files in a given application directory
@@ -330,7 +439,8 @@ mod tests {
 
     #[test]
     fn test_default_settings() {
-        let config = Config::load::<String, String>(&[][..], "__FOO", Default::default()).unwrap();
+        let config: NodeConfig =
+            load_config(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
 
         assert_eq!(config.derp_regions.len(), 2);
     }

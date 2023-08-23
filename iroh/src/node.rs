@@ -57,12 +57,11 @@ use tracing::{debug, trace};
 use crate::dial::Ticket;
 use crate::download::Downloader;
 use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, BytesGetRequest, BytesGetResponse, IdRequest, IdResponse,
-    ListBlobsRequest, ListBlobsResponse, ListCollectionsRequest, ListCollectionsResponse,
-    ListIncompleteBlobsRequest, ListIncompleteBlobsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShareRequest, ShutdownRequest, StatsGetRequest,
-    StatsGetResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    BytesGetRequest, BytesGetResponse, ListBlobsRequest, ListBlobsResponse, ListCollectionsRequest,
+    ListCollectionsResponse, ListIncompleteBlobsRequest, ListIncompleteBlobsResponse,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShareRequest,
+    ShutdownRequest, StatsGetRequest, StatsGetResponse, StatusRequest, StatusResponse,
+    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::sync::{SyncEngine, SYNC_ALPN};
 
@@ -1077,8 +1076,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
-    async fn id(self, _: IdRequest) -> IdResponse {
-        IdResponse {
+    async fn status(self, _: StatusRequest) -> StatusResponse {
+        StatusResponse {
             peer_id: Box::new(self.inner.secret_key.public()),
             listen_addrs: self
                 .inner
@@ -1086,15 +1085,6 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 .await
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-    async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
-        AddrsResponse {
-            addrs: self
-                .inner
-                .local_endpoint_addresses()
-                .await
-                .unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -1184,8 +1174,7 @@ fn handle_rpc_request<
             Share(msg) => chan.server_streaming(msg, handler, RpcHandler::share).await,
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
-            Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
-            Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
+            Status(msg) => chan.rpc(msg, handler, RpcHandler::status).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
             Stats(msg) => chan.rpc(msg, handler, RpcHandler::stats).await,
             Validate(msg) => {

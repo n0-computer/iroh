@@ -1914,6 +1914,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "toml 0.7.6",
  "tracing",
  "tracing-subscriber",
  "url",

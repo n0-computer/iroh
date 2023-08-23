@@ -215,18 +215,10 @@ impl RpcMsg<ProviderService> for ShutdownRequest {
 ///
 /// See [`IdResponse`] for the response.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct IdRequest;
+pub struct StatusRequest;
 
-impl RpcMsg<ProviderService> for IdRequest {
-    type Response = IdResponse;
-}
-
-/// A request to get the addresses of the node
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AddrsRequest;
-
-impl RpcMsg<ProviderService> for AddrsRequest {
-    type Response = AddrsResponse;
+impl RpcMsg<ProviderService> for StatusRequest {
+    type Response = StatusResponse;
 }
 
 /// The response to a watch request
@@ -238,20 +230,13 @@ pub struct WatchResponse {
 
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
-pub struct IdResponse {
+pub struct StatusResponse {
     /// The peer id of the node
     pub peer_id: Box<PublicKey>,
     /// The addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
     pub version: String,
-}
-
-/// The response to an addrs request
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AddrsResponse {
-    /// The addresses of the node
-    pub addrs: Vec<SocketAddr>,
 }
 
 impl Msg<ProviderService> for WatchRequest {
@@ -611,8 +596,7 @@ pub enum ProviderRequest {
     ListCollections(ListCollectionsRequest),
     Provide(ProvideRequest),
     Share(ShareRequest),
-    Id(IdRequest),
-    Addrs(AddrsRequest),
+    Status(StatusRequest),
     Shutdown(ShutdownRequest),
     Validate(ValidateRequest),
 
@@ -650,8 +634,7 @@ pub enum ProviderResponse {
     ListCollections(ListCollectionsResponse),
     Provide(ProvideProgress),
     Share(ShareProgress),
-    Id(IdResponse),
-    Addrs(AddrsResponse),
+    Status(StatusResponse),
     Validate(ValidateProgress),
     Shutdown(()),
 

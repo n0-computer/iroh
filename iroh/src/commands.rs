@@ -4,16 +4,16 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use iroh::client::quic::{Iroh, RpcClient};
+use iroh::client::quic::RpcClient;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::key::{PublicKey, SecretKey};
 
-use crate::config::Config;
+use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
-use self::sync::SyncEnv;
+// use self::sync::SyncEnv;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -34,14 +34,14 @@ pub mod validate;
 #[clap(version, verbatim_doc_comment)]
 pub struct Cli {
     #[clap(subcommand)]
-    pub command: Option<Commands>,
+    pub command: Commands,
 
     #[clap(flatten)]
-    #[clap(next_help_heading = "Options for all commands (except `provide`, `get`, and `doctor`)")]
+    #[clap(next_help_heading = "Options for console, doc, author, blob, node")]
     pub rpc_args: RpcArgs,
 
     #[clap(flatten)]
-    #[clap(next_help_heading = "Options for `provide`, `get` and `doctor`")]
+    #[clap(next_help_heading = "Options for start, get, doctor")]
     pub full_args: FullArgs,
 }
 
@@ -69,17 +69,16 @@ pub struct FullArgs {
 
 impl Cli {
     pub async fn run(self, rt: &runtime::Handle) -> Result<()> {
-        let command = self.command.unwrap_or(Commands::Console);
-        match command {
+        match self.command {
             Commands::Console => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                let iroh = Iroh::new(client.clone());
-                let env = SyncEnv::load_from_env(&iroh).await?;
+                let env = ConsoleEnv::from_env_and_peristent_state()?;
                 repl::run(client, env).await
             }
             Commands::Rpc(command) => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                command.run(client).await
+                let env = ConsoleEnv::from_env()?;
+                command.run(client, env).await
             }
             Commands::Full(command) => {
                 let FullArgs {
@@ -88,7 +87,7 @@ impl Cli {
                     keylog,
                 } = self.full_args;
 
-                let config = Config::from_env(cfg.as_deref())?;
+                let config = NodeConfig::from_env(cfg.as_deref())?;
 
                 #[cfg(feature = "metrics")]
                 let metrics_fut = start_metrics_server(metrics_addr, &rt);
@@ -118,11 +117,11 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum FullCommands {
-    /// Serve data from the given path.
+    /// Start a Iroh node
     ///
     /// If PATH is a folder all files in that folder will be served.  If no PATH is
     /// specified reads from STDIN.
-    Provide {
+    Start {
         /// Path to initial file or directory to provide
         path: Option<PathBuf>,
         /// Serve data in place
@@ -144,7 +143,9 @@ pub enum FullCommands {
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
     },
-    /// Fetch the data identified by HASH from a provider
+    /// Fetch data from a provider
+    ///
+    /// Starts a temporary Iroh node and fetches the content identified by HASH.
     Get {
         /// The hash to retrieve, as a Blake3 CID
         #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
@@ -192,9 +193,9 @@ pub enum FullCommands {
 }
 
 impl FullCommands {
-    pub async fn run(self, rt: &runtime::Handle, config: &Config, keylog: bool) -> Result<()> {
+    pub async fn run(self, rt: &runtime::Handle, config: &NodeConfig, keylog: bool) -> Result<()> {
         match self {
-            FullCommands::Provide {
+            FullCommands::Start {
                 path,
                 in_place,
                 addr,
@@ -271,24 +272,28 @@ impl FullCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum ConsoleCommands {
-    /// Start the Iroh console. This is the default command.
-    Console,
+#[allow(clippy::large_enum_variant)]
+pub enum RpcCommands {
+    /// Doc and author commands
+    #[clap(flatten)]
+    Sync(#[clap(subcommand)] sync::Commands),
+    /// Manage blobs
+    Blob {
+        #[clap(subcommand)]
+        command: BlobCommands,
+    },
+    /// Manage a running Iroh node
+    Node {
+        #[clap(subcommand)]
+        command: NodeCommands,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum RpcCommands {
-    /// List availble content on the provider.
-    #[clap(subcommand)]
-    List(self::list::Commands),
-    /// Validate hashes on the running provider.
-    Validate {
-        /// Repair the store by removing invalid data
-        #[clap(long, default_value_t = false)]
-        repair: bool,
-    },
-    /// Shutdown provider.
+pub enum NodeCommands {
+    /// Get status of the running node.
+    Status,
+    /// Shutdown the running node.
     Shutdown {
         /// Shutdown mode.
         ///
@@ -297,8 +302,38 @@ pub enum RpcCommands {
         #[clap(long, default_value_t = false)]
         force: bool,
     },
-    /// Identify the running provider.
-    Id,
+}
+
+impl NodeCommands {
+    pub async fn run(self, client: RpcClient) -> Result<()> {
+        match self {
+            Self::Shutdown { force } => {
+                client.rpc(ShutdownRequest { force }).await?;
+                Ok(())
+            }
+            Self::Status {} => {
+                let response = client.rpc(StatusRequest).await?;
+
+                println!("Listening address: {:#?}", response.listen_addrs);
+                println!("PeerID: {}", response.peer_id);
+                Ok(())
+            }
+        }
+    }
+}
+
+impl RpcCommands {
+    pub async fn run(self, client: RpcClient, env: ConsoleEnv) -> Result<()> {
+        match self {
+            Self::Node { command } => command.run(client).await,
+            Self::Blob { command } => command.run(client).await,
+            Self::Sync(command) => command.run(client, env).await,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum BlobCommands {
     /// Add data from PATH to the running provider's database.
     Add {
         /// The path to the file or folder to add
@@ -353,16 +388,21 @@ pub enum RpcCommands {
         #[clap(long, default_value_t = false)]
         stable: bool,
     },
-    /// List listening addresses of the provider.
-    Addresses,
-    #[clap(flatten)]
-    Sync(#[clap(subcommand)] sync::Commands),
+    /// List availble content on the node.
+    #[clap(subcommand)]
+    List(self::list::Commands),
+    /// Validate hashes on the running node.
+    Validate {
+        /// Repair the store by removing invalid data
+        #[clap(long, default_value_t = false)]
+        repair: bool,
+    },
 }
 
-impl RpcCommands {
+impl BlobCommands {
     pub async fn run(self, client: RpcClient) -> Result<()> {
         match self {
-            RpcCommands::Share {
+            Self::Share {
                 hash,
                 recursive,
                 peer,
@@ -417,30 +457,9 @@ impl RpcCommands {
                 }
                 Ok(())
             }
-            RpcCommands::List(cmd) => cmd.run(client).await,
-            RpcCommands::Validate { repair } => self::validate::run(client, repair).await,
-            RpcCommands::Shutdown { force } => {
-                client.rpc(ShutdownRequest { force }).await?;
-                Ok(())
-            }
-            RpcCommands::Id {} => {
-                let response = client.rpc(IdRequest).await?;
-
-                println!("Listening address: {:#?}", response.listen_addrs);
-                println!("PeerID: {}", response.peer_id);
-                Ok(())
-            }
-            RpcCommands::Add { path, in_place } => self::add::run(client, path, in_place).await,
-            RpcCommands::Addresses {} => {
-                let response = client.rpc(AddrsRequest).await?;
-                println!("Listening addresses: {:?}", response.addrs);
-                Ok(())
-            }
-            RpcCommands::Sync(command) => {
-                let iroh = Iroh::new(client.clone());
-                let env = SyncEnv::load_from_env(&iroh).await?;
-                command.run(client, env).await
-            }
+            Self::List(cmd) => cmd.run(client).await,
+            Self::Validate { repair } => self::validate::run(client, repair).await,
+            Self::Add { path, in_place } => self::add::run(client, path, in_place).await,
         }
     }
 }
