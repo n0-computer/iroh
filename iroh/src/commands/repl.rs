@@ -1,6 +1,6 @@
-use ansi_term::{Colour, Style};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use iroh::client::quic::RpcClient;
 use iroh_gossip::proto::util::base32;
 use iroh_sync::sync::{AuthorId, NamespaceId};
@@ -10,14 +10,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::config::{ConsoleEnv, ConsolePaths};
 
 pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
-    println!(
-        "{}",
-        Colour::Purple.bold().paint("Welcome to the Iroh console!")
-    );
-    println!(
-        "Type `{}` for a list of commands.",
-        Style::new().bold().paint("help")
-    );
+    println!("{}", "Welcome to the Iroh console!".purple().bold());
+    println!("Type `{}` for a list of commands.", "help".bold());
     let mut repl_rx = Repl::spawn(ReplState::with_env(env.clone()));
     while let Some((event, reply)) = repl_rx.recv().await {
         let (next, res) = match event {
@@ -37,11 +31,7 @@ pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
         };
 
         if let Err(err) = res {
-            println!(
-                "{} {:?}",
-                ansi_term::Colour::Red.bold().paint("Error:"),
-                err
-            )
+            println!("{} {:?}", "Error:".red().bold(), err)
         }
 
         reply.send(next).ok();
@@ -129,26 +119,25 @@ impl ReplState {
 
 impl ReplState {
     pub fn prompt(&self) -> String {
-        let bang = Colour::Blue.paint("> ");
         let mut pwd = String::new();
         if let Some(author) = &self.env.author {
             pwd.push_str(&format!(
                 "{}{} ",
-                Colour::Blue.paint("author:"),
-                Colour::Blue.bold().paint(fmt_short(author.as_bytes())),
+                "author:".blue(),
+                fmt_short(author.as_bytes()).blue().bold(),
             ));
         }
         if let Some(doc) = &self.env.doc {
             pwd.push_str(&format!(
                 "{}{} ",
-                Colour::Blue.paint("doc:"),
-                Colour::Blue.bold().paint(fmt_short(doc.as_bytes())),
+                "doc:".blue(),
+                fmt_short(doc.as_bytes()).blue().bold(),
             ));
         }
         if !pwd.is_empty() {
-            pwd = format!("{}\n", Colour::Blue.paint(pwd));
+            pwd.push_str("\n");
         }
-        format!("\n{pwd}{bang}")
+        format!("\n{pwd}{}", "> ".blue())
     }
 }
 
