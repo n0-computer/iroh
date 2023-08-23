@@ -1,5 +1,10 @@
-//! Specifications for individual ranges within a blob, and for ranges for a
-//! collection and its children.
+//! Specifications for ranges selection in blobs and collections.
+//!
+//! The [`RangeSpec`] allows specifying which BAO chunks inside a single blob should be
+//! selected.
+//!
+//! The [`RangeSpecSeq`] builds on top of this to select blob chunks in an entire
+//! collection.
 use std::fmt;
 
 use bao_tree::ChunkNum;
@@ -7,26 +12,39 @@ use range_collections::{RangeSet2, RangeSetRef};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-/// A chunk range specification.
+/// A chunk range specification as a sequence of chunk offsets.
 ///
-/// this is a sequence of spans, where the first span is considered false, and each subsequent span is alternating.
+/// Offsets encode alternating spans starting on 0, where the first span is always
+/// deselected.
 ///
-/// Examples:
-/// The range 10..33 would be encoded as `[10, 23]`
-/// The empty range would be encoded as the empty array `[]`
-/// A full interval .. would be encoded as `[0]`
-/// A half open interval 15.. would be encoded as `[15]`
+/// ## Examples:
 ///
-/// All values except for the first one must be non-zero. The first value may be zero.
-/// Values are bao chunk numbers, not byte offsets.
+/// - `[2, 5, 3, 1]` encodes five spans, of which two are selected:
+///   - `[0, 0+2) = [0, 2)` is not selected.
+///   - `[2, 2+5) = [2, 7)` is selected.
+///   - `[7, 7+3) = [7, 10)` is not selected.
+///   - `[10, 10+1) = [10, 11)` is selected.
+///   - `[11, inf)` is deselected.
 ///
-/// This is a SmallVec so we can avoid allocations for the very common case of a single chunk range.
+///   Such a [`RangeSpec`] can be converted to a [`RangeSet2`] using containing just the
+///   selected ranges: `RangeSet{2..7, 10..11}` using [`RangeSpec::to_chunk_ranges`].
+///
+/// - An empty range selects no spans, encoded as `[]`. This means nothing of the blob is
+///   selected.
+///
+/// - To select an entire blob create a single half-open span starting at the first chunk:
+///   `[0]`.
+///
+/// - To select the tail of a blob, create a single half-open span: `[15]`.
+///
+/// This is a SmallVec so we can avoid allocations for the very common case of a single
+/// chunk range.
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
-    /// Create a new range spec from a range set
+    /// Creates a new [`RangeSpec`] from a range set.
     pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
         let ranges = ranges.as_ref().boundaries();
         let mut res = SmallVec::new();
@@ -41,25 +59,32 @@ impl RangeSpec {
         Self(res)
     }
 
-    /// An empty range spec
+    /// A [`RangeSpec`] selecting nothing from the blob.
+    ///
+    /// This is called "emtpy" because the representation is an empty set.
     pub const EMPTY: Self = Self(SmallVec::new_const());
 
-    /// Create a range spec that covers the entire range
+    /// Creates a [`RangeSpec`] selecting the entire blob.
     pub fn all() -> Self {
         Self(smallvec![0])
     }
 
-    /// Check if this range spec is empty
+    /// Checks if this [`RangeSpec`] does not select any chunks in the blob.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Check if this range spec covers all values
+    /// Checks if this [`RangeSpec`] selects all chunks in the blob.
     pub fn is_all(&self) -> bool {
         self.0.len() == 1 && self.0[0] == 0
     }
 
-    /// Convert a range set from this range spec
+    /// Creates a [`RangeSet2`] from this [`RangeSpec`].
+    ///
+    /// The [`RangeSet2`] is the same as a [`RangeSet`] but is used because it can store up
+    /// to two 2 span boundaries without allocating.
+    ///
+    /// [`RangeSet`]: range_collections::RangeSet
     pub fn to_chunk_ranges(&self) -> RangeSet2<ChunkNum> {
         // this is zero allocation for single ranges
         // todo: optimize this in range collections
@@ -97,27 +122,45 @@ impl fmt::Debug for RangeSpec {
     }
 }
 
-/// A compressed sequence of range specs
+/// A chunk range specification for a sequence of blobs.
 ///
-/// Examples:
+/// To select chunks in a sequence of blobs this is encoded as a sequence of `(blob_offset,
+/// range_spec)` tuples. Offsets are interpreted in an accumulating fashion.
 ///
-/// All child ranges: `[(0, [0])]` starting at offset 0, all offsets (see above)
-/// First chunk of all children: `[(0, [0, 1])]` starting at offset 0, chunk range 0..1
-/// All of child 1234: `[(1234, [0]), [1, []]]`.
-/// First 33 chunks of child 5678: `[(5678, [0, 33]), (1, [])]`.
-/// Chunks 10 to 30 of child 6789: `[(6789, [10, 20]), (1, [])]`.
-/// No child ranges: `[]`
+/// ## Example:
 ///
-/// This is a smallvec so that we can avoid allocations in the common case of a single child range.
+/// Supose two [`RangeSpec`]s `range_a` and `range_b`.
+///
+/// - `[(0, range_a), (2, empty), (3, range_b), (1, empty)]` encodes:
+///   - Select `range_a` for children in the range `[0, 2)`
+///   - do no selection (empty) for children in the range `[2, 2+3) = [2, 5)` (3 children)
+///   - Select `range_b` for children in the range `[5, 5+1) = [5, 6)` (1 children)
+///   - do no selection (empty) for children in the open range `[6, inf)`
+///
+/// Another way to understand this is that offsets represent the number of times the
+/// previous range appears.
+///
+/// Other examples:
+///
+/// - Select `range_a` from all blobs after the 5th one in the sequence: `[(5, range_a)]`.
+///
+/// - Select `range_a` from all blobs in the sequence: `[(0, range_a)]`.
+///
+/// - Select `range_a` from blob 1234: `[(1234, range_a), (1, empty)]`.
+///
+/// - Select nothing: `[]`.
+///
+/// This is a smallvec so that we can avoid allocations in the common case of a single child
+/// range.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpecSeq(SmallVec<[(u64, RangeSpec); 2]>);
 
 impl RangeSpecSeq {
     #[allow(dead_code)]
-    /// An empty range spec sequence
+    /// A [`RangeSpecSeq`] containing no chunks from any blobs in the sequence.
     ///
-    /// When iterated, will return an empty range forever
+    /// [`RangeSpecSeq::iter`], will return an empty range forever.
     pub const fn empty() -> Self {
         Self(SmallVec::new_const())
     }
@@ -140,14 +183,14 @@ impl RangeSpecSeq {
         }
     }
 
-    /// A complete range spec sequence
+    /// A [`RangeSpecSeq`] containing all chunks from all blobs.
     ///
-    /// When iterated, will return a full range forever
+    /// [`RangeSpecSeq::iter`], will return a full range forever.
     pub fn all() -> Self {
         Self(smallvec![(0, RangeSpec::all())])
     }
 
-    /// Create a new range spec sequence from a sequence of range sets
+    /// Creates a new range spec sequence from a sequence of range sets.
     pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
         let mut prev = RangeSet2::empty();
         let mut count = 0;
@@ -167,7 +210,11 @@ impl RangeSpecSeq {
         Self(res)
     }
 
-    /// An infinite iterator of range specs
+    /// An infinite iterator of range specs for blobs in the sequence.
+    ///
+    /// Each item yielded by the iterator is the [`RangeSpec`] for a blob in the sequence.
+    /// Thus the first call to `.next()` returns the range spec for the first blob, the next
+    /// call returns the range spec of the second blob, etc.
     pub fn iter(&self) -> RequestRangeSpecIter<'_> {
         let before_first = self.0.get(0).map(|(c, _)| *c).unwrap_or_default();
         RequestRangeSpecIter {
@@ -177,9 +224,13 @@ impl RangeSpecSeq {
         }
     }
 
-    /// An iterator over non empty range specs
+    /// An iterator over blobs in the sequence with a non-emtpy range spec.
     ///
-    /// This iterator is infinite if the range spec is infinite
+    /// This iterator will only yield items for blobs which have at least one chunk
+    /// selected.
+    ///
+    /// This iterator is infinite if the [`RangeSpecSeq`] ends on a non-empty [`RangeSpec`],
+    /// that is all further blobs have selected chunks spans.
     pub fn iter_non_empty(&self) -> NonEmptyRequestRangeSpecIter<'_> {
         NonEmptyRequestRangeSpecIter::new(self.iter())
     }
@@ -187,9 +238,10 @@ impl RangeSpecSeq {
 
 static EMPTY_RANGE_SPEC: RangeSpec = RangeSpec::EMPTY;
 
-/// An infinite iterator of range specs
+/// An infinite iterator yielding [`RangeSpec`]s for each blob in a sequence.
 ///
-/// default is what to use if the children of this RequestRangeSpec are empty.
+/// The first item yielded is the [`RangeSpec`] for the first blob in the sequence, the
+/// next item is the [`RangeSpec`] for the next blob, etc.
 #[derive(Debug)]
 pub struct RequestRangeSpecIter<'a> {
     /// current value
@@ -211,7 +263,7 @@ impl<'a> RequestRangeSpecIter<'a> {
         }
     }
 
-    /// True if we are at the end of the iterator
+    /// True if we are at the end of the iterator.
     ///
     /// This does not mean that the iterator is terminated, it just means that
     /// it will repeat the same value forever.
@@ -243,7 +295,7 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
     }
 }
 
-/// An infinite iterator of range specs
+/// An iterator over blobs in the sequence with a non-emtpy range specs.
 ///
 /// default is what to use if the children of this RequestRangeSpec are empty.
 #[derive(Debug)]
