@@ -57,8 +57,12 @@ pub mod fsm {
 
     use bao_tree::{
         blake3,
-        io::fsm::{
-            OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+        io::{
+            fsm::{
+                OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext,
+                ResponseDecoderStart,
+            },
+            StartDecodeError,
         },
         TreeNode,
     };
@@ -433,6 +437,9 @@ pub mod fsm {
         /// This indicates that the provider does not have the requested data.
         #[error("not found")]
         NotFound,
+        /// The query range was invalid for the blob
+        #[error("invalid query range")]
+        InvalidQueryRange,
         /// Quinn read error when reading the size header
         #[error("read: {0}")]
         Read(quinn::ReadError),
@@ -446,6 +453,9 @@ pub mod fsm {
             match cause {
                 AtBlobHeaderNextError::NotFound => {
                     io::Error::new(io::ErrorKind::UnexpectedEof, cause)
+                }
+                AtBlobHeaderNextError::InvalidQueryRange => {
+                    io::Error::new(io::ErrorKind::InvalidInput, cause)
                 }
                 AtBlobHeaderNextError::Read(cause) => cause.into(),
                 AtBlobHeaderNextError::Io(cause) => cause,
@@ -464,16 +474,20 @@ pub mod fsm {
                     },
                     size,
                 )),
-                Err(cause) => Err(if cause.kind() == io::ErrorKind::UnexpectedEof {
-                    AtBlobHeaderNextError::NotFound
-                } else if let Some(inner) = cause.get_ref() {
-                    if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
-                        AtBlobHeaderNextError::Read(e.clone())
-                    } else {
-                        AtBlobHeaderNextError::Io(cause)
+                Err(cause) => Err(match cause {
+                    StartDecodeError::NotFound => AtBlobHeaderNextError::NotFound,
+                    StartDecodeError::InvalidQueryRange => AtBlobHeaderNextError::InvalidQueryRange,
+                    StartDecodeError::Io(cause) => {
+                        if let Some(inner) = cause.get_ref() {
+                            if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                                AtBlobHeaderNextError::Read(e.clone())
+                            } else {
+                                AtBlobHeaderNextError::Io(cause)
+                            }
+                        } else {
+                            AtBlobHeaderNextError::Io(cause)
+                        }
                     }
-                } else {
-                    AtBlobHeaderNextError::Io(cause)
                 }),
             }
         }
@@ -576,9 +590,9 @@ pub mod fsm {
     ///
     /// When the provider finds that it does not have a chunk that we requested,
     /// or that the chunk is invalid, it will stop sending data without producing
-    /// an error. This is indicated by the [`DecodeError::ChunkNotFound`] variant,
-    /// which can be used to detect that data is missing but the connection as well
-    /// that the provider is otherwise healthy.
+    /// an error. This is indicated by either the [`DecodeError::ParentNotFound`] or
+    /// [`DecodeError::LeafNotFound`] variant, which can be used to detect that data
+    /// is missing but the connection as well that the provider is otherwise healthy.
     ///
     /// The [`DecodeError::ParentHashMismatch`] and [`DecodeError::LeafHashMismatch`]
     /// variants indicate that the provider has sent us invalid data. A well-behaved
@@ -596,9 +610,12 @@ pub mod fsm {
         /// A chunk was not found or invalid, so the provider stopped sending data
         #[error("not found")]
         NotFound,
-        /// A chunk was not found or invalid, so the provider stopped sending data
-        #[error("chunk not found")]
-        ChunkNotFound,
+        /// A parent was not found or invalid, so the provider stopped sending data
+        #[error("parent not found {0:?}")]
+        ParentNotFound(TreeNode),
+        /// A parent was not found or invalid, so the provider stopped sending data
+        #[error("chunk not found {0}")]
+        LeafNotFound(ChunkNum),
         /// The hash of a parent did not match the expected hash
         #[error("parent hash mismatch: {0:?}")]
         ParentHashMismatch(TreeNode),
@@ -622,6 +639,7 @@ pub mod fsm {
                 AtBlobHeaderNextError::NotFound => Self::NotFound,
                 AtBlobHeaderNextError::Read(cause) => Self::Read(cause),
                 AtBlobHeaderNextError::Io(cause) => Self::Io(cause),
+                AtBlobHeaderNextError::InvalidQueryRange => Self::InvalidQueryRange,
             }
         }
     }
@@ -629,7 +647,10 @@ pub mod fsm {
     impl From<DecodeError> for io::Error {
         fn from(cause: DecodeError) -> Self {
             match cause {
-                DecodeError::ChunkNotFound => io::Error::new(io::ErrorKind::UnexpectedEof, cause),
+                DecodeError::ParentNotFound(_) => {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, cause)
+                }
+                DecodeError::LeafNotFound(_) => io::Error::new(io::ErrorKind::UnexpectedEof, cause),
                 DecodeError::Read(cause) => cause.into(),
                 DecodeError::Io(cause) => cause,
                 _ => io::Error::new(io::ErrorKind::Other, cause),
@@ -640,15 +661,14 @@ pub mod fsm {
     impl From<bao_tree::io::DecodeError> for DecodeError {
         fn from(value: bao_tree::io::DecodeError) -> Self {
             match value {
-                bao_tree::io::DecodeError::InvalidQueryRange => Self::InvalidQueryRange,
+                bao_tree::io::DecodeError::ParentNotFound(x) => Self::ParentNotFound(x),
+                bao_tree::io::DecodeError::LeafNotFound(x) => Self::LeafNotFound(x),
                 bao_tree::io::DecodeError::ParentHashMismatch(node) => {
                     Self::ParentHashMismatch(node)
                 }
                 bao_tree::io::DecodeError::LeafHashMismatch(chunk) => Self::LeafHashMismatch(chunk),
                 bao_tree::io::DecodeError::Io(cause) => {
-                    if cause.kind() == io::ErrorKind::UnexpectedEof {
-                        Self::ChunkNotFound
-                    } else if let Some(inner) = cause.get_ref() {
+                    if let Some(inner) = cause.get_ref() {
                         if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
                             Self::Read(e.clone())
                         } else {

@@ -541,10 +541,10 @@ async fn test_chunk_not_found_1() {
         let res = run_get_request(opts, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
-                if let DecodeError::ChunkNotFound = e {
+                if let DecodeError::ParentNotFound(_) = e {
                     Ok(())
                 } else {
-                    anyhow::bail!("expected DecodeError::ChunkNotFound, got {:?}", e);
+                    anyhow::bail!("expected DecodeError::ParentNotFound, got {:?}", e);
                 }
             } else {
                 anyhow::bail!("expected DecodeError, got {:?}", cause);
