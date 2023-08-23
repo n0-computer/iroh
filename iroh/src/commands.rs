@@ -314,7 +314,7 @@ impl NodeCommands {
             Self::Status {} => {
                 let response = client.rpc(StatusRequest).await?;
 
-                println!("Listening address: {:#?}", response.listen_addrs);
+                println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("PeerID: {}", response.peer_id);
                 Ok(())
             }
