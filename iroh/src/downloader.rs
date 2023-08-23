@@ -114,6 +114,13 @@ struct DownloadInfo {
     // errors, etc. Transport errors could allow for more attempts than serious errors such as the
     // source sending that that can't be decoded, or not having the requested data.
     remaining_retries: u8,
+    /// oneshot to return the download result back to the requester.
+    // TODO(@divma): download futures return the id of the intent they belong to so that it can be
+    // removed afterwards.
+    // problem with this is that a download future could relate to multiple intents. And in the
+    // future one intent can have multiple download futures if we paralelize large collection
+    // downloads.
+    sender: oneshot::Sender<u64>,
 }
 
 #[derive(Debug)]
