@@ -46,31 +46,20 @@ impl Commands {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
-    /// Create a new document
+    /// Create a new document.
     Init,
-    /// Import a document from peers
-    Import { ticket: DocTicket },
-    /// List documents
+    /// Join a document from a ticket.
+    Join { ticket: DocTicket },
+    /// List documents.
     List,
-    /// Start to synchronize a document with peers
-    Sync {
-        /// Document to operate on.
-        ///
-        /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `set-doc`.
-        #[clap(short, long)]
-        doc_id: Option<NamespaceId>,
-
-        peers: Vec<PeerSource>,
-    },
-    /// Share a document and print a ticket to share with peers
+    /// Share a document with peers over a ticket.
     Share {
         /// Set the document
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         mode: ShareMode,
     },
-    /// Set an entry
+    /// Set an entry in a document.
     Set {
         /// Document to operate on.
         ///
@@ -78,7 +67,7 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `set-doc`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
-        /// Author of this entry.
+        /// Author of the entry.
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `set-author`.
@@ -89,7 +78,7 @@ pub enum DocCommands {
         /// Content to store for this entry (parsed as UTF-8 string)
         value: String,
     },
-    /// Get entries by key
+    /// Get entries in a document.
     ///
     /// Shows the author, content hash and content length for all entries for this key.
     Get {
@@ -116,7 +105,7 @@ pub enum DocCommands {
         #[clap(short, long)]
         content: bool,
     },
-    /// List all entries in the document
+    /// List all keys in a document.
     #[clap(alias = "ls")]
     Keys {
         /// Document to operate on.
@@ -141,7 +130,7 @@ impl DocCommands {
                 let doc = iroh.create_doc().await?;
                 println!("{}", doc.id());
             }
-            Self::Import { ticket } => {
+            Self::Join { ticket } => {
                 let doc = iroh.import_doc(ticket).await?;
                 println!("{}", doc.id());
             }
@@ -150,11 +139,6 @@ impl DocCommands {
                 while let Some(id) = stream.try_next().await? {
                     println!("{}", id)
                 }
-            }
-            Self::Sync { doc_id, peers } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?)?;
-                doc.start_sync(peers).await?;
-                println!("ok");
             }
             Self::Share { doc_id, mode } => {
                 let doc = iroh.get_doc(env.doc(doc_id)?)?;
@@ -243,9 +227,9 @@ impl DocCommands {
 
 #[derive(Debug, Clone, Parser)]
 pub enum AuthorCommands {
-    /// Create a new author
+    /// Create a new author.
     Create,
-    /// List authors
+    /// List authors.
     #[clap(alias = "ls")]
     List,
 }
