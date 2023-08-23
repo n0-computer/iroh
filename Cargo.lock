@@ -2097,6 +2097,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "crossbeam",
+ "data-encoding",
  "derive_more",
  "ed25519-dalek",
  "flume",

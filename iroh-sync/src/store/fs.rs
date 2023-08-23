@@ -84,7 +84,7 @@ impl Store {
         let write_tx = self.db.begin_write()?;
         {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-            namespace_table.insert(&namespace.id_bytes(), &namespace.to_bytes())?;
+            namespace_table.insert(namespace.id().as_bytes(), &namespace.to_bytes())?;
         }
         write_tx.commit()?;
 
@@ -95,7 +95,7 @@ impl Store {
         let write_tx = self.db.begin_write()?;
         {
             let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
-            author_table.insert(&author.id_bytes(), &author.to_bytes())?;
+            author_table.insert(author.id().as_bytes(), &author.to_bytes())?;
         }
         write_tx.commit()?;
 
