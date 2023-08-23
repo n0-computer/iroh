@@ -12,7 +12,7 @@ use crate::config::{ConsoleEnv, ConsolePaths};
 pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
-    let mut repl_rx = Repl::spawn(ReplState::with_env(env.clone()));
+    let mut repl_rx = Repl::spawn(env.clone());
     while let Some((event, reply)) = repl_rx.recv().await {
         let (next, res) = match event {
             ReplCmd::Rpc(cmd) => {
@@ -51,13 +51,13 @@ pub enum ToRepl {
 }
 
 pub struct Repl {
-    state: ReplState,
+    env: ConsoleEnv,
     cmd_tx: mpsc::Sender<(ReplCmd, oneshot::Sender<ToRepl>)>,
 }
 impl Repl {
-    pub fn spawn(state: ReplState) -> mpsc::Receiver<(ReplCmd, oneshot::Sender<ToRepl>)> {
+    pub fn spawn(env: ConsoleEnv) -> mpsc::Receiver<(ReplCmd, oneshot::Sender<ToRepl>)> {
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
-        let repl = Repl { state, cmd_tx };
+        let repl = Repl { env, cmd_tx };
         std::thread::spawn(move || {
             if let Err(err) = repl.run() {
                 println!("> repl crashed: {err}");
@@ -72,52 +72,38 @@ impl Repl {
         rl.load_history(&history_path).ok();
         loop {
             // prepare a channel to receive a signal from the main thread when a command completed
-            let (to_repl_tx, to_repl_rx) = oneshot::channel();
-            let readline = rl.readline(&self.state.prompt());
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let readline = rl.readline(&self.prompt());
             match readline {
                 Ok(line) if line.is_empty() => continue,
                 Ok(line) => {
                     rl.add_history_entry(line.as_str())?;
                     let cmd = parse_cmd::<ReplCmd>(&line);
                     if let Some(cmd) = cmd {
-                        self.cmd_tx.blocking_send((cmd, to_repl_tx))?;
+                        self.cmd_tx.blocking_send((cmd, reply_tx))?;
                     } else {
                         continue;
                     }
                 }
                 Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
-                    self.cmd_tx.blocking_send((ReplCmd::Exit, to_repl_tx))?;
+                    self.cmd_tx.blocking_send((ReplCmd::Exit, reply_tx))?;
                 }
                 Err(ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }
             // wait for reply from main thread
-            match to_repl_rx.blocking_recv()? {
+            match reply_rx.blocking_recv()? {
                 ToRepl::UpdateEnv(env) => {
-                    self.state.env = env;
-                    continue;
+                    self.env = env;
                 }
-                ToRepl::Continue => continue,
+                ToRepl::Continue => {}
                 ToRepl::Exit => break,
             }
         }
         rl.save_history(&history_path).ok();
         Ok(())
     }
-}
 
-#[derive(Debug, Clone)]
-pub struct ReplState {
-    env: ConsoleEnv,
-}
-
-impl ReplState {
-    fn with_env(env: ConsoleEnv) -> Self {
-        Self { env }
-    }
-}
-
-impl ReplState {
     pub fn prompt(&self) -> String {
         let mut pwd = String::new();
         if let Some(author) = &self.env.author {
