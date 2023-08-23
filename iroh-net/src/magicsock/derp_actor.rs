@@ -201,13 +201,13 @@ impl DerpActor {
         }
         let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
 
-        const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        const PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
 
         // Split into multiple packets if needed.
         // In almost all cases this will be a single packet.
         // But we have no guarantee that the total size of the contents including
         // length prefix will be smaller than the payload size.
-        for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
+        for packet in PacketizeIter::<_, PAYLOAD_SIZE>::new(contents) {
             match derp_client.send(peer, packet).await {
                 Ok(_) => {
                     inc_by!(MagicsockMetrics, send_derp, total_bytes);
