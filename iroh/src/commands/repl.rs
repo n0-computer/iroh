@@ -99,6 +99,7 @@ impl Repl {
     pub fn run(mut self) -> anyhow::Result<()> {
         let mut rl =
             DefaultEditor::with_config(Config::builder().check_cursor_position(true).build())?;
+        rl.load_history(&self.state.env.repl_history_path).ok();
         loop {
             // prepare a channel to receive a signal from the main thread when a command completed
             let (to_repl_tx, to_repl_rx) = oneshot::channel();
@@ -131,6 +132,7 @@ impl Repl {
                 ToRepl::Exit => break,
             }
         }
+        rl.save_history(&self.state.env.repl_history_path).ok();
         Ok(())
     }
 }
