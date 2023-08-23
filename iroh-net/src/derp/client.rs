@@ -368,8 +368,8 @@ impl ClientBuilder {
     ) -> Self {
         Self {
             secret_key,
-            reader: FramedRead::new(reader, DerpCodec::default()),
-            writer: FramedWrite::new(writer, DerpCodec::default()),
+            reader: FramedRead::new(reader, DerpCodec),
+            writer: FramedWrite::new(writer, DerpCodec),
             local_addr,
             mesh_key: None,
             is_prober: false,
