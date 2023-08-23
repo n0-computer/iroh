@@ -294,6 +294,8 @@ pub enum RpcCommands {
 pub enum NodeCommands {
     /// Get status of the running node.
     Status,
+    /// Get statistics and metrics from the running node.
+    Stats,
     /// Shutdown the running node.
     Shutdown {
         /// Shutdown mode.
@@ -310,16 +312,24 @@ impl NodeCommands {
         match self {
             Self::Shutdown { force } => {
                 client.rpc(ShutdownRequest { force }).await?;
-                Ok(())
             }
-            Self::Status {} => {
+            Self::Stats => {
+                let response = client.rpc(StatsGetRequest {}).await??;
+                for (name, details) in response.stats.iter() {
+                    println!(
+                        "{:23} : {:>6}    ({})",
+                        name, details.value, details.description
+                    );
+                }
+            }
+            Self::Status => {
                 let response = client.rpc(StatusRequest).await?;
 
                 println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("PeerID: {}", response.peer_id);
-                Ok(())
             }
         }
+        Ok(())
     }
 }
 
