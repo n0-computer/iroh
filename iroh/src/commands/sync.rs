@@ -5,7 +5,6 @@ use indicatif::HumanBytes;
 use iroh::{
     client::quic::Iroh,
     rpc_protocol::{DocTicket, ShareMode},
-    sync::PeerSource,
 };
 use iroh_sync::{
     store::GetFilter,
