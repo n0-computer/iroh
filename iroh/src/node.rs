@@ -1192,8 +1192,6 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::validate)
                     .await
             }
-            PeerAdd(_msg) => todo!(),
-            PeerList(_msg) => todo!(),
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)

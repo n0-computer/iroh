@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 //! This defines the RPC protocol used for communication between a CLI and an iroh node.
 //!
 //! RPC using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
@@ -267,42 +265,6 @@ impl ServerStreamingMsg<ProviderService> for WatchRequest {
 pub struct VersionResponse {
     /// The version of the node
     pub version: String,
-}
-
-// peer
-
-/// todo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PeerAddRequest {
-    pub peer_id: PublicKey,
-    pub addrs: Vec<SocketAddr>,
-    pub region: Option<u16>,
-}
-
-impl RpcMsg<ProviderService> for PeerAddRequest {
-    type Response = RpcResult<PeerAddResponse>;
-}
-
-/// todo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PeerAddResponse {}
-
-/// todo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PeerListRequest {}
-
-impl Msg<ProviderService> for PeerListRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<ProviderService> for PeerListRequest {
-    type Response = RpcResult<PeerListResponse>;
-}
-
-/// todo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PeerListResponse {
-    pub peer_id: PublicKey,
 }
 
 // author
@@ -629,9 +591,6 @@ pub enum ProviderRequest {
     Addrs(AddrsRequest),
     Shutdown(ShutdownRequest),
     Validate(ValidateRequest),
-
-    PeerAdd(PeerAddRequest),
-    PeerList(PeerListRequest),
 
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
