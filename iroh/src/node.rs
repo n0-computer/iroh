@@ -1224,13 +1224,13 @@ fn handle_rpc_request<
             }
             DocList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
-                    handler.inner.sync.docs_list(req)
+                    handler.inner.sync.doc_list(req)
                 })
                 .await
             }
             DocCreate(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.docs_create(req)
+                    handler.inner.sync.doc_create(req)
                 })
                 .await
             }
