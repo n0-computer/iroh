@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
@@ -44,6 +44,8 @@ impl Commands {
 
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
+    /// Set the active document (only works within the Iroh console).
+    Switch { id: NamespaceId },
     /// Create a new document.
     Init,
     /// Join a document from a ticket.
@@ -124,6 +126,9 @@ pub enum DocCommands {
 impl DocCommands {
     pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
+            Self::Switch { .. } => {
+                bail!("This command is only supported in the Iroh console")
+            }
             Self::Init => {
                 let doc = iroh.create_doc().await?;
                 println!("{}", doc.id());
@@ -225,6 +230,8 @@ impl DocCommands {
 
 #[derive(Debug, Clone, Parser)]
 pub enum AuthorCommands {
+    /// Set the active author (only works within the Iroh console).
+    Switch { id: AuthorId },
     /// Create a new author.
     Create,
     /// List authors.
@@ -235,13 +242,16 @@ pub enum AuthorCommands {
 impl AuthorCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            AuthorCommands::List => {
+            Self::Switch { .. } => {
+                bail!("This command is only supported in the Iroh console")
+            }
+            Self::List => {
                 let mut stream = iroh.list_authors().await?;
                 while let Some(author_id) = stream.try_next().await? {
                     println!("{}", author_id);
                 }
             }
-            AuthorCommands::Create => {
+            Self::Create => {
                 let author_id = iroh.create_author().await?;
                 println!("{}", author_id);
             }

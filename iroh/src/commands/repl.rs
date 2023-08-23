@@ -3,11 +3,13 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use iroh::client::quic::RpcClient;
 use iroh_gossip::proto::util::base32;
-use iroh_sync::sync::{AuthorId, NamespaceId};
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::config::{ConsoleEnv, ConsolePaths};
+use crate::{
+    commands::sync,
+    config::{ConsoleEnv, ConsolePaths},
+};
 
 pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
@@ -15,17 +17,21 @@ pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
     let mut repl_rx = Repl::spawn(env.clone());
     while let Some((event, reply)) = repl_rx.recv().await {
         let (next, res) = match event {
-            ReplCmd::Rpc(cmd) => {
-                let res = cmd.run(client.clone(), env.clone()).await;
-                (ToRepl::Continue, res)
-            }
-            ReplCmd::SetDoc { id } => {
+            ReplCmd::Rpc(super::RpcCommands::Sync(sync::Commands::Doc {
+                command: sync::DocCommands::Switch { id },
+            })) => {
                 env.set_doc(id);
                 (ToRepl::UpdateEnv(env.clone()), Ok(()))
             }
-            ReplCmd::SetAuthor { id } => {
+            ReplCmd::Rpc(super::RpcCommands::Sync(sync::Commands::Author {
+                command: sync::AuthorCommands::Switch { id },
+            })) => {
                 let res = env.save_author(id);
                 (ToRepl::UpdateEnv(env.clone()), res)
+            }
+            ReplCmd::Rpc(cmd) => {
+                let res = cmd.run(client.clone(), env.clone()).await;
+                (ToRepl::Continue, res)
             }
             ReplCmd::Exit => (ToRepl::Exit, Ok(())),
         };
@@ -129,11 +135,6 @@ impl Repl {
 
 #[derive(Debug, Parser)]
 pub enum ReplCmd {
-    /// Set the active document
-    #[clap(next_help_heading = "foo")]
-    SetDoc { id: NamespaceId },
-    /// Set the active author
-    SetAuthor { id: AuthorId },
     #[clap(flatten)]
     Rpc(#[clap(subcommand)] super::RpcCommands),
     /// Quit the Iroh console
