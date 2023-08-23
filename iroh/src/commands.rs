@@ -72,12 +72,12 @@ impl Cli {
         match self.command {
             Commands::Console => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                let env = ConsoleEnv::from_env_and_peristent_state()?;
+                let env = ConsoleEnv::console_env()?;
                 repl::run(client, env).await
             }
             Commands::Rpc(command) => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                let env = ConsoleEnv::from_env()?;
+                let env = ConsoleEnv::cli_env()?;
                 command.run(client, env).await
             }
             Commands::Full(command) => {

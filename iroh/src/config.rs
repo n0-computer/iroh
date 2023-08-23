@@ -218,8 +218,8 @@ pub struct ConsoleEnv {
 }
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
-    pub fn from_env_and_peristent_state() -> Result<Self> {
-        let author = match Self::read_author_from_persistent_state()? {
+    pub fn console_env() -> Result<Self> {
+        let author = match Self::get_console_default_author()? {
             Some(author) => Some(author),
             None => env_author()?,
         };
@@ -229,7 +229,15 @@ impl ConsoleEnv {
         })
     }
 
-    fn read_author_from_persistent_state() -> anyhow::Result<Option<AuthorId>> {
+    /// Read only from environment variables.
+    pub fn cli_env() -> Result<Self> {
+        Ok(Self {
+            author: env_author()?,
+            doc: env_doc()?,
+        })
+    }
+
+    fn get_console_default_author() -> anyhow::Result<Option<AuthorId>> {
         let author_path = ConsolePaths::DefaultAuthor.with_env()?;
         if let Ok(s) = std::fs::read(&author_path) {
             let author = String::from_utf8(s)
@@ -245,14 +253,6 @@ impl ConsoleEnv {
         } else {
             Ok(None)
         }
-    }
-
-    /// Read only from environment variables.
-    pub fn from_env() -> Result<Self> {
-        Ok(Self {
-            author: env_author()?,
-            doc: env_doc()?,
-        })
     }
 
     pub fn save_author(&mut self, author: AuthorId) -> anyhow::Result<()> {
@@ -284,14 +284,14 @@ impl ConsoleEnv {
     }
 }
 
-pub fn env_author() -> Result<Option<AuthorId>> {
+fn env_author() -> Result<Option<AuthorId>> {
     match env_var(ENV_AUTHOR) {
         Ok(s) => Ok(Some(AuthorId::from_str(&s)?)),
         Err(_) => Ok(None),
     }
 }
 
-pub fn env_doc() -> Result<Option<NamespaceId>> {
+fn env_doc() -> Result<Option<NamespaceId>> {
     match env_var(ENV_DOC) {
         Ok(s) => Ok(Some(NamespaceId::from_str(&s)?)),
         Err(_) => Ok(None),
