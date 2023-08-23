@@ -11,8 +11,8 @@ use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
     DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
     DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-    DocSubscribeRequest, DocSubscribeResponse, DocTicket, DocsCreateRequest, DocsCreateResponse,
-    DocsListRequest, DocsListResponse, RpcResult, ShareMode,
+    DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
+    DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult, ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -40,7 +40,6 @@ impl<S: Store> SyncEngine<S> {
             let ite = store.list_authors();
             let ite = inline_result(ite).map_ok(|author| AuthorListResponse {
                 author_id: author.id(),
-                writable: true,
             });
             for entry in ite {
                 if let Err(_err) = tx.send(entry) {
@@ -132,6 +131,13 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         self.start_sync(replica.namespace(), peers).await?;
         Ok(DocStartSyncResponse {})
+    }
+
+    pub async fn doc_stop_sync(&self, req: DocStopSyncRequest) -> RpcResult<DocStopSyncResponse> {
+        let DocStopSyncRequest { doc_id } = req;
+        let replica = self.get_replica(&doc_id)?;
+        self.stop_sync(replica.namespace()).await?;
+        Ok(DocStopSyncResponse {})
     }
 
     pub async fn doc_set<B: BaoStore>(

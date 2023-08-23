@@ -42,7 +42,6 @@ impl Commands {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
     /// Create a new document.
@@ -51,7 +50,7 @@ pub enum DocCommands {
     Join { ticket: DocTicket },
     /// List documents.
     List,
-    /// Share a document with peers over a ticket.
+    /// Share a document with peers.
     Share {
         /// Set the document
         #[clap(short, long)]
