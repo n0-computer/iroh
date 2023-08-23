@@ -4,15 +4,20 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
+    pin::Pin,
+    task::Poll,
     time::{Duration, Instant},
 };
 
 use crate::config::{iroh_config_path, Config, IrohPaths, CONFIG_FILE_NAME, ENV_PREFIX};
 
 use anyhow::Context;
+use bytes::{Bytes, BytesMut};
 use clap::Subcommand;
+use futures::FutureExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::progress::ProgressWriter;
+use iroh_net::derp::{http::Client, ReceivedMessage};
 use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
@@ -22,12 +27,13 @@ use iroh_net::{
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use tokio::{io::AsyncWriteExt, sync};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt, Sink},
+    sync,
+};
 
 use iroh_metrics::core::Core;
 use iroh_net::metrics::MagicsockMetrics;
-
-mod derp;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -57,17 +63,12 @@ impl std::str::FromStr for SecretKeyOption {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
-    /// Report on the current network environment, using either an explicitly provided stun host
-    /// or the settings from the config file.
-    Report {
-        /// Explicitly provided stun host. If provided, this will disable derp and just do stun.
-        #[clap(long)]
-        stun_host: Option<String>,
-        /// The port of the STUN server.
-        #[clap(long, default_value_t = DEFAULT_DERP_STUN_PORT)]
-        stun_port: u16,
-    },
-    /// Wait for incoming requests from iroh doctor connect
+    /// Get the latencies of the different DERP regions
+    ///
+    /// Tests the latencies of the default DERP regions and nodes. To test custom regions or nodes,
+    /// adjust the [`Config`].
+    Regions,
+    /// Wait for incoming requests from iroh doctor derp connect
     Accept {
         /// Our own secret key, in hex. If not specified, the locally configured key will be used.
         #[clap(long, default_value_t = SecretKeyOption::Local)]
@@ -84,15 +85,21 @@ pub enum Commands {
         /// Use a local derp relay
         #[clap(long)]
         local_derper: bool,
+
+        /// The DERP region the peer you are dialing can be found on.
+        ///
+        /// If `local_derper` is true, this field is ignored.
+        ///
+        /// When `None`, or if attempting to dial an unknown region, no relaying can occur.
+        ///
+        /// Default is `None`.
+        #[clap(long)]
+        derp_region: Option<u16>,
     },
-    /// Connect to an iroh doctor accept node.
+    /// Connect to an iroh doctor derp accept node.
     Connect {
         /// hex peer id of the node to connect to
         dial: String,
-
-        /// One or more remote endpoints to use when dialing
-        #[clap(long)]
-        remote_endpoint: Vec<SocketAddr>,
 
         /// Our own secret key, in hex. If not specified, a random key will be generated.
         #[clap(long, default_value_t = SecretKeyOption::Random)]
@@ -108,39 +115,12 @@ pub enum Commands {
         ///
         /// If `local_derper` is true, this field is ignored.
         ///
-        /// When `None`, or if attempting to dial an unknown region, no hole punching can occur.
+        /// When `None`, or if attempting to dial an unknown region, no relaying can occur.
         ///
         /// Default is `None`.
         #[clap(long)]
         derp_region: Option<u16>,
     },
-    /// Probe the port mapping protocols.
-    PortMapProbe {
-        /// Whether to enable UPnP.
-        #[clap(long)]
-        enable_upnp: bool,
-        /// Whether to enable PCP.
-        #[clap(long)]
-        enable_pcp: bool,
-        /// Whether to enable NAT-PMP.
-        #[clap(long)]
-        enable_nat_pmp: bool,
-    },
-    /// Attempt to get a port mapping to the given local port.
-    PortMap {
-        /// Protocol to use for port mapping. One of ["upnp", "nat_pmp", "pcp"].
-        protocol: String,
-        /// Local port to get a mapping.
-        local_port: NonZeroU16,
-        /// How long to wait for an external port to be ready in seconds.
-        #[clap(long, default_value_t = 10)]
-        timeout_secs: u64,
-    },
-    /// Get the latencies of the different DERP regions
-    ///
-    /// Tests the latencies of the default DERP regions and nodes. To test custom regions or nodes,
-    /// adjust the [`Config`].
-    DerpRegions,
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -172,64 +152,72 @@ fn update_pb(
 }
 
 /// handle a test stream request
-async fn handle_test_request(
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
-    gui: &Gui,
-) -> anyhow::Result<()> {
-    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-    recv.read_exact(&mut buf).await?;
-    let request: TestStreamRequest = postcard::from_bytes(&buf)?;
+async fn handle_test_request(mut client: Client, gui: &Gui) -> anyhow::Result<()> {
+    let (request, source): (TestStreamRequest, PublicKey) = {
+        let (msg, _) = client.recv_detail().await?;
+        match msg {
+            ReceivedMessage::ReceivedPacket { data, source } => {
+                (postcard::from_bytes(&data)?, source)
+            }
+            m => {
+                anyhow::bail!("unexpected message {m:?} received");
+            }
+        }
+    };
     match request {
         TestStreamRequest::Echo { bytes } => {
-            // copy the stream back
-            let (mut send, updates) = ProgressWriter::new(&mut send);
+            let (sink, updates) = ProgressWriter::new(tokio::io::sink());
             let t0 = Instant::now();
             let progress = update_pb("echo", gui.pb.clone(), bytes, updates);
-            tokio::io::copy(&mut recv, &mut send).await?;
+            // copy the msgs back
+            derp_echo(client, source, sink).await?;
             let elapsed = t0.elapsed();
-            drop(send);
             progress.await?;
             gui.set_echo(bytes, elapsed);
         }
         TestStreamRequest::Drain { bytes } => {
             // drain the stream
-            let (mut send, updates) = ProgressWriter::new(tokio::io::sink());
+            let (sink, updates) = ProgressWriter::new(tokio::io::sink());
             let progress = update_pb("recv", gui.pb.clone(), bytes, updates);
             let t0 = Instant::now();
-            tokio::io::copy(&mut recv, &mut send).await?;
+            recv_sink(client, sink).await?;
             let elapsed = t0.elapsed();
-            drop(send);
             progress.await?;
             gui.set_recv(bytes, elapsed);
         }
-        TestStreamRequest::Send { bytes, block_size } => {
+        TestStreamRequest::Send { bytes, .. } => {
             // send the requested number of bytes, in blocks of the requested size
-            let (mut send, updates) = ProgressWriter::new(&mut send);
+            let (sink, updates) = ProgressWriter::new(tokio::io::sink());
             let progress = update_pb("send", gui.pb.clone(), bytes, updates);
             let t0 = Instant::now();
-            send_blocks(&mut send, bytes, block_size).await?;
-            drop(send);
+            send_blocks(&mut client, source, bytes, Some(sink)).await?;
             let elapsed = t0.elapsed();
             progress.await?;
             gui.set_send(bytes, elapsed);
         }
     }
-    send.finish().await?;
     Ok(())
 }
 
 async fn send_blocks(
-    mut send: impl tokio::io::AsyncWrite + Unpin,
+    client: &Client,
+    peer: PublicKey,
     total_bytes: u64,
-    block_size: u32,
+    mut progress: Option<ProgressWriter<Sink>>,
 ) -> anyhow::Result<()> {
+    let block_size = iroh_net::derp::MAX_PACKET_SIZE;
     // send the requested number of bytes, in blocks of the requested size
     let buf = vec![0u8; block_size as usize];
     let mut remaining = total_bytes;
     while remaining > 0 {
         let n = remaining.min(block_size as u64);
-        send.write_all(&buf[..n as usize]).await?;
+        if let Some(mut p) = progress.take() {
+            p.write_all(&buf[..n as usize]).await?;
+            progress = Some(p);
+        }
+        client
+            .send(peer, Bytes::from(buf[..n as usize].to_vec()))
+            .await?;
         remaining -= n;
     }
     Ok(())
@@ -363,45 +351,111 @@ impl Drop for Gui {
     }
 }
 
-async fn active_side(connection: quinn::Connection, config: &TestConfig) -> anyhow::Result<()> {
+async fn active_side(client: Client, peer: PublicKey, config: &TestConfig) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
     let gui = Gui::new();
     let Gui { pb, .. } = &gui;
     for _ in 0..n {
-        let d = send_test(&connection, config, pb).await?;
+        let d = send_test(client.clone(), peer.clone(), config, pb).await?;
         gui.set_send(config.size, d);
-        let d = recv_test(&connection, config, pb).await?;
+        let d = recv_test(client.clone(), peer.clone(), config, pb).await?;
         gui.set_recv(config.size, d);
-        let d = echo_test(&connection, config, pb).await?;
+        let d = echo_test(client.clone(), peer.clone(), config, pb).await?;
         gui.set_echo(config.size, d);
     }
     Ok(())
 }
 
 async fn send_test_request(
-    send: &mut quinn::SendStream,
+    client: &mut Client,
+    peer: PublicKey,
     request: &TestStreamRequest,
 ) -> anyhow::Result<()> {
-    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+    let mut buf = BytesMut::with_capacity(TestStreamRequest::POSTCARD_MAX_SIZE);
     postcard::to_slice(&request, &mut buf)?;
-    send.write_all(&buf).await?;
+    client.send(peer, buf.freeze()).await?;
     Ok(())
 }
 
+// struct RecvDerp {
+//     client: Client,
+// }
+
+// impl AsyncRead for RecvDerp {
+//     fn poll_read(
+//         self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//         buf: &mut tokio::io::ReadBuf<'_>,
+//     ) -> tokio::io::Poll<Result<()>> {
+//         while let Ok(msg) = self.client.recv_detail() {
+
+//     }
+// }
+
+// TODO: either make a DerpClient struct that is AsyncRead/AsyncWrite, or remove
+// the `ProgressWriter` code
+async fn recv_sink(client: Client, mut sink: ProgressWriter<Sink>) -> anyhow::Result<u64> {
+    let mut size = 0;
+    while let Ok(msg) = client.recv_detail().await {
+        match msg.0 {
+            ReceivedMessage::ReceivedPacket { data, .. } => {
+                let len = data.len() as u64;
+                sink.write_all(&data).await?;
+                size += len;
+            }
+            m => {
+                anyhow::bail!("received unexpected message {m:?}");
+            }
+        }
+    }
+    Ok(size)
+}
+
+// TODO: either make a DerpClient struct that is AsyncRead/AsyncWrite, or remove
+// the `ProgressWriter` code
+async fn derp_echo(
+    client: Client,
+    peer: PublicKey,
+    mut sink: ProgressWriter<Sink>,
+) -> anyhow::Result<u64> {
+    let mut size = 0;
+    while let Ok(msg) = client.recv_detail().await {
+        match msg.0 {
+            ReceivedMessage::ReceivedPacket { data, .. } => {
+                // ew
+                let echo_data = data.clone();
+                client.send(peer, echo_data).await?;
+                let len = data.len() as u64;
+                sink.write_all(&data).await?;
+                size += len;
+            }
+            m => {
+                anyhow::bail!("received unexpected message {m:?}");
+            }
+        }
+    }
+    Ok(size)
+}
+
 async fn echo_test(
-    connection: &quinn::Connection,
+    mut client: Client,
+    peer: PublicKey,
     config: &TestConfig,
     pb: &indicatif::ProgressBar,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
-    let (mut send, mut recv) = connection.open_bi().await?;
-    send_test_request(&mut send, &TestStreamRequest::Echo { bytes: size }).await?;
-    let (mut sink, updates) = ProgressWriter::new(tokio::io::sink());
-    let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
+    send_test_request(
+        &mut client,
+        peer.clone(),
+        &TestStreamRequest::Echo { bytes: size },
+    )
+    .await?;
+    let (sink, updates) = ProgressWriter::new(tokio::io::sink());
+    let recv_client = client.clone();
+    let copying = tokio::spawn(async move { recv_sink(recv_client, sink).await });
     let progress = update_pb("echo", pb.clone(), size, updates);
     let t0 = Instant::now();
-    send_blocks(&mut send, size, 1024 * 1024).await?;
-    send.finish().await?;
+    send_blocks(&mut client, peer, size, None).await?;
     let received = copying.await??;
     anyhow::ensure!(received == size);
     let duration = t0.elapsed();
@@ -410,49 +464,94 @@ async fn echo_test(
 }
 
 async fn send_test(
-    connection: &quinn::Connection,
+    mut client: Client,
+    peer: PublicKey,
     config: &TestConfig,
     pb: &indicatif::ProgressBar,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
-    let (mut send, mut recv) = connection.open_bi().await?;
-    send_test_request(&mut send, &TestStreamRequest::Drain { bytes: size }).await?;
-    let (mut send_with_progress, updates) = ProgressWriter::new(&mut send);
-    let copying =
-        tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
+    send_test_request(
+        &mut client,
+        peer.clone(),
+        &TestStreamRequest::Drain { bytes: size },
+    )
+    .await?;
+    let (sink, updates) = ProgressWriter::new(tokio::io::sink());
     let progress = update_pb("send", pb.clone(), size, updates);
     let t0 = Instant::now();
-    send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
-    drop(send_with_progress);
-    send.finish().await?;
-    drop(send);
-    let received = copying.await??;
-    anyhow::ensure!(received == 0);
+    send_blocks(&mut client, peer, size, Some(sink)).await?;
     let duration = t0.elapsed();
     progress.await?;
     Ok(duration)
 }
 
+// struct DerpWriter {
+//     client: Client,
+//     peer: PublicKey,
+//     fut: Option<(
+//         Pin<Box<dyn std::future::Future<Output = Result<(), iroh_net::derp::http::ClientError>>>>,
+//         usize,
+//     )>,
+// }
+
+// impl tokio::io::AsyncWrite for DerpWriter {
+//     fn poll_write(
+//         self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//         buf: &[u8],
+//     ) -> Poll<Result<usize, std::io::Error>> {
+//         // if we are in the middle of sending, keep polling the send
+//         if let Some((fut, size)) = self.fut {
+//             let poll = fut.poll_unpin(cx);
+//             match poll {
+//                 Poll::Ready(res) => {
+
+//                 }
+//                 Poll::Pending => Poll::Pending,
+//             }
+//         }
+//         // if buf.len() > iroh_net::derp::MAX_PACKET_SIZE {
+//         //     self.client.send(
+//         //         self.peer.clone(),
+//         //         &buf[..iroh_net::derp::MAX_PACKET_SIZE].into(),
+//         //     )
+//         // }
+//     }
+
+//     fn poll_flush(
+//         self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//     ) -> std::task::Poll<Result<(), std::io::Error>> {
+//         std::task::Poll::Ready(Ok(()))
+//     }
+//     fn poll_shutdown(
+//         self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//     ) -> std::task::Poll<Result<(), std::io::Error>> {
+//         std::task::Poll::Ready(Ok(()))
+//     }
+// }
+
 async fn recv_test(
-    connection: &quinn::Connection,
+    mut client: Client,
+    peer: PublicKey,
     config: &TestConfig,
     pb: &indicatif::ProgressBar,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
-    let (mut send, mut recv) = connection.open_bi().await?;
     let t0 = Instant::now();
-    let (mut sink, updates) = ProgressWriter::new(tokio::io::sink());
+    let (sink, updates) = ProgressWriter::new(tokio::io::sink());
     send_test_request(
-        &mut send,
+        &mut client,
+        peer.clone(),
         &TestStreamRequest::Send {
             bytes: size,
             block_size: 1024 * 1024,
         },
     )
     .await?;
-    let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
+    let copying = tokio::spawn(async move { recv_sink(client, sink).await });
     let progress = update_pb("recv", pb.clone(), size, updates);
-    send.finish().await?;
     let received = copying.await??;
     anyhow::ensure!(received == size);
     let duration = t0.elapsed();
@@ -461,20 +560,13 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
+async fn passive_side(client: Client) -> anyhow::Result<()> {
     let gui = Gui::new();
     loop {
-        match connection.accept_bi().await {
-            Ok((send, recv)) => {
-                if let Err(cause) = handle_test_request(send, recv, &gui).await {
-                    eprintln!("Error handling test request {cause}");
-                }
-            }
-            Err(cause) => {
-                eprintln!("error accepting bidi stream {cause}");
-                break Err(cause.into());
-            }
-        };
+        let client = client.clone();
+        if let Err(cause) = handle_test_request(client, &gui).await {
+            eprintln!("Error handling test request {cause}");
+        }
     }
 }
 
@@ -488,80 +580,20 @@ fn configure_local_derp_map() -> DerpMap {
 
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 
-async fn make_endpoint(
+async fn make_derp_client(
     secret_key: SecretKey,
-    derp_map: Option<DerpMap>,
+    derp_map: DerpMap,
 ) -> anyhow::Result<MagicEndpoint> {
-    tracing::info!(
-        "public key: {}",
-        hex::encode(secret_key.public().as_bytes())
-    );
-    tracing::info!("derp map {:#?}", derp_map);
-
-    let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
-    let on_net_info = |ni: config::NetInfo| {
-        tracing::info!("got net info {:#?}", ni);
-    };
-
-    let on_endpoints = move |ep: &[config::Endpoint]| {
-        tracing::info!("got endpoint {:#?}", ep);
-    };
-
-    let on_derp_active = move || {
-        tracing::info!("got derp active");
-        on_derp_s.try_send(()).ok();
-    };
-
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-    transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-
-    let endpoint = MagicEndpoint::builder()
-        .secret_key(secret_key)
-        .alpns(vec![DR_DERP_ALPN.to_vec()])
-        .derp_map(derp_map)
-        .transport_config(transport_config)
-        .on_net_info(Box::new(on_net_info))
-        .on_endpoints(Box::new(on_endpoints))
-        .on_derp_active(Box::new(on_derp_active))
-        .bind(0)
-        .await?;
-
-    tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
-        .await
-        .context("wait for derp connection")?;
-
-    Ok(endpoint)
+    todo!();
 }
 
 async fn connect(
     dial: String,
     secret_key: SecretKey,
-    remote_endpoints: Vec<SocketAddr>,
-    derp_region: Option<u16>,
-    derp_map: Option<DerpMap>,
+    derp_region: u16,
+    derp_map: DerpMap,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, derp_map).await?;
-
-    let bytes = hex::decode(dial)?;
-    let peer_id = PublicKey::try_from(&bytes[..]).context("failed to parse PublicKey")?;
-
-    tracing::info!("dialing {:?}", peer_id);
-    let conn = endpoint
-        .connect(peer_id, &DR_DERP_ALPN, derp_region, &remote_endpoints)
-        .await;
-    match conn {
-        Ok(connection) => {
-            if let Err(cause) = passive_side(connection).await {
-                eprintln!("error handling connection: {cause}");
-            }
-        }
-        Err(cause) => {
-            eprintln!("unable to connect to {peer_id}: {cause}");
-        }
-    }
-
-    Ok(())
+    todo!();
 }
 
 /// format a socket addr so that it does not have to be escaped on the console
@@ -576,38 +608,10 @@ fn format_addr(addr: SocketAddr) -> String {
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
-    derp_map: Option<DerpMap>,
+    derp_map: DerpMap,
+    region: u16,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), derp_map).await?;
-
-    let endpoints = endpoint.local_endpoints().await?;
-    let remote_addrs = endpoints
-        .iter()
-        .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
-        .collect::<Vec<_>>()
-        .join(" ");
-    println!(
-            "Run\n\niroh doctor connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
-            hex::encode(secret_key.public().as_bytes()),
-            remote_addrs,
-        );
-    println!("Omit the --remote-endpoint args to connect just by key.");
-    while let Some(connecting) = endpoint.accept().await {
-        match connecting.await {
-            Ok(connection) => {
-                println!("\nAccepted connection. Performing test.\n");
-                let t0 = Instant::now();
-                if let Err(cause) = active_side(connection, &config).await {
-                    println!("error after {}: {cause}", t0.elapsed().as_secs_f64());
-                }
-            }
-            Err(cause) => {
-                eprintln!("error accepting connection {cause}");
-            }
-        }
-    }
-
-    Ok(())
+    todo!();
 }
 
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
@@ -793,59 +797,47 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 
 pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
     match command {
-        Commands::Report {
-            stun_host,
-            stun_port,
-        } => report(stun_host, stun_port, config).await,
         Commands::Connect {
             dial,
             secret_key,
             local_derper,
             derp_region,
-            remote_endpoint,
         } => {
             let (derp_map, derp_region) = if local_derper {
-                (Some(configure_local_derp_map()), Some(TEST_REGION_ID))
+                (configure_local_derp_map(), TEST_REGION_ID)
             } else {
-                (config.derp_map(), derp_region)
+                match (config.derp_map(), derp_region) {
+                    (Some(derp_map), Some(region_id)) => (derp_map, region_id),
+                    _ => {
+                        anyhow::bail!("must provide `derp_map` configuration in the config file and a `--region-id`");
+                    }
+                }
             };
             let secret_key = create_secret_key(secret_key)?;
-            connect(dial, secret_key, remote_endpoint, derp_region, derp_map).await
+            connect(dial, secret_key, derp_region, derp_map).await
         }
         Commands::Accept {
             secret_key,
             local_derper,
             size,
             iterations,
+            derp_region,
         } => {
-            let derp_map = if local_derper {
-                Some(configure_local_derp_map())
+            let (derp_map, derp_region) = if local_derper {
+                (configure_local_derp_map(), TEST_REGION_ID)
             } else {
-                config.derp_map()
+                match (config.derp_map(), derp_region) {
+                    (Some(derp_map), Some(region_id)) => (derp_map, region_id),
+                    _ => {
+                        anyhow::bail!("must provide `derp_map` configuration in the config file and a `--region-id`");
+                    }
+                }
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            accept(secret_key, config, derp_map).await
+            accept(secret_key, config, derp_map, derp_region).await
         }
-        Commands::PortMap {
-            protocol,
-            local_port,
-            timeout_secs,
-        } => port_map(&protocol, local_port, Duration::from_secs(timeout_secs)).await,
-        Commands::PortMapProbe {
-            enable_upnp,
-            enable_pcp,
-            enable_nat_pmp,
-        } => {
-            let config = portmapper::Config {
-                enable_upnp,
-                enable_pcp,
-                enable_nat_pmp,
-            };
-
-            port_map_probe(config).await
-        }
-        Commands::DerpRegions => {
+        Commands::Regions => {
             let default_config_path =
                 iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
 
