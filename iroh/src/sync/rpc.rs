@@ -40,7 +40,6 @@ impl<S: Store> SyncEngine<S> {
             let ite = store.list_authors();
             let ite = inline_result(ite).map_ok(|author| AuthorListResponse {
                 author_id: author.id(),
-                writable: true,
             });
             for entry in ite {
                 if let Err(_err) = tx.send(entry) {

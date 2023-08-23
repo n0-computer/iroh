@@ -269,7 +269,7 @@ pub struct VersionResponse {
 
 // author
 
-/// todo
+/// List document authors for which we have a secret key.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorListRequest {}
 
@@ -281,14 +281,14 @@ impl ServerStreamingMsg<ProviderService> for AuthorListRequest {
     type Response = RpcResult<AuthorListResponse>;
 }
 
-/// todo
+/// Response for [`AuthorListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorListResponse {
+    /// The author id
     pub author_id: AuthorId,
-    pub writable: bool,
 }
 
-/// todo
+/// Create a new document author.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorCreateRequest;
 
@@ -296,16 +296,17 @@ impl RpcMsg<ProviderService> for AuthorCreateRequest {
     type Response = RpcResult<AuthorCreateResponse>;
 }
 
-/// todo
+/// Response for [`AuthorCreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorCreateResponse {
+    /// The id of the created author
     pub author_id: AuthorId,
 }
 
-/// todo
+/// Import author from secret key
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorImportRequest {
-    // either a public or private key
+    /// The secret key for the author
     pub key: KeyBytes,
 }
 
@@ -313,20 +314,14 @@ impl RpcMsg<ProviderService> for AuthorImportRequest {
     type Response = RpcResult<AuthorImportResponse>;
 }
 
-/// todo
+/// Response to [`AuthorImportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorImportResponse {
+    /// The author id of the imported author
     pub author_id: AuthorId,
 }
 
-/// todo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AuthorShareRequest {
-    pub author: AuthorId,
-    pub mode: ShareMode,
-}
-
-/// todo
+/// Intended capability for document share tickets
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum ShareMode {
@@ -335,20 +330,17 @@ pub enum ShareMode {
     /// Write access
     Write,
 }
-
-impl RpcMsg<ProviderService> for AuthorShareRequest {
-    type Response = RpcResult<AuthorShareResponse>;
-}
-
-/// todo
+/// Response to [`AuthorShareRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorShareResponse {
+    /// The secret key of the author
     pub key: KeyBytes,
 }
 
-/// todo
+/// Subscribe to events for a document.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeRequest {
+    /// The document id
     pub doc_id: NamespaceId,
 }
 
@@ -360,13 +352,14 @@ impl ServerStreamingMsg<ProviderService> for DocSubscribeRequest {
     type Response = DocSubscribeResponse;
 }
 
-/// todo
+/// Response to [`DocSubscribeRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeResponse {
+    /// The event that occured on the document
     pub event: LiveEvent,
 }
 
-/// todo
+/// List all documents
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocsListRequest {}
 
@@ -378,14 +371,14 @@ impl ServerStreamingMsg<ProviderService> for DocsListRequest {
     type Response = RpcResult<DocsListResponse>;
 }
 
-/// todo
+/// Response to [`DocsListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocsListResponse {
+    /// The document id
     pub id: NamespaceId,
-    // pub writable: bool,
 }
 
-/// todo
+/// Create a new document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocsCreateRequest {}
 
@@ -393,13 +386,14 @@ impl RpcMsg<ProviderService> for DocsCreateRequest {
     type Response = RpcResult<DocsCreateResponse>;
 }
 
-/// todo
+/// Response to [`DocsCreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocsCreateResponse {
+    /// The document id
     pub id: NamespaceId,
 }
 
-/// todo
+/// Contains both a key (either secret or public) to a document, and a list of peers to join.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DocTicket {
     /// either a public or private key
@@ -412,10 +406,12 @@ impl DocTicket {
     pub fn new(key: KeyBytes, peers: Vec<PeerSource>) -> Self {
         Self { key, peers }
     }
+    /// Serialize the ticket to a byte array.
     pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let bytes = postcard::to_stdvec(&self)?;
         Ok(bytes)
     }
+    /// Parse ticket from a byte array.
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let slf = postcard::from_bytes(bytes)?;
         Ok(slf)
@@ -437,7 +433,7 @@ impl fmt::Display for DocTicket {
     }
 }
 
-/// todo
+/// Import a document from a ticket.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocImportRequest(pub DocTicket);
 
@@ -445,16 +441,19 @@ impl RpcMsg<ProviderService> for DocImportRequest {
     type Response = RpcResult<DocImportResponse>;
 }
 
-/// todo
+/// Response to [`DocImportRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocImportResponse {
+    /// the document id
     pub doc_id: NamespaceId,
 }
 
-/// todo
+/// Share a document with peers over a ticket.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareRequest {
+    /// The document id
     pub doc_id: NamespaceId,
+    /// Whether to share read or write access to the document
     pub mode: ShareMode,
 }
 
@@ -462,14 +461,16 @@ impl RpcMsg<ProviderService> for DocShareRequest {
     type Response = RpcResult<DocShareResponse>;
 }
 
-/// todo
+/// The response to [`DocShareRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareResponse(pub DocTicket);
 
-/// todo
+/// Start to sync a doc with peers.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStartSyncRequest {
+    /// The document id
     pub doc_id: NamespaceId,
+    /// List of peers to join
     pub peers: Vec<PeerSource>,
 }
 
@@ -477,13 +478,14 @@ impl RpcMsg<ProviderService> for DocStartSyncRequest {
     type Response = RpcResult<DocStartSyncResponse>;
 }
 
-/// todo
+/// Response to [`DocStartSyncRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStartSyncResponse {}
 
-/// todo
+/// Stop the live sync for a doc.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStopSyncRequest {
+    /// The document id
     pub doc_id: NamespaceId,
 }
 
@@ -491,17 +493,22 @@ impl RpcMsg<ProviderService> for DocStopSyncRequest {
     type Response = RpcResult<DocStopSyncResponse>;
 }
 
-/// todo
+/// Response to [`DocStopSyncRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStopSyncResponse {}
 
-/// todo
+/// Set an entry in a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetRequest {
+    /// The document id
     pub doc_id: NamespaceId,
+    /// Author of this entry.
     pub author_id: AuthorId,
+    /// Key of this entry.
     pub key: Vec<u8>,
-    // todo: different forms to supply value
+    /// Value of this entry.
+    // TODO: Allow to provide the hash directly
+    // TODO: Add a way to provide content as stream
     pub value: Vec<u8>,
 }
 
@@ -509,16 +516,19 @@ impl RpcMsg<ProviderService> for DocSetRequest {
     type Response = RpcResult<DocSetResponse>;
 }
 
-/// todo
+/// Response to [`DocSetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetResponse {
+    /// The newly-created entry.
     pub entry: SignedEntry,
 }
 
-/// todo
+/// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetRequest {
+    /// The document id
     pub doc_id: NamespaceId,
+    /// Filter entries by this [`GetFilter`]
     pub filter: GetFilter,
 }
 
@@ -530,15 +540,17 @@ impl ServerStreamingMsg<ProviderService> for DocGetRequest {
     type Response = RpcResult<DocGetResponse>;
 }
 
-/// todo
+/// Response to [`DocGetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetResponse {
+    /// The document entry
     pub entry: SignedEntry,
 }
 
-/// todo
+/// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BytesGetRequest {
+    /// Hash to get bytes for
     pub hash: Hash,
 }
 
@@ -546,12 +558,14 @@ impl RpcMsg<ProviderService> for BytesGetRequest {
     type Response = RpcResult<BytesGetResponse>;
 }
 
-/// todo
+/// Response to [`BytesGetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BytesGetResponse {
+    /// The blob data
     pub data: Bytes,
 }
 
+/// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatsGetRequest {}
 
@@ -562,13 +576,16 @@ impl RpcMsg<ProviderService> for StatsGetRequest {
 /// Counter stats
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CounterStats {
+    /// The counter value
     pub value: u64,
+    /// The counter description
     pub description: String,
 }
 
-/// todo
+/// Response to [`StatsGetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatsGetResponse {
+    /// Map of statistics
     pub stats: HashMap<String, CounterStats>,
 }
 
@@ -595,7 +612,6 @@ pub enum ProviderRequest {
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
     AuthorImport(AuthorImportRequest),
-    AuthorShare(AuthorShareRequest),
 
     DocsList(DocsListRequest),
     DocsCreate(DocsCreateRequest),
@@ -631,13 +647,9 @@ pub enum ProviderResponse {
 
     // TODO: I see I changed naming convention here but at least to me it becomes easier to parse
     // with the subject in front if there's many commands
-    PeerAdd(RpcResult<PeerAddResponse>),
-    PeerList(RpcResult<PeerListResponse>),
-
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
-    AuthorShare(RpcResult<AuthorShareResponse>),
 
     DocsList(RpcResult<DocsListResponse>),
     DocsCreate(RpcResult<DocsCreateResponse>),

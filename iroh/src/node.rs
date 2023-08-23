@@ -1207,7 +1207,6 @@ fn handle_rpc_request<
             AuthorImport(_msg) => {
                 todo!()
             }
-            AuthorShare(_msg) => todo!(),
             DocsList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.docs_list(req)
