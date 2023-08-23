@@ -52,7 +52,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::dial::Ticket;
 use crate::download::Downloader;
@@ -482,7 +482,16 @@ where
                             continue;
                         }
                     };
-                    rt.main().spawn(handle_connection(connecting, alpn, handler.inner.clone(), gossip.clone(), collection_parser.clone(), custom_get_handler.clone(), auth_handler.clone()));
+                    let gossip = gossip.clone();
+                    let inner = handler.inner.clone();
+                    let collection_parser = collection_parser.clone();
+                    let custom_get_handler = custom_get_handler.clone();
+                    let auth_handler = auth_handler.clone();
+                    rt.main().spawn(async move {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, collection_parser, custom_get_handler, auth_handler).await {
+                            warn!("Handling incoming connection ended with error: {err}");
+                        }
+                    });
                 },
                 // Handle new callbacks
                 Some(cb) = cb_receiver.recv() => {
