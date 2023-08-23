@@ -364,7 +364,7 @@ impl Actor {
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
-                            debug!(me = ?me, "all gossip handles dropped, stop gossip actor");
+                            debug!(?me, "all gossip handles dropped, stop gossip actor");
                             break;
                         }
                     }
@@ -377,11 +377,11 @@ impl Actor {
                 (peer_id, res) = self.dialer.next() => {
                     match res {
                         Ok(conn) => {
-                            debug!(me = ?me, peer = ?peer_id, "dial successfull");
+                            debug!(?me, peer = ?peer_id, "dial successfull");
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
-                            warn!(me = ?me, peer = ?peer_id, "dial failed: {err}");
+                            warn!(?me, peer = ?peer_id, "dial failed: {err}");
                         }
                     }
                 }
@@ -407,7 +407,7 @@ impl Actor {
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(me = ?me, "handle to_actor  {msg:?}");
+        debug!(?me, "handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -418,13 +418,13 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(me = ?me, peer = ?peer_id, "connection established, start loop");
+                    debug!(?me, peer = ?peer_id, "connection established, start loop");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
-                            debug!(me = ?me, peer = ?peer_id, "connection closed without error")
+                            debug!(?me, peer = ?peer_id, "connection closed without error")
                         }
                         Err(err) => {
-                            debug!(me = ?me, peer = ?peer_id, "connection closed with error {err:?}")
+                            debug!(?me, peer = ?peer_id, "connection closed with error {err:?}")
                         }
                     }
                     in_event_tx
@@ -480,9 +480,9 @@ impl Actor {
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
         if matches!(event, InEvent::TimerExpired(_)) {
-            trace!(me = ?me, "handle in_event  {event:?}");
+            trace!(?me, "handle in_event  {event:?}");
         } else {
-            debug!(me = ?me, "handle in_event  {event:?}");
+            debug!(?me, "handle in_event  {event:?}");
         };
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
@@ -490,9 +490,9 @@ impl Actor {
         let out = self.state.handle(event, now);
         for event in out {
             if matches!(event, OutEvent::ScheduleTimer(_, _)) {
-                trace!(me = ?me, "handle out_event {event:?}");
+                trace!(?me, "handle out_event {event:?}");
             } else {
-                debug!(me = ?me, "handle out_event {event:?}");
+                debug!(?me, "handle out_event {event:?}");
             };
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
@@ -502,7 +502,7 @@ impl Actor {
                             self.conn_send_tx.remove(&peer_id);
                         }
                     } else {
-                        debug!(me = ?me, peer = ?peer_id, "dial");
+                        debug!(?me, peer = ?peer_id, "dial");
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         // TODO: Enforce max length
                         self.pending_sends.entry(peer_id).or_default().push(message);
