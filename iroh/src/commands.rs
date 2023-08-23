@@ -4,7 +4,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use iroh::client::quic::RpcClient;
+use iroh::client::quic::{Iroh, RpcClient};
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
@@ -13,6 +13,7 @@ use iroh_net::key::{PublicKey, SecretKey};
 use crate::config::Config;
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
+use self::sync::SyncEnv;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -72,7 +73,9 @@ impl Cli {
         match command {
             Commands::Console => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                repl::run(client).await
+                let iroh = Iroh::new(client.clone());
+                let env = SyncEnv::load_from_env(&iroh).await?;
+                repl::run(client, env).await
             }
             Commands::Rpc(command) => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
@@ -433,7 +436,11 @@ impl RpcCommands {
                 println!("Listening addresses: {:?}", response.addrs);
                 Ok(())
             }
-            RpcCommands::Sync(command) => command.run(client).await,
+            RpcCommands::Sync(command) => {
+                let iroh = Iroh::new(client.clone());
+                let env = SyncEnv::load_from_env(&iroh).await?;
+                command.run(client, env).await
+            }
         }
     }
 }

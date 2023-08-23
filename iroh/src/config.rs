@@ -24,6 +24,7 @@ pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 pub const ENV_PREFIX: &str = "IROH";
 
 /// Fetches the environment variable `IROH_<key>` from the current process.
+#[allow(dead_code)]
 pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
     env::var(&format!("{ENV_PREFIX}_{key}"))
 }
@@ -39,7 +40,10 @@ pub enum IrohPaths {
     BaoFlatStorePartial,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
     DocsDatabase,
+    /// Path to a directory with the [`ConsolePaths`]
+    Console,
 }
+
 impl From<&IrohPaths> for &'static str {
     fn from(value: &IrohPaths) -> Self {
         match value {
@@ -47,6 +51,7 @@ impl From<&IrohPaths> for &'static str {
             IrohPaths::BaoFlatStoreComplete => "blobs.v0",
             IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
             IrohPaths::DocsDatabase => "docs.redb",
+            IrohPaths::Console => "console",
         }
     }
 }
@@ -58,6 +63,7 @@ impl FromStr for IrohPaths {
             "blobs.v0" => Self::BaoFlatStoreComplete,
             "blobs-partial.v0" => Self::BaoFlatStorePartial,
             "docs.redb" => Self::DocsDatabase,
+            "console" => Self::Console,
             _ => bail!("unknown file or directory"),
         })
     }
@@ -88,6 +94,53 @@ impl IrohPaths {
     pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
         let path = root.as_ref().join(self);
         path
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ConsolePaths {
+    DefaultAuthor,
+    History,
+}
+
+impl From<&ConsolePaths> for &'static str {
+    fn from(value: &ConsolePaths) -> Self {
+        match value {
+            ConsolePaths::DefaultAuthor => "default_author.pubkey",
+            ConsolePaths::History => "history",
+        }
+    }
+}
+impl FromStr for ConsolePaths {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s {
+            "default_author.pubkey" => Self::DefaultAuthor,
+            "history" => Self::History,
+            _ => bail!("unknown file or directory"),
+        })
+    }
+}
+
+impl fmt::Display for ConsolePaths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = self.into();
+        write!(f, "{s}")
+    }
+}
+impl AsRef<Path> for ConsolePaths {
+    fn as_ref(&self) -> &Path {
+        let s: &str = self.into();
+        Path::new(s)
+    }
+}
+
+impl ConsolePaths {
+    pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
+        PathBuf::from(root.as_ref()).join(self)
+    }
+    pub fn with_env(self) -> Result<PathBuf> {
+        Ok(self.with_root(IrohPaths::Console.with_env()?))
     }
 }
 
@@ -289,6 +342,7 @@ mod tests {
             IrohPaths::BaoFlatStoreComplete,
             IrohPaths::BaoFlatStorePartial,
             IrohPaths::DocsDatabase,
+            IrohPaths::Console,
         ];
         for iroh_path in &kinds {
             let root = PathBuf::from("/tmp");

@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -13,12 +13,58 @@ use iroh_sync::{
     store::GetFilter,
     sync::{AuthorId, NamespaceId, SignedEntry},
 };
+use tokio::fs;
 
-use crate::config::env_var;
+use crate::config::{ConsolePaths, IrohPaths};
 
 use super::RpcClient;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
+
+#[derive(Debug, Clone, Default)]
+pub struct SyncEnv {
+    pub dir: PathBuf,
+    pub author: Option<AuthorId>,
+    pub repl_history_path: PathBuf,
+}
+
+impl SyncEnv {
+    pub async fn load_from_env(_client: &Iroh) -> Result<Self> {
+        let dir: PathBuf = IrohPaths::Console.with_env()?;
+        if std::fs::metadata(&dir).is_err() {
+            std::fs::create_dir_all(&dir)?;
+        };
+        let repl_history_path = ConsolePaths::History.with_root(&dir);
+        let author_path = ConsolePaths::DefaultAuthor.with_root(&dir);
+        let author = match fs::read(author_path).await {
+            Ok(s) => Some(AuthorId::from_str(&String::from_utf8(s)?)?),
+            Err(_err) => None,
+        };
+        let slf = Self {
+            dir,
+            author,
+            repl_history_path,
+        };
+        Ok(slf)
+    }
+
+    async fn persist(&self) -> Result<()> {
+        if let Some(author) = &self.author {
+            let author_path = ConsolePaths::DefaultAuthor.with_root(&self.dir);
+            fs::write(author_path, format!("{}", author)).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn set_author(&mut self, author: AuthorId) -> Result<()> {
+        self.author = Some(author);
+        self.persist().await
+    }
+
+    pub fn author(&self) -> &Option<AuthorId> {
+        &self.author
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Parser)]
@@ -42,15 +88,12 @@ pub enum Commands {
 }
 
 impl Commands {
-    pub async fn run(self, client: RpcClient) -> Result<()> {
+    pub async fn run(self, client: RpcClient, env: SyncEnv) -> Result<()> {
         let iroh = Iroh::new(client);
         match self {
             Commands::Author { command } => command.run(&iroh).await,
             Commands::Docs { command } => command.run(&iroh).await,
-            Commands::Doc { command, id } => {
-                let doc_env = DocEnv::from_env()?;
-                command.run(&iroh, id, doc_env).await
-            }
+            Commands::Doc { command, id } => command.run(&iroh, id, env).await,
         }
     }
 }
@@ -115,27 +158,6 @@ impl Docs {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct DocEnv {
-    pub author: Option<AuthorId>,
-}
-
-impl DocEnv {
-    pub fn from_env() -> anyhow::Result<Self> {
-        let author = if let Some(author) = env_var("AUTHOR").ok() {
-            Some(AuthorId::from_str(&author)?)
-        } else {
-            None
-        };
-        Ok(Self { author })
-    }
-
-    pub fn author(&self, arg: Option<AuthorId>) -> Result<AuthorId> {
-        arg.or(self.author.clone())
-            .ok_or_else(|| anyhow!("Author is required but not set"))
-    }
-}
-
 #[derive(Debug, Clone, Parser)]
 pub enum Doc {
     /// Start to synchronize a document with peers
@@ -189,7 +211,7 @@ pub enum Doc {
 }
 
 impl Doc {
-    pub async fn run(self, iroh: &Iroh, doc_id: NamespaceId, env: DocEnv) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, doc_id: NamespaceId, env: SyncEnv) -> Result<()> {
         let doc = iroh.get_doc(doc_id)?;
         match self {
             Doc::StartSync { peers } => {
@@ -213,7 +235,9 @@ impl Doc {
             Doc::Set { author, key, value } => {
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
-                let author = env.author(author)?;
+                let author = author
+                    .or_else(|| *env.author())
+                    .ok_or_else(|| anyhow!("No author provided"))?;
                 let entry = doc.set_bytes(author, key, value).await?;
                 println!("{}", fmt_entry(&entry));
             }
