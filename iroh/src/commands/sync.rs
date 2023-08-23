@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
     client::quic::Iroh,
@@ -125,6 +125,15 @@ pub enum DocCommands {
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
     },
+    /// Watch for changes and events on a document
+    Watch {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `set-doc`.
+        #[clap(short, long)]
+        doc_id: Option<NamespaceId>,
+    },
 }
 
 impl DocCommands {
@@ -229,6 +238,14 @@ impl DocCommands {
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
+                }
+            }
+            Self::Watch { doc_id } => {
+                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let mut stream = doc.subscribe().await?;
+                while let Some(event) = stream.next().await {
+                    let event = event?;
+                    println!("{event:?}");
                 }
             }
         }
