@@ -5,7 +5,7 @@ use std::{collections::HashMap, io, pin::Pin, time::Instant};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use iroh_net::{tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::{sleep_until, Sleep},
@@ -77,7 +77,7 @@ pub async fn read_lp(
 }
 
 /// Future for a pending dial operation
-pub type DialFuture = BoxFuture<'static, (PeerId, anyhow::Result<quinn::Connection>)>;
+pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Connection>)>;
 
 /// Dial peers and maintain a queue of pending dials
 ///
@@ -89,7 +89,7 @@ pub type DialFuture = BoxFuture<'static, (PeerId, anyhow::Result<quinn::Connecti
 pub struct Dialer {
     endpoint: MagicEndpoint,
     pending: FuturesUnordered<DialFuture>,
-    pending_peers: HashMap<PeerId, CancellationToken>,
+    pending_peers: HashMap<PublicKey, CancellationToken>,
 }
 impl Dialer {
     /// Create a new dialer for a [`MagicEndpoint`]
@@ -105,7 +105,7 @@ impl Dialer {
     ///
     /// Note that the peer's addresses and/or derp region must be added to the endpoint's
     /// addressbook for a dial to succeed, see [`MagicEndpoint::add_known_addrs`].
-    pub fn queue_dial(&mut self, peer_id: PeerId, alpn_protocol: &'static [u8]) {
+    pub fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
         if self.is_pending(&peer_id) {
             return;
         }
@@ -125,19 +125,19 @@ impl Dialer {
     }
 
     /// Abort a pending dial
-    pub fn abort_dial(&mut self, peer_id: &PeerId) {
+    pub fn abort_dial(&mut self, peer_id: &PublicKey) {
         if let Some(cancel) = self.pending_peers.remove(peer_id) {
             cancel.cancel();
         }
     }
 
     /// Check if a peer is currently being dialed
-    pub fn is_pending(&self, peer: &PeerId) -> bool {
+    pub fn is_pending(&self, peer: &PublicKey) -> bool {
         self.pending_peers.contains_key(peer)
     }
 
     /// Wait for the next dial operation to complete
-    pub async fn next(&mut self) -> (PeerId, anyhow::Result<quinn::Connection>) {
+    pub async fn next(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
         match self.pending_peers.is_empty() {
             false => {
                 let (peer_id, res) = self.pending.next().await.unwrap();

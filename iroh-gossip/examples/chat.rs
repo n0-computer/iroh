@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
 use anyhow::{bail, Context};
 use bytes::Bytes;
 use clap::Parser;
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::Signature;
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::{util::base32, Event, TopicId},
@@ -11,8 +11,8 @@ use iroh_gossip::{
 use iroh_net::{
     defaults::default_derp_map,
     derp::DerpMap,
+    key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    tls::{Keypair, PeerId},
     MagicEndpoint,
 };
 use once_cell::sync::OnceCell;
@@ -26,16 +26,16 @@ use url::Url;
 /// on received messages.
 ///
 /// By default a new peer id is created when starting the example. To reuse your identity,
-/// set the `--private-key` flag with the private key printed on a previous invocation.
+/// set the `--secret-key` flag with the secret key printed on a previous invocation.
 ///
 /// By default, the DERP server run by n0 is used. To use a local DERP server, run
 ///     cargo run --bin derper --features derper -- --dev
 /// in another terminal and then set the `-d http://localhost:3340` flag on this example.
 #[derive(Parser, Debug)]
 struct Args {
-    /// Private key to derive our peer id from.
+    /// secret key to derive our peer id from.
     #[clap(long)]
-    private_key: Option<String>,
+    secret_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
     #[clap(short, long)]
     derp: Option<Url>,
@@ -87,15 +87,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // parse or generate our keypair
-    let keypair = match args.private_key {
-        None => Keypair::generate(),
-        Some(key) => parse_keypair(&key)?,
+    // parse or generate our secret key
+    let secret_key = match args.secret_key {
+        None => SecretKey::generate(),
+        Some(key) => parse_secret_key(&key)?,
     };
-    println!(
-        "> our private key: {}",
-        base32::fmt(keypair.secret().to_bytes())
-    );
+    println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
 
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {
@@ -114,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
 
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
-        .keypair(keypair)
+        .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .derp_map(derp_map)
         .on_endpoints({
@@ -173,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
     // broadcast our name, if set
     if let Some(name) = args.name {
         let message = Message::AboutMe { name };
-        let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
+        let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
         gossip.broadcast(topic, encoded_message).await?;
     }
 
@@ -189,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
     println!("> type a message and hit enter to broadcast...");
     while let Some(text) = line_rx.recv().await {
         let message = Message::Message { text: text.clone() };
-        let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
+        let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
         gossip.broadcast(topic, encoded_message).await?;
         println!("> sent: {text}");
     }
@@ -256,24 +253,24 @@ fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> 
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SignedMessage {
-    from: PeerId,
+    from: PublicKey,
     data: Bytes,
     signature: Signature,
 }
 
 impl SignedMessage {
-    pub fn verify_and_decode(bytes: &[u8]) -> anyhow::Result<(PeerId, Message)> {
+    pub fn verify_and_decode(bytes: &[u8]) -> anyhow::Result<(PublicKey, Message)> {
         let signed_message: Self = postcard::from_bytes(bytes)?;
-        let key: VerifyingKey = signed_message.from.into();
-        key.verify_strict(&signed_message.data, &signed_message.signature)?;
+        let key: PublicKey = signed_message.from;
+        key.verify(&signed_message.data, &signed_message.signature)?;
         let message: Message = postcard::from_bytes(&signed_message.data)?;
         Ok((signed_message.from, message))
     }
 
-    pub fn sign_and_encode(keypair: &Keypair, message: &Message) -> anyhow::Result<Bytes> {
+    pub fn sign_and_encode(secret_key: &SecretKey, message: &Message) -> anyhow::Result<Bytes> {
         let data: Bytes = postcard::to_stdvec(&message)?.into();
-        let signature = keypair.secret().sign(&data);
-        let from: PeerId = keypair.public().into();
+        let signature = secret_key.sign(&data);
+        let from: PublicKey = secret_key.public();
         let signed_message = Self {
             from,
             data,
@@ -308,7 +305,7 @@ impl Ticket {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PeerAddr {
-    peer_id: PeerId,
+    peer_id: PublicKey,
     addrs: Vec<SocketAddr>,
     derp_region: Option<u16>,
 }
@@ -345,14 +342,14 @@ impl FromStr for Ticket {
 
 // helpers
 
-fn fmt_peer_id(input: &PeerId) -> String {
+fn fmt_peer_id(input: &PublicKey) -> String {
     base32::fmt_short(input.as_bytes())
 }
-fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
-    let bytes = base32::parse_array(secret)?;
-    let key = SigningKey::from_bytes(&bytes);
-    Ok(key.into())
+fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
+    let bytes: [u8; 32] = base32::parse_array(secret)?;
+    Ok(SecretKey::from(bytes))
 }
+
 fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     match derp_map {
         None => "None".to_string(),
