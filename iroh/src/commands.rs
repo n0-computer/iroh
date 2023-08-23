@@ -132,7 +132,7 @@ impl Cli {
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash: ticket.hash(),
-                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
+                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()?),
                         token: ticket.token().cloned(),
                         single: !ticket.recursive(),
                     }
@@ -145,7 +145,7 @@ impl Cli {
                             peer_id: peer,
                             keylog: self.keylog,
                             derp_region: region,
-                            derp_map: config.derp_map(),
+                            derp_map: config.derp_map()?,
                             keypair: Keypair::generate(),
                         },
                         token,
@@ -184,7 +184,7 @@ impl Cli {
                         rpc_port,
                         keylog: self.keylog,
                         request_token,
-                        derp_map: config.derp_map(),
+                        derp_map: config.derp_map()?,
                     },
                 )
                 .await

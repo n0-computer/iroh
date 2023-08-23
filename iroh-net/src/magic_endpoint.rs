@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context, Result};
 use quinn_proto::VarInt;
 use tracing::{debug, trace};
 
@@ -56,14 +56,28 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Specify the DERP servers that are used by this endpoint.
+    /// Enables using DERP servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other peers by [`PeerId`] and also
-    /// help establish connections between peers by being an initial relay
-    /// for traffic while assisting in holepunching to establish a direct
-    /// connection between the peers.
-    pub fn derp_map(mut self, derp_map: Option<DerpMap>) -> Self {
-        self.derp_map = derp_map;
+    /// DERP servers are used to discover other peers by [`PeerId`] and also help establish
+    /// connections between peers by being an initial relay for traffic while assisting in
+    /// holepunching to establish a direct connection between peers.
+    ///
+    /// The provided `derp_map` must contain at least one region with a configured derp
+    /// node.  If an invalid [`DerpMap`] is provided [`bind`] will result in an error.
+    ///
+    /// [`bind`]: MagicEndpointBuilder::bind
+    pub fn enable_derp(mut self, derp_map: DerpMap) -> Self {
+        self.derp_map = Some(derp_map);
+        self
+    }
+
+    /// Disables using DERP servers.
+    ///
+    /// See [`enable_derp`] for details.
+    ///
+    /// [`enable_derp`]: MagicEndpointBuilder::enable_derp
+    pub fn disable_derp(mut self) -> Self {
+        self.derp_map = None;
         self
     }
 
@@ -119,7 +133,7 @@ impl MagicEndpointBuilder {
     /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
-    pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
+    pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let mut server_config = make_server_config(
             &keypair,
@@ -134,7 +148,7 @@ impl MagicEndpointBuilder {
             keypair,
             bind_port,
             Some(server_config),
-            self.derp_map,
+            self.derp_map.unwrap_or_default(),
             Some(self.callbacks),
             self.keylog,
         )
@@ -147,7 +161,7 @@ fn make_server_config(
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
-) -> anyhow::Result<quinn::ServerConfig> {
+) -> Result<quinn::ServerConfig> {
     let tls_server_config = tls::make_server_config(keypair, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
@@ -178,13 +192,13 @@ impl MagicEndpoint {
         keypair: Keypair,
         bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
-        derp_map: Option<DerpMap>, // TODO: remove this option as well?
+        derp_map: DerpMap,
         callbacks: Option<Callbacks>,
         keylog: bool,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
-            derp_map: derp_map.unwrap_or_default(),
+            derp_map,
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
         })
@@ -226,7 +240,7 @@ impl MagicEndpoint {
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
-    pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
+    pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         self.msock.local_addr()
     }
 
@@ -236,7 +250,7 @@ impl MagicEndpoint {
     /// This list contains both the locally-bound addresses and the endpoint's
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
-    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<config::Endpoint>> {
+    pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         self.msock.local_endpoints().await
     }
 
@@ -263,7 +277,7 @@ impl MagicEndpoint {
         alpn: &[u8],
         derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
-    ) -> anyhow::Result<quinn::Connection> {
+    ) -> Result<quinn::Connection> {
         if derp_region.is_some() || !known_addrs.is_empty() {
             self.add_known_addrs(peer_id, derp_region, known_addrs)
                 .await?;
@@ -314,7 +328,7 @@ impl MagicEndpoint {
         peer_id: PeerId,
         derp_region: Option<u16>,
         endpoints: &[SocketAddr],
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         match (endpoints.is_empty(), derp_region) {
             (true, None) => {
                 anyhow::bail!(
@@ -372,7 +386,7 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> anyhow::Result<()> {
+    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
         self.endpoint.wait_idle().await;
         // TODO: Now wait-idle on msock!
@@ -393,7 +407,7 @@ impl MagicEndpoint {
 /// Accept an incoming connection and extract the client-provided [`PeerId`] and ALPN protocol.
 pub async fn accept_conn(
     mut conn: quinn::Connecting,
-) -> anyhow::Result<(PeerId, String, quinn::Connection)> {
+) -> Result<(PeerId, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
     let peer_id = get_peer_id(&conn).await?;
@@ -401,7 +415,7 @@ pub async fn accept_conn(
 }
 
 /// Extract the ALPN protocol from the peer's TLS certificate.
-pub async fn get_alpn(connecting: &mut quinn::Connecting) -> anyhow::Result<String> {
+pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
     let data = connecting.handshake_data().await?;
     match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
@@ -413,7 +427,7 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> anyhow::Result<Stri
 }
 
 /// Extract the [`PeerId`] from the peer's TLS certificate.
-pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerId> {
+pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PeerId> {
     let data = connection.peer_identity();
     match data {
         None => anyhow::bail!("no peer certificate found"),
@@ -460,7 +474,7 @@ mod tests {
                     let ep = MagicEndpoint::builder()
                         .keypair(server_keypair)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_map(Some(derp_map))
+                        .enable_derp(derp_map)
                         .bind(0)
                         .await
                         .unwrap();
@@ -493,7 +507,7 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .derp_map(Some(derp_map))
+                    .enable_derp(derp_map)
                     .bind(0)
                     .await
                     .unwrap();

@@ -271,16 +271,18 @@ where
             .keypair(self.keypair.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
-            .derp_map(self.derp_map)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .on_endpoints(Box::new(move |eps| {
                 if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
                     endpoints_update_s.send(()).ok();
                 }
-            }))
-            .bind(self.bind_addr.port())
-            .await?;
+            }));
+        let endpoint = match self.derp_map {
+            Some(derp_map) => endpoint.enable_derp(derp_map),
+            None => endpoint,
+        };
+        let endpoint = endpoint.bind(self.bind_addr.port()).await?;
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);

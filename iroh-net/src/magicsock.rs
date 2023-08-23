@@ -2694,7 +2694,7 @@ pub(crate) mod tests {
                     on_derp_s.try_send(()).ok();
                 }))
                 .transport_config(transport_config)
-                .derp_map(Some(derp_map))
+                .enable_derp(derp_map)
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;

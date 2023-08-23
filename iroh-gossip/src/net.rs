@@ -607,7 +607,7 @@ mod test {
     async fn create_endpoint(derp_map: DerpMap) -> anyhow::Result<MagicEndpoint> {
         MagicEndpoint::builder()
             .alpns(vec![GOSSIP_ALPN.to_vec()])
-            .derp_map(Some(derp_map))
+            .enable_derp(derp_map)
             .bind(0)
             .await
     }
