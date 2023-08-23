@@ -727,6 +727,7 @@ mod tests {
         let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
+        let _ = buf.split_to(frame_len);
 
         // send disco packet
         println!("  send disco packet");
@@ -737,6 +738,7 @@ mod tests {
         let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
+        let _ = buf.split_to(frame_len);
 
         // send peer_gone
         println!("send peer gone");
@@ -745,6 +747,7 @@ mod tests {
         assert_eq!(FrameType::PeerGone, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let _ = buf.split_to(frame_len);
 
         // send mesh_upate
         let updates = vec![
@@ -763,11 +766,13 @@ mod tests {
         assert_eq!(FrameType::PeerPresent, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let _ = buf.split_to(frame_len);
 
         let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::PeerGone, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let _ = buf.split_to(frame_len);
 
         // Read tests
         println!("--read");
@@ -782,6 +787,7 @@ mod tests {
         assert_eq!(FrameType::Pong, frame_type);
         assert_eq!(8, frame_len);
         assert_eq!(data, &buf[..]);
+        let _ = buf.split_to(frame_len);
 
         // change preferred to false
         println!("  preferred: false");

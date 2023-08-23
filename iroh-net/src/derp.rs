@@ -188,12 +188,14 @@ async fn read_frame_header(
     mut reader: impl AsyncRead + Unpin,
     buf: &mut BytesMut,
 ) -> Result<(FrameType, usize)> {
-    while buf.len() < 5 {
-        reader.read_buf(buf).await?;
+    let len = buf.len();
+    if len < 5 {
+        buf.resize(5, 0);
+        reader.read_exact(&mut buf[len..5]).await?;
     }
     let frame_type = buf[0];
     let frame_len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-    let _ = buf.split_off(5);
+    let _ = buf.split_to(5);
     Ok((frame_type.into(), frame_len))
 }
 
