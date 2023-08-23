@@ -9,10 +9,11 @@ use rand::rngs::OsRng;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-    DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
-    DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-    DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
-    DocCreateRequest, DocCreateResponse, DocListRequest, DocListResponse, RpcResult, ShareMode,
+    DocCreateRequest, DocCreateResponse, DocGetRequest, DocGetResponse, DocImportRequest,
+    DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
+    DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+    DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
+    DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -73,6 +74,12 @@ impl<S: Store> SyncEngine<S> {
             }
         });
         rx.into_stream()
+    }
+
+    pub async fn doc_info(&self, req: DocInfoRequest) -> RpcResult<DocInfoResponse> {
+        let replica = self.get_replica(&req.doc_id)?;
+        self.start_sync(replica.namespace(), vec![]).await?;
+        Ok(DocInfoResponse {})
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {

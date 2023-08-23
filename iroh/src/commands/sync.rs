@@ -151,7 +151,7 @@ pub enum Doc {
 
 impl Doc {
     pub async fn run(self, iroh: Iroh, doc_id: NamespaceId) -> anyhow::Result<()> {
-        let doc = iroh.get_doc(doc_id)?;
+        let doc = iroh.get_doc(doc_id).await?;
         match self {
             Doc::StartSync { peers } => {
                 doc.start_sync(peers).await?;

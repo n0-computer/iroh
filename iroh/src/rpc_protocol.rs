@@ -459,6 +459,22 @@ impl RpcMsg<ProviderService> for DocShareRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareResponse(pub DocTicket);
 
+/// Get info on a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocInfoRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocInfoRequest {
+    type Response = RpcResult<DocInfoResponse>;
+}
+
+/// Response to [`DocInfoRequest`]
+// TODO: actually provide info
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocInfoResponse {}
+
 /// Start to sync a doc with peers.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStartSyncRequest {
@@ -609,6 +625,7 @@ pub enum ProviderRequest {
     AuthorCreate(AuthorCreateRequest),
     AuthorImport(AuthorImportRequest),
 
+    DocInfo(DocInfoRequest),
     DocList(DocListRequest),
     DocCreate(DocCreateRequest),
     DocImport(DocImportRequest),
@@ -644,6 +661,7 @@ pub enum ProviderResponse {
     AuthorCreate(RpcResult<AuthorCreateResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
 
+    DocInfo(RpcResult<DocInfoResponse>),
     DocList(RpcResult<DocListResponse>),
     DocCreate(RpcResult<DocCreateResponse>),
     DocImport(RpcResult<DocImportResponse>),

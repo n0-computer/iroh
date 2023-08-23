@@ -1216,6 +1216,12 @@ fn handle_rpc_request<
             AuthorImport(_msg) => {
                 todo!()
             }
+            DocInfo(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_info(req).await
+                })
+                .await
+            }
             DocList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.docs_list(req)
