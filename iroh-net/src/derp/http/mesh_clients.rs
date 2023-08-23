@@ -104,17 +104,12 @@ pub enum MeshAddrs {
 mod tests {
     use crate::derp::{http::ServerBuilder, ReceivedMessage};
     use anyhow::Result;
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
 
     #[tokio::test]
     async fn test_mesh_network() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = crate::test_utils::setup_logging();
 
         // TODO(ramfox): figure out why this fails on later rounds
         // for i in 0..10 {
