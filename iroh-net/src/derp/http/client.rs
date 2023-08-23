@@ -940,24 +940,26 @@ impl Client {
     /// from that server, we will get `PeerPresent` and `PeerGone` messages. We
     /// then and and remove that derp server as a `PacketForwarder` respectfully.
     ///
-    /// If you pass in a `meshed_once` sender, it will send the first
-    /// time we return successfully from `watch_connection_changes`, indicating
-    /// that the given server is aware that this client exists and wants to
-    /// track network changes
+    /// If you pass in a `mesh_events` sender, it will send events about the mesh
+    /// activities.
+    /// [`MeshClientEvent::Meshed`] is sent the when we return successfully from `watch_connection_changes`,
+    /// indicating that the given server is aware that this client exists and wants to
+    /// track network changes.
+    /// When peers connect and disconnect, [`MeshClientEvent::PeerPresent`] and  [`MeshClientEvent::PeerGone`]
+    /// are sent respectively.
     ///
-    /// This `meshed_once` sender is typically used for aligning the mesh network
-    /// during tests.
+    /// This sender is typically used for aligning the mesh network during tests.
     pub(crate) async fn run_mesh_client(
         self,
         packet_forwarder_handler: PacketForwarderHandler<Client>,
-        meshed_once: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
+        mesh_events: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
     ) -> anyhow::Result<()> {
         // connect to the remote server & request to watching the remote's state changes
         let own_key = self.public_key();
         loop {
             let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
                 Ok(key) => {
-                    if let Some(ref sender) = meshed_once {
+                    if let Some(ref sender) = mesh_events {
                         if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
                             bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
                         }
@@ -1007,7 +1009,7 @@ impl Client {
                         }
                         peers_present.insert(key).await?;
                         packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
-                        if let Some(ref chan) = meshed_once {
+                        if let Some(ref chan) = mesh_events {
                             chan.send(MeshClientEvent::PeerPresent { peer: key })
                                 .await?;
                         }
@@ -1019,7 +1021,7 @@ impl Client {
                         }
                         peers_present.remove(key).await?;
                         packet_forwarder_handler.remove_packet_forwarder(key)?;
-                        if let Some(ref chan) = meshed_once {
+                        if let Some(ref chan) = mesh_events {
                             chan.send(MeshClientEvent::PeerGone { peer: key }).await?;
                         }
                     }
