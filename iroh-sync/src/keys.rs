@@ -149,13 +149,13 @@ impl NamespaceId {
 
 impl fmt::Display for Author {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(&self.to_bytes()))
+        write!(f, "{}", base32::fmt(self.to_bytes()))
     }
 }
 
 impl fmt::Display for Namespace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(&self.to_bytes()))
+        write!(f, "{}", base32::fmt(self.to_bytes()))
     }
 }
 
