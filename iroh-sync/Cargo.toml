@@ -12,6 +12,7 @@ repository = "https://github.com/n0-computer/iroh"
 anyhow = "1"
 blake3 = { package = "iroh-blake3", version = "1.4.3"}
 crossbeam = "0.8.2"
+data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.10"
