@@ -1216,19 +1216,19 @@ fn handle_rpc_request<
             AuthorImport(_msg) => {
                 todo!()
             }
-            DocsList(msg) => {
+            DocList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.docs_list(req)
                 })
                 .await
             }
-            DocsCreate(msg) => {
+            DocCreate(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.docs_create(req)
                 })
                 .await
             }
-            DocsImport(msg) => {
+            DocImport(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_import(req).await
                 })

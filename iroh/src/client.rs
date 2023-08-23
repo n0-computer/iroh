@@ -16,7 +16,7 @@ use quic_rpc::{RpcClient, ServiceConnection};
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocGetRequest,
     DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
-    DocSubscribeRequest, DocTicket, DocsCreateRequest, DocsListRequest, ProviderService, ShareMode,
+    DocSubscribeRequest, DocTicket, DocCreateRequest, DocListRequest, ProviderService, ShareMode,
     StatsGetRequest,
 };
 use crate::sync::{LiveEvent, PeerSource};
@@ -54,7 +54,7 @@ where
 
     /// Create a new document.
     pub async fn create_doc(&self) -> Result<Doc<C>> {
-        let res = self.rpc.rpc(DocsCreateRequest {}).await??;
+        let res = self.rpc.rpc(DocCreateRequest {}).await??;
         let doc = Doc {
             id: res.id,
             rpc: self.rpc.clone(),
@@ -74,7 +74,7 @@ where
 
     /// List all documents.
     pub async fn list_docs(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
-        let stream = self.rpc.server_streaming(DocsListRequest {}).await?;
+        let stream = self.rpc.server_streaming(DocListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.id))
     }
 

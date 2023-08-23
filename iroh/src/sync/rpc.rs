@@ -12,7 +12,7 @@ use crate::rpc_protocol::{
     DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
     DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
     DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
-    DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult, ShareMode,
+    DocCreateRequest, DocCreateResponse, DocListRequest, DocListResponse, RpcResult, ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -50,22 +50,22 @@ impl<S: Store> SyncEngine<S> {
         rx.into_stream()
     }
 
-    pub fn docs_create(&self, _req: DocsCreateRequest) -> RpcResult<DocsCreateResponse> {
+    pub fn docs_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let doc = self.store.new_replica(Namespace::new(&mut OsRng {}))?;
-        Ok(DocsCreateResponse {
+        Ok(DocCreateResponse {
             id: doc.namespace(),
         })
     }
 
     pub fn docs_list(
         &self,
-        _req: DocsListRequest,
-    ) -> impl Stream<Item = RpcResult<DocsListResponse>> {
+        _req: DocListRequest,
+    ) -> impl Stream<Item = RpcResult<DocListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let store = self.store.clone();
         self.rt.main().spawn_blocking(move || {
             let ite = store.list_namespaces();
-            let ite = inline_result(ite).map_ok(|id| DocsListResponse { id });
+            let ite = inline_result(ite).map_ok(|id| DocListResponse { id });
             for entry in ite {
                 if let Err(_err) = tx.send(entry) {
                     break;

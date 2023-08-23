@@ -355,34 +355,34 @@ pub struct DocSubscribeResponse {
 
 /// List all documents
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocsListRequest {}
+pub struct DocListRequest {}
 
-impl Msg<ProviderService> for DocsListRequest {
+impl Msg<ProviderService> for DocListRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for DocsListRequest {
-    type Response = RpcResult<DocsListResponse>;
+impl ServerStreamingMsg<ProviderService> for DocListRequest {
+    type Response = RpcResult<DocListResponse>;
 }
 
 /// Response to [`DocsListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocsListResponse {
+pub struct DocListResponse {
     /// The document id
     pub id: NamespaceId,
 }
 
 /// Create a new document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocsCreateRequest {}
+pub struct DocCreateRequest {}
 
-impl RpcMsg<ProviderService> for DocsCreateRequest {
-    type Response = RpcResult<DocsCreateResponse>;
+impl RpcMsg<ProviderService> for DocCreateRequest {
+    type Response = RpcResult<DocCreateResponse>;
 }
 
 /// Response to [`DocsCreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocsCreateResponse {
+pub struct DocCreateResponse {
     /// The document id
     pub id: NamespaceId,
 }
@@ -603,14 +603,15 @@ pub enum ProviderRequest {
     Shutdown(ShutdownRequest),
     Validate(ValidateRequest),
 
+    // TODO: I see I changed naming convention here but at least to me it becomes easier to parse
+    // with the subject in front if there's many commands
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
     AuthorImport(AuthorImportRequest),
 
-    DocsList(DocsListRequest),
-    DocsCreate(DocsCreateRequest),
-    DocsImport(DocImportRequest),
-
+    DocList(DocListRequest),
+    DocCreate(DocCreateRequest),
+    DocImport(DocImportRequest),
     DocSet(DocSetRequest),
     DocGet(DocGetRequest),
     DocStartSync(DocStartSyncRequest),
@@ -639,16 +640,13 @@ pub enum ProviderResponse {
     Validate(ValidateProgress),
     Shutdown(()),
 
-    // TODO: I see I changed naming convention here but at least to me it becomes easier to parse
-    // with the subject in front if there's many commands
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
 
-    DocsList(RpcResult<DocsListResponse>),
-    DocsCreate(RpcResult<DocsCreateResponse>),
-    DocsImport(RpcResult<DocImportResponse>),
-
+    DocList(RpcResult<DocListResponse>),
+    DocCreate(RpcResult<DocCreateResponse>),
+    DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetResponse>),
     DocShare(RpcResult<DocShareResponse>),
