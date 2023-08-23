@@ -72,12 +72,12 @@ impl Cli {
         match self.command {
             Commands::Console => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                let env = ConsoleEnv::console_env()?;
+                let env = ConsoleEnv::for_console()?;
                 repl::run(client, env).await
             }
             Commands::Rpc(command) => {
                 let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
-                let env = ConsoleEnv::cli_env()?;
+                let env = ConsoleEnv::for_cli()?;
                 command.run(client, env).await
             }
             Commands::Full(command) => {
@@ -90,7 +90,7 @@ impl Cli {
                 let config = NodeConfig::from_env(cfg.as_deref())?;
 
                 #[cfg(feature = "metrics")]
-                let metrics_fut = start_metrics_server(metrics_addr, &rt);
+                let metrics_fut = start_metrics_server(metrics_addr, rt);
 
                 let res = command.run(rt, &config, keylog).await;
 
@@ -115,6 +115,7 @@ pub enum Commands {
     Rpc(#[clap(subcommands)] RpcCommands),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum FullCommands {
     /// Start a Iroh node
@@ -332,6 +333,7 @@ impl RpcCommands {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
     /// Add data from PATH to the running provider's database.

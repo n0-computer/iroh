@@ -17,6 +17,7 @@ use super::RpcClient;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Manage documents

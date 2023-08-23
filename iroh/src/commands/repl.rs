@@ -46,6 +46,7 @@ pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
 }
 
 /// Reply to the repl after a command completed
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ToRepl {
     /// Continue execution by reading the next command
@@ -127,7 +128,7 @@ impl Repl {
             ));
         }
         if !pwd.is_empty() {
-            pwd.push_str("\n");
+            pwd.push('\n');
         }
         format!("\n{pwd}{}", "> ".blue())
     }

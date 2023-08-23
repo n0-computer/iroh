@@ -30,7 +30,7 @@ const ENV_DOC: &str = "DOC";
 
 /// Fetches the environment variable `IROH_<key>` from the current process.
 pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
-    env::var(&format!("{ENV_PREFIX}_{key}"))
+    env::var(format!("{ENV_PREFIX}_{key}"))
 }
 
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
@@ -218,7 +218,7 @@ pub struct ConsoleEnv {
 }
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
-    pub fn console_env() -> Result<Self> {
+    pub fn for_console() -> Result<Self> {
         let author = match Self::get_console_default_author()? {
             Some(author) => Some(author),
             None => env_author()?,
@@ -230,7 +230,7 @@ impl ConsoleEnv {
     }
 
     /// Read only from environment variables.
-    pub fn cli_env() -> Result<Self> {
+    pub fn for_cli() -> Result<Self> {
         Ok(Self {
             author: env_author()?,
             doc: env_doc()?,
