@@ -46,16 +46,18 @@ impl Metric for Metrics {
     }
 }
 
-/// Initialize the metrics collection.
-pub fn init_metrics_collection() {
-    iroh_metrics::core::Core::init(|reg, metrics| {
+/// Initialize the global metrics collection.
+///
+/// Will return an error if the global metrics collection was already initialized.
+pub fn try_init_metrics_collection() -> std::io::Result<()> {
+    iroh_metrics::core::Core::try_init(|reg, metrics| {
         metrics.insert(crate::metrics::Metrics::new(reg));
         metrics.insert(iroh_sync::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
         metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
-    });
+    })
 }
 
 /// Collect the current metrics into a hash map.

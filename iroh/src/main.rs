@@ -8,7 +8,7 @@ mod commands;
 mod config;
 
 use crate::{
-    commands::{init_metrics_collection, Cli},
+    commands::{start_metrics_server, Cli},
     config::{iroh_config_path, Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
 
@@ -50,7 +50,7 @@ async fn main_impl() -> Result<()> {
     )?;
 
     #[cfg(feature = "metrics")]
-    let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
+    let metrics_fut = start_metrics_server(cli.metrics_addr, &rt);
 
     let r = cli.run(&rt, &config).await;
 

@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
 pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    iroh::metrics::init_metrics_collection();
+    iroh::metrics::try_init_metrics_collection().ok();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         return Some(tokio::spawn(async move {

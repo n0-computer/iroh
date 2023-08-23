@@ -404,7 +404,7 @@ pub async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
 }
 
 #[cfg(feature = "metrics")]
-pub fn init_metrics_collection(
+pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
     rt: &iroh_bytes::util::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {

@@ -77,22 +77,6 @@ pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
-#[cfg(feature = "metrics")]
-/// Initialize the metrics collection.
-pub fn init_metrics_collection() {
-    use iroh_metrics::core::Metric;
-
-    iroh_metrics::core::Core::try_init(|reg, metrics| {
-        metrics.insert(crate::metrics::Metrics::new(reg));
-        metrics.insert(iroh_sync::metrics::Metrics::new(reg));
-        metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
-    })
-    .ok();
-}
-
 /// Builder for the [`Node`].
 ///
 /// You must supply a blob store. Various store implementations are available
@@ -299,9 +283,14 @@ where
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
 
-        // TODO: this should actually run globally only once.
+        // Initialize the metrics collection.
+        //
+        // The metrics are global per process. Subsequent calls do not change the metrics
+        // collection and will return an error. We ignore this error. This means that if you'd
+        // spawn multiple Iroh nodes in the same process, the metrics would be shared between the
+        // nodes.
         #[cfg(feature = "metrics")]
-        init_metrics_collection();
+        crate::metrics::try_init_metrics_collection().ok();
 
         let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let mut transport_config = quinn::TransportConfig::default();
