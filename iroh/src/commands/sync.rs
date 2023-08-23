@@ -54,7 +54,10 @@ pub enum DocCommands {
     List,
     /// Start to synchronize a document with peers
     Sync {
-        /// Set the document
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `set-doc`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
 
@@ -69,13 +72,16 @@ pub enum DocCommands {
     },
     /// Set an entry
     Set {
-        /// Set the document
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `set-doc`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         /// Author of this entry.
         ///
-        /// Required unless the author is set through the REPL environment or the IROH_AUTHOR
-        /// environment variable.
+        /// Required unless the author is set through the IROH_AUTHOR environment variable.
+        /// Within the Iroh console, the active author can also set with `set-author`.
         #[clap(short, long)]
         author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
@@ -87,7 +93,10 @@ pub enum DocCommands {
     ///
     /// Shows the author, content hash and content length for all entries for this key.
     Get {
-        /// Set the document
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `set-doc`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string).
@@ -110,7 +119,10 @@ pub enum DocCommands {
     /// List all entries in the document
     #[clap(alias = "ls")]
     Keys {
-        /// Set the document
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `set-doc`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         /// If true, old entries will be included. By default only the latest value for each key is
