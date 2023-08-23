@@ -19,7 +19,7 @@ use iroh::{
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
-    tls::{Keypair, PeerId},
+    key::{PublicKey, SecretKey},
     MagicEndpoint,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -142,10 +142,10 @@ async fn empty_files() -> Result<()> {
 }
 
 /// Create new get options with the given peer id and addresses, using a
-/// randomly generated keypair.
-fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+/// randomly generated secret key.
+fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     iroh::dial::Options {
-        keypair: Keypair::generate(),
+        secret_key: SecretKey::generate(),
         peer_id,
         addrs,
         derp_region: None,
@@ -574,7 +574,7 @@ async fn test_run_ticket() {
 
     let no_token_ticket = node.ticket(hash).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = no_token_ticket.as_get_options(Keypair::generate(), None);
+        let opts = no_token_ticket.as_get_options(SecretKey::generate(), None);
         let request = GetRequest::all(no_token_ticket.hash()).into();
         let response = run_get_request(opts, request).await;
         assert!(response.is_err());
@@ -589,7 +589,7 @@ async fn test_run_ticket() {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
             .into();
-        run_get_request(ticket.as_get_options(Keypair::generate(), None), request).await
+        run_get_request(ticket.as_get_options(SecretKey::generate(), None), request).await
     })
     .await
     .expect("timeout")
@@ -911,7 +911,7 @@ async fn test_token_passthrough() -> Result<()> {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let endpoint = MagicEndpoint::builder()
-            .keypair(Keypair::generate())
+            .secret_key(SecretKey::generate())
             .keylog(true)
             .bind(0)
             .await?;
