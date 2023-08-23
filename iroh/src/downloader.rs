@@ -3,15 +3,20 @@
 
 #![allow(clippy::all, unused, missing_docs)]
 
-use std::collections::HashMap;
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    task::Poll::{Pending, Ready},
+};
 
+use futures::{stream::FuturesUnordered, FutureExt};
 use iroh_bytes::{
+    baomap::range_collections::RangeSet2,
     protocol::{RangeSpec, RangeSpecSeq},
     Hash,
 };
 use iroh_net::key::PublicKey;
 use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, time::delay_queue};
 
 /// Download identifier.
 // Mainly for readability.
@@ -46,6 +51,40 @@ pub enum Download {
     },
 }
 
+impl Download {
+    /// Get the requested hash.
+    const fn hash(&self) -> &Hash {
+        match self {
+            Download::Blob { hash }
+            | Download::BlobRanges { hash, .. }
+            | Download::Collection { hash }
+            | Download::CollectionRanges { hash, .. } => hash,
+        }
+    }
+
+    /// Get the ranges this download is requesting.
+    fn ranges(&self) -> RangeSpecSeq {
+        match self {
+            Download::Blob { .. } => RangeSpecSeq::new([RangeSet2::all()]),
+            Download::BlobRanges { range_set, .. } => {
+                RangeSpecSeq::new([range_set.to_chunk_ranges()])
+            }
+            Download::Collection { hash } => RangeSpecSeq::all(),
+            Download::CollectionRanges {
+                hash,
+                range_set_seq,
+            } => range_set_seq.clone(),
+        }
+    }
+}
+
+// TODO(@divma): mot likely drop this. Useful for now
+#[derive(Debug)]
+pub enum DownloadResult {
+    Success,
+    Failed,
+}
+
 /// Kind of sources that canm be used to perform a download.
 // TODO(@divma): likely we will end up using only onme of these. Curiously, I'm not sure which is
 // more ilkely
@@ -72,29 +111,29 @@ pub enum Source {
 }
 
 /// Handle to interact with a download request.
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub struct DownloadHandle {
     /// Id used to identify the request in the [`Downloader`].
     id: u64,
-    /// Token used to cancel this request.
-    #[debug(skip)]
-    cancellation_token: CancellationToken,
     /// Receiver to retrieve the return value of this download.
-    // TODO(@divma): what's the return value?
-    receiver: oneshot::Receiver<u64>,
+    receiver: oneshot::Receiver<DownloadResult>,
 }
 
-impl DownloadHandle {
-    /// Cancels the request consuming the handle.
-    pub fn cancel(self) {
-        self.cancellation_token.cancel()
-    }
-}
+impl std::future::Future for DownloadHandle {
+    type Output = DownloadResult;
 
-impl Drop for DownloadHandle {
-    fn drop(&mut self) {
-        // directly cancel the request on drop
-        self.cancellation_token.cancel();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        use std::task::Poll::*;
+        // make it easier on holders of the handle to poll the result, removing the receiver error
+        // from the middle
+        match self.receiver.poll_unpin(cx) {
+            Ready(Ok(result)) => Ready(result),
+            Ready(Err(_recv_err)) => Ready(DownloadResult::Failed),
+            Pending => Pending,
+        }
     }
 }
 
@@ -123,10 +162,94 @@ struct DownloadInfo {
     sender: oneshot::Sender<u64>,
 }
 
+enum Message {
+    Start { kind: Download, id: Id },
+    Cancel { id: Id },
+}
+
+/// Information about a request.
+#[derive(Debug)]
+struct RequestInfo {
+    /// Ids of intents ([`Download`]) associated with this request.
+    intents: Vec<Id>,
+    /// State of the request.
+    state: RequestState,
+}
+
+#[derive(derive_more::Debug)]
+enum RequestState {
+    /// Request has not yet started.
+    Scheduled {
+        /// Key to manage the delay associated with this scheduled request.
+        #[debug(skip)]
+        delay_key: delay_queue::Key,
+    },
+    /// Request is underway.
+    Active {
+        /// Token used to cancel the future doing the request.
+        #[debug(skip)]
+        cancellation: CancellationToken,
+    },
+}
+
 #[derive(Debug)]
 pub struct DownloadService {
-    /// Download requests as received by the
-    current_downloads: HashMap<Id, DownloadInfo>,
+    /// Download requests as received by the [`Downloader`]. These requests might be underway or
+    /// pending.
+    registered_intents: HashMap<Id, DownloadInfo>,
+    /// Requests performed for download intents. Two download requests can produce the same
+    /// request. This map allows deduplication of efforts. These requests might be underway or
+    /// pending.
+    current_requests: HashMap<(Hash, RangeSpecSeq), RequestInfo>,
+    /// Queue of scheduled requests.
+    scheduled_requests: delay_queue::DelayQueue<(Hash, RangeSpecSeq)>,
+    /// Downloas underway.
+    in_progress_downloads: FuturesUnordered<tokio::time::Sleep>,
+}
+
+impl DownloadService {
+    fn handle_message(&mut self, msg: Message) {
+        match msg {
+            Message::Start { kind, id } => todo!(),
+            Message::Cancel { id } => todo!(),
+        }
+    }
+
+    fn cancel_download(&mut self, id: Id) {
+        // remove the intent first
+        let Some(DownloadInfo { kind, ..  }) = self.registered_intents.remove(&id) else {
+            // TODO(@divma): log that the requested intent to be canceled is not present
+            return
+        };
+
+        // get the hash and ranges this intent maps to
+        let download_key = (*kind.hash(), kind.ranges());
+        let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(download_key) else {
+            unreachable!("registered intents have an associated request")
+        };
+
+        // remove the intent from the associated request
+        let intents = &mut occupied_entry.get_mut().intents;
+        let intent_position = intents
+            .iter()
+            .position(|&intent_id| intent_id == id)
+            .expect("associated request contains intent id");
+        intents.remove(intent_position);
+
+        // if this was the last intent associated with the request, cancel it or remove it from the
+        // schedule queue accordingly
+        if intents.is_empty() {
+            let state = occupied_entry.remove().state;
+            match state {
+                RequestState::Scheduled { delay_key } => {
+                    self.scheduled_requests.remove(&delay_key);
+                }
+                RequestState::Active { cancellation } => {
+                    cancellation.cancel();
+                }
+            }
+        }
+    }
 }
 
 impl Downloader {

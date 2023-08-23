@@ -39,7 +39,7 @@ use smallvec::{smallvec, SmallVec};
 ///
 /// This is a SmallVec so we can avoid allocations for the very common case of a single
 /// chunk range.
-#[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Hash)]
 #[repr(transparent)]
 pub struct RangeSpec(SmallVec<[u64; 2]>);
 
@@ -152,7 +152,7 @@ impl fmt::Debug for RangeSpec {
 ///
 /// This is a smallvec so that we can avoid allocations in the common case of a single child
 /// range.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, Hash)]
 #[repr(transparent)]
 pub struct RangeSpecSeq(SmallVec<[(u64, RangeSpec); 2]>);
 

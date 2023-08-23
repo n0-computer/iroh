@@ -4297,6 +4297,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.12.3",
  "pin-project-lite",
+ "slab",
  "tokio",
  "tracing",
 ]
