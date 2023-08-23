@@ -51,14 +51,14 @@ impl<S: Store> SyncEngine<S> {
         rx.into_stream()
     }
 
-    pub fn docs_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
+    pub fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let doc = self.store.new_replica(Namespace::new(&mut OsRng {}))?;
         Ok(DocCreateResponse {
             id: doc.namespace(),
         })
     }
 
-    pub fn docs_list(
+    pub fn doc_list(
         &self,
         _req: DocListRequest,
     ) -> impl Stream<Item = RpcResult<DocListResponse>> {

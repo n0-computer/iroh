@@ -365,7 +365,7 @@ impl ServerStreamingMsg<ProviderService> for DocListRequest {
     type Response = RpcResult<DocListResponse>;
 }
 
-/// Response to [`DocsListRequest`]
+/// Response to [`DocListRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocListResponse {
     /// The document id
@@ -380,7 +380,7 @@ impl RpcMsg<ProviderService> for DocCreateRequest {
     type Response = RpcResult<DocCreateResponse>;
 }
 
-/// Response to [`DocsCreateRequest`]
+/// Response to [`DocCreateRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocCreateResponse {
     /// The document id
