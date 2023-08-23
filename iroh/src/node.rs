@@ -1245,6 +1245,12 @@ fn handle_rpc_request<
                 })
                 .await
             }
+            DocStopSync(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_stop_sync(req).await
+                })
+                .await
+            }
             DocShare(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_share(req).await

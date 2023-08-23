@@ -2,9 +2,6 @@
 //!
 //! TODO: Contains only iroh sync related methods. Add other methods.
 
-// TODO: fill out docs
-#![allow(missing_docs)]
-
 use std::collections::HashMap;
 use std::result::Result as StdResult;
 
@@ -18,8 +15,9 @@ use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocGetRequest,
-    DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocSubscribeRequest,
-    DocTicket, DocsCreateRequest, DocsListRequest, ProviderService, ShareMode, StatsGetRequest,
+    DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
+    DocSubscribeRequest, DocTicket, DocsCreateRequest, DocsListRequest, ProviderService, ShareMode,
+    StatsGetRequest,
 };
 use crate::sync::{LiveEvent, PeerSource};
 
@@ -37,19 +35,24 @@ impl<C> Iroh<C>
 where
     C: ServiceConnection<ProviderService>,
 {
+    /// Create a new high-level client to a Iroh node from the low-level RPC client.
     pub fn new(rpc: RpcClient<ProviderService, C>) -> Self {
         Self { rpc }
     }
+
+    /// Create a new document author.
     pub async fn create_author(&self) -> Result<AuthorId> {
         let res = self.rpc.rpc(AuthorCreateRequest).await??;
         Ok(res.author_id)
     }
 
+    /// List document authors for which we have a secret key.
     pub async fn list_authors(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
         let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.author_id))
     }
 
+    /// Create a new document.
     pub async fn create_doc(&self) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocsCreateRequest {}).await??;
         let doc = Doc {
@@ -59,6 +62,7 @@ where
         Ok(doc)
     }
 
+    /// Import a document from a ticket and join all peers in the ticket.
     pub async fn import_doc(&self, ticket: DocTicket) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
         let doc = Doc {
@@ -68,11 +72,13 @@ where
         Ok(doc)
     }
 
+    /// List all documents.
     pub async fn list_docs(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
         let stream = self.rpc.server_streaming(DocsListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.id))
     }
 
+    /// Get a [`Doc`] client for a single document.
     pub fn get_doc(&self, id: NamespaceId) -> Result<Doc<C>> {
         // TODO: Check if doc exists?
         let doc = Doc {
@@ -82,12 +88,16 @@ where
         Ok(doc)
     }
 
+    /// Get the bytes for a hash.
+    ///
+    /// NOTE: This reads the full blob into memory.
     // TODO: add get_reader for streaming gets
     pub async fn get_bytes(&self, hash: Hash) -> Result<Bytes> {
         let res = self.rpc.rpc(BytesGetRequest { hash }).await??;
         Ok(res.data)
     }
 
+    /// Get statistics of the running node.
     pub async fn stats(&self) -> Result<HashMap<String, CounterStats>> {
         let res = self.rpc.rpc(StatsGetRequest {}).await??;
         Ok(res.stats)
@@ -105,10 +115,12 @@ impl<C> Doc<C>
 where
     C: ServiceConnection<ProviderService>,
 {
+    /// Get the document id of this doc.
     pub fn id(&self) -> NamespaceId {
         self.id
     }
 
+    /// Set the content of a key to a byte array.
     pub async fn set_bytes(
         &self,
         author_id: AuthorId,
@@ -127,6 +139,7 @@ where
         Ok(res.entry)
     }
 
+    /// Get the contents of an entry as a byte array.
     // TODO: add get_content_reader
     pub async fn get_content_bytes(&self, entry: &SignedEntry) -> Result<Bytes> {
         let hash = *entry.content_hash();
@@ -134,6 +147,7 @@ where
         Ok(bytes.data)
     }
 
+    /// Get the latest entry for a key and author.
     pub async fn get_latest(&self, author_id: AuthorId, key: Vec<u8>) -> Result<SignedEntry> {
         let filter = GetFilter::latest().with_key(key).with_author(author_id);
         let mut stream = self.get(filter).await?;
@@ -144,6 +158,7 @@ where
         Ok(entry)
     }
 
+    /// Get entries.
     pub async fn get(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<SignedEntry>>> {
         let stream = self
             .rpc
@@ -155,6 +170,7 @@ where
         Ok(flatten(stream).map_ok(|res| res.entry))
     }
 
+    /// Share this document with peers over a ticket.
     pub async fn share(&self, mode: ShareMode) -> anyhow::Result<DocTicket> {
         let res = self
             .rpc
@@ -166,6 +182,7 @@ where
         Ok(res.0)
     }
 
+    /// Start to sync this document with a list of peers.
     pub async fn start_sync(&self, peers: Vec<PeerSource>) -> Result<()> {
         let _res = self
             .rpc
@@ -177,8 +194,16 @@ where
         Ok(())
     }
 
-    // TODO: add stop_sync
+    /// Stop the live sync for this document.
+    pub async fn stop_sync(&self) -> Result<()> {
+        let _res = self
+            .rpc
+            .rpc(DocStopSyncRequest { doc_id: self.id })
+            .await??;
+        Ok(())
+    }
 
+    /// Subscribe to events for this document.
     pub async fn subscribe(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<LiveEvent>>> {
         let stream = self
             .rpc

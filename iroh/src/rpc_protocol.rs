@@ -521,6 +521,20 @@ pub struct DocStartSyncResponse {}
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
+pub struct DocStopSyncRequest {
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocStopSyncRequest {
+    type Response = RpcResult<DocStopSyncResponse>;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocStopSyncResponse {}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetRequest {
     pub doc_id: NamespaceId,
     pub author_id: AuthorId,
@@ -630,8 +644,9 @@ pub enum ProviderRequest {
 
     DocSet(DocSetRequest),
     DocGet(DocGetRequest),
-    DocStartSync(DocStartSyncRequest), // DocGetContent(DocGetContentRequest),
-    DocShare(DocShareRequest),         // DocGetContent(DocGetContentRequest),
+    DocStartSync(DocStartSyncRequest),
+    DocStopSync(DocStopSyncRequest),
+    DocShare(DocShareRequest),
     DocSubscribe(DocSubscribeRequest),
 
     BytesGet(BytesGetRequest),
@@ -671,8 +686,9 @@ pub enum ProviderResponse {
 
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetResponse>),
-    DocJoin(RpcResult<DocStartSyncResponse>),
     DocShare(RpcResult<DocShareResponse>),
+    DocStartSync(RpcResult<DocStartSyncResponse>),
+    DocStopSync(RpcResult<DocStopSyncResponse>),
     DocSubscribe(DocSubscribeResponse),
 
     BytesGet(RpcResult<BytesGetResponse>),
