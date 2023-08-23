@@ -72,11 +72,6 @@ impl Author {
 pub enum Docs {
     List,
     Create,
-    // Import {
-    //     key: String,
-    //     #[clap(short, long)]
-    //     peers: Vec<PeerSource>,
-    // },
     Import { ticket: DocTicket },
 }
 
@@ -87,14 +82,6 @@ impl Docs {
                 let doc = iroh.create_doc().await?;
                 println!("created {}", doc.id());
             }
-            // Docs::Import { key, peers } => {
-            //     let key = hex::decode(key)?
-            //         .try_into()
-            //         .map_err(|_| anyhow!("invalid length"))?;
-            //     let ticket = DocTicket::new(key, peers);
-            //     let doc = iroh.import_doc(ticket).await?;
-            //     println!("imported {}", doc.id());
-            // }
             Docs::Import { ticket } => {
                 let doc = iroh.import_doc(ticket).await?;
                 println!("imported {}", doc.id());
@@ -121,6 +108,7 @@ pub enum Doc {
     /// Set an entry
     Set {
         /// Author of this entry.
+        #[clap(short, long)]
         author: AuthorId,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
@@ -168,16 +156,6 @@ impl Doc {
             }
             Doc::Share { mode } => {
                 let ticket = doc.share(mode).await?;
-                // println!("key:    {}", hex::encode(ticket.key));
-                // println!(
-                //     "peers:  {}",
-                //     ticket
-                //         .peers
-                //         .iter()
-                //         .map(|p| p.to_string())
-                //         .collect::<Vec<_>>()
-                //         .join(", ")
-                // );
                 println!("ticket: {}", ticket);
             }
             Doc::Set { author, key, value } => {
