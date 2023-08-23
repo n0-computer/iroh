@@ -15,25 +15,25 @@ use futures::{
 };
 use iroh::{
     collection::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
-    database::mem,
     node::{Builder, Event, Node, StaticTokenAuthHandler},
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
-    tls::{Keypair, PeerId},
+    key::{PublicKey, SecretKey},
     MagicEndpoint,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use testdir::testdir;
-use tokio::{fs, io::AsyncWriteExt, sync::mpsc};
+use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+use bao_tree::blake3;
 use iroh_bytes::{
+    baomap::Store,
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
-    provider::{self, BaoReadonlyDb, CustomGetHandler, RequestAuthorizationHandler},
+    provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
 };
@@ -44,7 +44,7 @@ fn test_runtime() -> runtime::Handle {
     runtime::Handle::from_currrent(1).unwrap()
 }
 
-fn test_node<D: BaoReadonlyDb>(
+fn test_node<D: Store>(
     db: D,
     addr: SocketAddr,
 ) -> Builder<D, DummyServerEndpoint, IrohCollectionParser> {
@@ -138,10 +138,10 @@ async fn empty_files() -> Result<()> {
 }
 
 /// Create new get options with the given peer id and addresses, using a
-/// randomly generated keypair.
-fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+/// randomly generated secret key.
+fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     iroh::dial::Options {
-        keypair: Keypair::generate(),
+        secret_key: SecretKey::generate(),
         peer_id,
         addrs,
         derp_region: None,
@@ -150,31 +150,29 @@ fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     }
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "mem-db")]
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
-    use iroh::database::flat::{create_collection, DataSource};
-
-    let dir: PathBuf = testdir!();
-    let filename = "hello_world";
-    let path = dir.join(filename);
     let content = b"hello world!";
     let addr = "127.0.0.1:0".parse().unwrap();
 
-    tokio::fs::write(&path, content).await?;
-    // hash of the transfer file
-    let expect_data = tokio::fs::read(&path).await?;
-    let expect_hash = blake3::hash(&expect_data);
-    let expect_name = filename.to_string();
-
-    let (db, hash) = create_collection(vec![DataSource::new(path)]).await?;
-
+    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let expect_hash = db.insert(content.as_slice());
+    let expect_name = "hello_world".to_string();
+    let collection = Collection::new(
+        vec![Blob {
+            name: expect_name.clone(),
+            hash: expect_hash,
+        }],
+        0,
+    )?;
+    let hash = db.insert(collection.to_bytes()?);
     let rt = test_runtime();
     let node = test_node(db, addr).runtime(&rt).spawn().await?;
 
     let mut tasks = Vec::new();
     for _i in 0..3 {
-        let file_hash: Hash = expect_hash.into();
+        let file_hash: Hash = expect_hash;
         let name = expect_name.clone();
         let addrs = node.local_address().unwrap();
         let peer_id = node.peer_id();
@@ -230,7 +228,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, lookup) = mem::Database::new(file_opts.clone());
+    let (mut mdb, lookup) = iroh::baomap::readonly_mem::Store::new(file_opts.clone());
     let mut blobs = Vec::new();
     let mut total_blobs_size = 0u64;
 
@@ -359,18 +357,23 @@ fn setup_logging() {
         .ok();
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
-    use iroh::database::flat::create_collection;
-
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     setup_logging();
-    let dir = testdir!();
-    let src = dir.join("src");
-    fs::write(&src, "hello there").await.unwrap();
-    let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let child_hash = db.insert(b"hello there");
+    let collection = Collection::new(
+        vec![Blob {
+            name: "hello".to_string(),
+            hash: child_hash,
+        }],
+        0,
+    )
+    .unwrap();
+    let hash = db.insert(collection.to_bytes().unwrap());
     let addr = "127.0.0.1:0".parse().unwrap();
     let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
@@ -416,56 +419,13 @@ async fn test_server_close() {
         .expect("supervisor failed");
 }
 
-#[cfg(feature = "flat-db")]
-#[tokio::test]
-async fn test_blob_reader_partial() -> Result<()> {
-    use iroh::database::flat::create_collection;
-
-    let rt = test_runtime();
-    // Prepare a Provider transferring a file.
-    let dir = testdir!();
-    let src0 = dir.join("src0");
-    let src1 = dir.join("src1");
-    {
-        let content = vec![1u8; 1000];
-        let mut f = tokio::fs::File::create(&src0).await?;
-        for _ in 0..10 {
-            f.write_all(&content).await?;
-        }
-    }
-    fs::write(&src1, "hello world").await?;
-    let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db, addr).runtime(&rt).spawn().await?;
-    let node_addr = node.local_endpoint_addresses().await?;
-    let peer_id = node.peer_id();
-
-    let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-        let connection = iroh::dial::dial(get_options(peer_id, node_addr))
-            .await
-            .unwrap();
-        let response = fsm::start(connection, GetRequest::all(hash).into());
-        // connect
-        let connected = response.next().await.unwrap();
-        // send the request
-        let _start = connected.next().await.unwrap();
-        // and then just hang
-    })
-    .await;
-
-    timeout.expect(
-        "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
-    );
-    Ok(())
-}
-
 /// create an in memory test database containing the given entries and an iroh collection of all entries
 ///
 /// returns the database and the root hash of the collection
 fn create_test_db(
     entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-) -> (mem::Database, Hash) {
-    let (mut db, hashes) = iroh::database::mem::Database::new(entries);
+) -> (iroh::baomap::readonly_mem::Store, Hash) {
+    let (mut db, hashes) = iroh::baomap::readonly_mem::Store::new(entries);
     let collection = Collection::new(
         hashes
             .into_iter()
@@ -524,7 +484,7 @@ async fn test_run_ticket() {
 
     let no_token_ticket = node.ticket(hash).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = no_token_ticket.as_get_options(Keypair::generate(), None);
+        let opts = no_token_ticket.as_get_options(SecretKey::generate(), None);
         let request = GetRequest::all(no_token_ticket.hash()).into();
         let response = run_get_request(opts, request).await;
         assert!(response.is_err());
@@ -539,7 +499,7 @@ async fn test_run_ticket() {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
             .into();
-        run_get_request(ticket.as_get_options(Keypair::generate(), None), request).await
+        run_get_request(ticket.as_get_options(SecretKey::generate(), None), request).await
     })
     .await
     .expect("timeout")
@@ -664,7 +624,7 @@ async fn test_custom_collection_parser() {
     // create a collection consisting of 2 leafs
     let leaf1_data = vec![0u8; 12345];
     let leaf2_data = vec![1u8; 67890];
-    let mut db = mem::Database::default();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
     let leaf1_hash = db.insert(leaf1_data.clone());
     let leaf2_hash = db.insert(leaf2_data.clone());
     let collection = vec![leaf1_hash, leaf2_hash];
@@ -737,7 +697,7 @@ impl CustomGetHandler for BlobCustomHandler {
 async fn test_custom_request_blob() {
     let rt = test_runtime();
     let expected = b"hello".to_vec();
-    let (db, hashes) = iroh::database::mem::Database::new([("test", &expected)]);
+    let (db, hashes) = iroh::baomap::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = test_node(db, addr)
@@ -861,7 +821,7 @@ async fn test_token_passthrough() -> Result<()> {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let endpoint = MagicEndpoint::builder()
-            .keypair(Keypair::generate())
+            .secret_key(SecretKey::generate())
             .keylog(true)
             .bind(0)
             .await?;

@@ -2,11 +2,12 @@
 
 use std::{
     collections::HashMap,
-    env,
+    env, fmt,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use config::{Environment, File, Value};
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
@@ -22,6 +23,65 @@ pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 /// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
 pub const ENV_PREFIX: &str = "IROH";
 
+/// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum IrohPaths {
+    /// Path to the node's secret key for the [`iroh_net::PublicKey`].
+    SecretKey,
+    /// Path to the node's [flat-file store](iroh::baomap::flat) for complete blobs.
+    BaoFlatStoreComplete,
+    /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
+    BaoFlatStorePartial,
+}
+impl From<&IrohPaths> for &'static str {
+    fn from(value: &IrohPaths) -> Self {
+        match value {
+            IrohPaths::SecretKey => "keypair",
+            IrohPaths::BaoFlatStoreComplete => "blobs.v0",
+            IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
+        }
+    }
+}
+impl FromStr for IrohPaths {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s {
+            "keypair" => Self::SecretKey,
+            "blobs.v0" => Self::BaoFlatStoreComplete,
+            "blobs-partial.v0" => Self::BaoFlatStorePartial,
+            _ => bail!("unknown file or directory"),
+        })
+    }
+}
+impl fmt::Display for IrohPaths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = self.into();
+        write!(f, "{s}")
+    }
+}
+impl AsRef<Path> for IrohPaths {
+    fn as_ref(&self) -> &Path {
+        let s: &str = self.into();
+        Path::new(s)
+    }
+}
+impl IrohPaths {
+    /// Get the path for this [`IrohPath`] by joining the name to `IROH_DATA_DIR` environment variable.
+    pub fn with_env(self) -> Result<PathBuf> {
+        let mut root = iroh_data_root()?;
+        if !root.is_absolute() {
+            root = std::env::current_dir()?.join(root);
+        }
+        Ok(self.with_root(root))
+    }
+
+    /// Get the path for this [`IrohPath`] by joining the name to a root directory.
+    pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
+        let path = root.as_ref().join(self);
+        path
+    }
+}
+
 /// The configuration for the iroh cli.
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
@@ -34,7 +94,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             // TODO(ramfox): this should probably just be a derp map
-            derp_regions: vec![default_na_derp_region(), default_eu_derp_region()],
+            derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
         }
     }
 }
@@ -94,12 +154,8 @@ impl Config {
             return None;
         }
 
-        let mut regions = HashMap::new();
-        for region in &self.derp_regions {
-            regions.insert(region.region_id, region.clone());
-        }
-
-        Some(DerpMap { regions })
+        let dm: DerpMap = self.derp_regions.iter().cloned().into();
+        Some(dm)
     }
 }
 
@@ -198,5 +254,21 @@ mod tests {
         let config = Config::load::<String, String>(&[][..], "__FOO", Default::default()).unwrap();
 
         assert_eq!(config.derp_regions.len(), 2);
+    }
+
+    #[test]
+    fn test_iroh_paths_parse_roundtrip() {
+        let kinds = [
+            IrohPaths::BaoFlatStoreComplete,
+            IrohPaths::BaoFlatStorePartial,
+            IrohPaths::SecretKey,
+        ];
+        for iroh_path in &kinds {
+            let root = PathBuf::from("/tmp");
+            let path = root.join(iroh_path);
+            let fname = path.file_name().unwrap().to_str().unwrap();
+            let parsed = IrohPaths::from_str(fname).unwrap();
+            assert_eq!(*iroh_path, parsed);
+        }
     }
 }

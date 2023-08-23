@@ -7,13 +7,18 @@ use std::{
 };
 
 use futures::future::BoxFuture;
+use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
-use crate::{config, disco, key, magicsock::Timer, net::ip::is_unicast_link_local, stun};
+use crate::{
+    config, disco, key::PublicKey, magicsock::Timer, net::ip::is_unicast_link_local, stun,
+};
 
-use super::{ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr};
+use super::{
+    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr,
+};
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -47,9 +52,9 @@ pub(super) struct Endpoint {
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
     /// Public key for this node/connection.
-    conn_public_key: key::node::PublicKey,
+    conn_public_key: PublicKey,
     /// Peer public key (for UDP + DERP)
-    pub(super) public_key: key::node::PublicKey,
+    pub(super) public_key: PublicKey,
     /// Last time we pinged all endpoints
     last_full_ping: Option<Instant>,
     /// Fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
@@ -86,14 +91,19 @@ pub struct PendingCliPing {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) msock_sender: mpsc::Sender<ActorMessage>,
-    pub(super) msock_public_key: key::node::PublicKey,
-    pub(super) public_key: key::node::PublicKey,
+    pub(super) msock_public_key: PublicKey,
+    pub(super) public_key: PublicKey,
     pub(super) derp_addr: Option<u16>,
 }
 
 impl Endpoint {
     pub fn new(id: usize, options: Options) -> Self {
         let quic_mapped_addr = QuicMappedAddr::generate();
+
+        if options.derp_addr.is_some() {
+            // we potentially have a relay connection to the peer
+            inc!(MagicsockMetrics, num_relay_conns_added);
+        }
 
         Endpoint {
             id,
@@ -115,7 +125,7 @@ impl Endpoint {
         }
     }
 
-    pub fn public_key(&self) -> &key::node::PublicKey {
+    pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
 
@@ -131,7 +141,7 @@ impl Endpoint {
             .collect();
 
         EndpointInfo {
-            public_key: self.public_key.clone(),
+            public_key: self.public_key,
             derp_addr: self.derp_addr,
             addrs,
             has_direct_connection: self.is_best_addr_valid(Instant::now()),
@@ -193,6 +203,16 @@ impl Endpoint {
 
         // If we found a candidate, set to best addr
         if let Some(pong) = last_pong {
+            if self.best_addr.is_none() {
+                // we now have a direct connection, adjust direct connection count
+                inc!(MagicsockMetrics, num_direct_conns_added);
+                if self.derp_addr.is_some() {
+                    // we no longer rely on the relay connection, decrease the relay connection
+                    // count
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+            }
+
             self.best_addr = Some(AddrLatency {
                 addr: pong.from.as_socket_addr(),
                 latency: Some(lowest_latency),
@@ -315,6 +335,12 @@ impl Endpoint {
             // If we fail to ping our current best addr, it is not that good anymore.
             if let Some(ref addr) = self.best_addr {
                 if sp.to == addr.addr {
+                    // we had a direct connection that is no longer valid
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    if self.derp_addr.is_some() {
+                        // we can only connect through a relay connection
+                        inc!(MagicsockMetrics, num_relay_conns_added);
+                    }
                     self.best_addr = None;
                     self.trust_best_addr_until = None;
                 }
@@ -339,7 +365,7 @@ impl Endpoint {
     async fn send_disco_ping(
         &mut self,
         ep: SendAddr,
-        public_key: Option<key::node::PublicKey>,
+        public_key: Option<PublicKey>,
         tx_id: stun::TransactionId,
     ) {
         debug!("send disco ping: start");
@@ -352,7 +378,7 @@ impl Endpoint {
                     dst_key: pub_key,
                     msg: disco::Message::Ping(disco::Ping {
                         tx_id,
-                        node_key: self.conn_public_key.clone(),
+                        node_key: self.conn_public_key,
                     }),
                 })
                 .await
@@ -401,8 +427,7 @@ impl Endpoint {
                 timer,
             },
         );
-        let public_key = self.public_key.clone();
-        self.send_disco_ping(ep, Some(public_key), txid).await;
+        self.send_disco_ping(ep, Some(self.public_key), txid).await;
     }
 
     async fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) {
@@ -418,6 +443,13 @@ impl Endpoint {
                     .map(|a| ep == &a.addr)
                     .unwrap_or_default()
                 {
+                    // we no longer rely on a direct connection
+                    if self.best_addr.is_some() {
+                        inc!(MagicsockMetrics, num_direct_conns_removed);
+                        if self.derp_addr.is_some() {
+                            inc!(MagicsockMetrics, num_relay_conns_added);
+                        }
+                    }
                     self.best_addr = None;
                 }
                 return false;
@@ -483,6 +515,17 @@ impl Endpoint {
     }
 
     pub fn update_from_node(&mut self, n: &config::Node) {
+        if self.best_addr.is_none() {
+            // we do not have a direct connection, so changing the derp information may
+            // have an effect on our connection status
+            if self.derp_addr.is_none() && n.derp.is_some() {
+                // we did not have a relay connection before, but now we do
+                inc!(MagicsockMetrics, num_relay_conns_added)
+            } else if self.derp_addr.is_some() && n.derp.is_none() {
+                // we had a relay connection before but do not have one now
+                inc!(MagicsockMetrics, num_relay_conns_removed)
+            }
+        }
         self.derp_addr = n.derp;
 
         for st in self.endpoint_state.values_mut() {
@@ -514,6 +557,14 @@ impl Endpoint {
                     .map(|a| ep == &a.addr)
                     .unwrap_or_default()
                 {
+                    if self.best_addr.is_some() {
+                        // we no long rely on a direct connection
+                        inc!(MagicsockMetrics, num_direct_conns_removed);
+                        if self.derp_addr.is_some() {
+                            // we only have a relay connection to the peer
+                            inc!(MagicsockMetrics, num_relay_conns_added);
+                        }
+                    }
                     self.best_addr = None;
                 }
                 return false;
@@ -524,6 +575,14 @@ impl Endpoint {
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
     fn reset(&mut self) {
+        if self.best_addr.is_some() {
+            // we no longer rely on a direct connection
+            inc!(MagicsockMetrics, num_relay_conns_removed);
+            if self.derp_addr.is_some() {
+                // we are now relying on a relay connection
+                inc!(MagicsockMetrics, num_direct_conns_added);
+            }
+        }
         self.last_full_ping = None;
         self.best_addr = None;
         self.best_addr_at = None;
@@ -582,6 +641,14 @@ impl Endpoint {
                         .map(|a| ep == &a.addr)
                         .unwrap_or_default()
                     {
+                        // no longer relying on a direct connection, remove conn count
+                        if self.best_addr.is_some() {
+                            inc!(MagicsockMetrics, num_direct_conns_removed);
+                            if self.derp_addr.is_some() {
+                                // we now rely on a relay connection, add a relay count
+                                inc!(MagicsockMetrics, num_relay_conns_added);
+                            }
+                        }
                         self.best_addr = None;
                     }
                     return false;
@@ -610,11 +677,11 @@ impl Endpoint {
     /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
     pub(super) async fn handle_pong_conn(
         &mut self,
-        conn_disco_public: &key::node::PublicKey,
+        conn_disco_public: &PublicKey,
         m: &disco::Pong,
         _di: &mut DiscoInfo,
         src: SendAddr,
-    ) -> (bool, Option<(SendAddr, key::node::PublicKey)>) {
+    ) -> (bool, Option<(SendAddr, PublicKey)>) {
         let is_derp = src.is_derp();
 
         info!(
@@ -640,7 +707,7 @@ impl Endpoint {
                 let latency = now - sp.at;
 
                 if !is_derp {
-                    let key = self.public_key.clone();
+                    let key = self.public_key;
                     match self.endpoint_state.get_mut(&sp.to) {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
@@ -709,6 +776,14 @@ impl Endpoint {
 
                     if is_better {
                         info!("disco: node {:?} now using {:?}", self.public_key, sp.to);
+                        if self.best_addr.is_none() {
+                            // we now have direct connection!
+                            inc!(MagicsockMetrics, num_direct_conns_added);
+                            if self.derp_addr.is_some() {
+                                // no long relying on a relay connection, remove a relay conn
+                                inc!(MagicsockMetrics, num_relay_conns_removed);
+                            }
+                        }
                         self.best_addr.replace(this_pong.clone());
                     }
                     let best_addr = self.best_addr.as_mut().expect("just set");
@@ -771,6 +846,14 @@ impl Endpoint {
         self.is_call_me_maybe_ep.retain(|ep, want| {
             if !*want {
                 if self.best_addr.as_ref().map(|a| &a.addr) == Some(ep) {
+                    if self.best_addr.is_some() {
+                        // no longer relying on the direct connection
+                        inc!(MagicsockMetrics, num_direct_conns_removed);
+                        if self.derp_addr.is_some() {
+                            // we are now relying on the relay connection, add a relay conn
+                            inc!(MagicsockMetrics, num_relay_conns_added);
+                        }
+                    }
                     self.best_addr = None;
                 }
                 return false;
@@ -789,7 +872,7 @@ impl Endpoint {
     /// Stops timers associated with de and resets its state back to zero.
     /// It's called when a discovery endpoint is no longer present in the
     /// NetworkMap, or when magicsock is transitioning from running to
-    /// stopped state (via `set_private_key(None)`).
+    /// stopped state (via `set_secret_key(None)`).
     pub fn stop_and_reset(&mut self) {
         self.reset();
         self.pending_cli_pings.clear();
@@ -883,7 +966,7 @@ pub struct AddrLatency {
 /// - The [`QuicMappedAddr`] which internally identifies the peer to the QUIC stack.  This
 ///   is static and never changes.
 ///
-/// - The peers's public key, aka `PeerId` or "node_key".  This is static and never changes,
+/// - The peers's public key, aka `PublicKey` or "node_key".  This is static and never changes,
 ///   however a peer could be added when this is not yet known.  To set this after creation
 ///   use [`PeerMap::set_node_key_for_ip_port`].
 ///
@@ -893,7 +976,7 @@ pub struct AddrLatency {
 /// An index of peerInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
 #[derive(Default, Debug)]
 pub(super) struct PeerMap {
-    by_node_key: HashMap<key::node::PublicKey, usize>,
+    by_node_key: HashMap<PublicKey, usize>,
     by_ip_port: HashMap<SendAddr, usize>,
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
     by_id: HashMap<usize, Endpoint>,
@@ -915,14 +998,11 @@ impl PeerMap {
     }
 
     /// Returns the endpoint for nk, or None if nk is not known to us.
-    pub(super) fn endpoint_for_node_key(&self, nk: &key::node::PublicKey) -> Option<&Endpoint> {
+    pub(super) fn endpoint_for_node_key(&self, nk: &PublicKey) -> Option<&Endpoint> {
         self.by_node_key.get(nk).and_then(|id| self.by_id(id))
     }
 
-    pub(super) fn endpoint_for_node_key_mut(
-        &mut self,
-        nk: &key::node::PublicKey,
-    ) -> Option<&mut Endpoint> {
+    pub(super) fn endpoint_for_node_key_mut(&mut self, nk: &PublicKey) -> Option<&mut Endpoint> {
         self.by_node_key
             .get(nk)
             .and_then(|id| self.by_id.get_mut(id))
@@ -964,7 +1044,7 @@ impl PeerMap {
 
         // update indices
         self.by_quic_mapped_addr.insert(ep.quic_mapped_addr, id);
-        self.by_node_key.insert(ep.public_key.clone(), id);
+        self.by_node_key.insert(ep.public_key, id);
 
         self.by_id.insert(id, ep);
         id
@@ -975,10 +1055,10 @@ impl PeerMap {
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: &SendAddr, nk: &key::node::PublicKey) {
+    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: &SendAddr, nk: &PublicKey) {
         if let Some(id) = self.by_ip_port.get(ipp) {
             if !self.by_node_key.contains_key(nk) {
-                self.by_node_key.insert(nk.clone(), *id);
+                self.by_node_key.insert(*nk, *id);
             }
             self.by_ip_port.remove(ipp);
         }
@@ -1039,7 +1119,7 @@ struct EndpointState {
 #[derive(Debug, Clone)]
 pub struct EndpointInfo {
     /// The public key of the endpoint.
-    pub public_key: key::node::PublicKey,
+    pub public_key: PublicKey,
     /// Derp region, if available.
     pub derp_addr: Option<u16>,
     /// List of addresses this node might be reachable under.

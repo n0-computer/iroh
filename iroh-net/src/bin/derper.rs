@@ -16,16 +16,19 @@ use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
-use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
+use iroh_metrics::inc;
 use iroh_net::{
+    defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME},
     derp::{
         self,
         http::{
             MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
         },
     },
-    key, stun,
+    key::SecretKey,
+    stun,
 };
+use serde_with::{serde_as, DisplayFromStr};
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -33,6 +36,8 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
+
+use metrics::StunMetrics;
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
@@ -102,14 +107,14 @@ impl CertMode {
                 let cert_path = dir.join(format!("{keyname}.crt"));
                 let key_path = dir.join(format!("{keyname}.key"));
 
-                let (certs, private_key) = tokio::task::spawn_blocking(move || {
+                let (certs, secret_key) = tokio::task::spawn_blocking(move || {
                     let certs = load_certs(cert_path)?;
-                    let key = load_private_key(key_path)?;
+                    let key = load_secret_key(key_path)?;
                     anyhow::Ok((certs, key))
                 })
                 .await??;
 
-                let config = config.with_single_cert(certs, private_key)?;
+                let config = config.with_single_cert(certs, secret_key)?;
                 let config = Arc::new(config);
                 let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
 
@@ -136,12 +141,12 @@ fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
     Ok(certs)
 }
 
-fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
-    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open private key file")?;
+fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
+    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader).context("cannot parse private key .pem file")? {
+        match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
             Some(rustls_pemfile::Item::RSAKey(key)) => return Ok(rustls::PrivateKey(key)),
             Some(rustls_pemfile::Item::PKCS8Key(key)) => return Ok(rustls::PrivateKey(key)),
             Some(rustls_pemfile::Item::ECKey(key)) => return Ok(rustls::PrivateKey(key)),
@@ -156,10 +161,12 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
     );
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize)]
 struct Config {
-    /// PrivateKey for this Derper.
-    private_key: key::node::SecretKey,
+    /// [`SecretKey`] for this Derper.
+    #[serde_as(as = "DisplayFromStr")]
+    secret_key: SecretKey,
     /// Server listen address.
     ///
     /// Defaults to `[::]:443`.
@@ -205,7 +212,7 @@ struct MeshConfig {
 #[derive(Serialize, Deserialize)]
 struct TlsConfig {
     /// Mode for getting a cert. possible options: 'Manual', 'LetsEncrypt'
-    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a private key from
+    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a secret key from
     /// `<hostname>.key`, with the `<hostname>` being the escaped hostname.
     cert_mode: CertMode,
     /// Whether to use the LetsEncrypt production or staging server.
@@ -240,7 +247,7 @@ struct Limits {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            private_key: key::node::SecretKey::generate(),
+            secret_key: SecretKey::generate(),
             addr: "[::]:443".parse().unwrap(),
             stun_port: DEFAULT_DERP_STUN_PORT,
             hostname: NA_DERP_HOSTNAME.into(),
@@ -316,6 +323,7 @@ pub fn init_metrics_collection(
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
             metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+            metrics.insert(StunMetrics::new(reg));
         });
 
         return Some(rt.spawn(async move {
@@ -404,7 +412,7 @@ async fn run(
             } else {
                 (None, None)
             };
-            (Some(cfg.private_key), mesh_key, mesh_derpers)
+            (Some(cfg.secret_key), mesh_key, mesh_derpers)
         }
         false => (None, None, None),
     };
@@ -444,7 +452,7 @@ async fn run(
     };
 
     let mut builder = DerpServerBuilder::new(addr)
-        .secret_key(secret_key)
+        .secret_key(secret_key.map(Into::into))
         .mesh_key(mesh_key)
         .headers(headers)
         .tls_config(tls_config.clone())
@@ -686,11 +694,13 @@ async fn server_stun_listener(sock: UdpSocket) {
     loop {
         match sock.recv_from(&mut buffer).await {
             Ok((n, src_addr)) => {
+                inc!(StunMetrics, requests);
                 let pkt = buffer[..n].to_vec();
                 let sock = sock.clone();
                 tokio::task::spawn(async move {
                     if !stun::is(&pkt) {
                         debug!(%src_addr, "STUN: ignoring non stun packet");
+                        inc!(StunMetrics, bad_requests);
                         return;
                     }
                     match tokio::task::spawn_blocking(move || stun::parse_binding_request(&pkt))
@@ -706,22 +716,33 @@ async fn server_stun_listener(sock: UdpSocket) {
                             match sock.send_to(&res, src_addr).await {
                                 Ok(len) => {
                                     if len != res.len() {
-                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but exepcted {}", len, res.len());
+                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but expected {}", len, res.len());
+                                    }
+                                    match src_addr {
+                                        SocketAddr::V4(_) => {
+                                            inc!(StunMetrics, ipv4_success);
+                                        }
+                                        SocketAddr::V6(_) => {
+                                            inc!(StunMetrics, ipv6_success);
+                                        }
                                     }
                                     trace!(%src_addr, %txid, "STUN: sent {} bytes", len);
                                 }
                                 Err(err) => {
+                                    inc!(StunMetrics, failures);
                                     warn!(%src_addr, %txid, "STUN: failed to write response: {:?}", err);
                                 }
                             }
                         }
                         Err(err) => {
+                            inc!(StunMetrics, bad_requests);
                             warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
                         }
                     }
                 });
             }
             Err(err) => {
+                inc!(StunMetrics, failures);
                 warn!("STUN: failed to recv: {:?}", err);
             }
         }
@@ -809,6 +830,54 @@ async fn server_stun_listener(sock: UdpSocket) {
 // 	l.numAccepts.Add(1)
 // 	return cn, nil
 // }
+//
+mod metrics {
+    use iroh_metrics::{
+        core::{Counter, Metric},
+        struct_iterable::Iterable,
+    };
+
+    /// StunMetrics tracked for the DERPER
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Iterable)]
+    pub struct StunMetrics {
+        /*
+         * Metrics about STUN requests over ipv6
+         */
+        /// Number of stun requests made
+        pub requests: Counter,
+        /// Number of successful requests over ipv4
+        pub ipv4_success: Counter,
+        /// Number of successful requests over ipv6
+        pub ipv6_success: Counter,
+
+        /// Number of bad requests, either non-stun packets or incorrect binding request
+        pub bad_requests: Counter,
+        /// Number of failures
+        pub failures: Counter,
+    }
+
+    impl Default for StunMetrics {
+        fn default() -> Self {
+            Self {
+                /*
+                 * Metrics about STUN requests
+                 */
+                requests: Counter::new("Number of STUN requests made to the server."),
+                ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
+                ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
+                bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
+                failures: Counter::new("Number of STUN requests that end in failure."),
+            }
+        }
+    }
+
+    impl Metric for StunMetrics {
+        fn name() -> &'static str {
+            "stun"
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -821,7 +890,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_net::{
         derp::{http::ClientBuilder, ReceivedMessage},
-        key::node::SecretKey,
+        key::SecretKey,
     };
 
     #[tokio::test]
@@ -889,7 +958,7 @@ mod tests {
 
         // set up clients
         let a_secret_key = SecretKey::generate();
-        let a_key = a_secret_key.public_key();
+        let a_key = a_secret_key.public();
         let client_a = ClientBuilder::new()
             .server_url(derper_url.clone())
             .build(a_secret_key)?;
@@ -913,14 +982,14 @@ mod tests {
         }
 
         let b_secret_key = SecretKey::generate();
-        let b_key = b_secret_key.public_key();
+        let b_key = b_secret_key.public();
         let client_b = ClientBuilder::new()
             .server_url(derper_url)
             .build(b_secret_key)?;
         client_b.connect().await?;
 
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key.clone(), msg.clone()).await?;
+        client_a.send(b_key, msg.clone()).await?;
 
         let (res, _) = client_b.recv_detail().await?;
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
@@ -931,7 +1000,7 @@ mod tests {
         }
 
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key.clone(), msg.clone()).await?;
+        client_b.send(a_key, msg.clone()).await?;
 
         let (res, _) = client_a.recv_detail().await?;
         if let ReceivedMessage::ReceivedPacket { source, data } = res {

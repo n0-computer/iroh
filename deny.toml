@@ -22,4 +22,5 @@ license-files = [
 ]
 
 [advisories]
-ignore = []
+ignore = [
+]

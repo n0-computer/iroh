@@ -8,18 +8,18 @@ use std::{
 
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
+    baomap::flat,
     collection::IrohCollectionParser,
-    database::flat::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
-use iroh_net::{derp::DerpMap, tls::Keypair};
+use iroh_bytes::{baomap::Store, protocol::RequestToken, util::runtime};
+use iroh_net::{derp::DerpMap, key::SecretKey};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::config::iroh_data_root;
+use crate::config::IrohPaths;
 
 use super::{
     add::{aggregate_add_response, print_add_response},
@@ -35,7 +35,12 @@ pub struct ProvideOptions {
     pub derp_map: Option<DerpMap>,
 }
 
-pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptions) -> Result<()> {
+pub async fn run(
+    rt: &runtime::Handle,
+    path: Option<PathBuf>,
+    in_place: bool,
+    opts: ProvideOptions,
+) -> Result<()> {
     if let Some(ref path) = path {
         ensure!(
             path.exists(),
@@ -44,23 +49,14 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
         );
     }
 
-    let iroh_data_root = iroh_data_root()?;
-    let marker = iroh_data_root.join(FNAME_PATHS);
-    let db = {
-        if iroh_data_root.is_dir() && marker.exists() {
-            // try to load db
-            Database::load(&iroh_data_root).await.with_context(|| {
-                format!(
-                    "Failed to load iroh database from {}",
-                    iroh_data_root.display()
-                )
-            })?
-        } else {
-            // directory does not exist, create an empty db
-            Database::default()
-        }
-    };
-    let key = Some(iroh_data_root.join("keypair"));
+    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
+    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
+    tokio::fs::create_dir_all(&blob_dir).await?;
+    tokio::fs::create_dir_all(&partial_blob_dir).await?;
+    let db = flat::Store::load(&blob_dir, &partial_blob_dir, rt)
+        .await
+        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+    let key = Some(IrohPaths::SecretKey.with_env()?);
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), rt, key, opts).await?;
     let controller = provider.controller();
@@ -89,12 +85,21 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let stream = controller.server_streaming(ProvideRequest { path }).await?;
-                let (hash, entries) = aggregate_add_response(stream).await?;
-                print_add_response(hash, entries);
-                let ticket = provider.ticket(hash).await?.with_token(token);
-                println!("All-in-one ticket: {ticket}");
-                anyhow::Ok(tmp_path)
+                let stream = controller
+                    .server_streaming(ProvideRequest { path, in_place })
+                    .await?;
+                match aggregate_add_response(stream).await {
+                    Ok((hash, entries)) => {
+                        print_add_response(hash, entries);
+                        let ticket = provider.ticket(hash).await?.with_token(token);
+                        println!("All-in-one ticket: {ticket}");
+                        anyhow::Ok(tmp_path)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to add data: {}", e);
+                        std::process::exit(-1);
+                    }
+                }
             }
             .instrument(info_span!("provider-add")),
         )
@@ -111,8 +116,6 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
             res?;
         }
     }
-    // persist the db to disk.
-    db.save(&iroh_data_root).await?;
 
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
@@ -122,13 +125,13 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
     Ok(())
 }
 
-async fn provide<D: BaoReadonlyDb>(
+async fn provide<D: Store>(
     db: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
 ) -> Result<Node<D>> {
-    let keypair = get_keypair(key).await?;
+    let secret_key = get_secret_key(key).await?;
 
     let mut builder = Node::builder(db)
         .collection_parser(IrohCollectionParser)
@@ -140,14 +143,14 @@ async fn provide<D: BaoReadonlyDb>(
     let builder = builder.bind_addr(opts.addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = opts.rpc_port.into() {
-        let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
+        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port)?;
         builder
             .rpc_endpoint(rpc_endpoint)
-            .keypair(keypair)
+            .secret_key(secret_key)
             .spawn()
             .await?
     } else {
-        builder.keypair(keypair).spawn().await?
+        builder.secret_key(secret_key).spawn().await?
     };
     let eps = provider.local_endpoints().await?;
     println!("Listening addresses:");
@@ -164,16 +167,16 @@ async fn provide<D: BaoReadonlyDb>(
     Ok(provider)
 }
 
-async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
+async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
     match key {
         Some(key_path) => {
             if key_path.exists() {
                 let keystr = tokio::fs::read(key_path).await?;
-                let keypair = Keypair::try_from_openssh(keystr).context("invalid keyfile")?;
-                Ok(keypair)
+                let secret_key = SecretKey::try_from_openssh(keystr).context("invalid keyfile")?;
+                Ok(secret_key)
             } else {
-                let keypair = Keypair::generate();
-                let ser_key = keypair.to_openssh()?;
+                let secret_key = SecretKey::generate();
+                let ser_key = secret_key.to_openssh()?;
 
                 // Try to canoncialize if possible
                 let key_path = key_path.canonicalize().unwrap_or(key_path);
@@ -198,25 +201,25 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
                     .await
                     .context("failed to rename keyfile")?;
 
-                Ok(keypair)
+                Ok(secret_key)
             }
         }
         None => {
             // No path provided, just generate one
-            Ok(Keypair::generate())
+            Ok(SecretKey::generate())
         }
     }
 }
 
 /// Makes a an RPC endpoint that uses a QUIC transport
 fn make_rpc_endpoint(
-    keypair: &Keypair,
+    secret_key: &SecretKey,
     rpc_port: u16,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
         iroh::node::make_server_config(
-            keypair,
+            secret_key,
             MAX_RPC_STREAMS,
             MAX_RPC_CONNECTIONS,
             vec![RPC_ALPN.to_vec()],

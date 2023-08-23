@@ -12,6 +12,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::key::SecretKey;
 
 /// Configures logging for the current test, **single-threaded runtime only**.
 ///
@@ -134,7 +135,7 @@ pub(crate) async fn run_derp_and_stun(
 ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
     // TODO: pass a mesh_key?
 
-    let server_key = crate::key::node::SecretKey::generate();
+    let server_key = SecretKey::generate();
     let tls_config = crate::derp::http::make_tls_config();
     let server = crate::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
         .secret_key(Some(server_key))
@@ -147,32 +148,26 @@ pub(crate) async fn run_derp_and_stun(
 
     let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(stun_ip).await?;
     let region_id = 1;
-    let m = DerpMap {
-        regions: [(
-            1,
-            DerpRegion {
-                region_id,
-                region_code: "test".into(),
-                nodes: vec![DerpNode {
-                    name: "t1".into(),
-                    region_id,
-                    // In test mode, the DERP client does not validate HTTPS certs, so the host
-                    // name is irrelevant, but the port is used.
-                    url: format!("https://test-node.invalid:{}", https_addr.port())
-                        .parse()
-                        .unwrap(),
-                    stun_only: false,
-                    stun_port: stun_addr.port(),
-                    ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
-                    ipv6: UseIpv6::Disabled,
-                    stun_test_ip: Some(stun_addr.ip()),
-                }],
-                avoid: false,
-            },
-        )]
-        .into_iter()
-        .collect(),
-    };
+    let m: DerpMap = [DerpRegion {
+        region_id,
+        region_code: "test".into(),
+        nodes: vec![DerpNode {
+            name: "t1".into(),
+            region_id,
+            // In test mode, the DERP client does not validate HTTPS certs, so the host
+            // name is irrelevant, but the port is used.
+            url: format!("https://test-node.invalid:{}", https_addr.port())
+                .parse()
+                .unwrap(),
+            stun_only: false,
+            stun_port: stun_addr.port(),
+            ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
+            ipv6: UseIpv6::Disabled,
+            stun_test_ip: Some(stun_addr.ip()),
+        }],
+        avoid: false,
+    }]
+    .into();
 
     let (tx, rx) = oneshot::channel();
     tokio::spawn(

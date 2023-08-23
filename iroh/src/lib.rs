@@ -4,10 +4,11 @@
 pub use iroh_bytes as bytes;
 pub use iroh_net as net;
 
+pub mod baomap;
 #[cfg(feature = "iroh-collection")]
 pub mod collection;
-pub mod database;
 pub mod dial;
+pub mod get;
 pub mod node;
 pub mod rpc_protocol;
 pub mod util;

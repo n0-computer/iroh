@@ -1,5 +1,4 @@
 //! Default values used in [`iroh-net`][`crate`]
-use std::collections::HashMap;
 
 use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
@@ -25,11 +24,7 @@ pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
 
 /// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
-    DerpMap {
-        regions: HashMap::from_iter(
-            [(1, default_na_derp_region()), (2, default_eu_derp_region())].into_iter(),
-        ),
-    }
+    [default_na_derp_region(), default_eu_derp_region()].into()
 }
 
 /// Get the default [`DerpRegion`] for NA.

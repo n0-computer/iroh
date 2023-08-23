@@ -1,10 +1,12 @@
 //! Utility functions and types.
 use anyhow::Result;
+use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, result, str::FromStr};
 use thiserror::Error;
 pub mod io;
+pub mod progress;
 pub mod runtime;
 
 /// Hash type used throught.

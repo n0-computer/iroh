@@ -15,7 +15,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.66"
+  MSRV: "1.67"
 
 jobs:
   build_and_test_nix:
@@ -276,7 +276,7 @@ jobs:
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
     - name: clippy check (all features)
-      run: cargo clippy --workspace --all-features --all-targets
+      run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
 
     - name: clippy check (no features)
       run: cargo clippy --workspace --no-default-features --lib --bins --tests
@@ -383,7 +383,7 @@ jobs:
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
 
     - name: Dump report
-      if: ${{ github.repository == 'n0-computer/iroh' }}
+      if: ${{ (github.event.pull_request && !github.event.pull_request.head.repo.fork) || !github.event.pull_request }}
       run: |
         export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
         export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
