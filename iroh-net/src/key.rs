@@ -4,6 +4,7 @@ mod encryption;
 
 use std::{
     fmt::{Debug, Display},
+    hash::Hash,
     str::FromStr,
 };
 
@@ -17,12 +18,18 @@ pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
 
 /// A public key.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PublicKey {
     public: VerifyingKey,
     /// Cached version of `crypto_box::PublicKey` matching `public`.
     /// Stored as raw array, as `crypto_box::PublicKey` is not `Copy`.
     public_crypto_box: [u8; 32],
+}
+
+impl Hash for PublicKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.public.hash(state);
+    }
 }
 
 impl Serialize for PublicKey {
