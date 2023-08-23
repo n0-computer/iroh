@@ -157,7 +157,7 @@ impl DocCommands {
                 }
             }
             Self::Share { doc_id, mode } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
                 let ticket = doc.share(mode).await?;
                 println!("{}", ticket);
             }
@@ -167,7 +167,7 @@ impl DocCommands {
                 key,
                 value,
             } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
                 let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
@@ -182,7 +182,7 @@ impl DocCommands {
                 old,
                 content,
             } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
                 let mut filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
@@ -223,7 +223,7 @@ impl DocCommands {
                 prefix,
                 author,
             } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
                 let filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
@@ -241,7 +241,7 @@ impl DocCommands {
                 }
             }
             Self::Watch { doc_id } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?)?;
+                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
                 let mut stream = doc.subscribe().await?;
                 while let Some(event) = stream.next().await {
                     let event = event?;

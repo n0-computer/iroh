@@ -9,10 +9,11 @@ use rand::rngs::OsRng;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-    DocGetRequest, DocGetResponse, DocImportRequest, DocImportResponse, DocSetRequest,
-    DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-    DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
-    DocsCreateRequest, DocsCreateResponse, DocsListRequest, DocsListResponse, RpcResult, ShareMode,
+    DocCreateRequest, DocCreateResponse, DocGetRequest, DocGetResponse, DocImportRequest,
+    DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
+    DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+    DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
+    DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
 };
 
 use super::{engine::SyncEngine, PeerSource};
@@ -50,22 +51,19 @@ impl<S: Store> SyncEngine<S> {
         rx.into_stream()
     }
 
-    pub fn docs_create(&self, _req: DocsCreateRequest) -> RpcResult<DocsCreateResponse> {
+    pub fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let doc = self.store.new_replica(Namespace::new(&mut OsRng {}))?;
-        Ok(DocsCreateResponse {
+        Ok(DocCreateResponse {
             id: doc.namespace(),
         })
     }
 
-    pub fn docs_list(
-        &self,
-        _req: DocsListRequest,
-    ) -> impl Stream<Item = RpcResult<DocsListResponse>> {
+    pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let store = self.store.clone();
         self.rt.main().spawn_blocking(move || {
             let ite = store.list_namespaces();
-            let ite = inline_result(ite).map_ok(|id| DocsListResponse { id });
+            let ite = inline_result(ite).map_ok(|id| DocListResponse { id });
             for entry in ite {
                 if let Err(_err) = tx.send(entry) {
                     break;
@@ -73,6 +71,12 @@ impl<S: Store> SyncEngine<S> {
             }
         });
         rx.into_stream()
+    }
+
+    pub async fn doc_info(&self, req: DocInfoRequest) -> RpcResult<DocInfoResponse> {
+        let replica = self.get_replica(&req.doc_id)?;
+        self.start_sync(replica.namespace(), vec![]).await?;
+        Ok(DocInfoResponse {})
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {

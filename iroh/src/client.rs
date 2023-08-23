@@ -14,10 +14,10 @@ use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocGetRequest,
-    DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
-    DocSubscribeRequest, DocTicket, DocsCreateRequest, DocsListRequest, ProviderService, ShareMode,
-    StatsGetRequest,
+    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocCreateRequest,
+    DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
+    ProviderService, ShareMode, StatsGetRequest,
 };
 use crate::sync::{LiveEvent, PeerSource};
 
@@ -54,7 +54,7 @@ where
 
     /// Create a new document.
     pub async fn create_doc(&self) -> Result<Doc<C>> {
-        let res = self.rpc.rpc(DocsCreateRequest {}).await??;
+        let res = self.rpc.rpc(DocCreateRequest {}).await??;
         let doc = Doc {
             id: res.id,
             rpc: self.rpc.clone(),
@@ -74,23 +74,33 @@ where
 
     /// List all documents.
     pub async fn list_docs(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
-        let stream = self.rpc.server_streaming(DocsListRequest {}).await?;
+        let stream = self.rpc.server_streaming(DocListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.id))
     }
 
-    /// Get a [`Doc`] client for a single document.
-    pub fn get_doc(&self, id: NamespaceId) -> Result<Doc<C>> {
-        // TODO: Check if doc exists?
+    /// Get a [`Doc`] client for a single document. Return an error if the document cannot be found.
+    pub async fn get_doc(&self, id: NamespaceId) -> Result<Doc<C>> {
+        match self.try_get_doc(id).await? {
+            Some(doc) => Ok(doc),
+            None => Err(anyhow!("Document not found")),
+        }
+    }
+
+    /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
+    pub async fn try_get_doc(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+        if let Err(_err) = self.rpc.rpc(DocInfoRequest { doc_id: id }).await? {
+            return Ok(None);
+        }
         let doc = Doc {
             id,
             rpc: self.rpc.clone(),
         };
-        Ok(doc)
+        Ok(Some(doc))
     }
 
     /// Get the bytes for a hash.
     ///
-    /// NOTE: This reads the full blob into memory.
+    /// Note: This reads the full blob into memory.
     // TODO: add get_reader for streaming gets
     pub async fn get_bytes(&self, hash: Hash) -> Result<Bytes> {
         let res = self.rpc.rpc(BytesGetRequest { hash }).await??;
