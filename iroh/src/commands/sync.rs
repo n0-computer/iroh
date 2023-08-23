@@ -137,6 +137,9 @@ pub enum Doc {
         content: bool,
     },
     List {
+        /// Filter by author.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
         /// If true, old entries will be included. By default only the latest value for each key is
         /// shown.
         #[clap(short, long)]
@@ -205,14 +208,21 @@ impl Doc {
                     println!();
                 }
             }
-            Doc::List { old, prefix } => {
+            Doc::List {
+                old,
+                prefix,
+                author,
+            } => {
                 let filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
                 };
-                let filter = match prefix {
+                let mut filter = match prefix {
                     Some(prefix) => filter.with_prefix(prefix),
                     None => filter,
+                };
+                if let Some(author) = author {
+                    filter = filter.with_author(author);
                 };
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
