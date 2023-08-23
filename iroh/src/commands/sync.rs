@@ -115,6 +115,9 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `set-doc`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
+        /// Filter by author.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
         /// If true, old entries will be included. By default only the latest value for each key is
         /// shown.
         #[clap(short, long)]
@@ -209,15 +212,19 @@ impl DocCommands {
                 doc_id,
                 old,
                 prefix,
+                author,
             } => {
                 let doc = iroh.get_doc(env.doc(doc_id)?)?;
                 let filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
                 };
-                let filter = match prefix {
+                let mut filter = match prefix {
                     Some(prefix) => filter.with_prefix(prefix),
                     None => filter,
+                };
+                if let Some(author) = author {
+                    filter = filter.with_author(author);
                 };
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
