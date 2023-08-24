@@ -7,40 +7,21 @@ use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::{
-        sync::{self, AuthorCommands, DocCommands},
-        RpcCommands,
-    },
+    commands::RpcCommands,
     config::{ConsoleEnv, ConsolePaths},
 };
 
-pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
+pub async fn run(client: RpcClient, env: ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
     let mut repl_rx = Repl::spawn(env.clone());
     while let Some((event, reply)) = repl_rx.recv().await {
         let fut = async {
             match event {
-                // handle doc switch command
-                ReplCmd::Rpc(RpcCommands::Sync(sync::Commands::Doc {
-                    command: DocCommands::Switch { id },
-                })) => {
-                    env.set_doc(id);
-                    (ToRepl::UpdateEnv(env.clone()), Ok(()))
-                }
-                // handle author switch command
-                ReplCmd::Rpc(RpcCommands::Sync(sync::Commands::Author {
-                    command: AuthorCommands::Switch { id },
-                })) => {
-                    let res = env.save_author(id);
-                    (ToRepl::UpdateEnv(env.clone()), res)
-                }
-                // handle any other comand
                 ReplCmd::Rpc(cmd) => {
                     let res = cmd.run(client.clone(), env.clone()).await;
                     (ToRepl::Continue, res)
                 }
-                // handle exit
                 ReplCmd::Exit => (ToRepl::Exit, Ok(())),
             }
         };
@@ -70,8 +51,6 @@ pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
 pub enum ToRepl {
     /// Continue execution by reading the next command
     Continue,
-    /// Continue execution by reading the next command, and update the repl state
-    UpdateEnv(ConsoleEnv),
     /// Exit the repl
     Exit,
 }
@@ -91,7 +70,7 @@ impl Repl {
         });
         cmd_rx
     }
-    pub fn run(mut self) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         let mut rl =
             DefaultEditor::with_config(Config::builder().check_cursor_position(true).build())?;
         let history_path = ConsolePaths::History.with_env()?;
@@ -119,10 +98,7 @@ impl Repl {
             }
             // wait for reply from main thread
             match reply_rx.blocking_recv()? {
-                ToRepl::UpdateEnv(env) => {
-                    self.env = env;
-                }
-                ToRepl::Continue => {}
+                ToRepl::Continue => continue,
                 ToRepl::Exit => break,
             }
         }
@@ -132,14 +108,14 @@ impl Repl {
 
     pub fn prompt(&self) -> String {
         let mut pwd = String::new();
-        if let Some(author) = &self.env.author {
+        if let Some(author) = &self.env.author(None).ok() {
             pwd.push_str(&format!(
                 "{}{} ",
                 "author:".blue(),
                 fmt_short(author.as_bytes()).blue().bold(),
             ));
         }
-        if let Some(doc) = &self.env.doc {
+        if let Some(doc) = &self.env.doc(None).ok() {
             pwd.push_str(&format!(
                 "{}{} ",
                 "doc:".blue(),

@@ -35,7 +35,7 @@ impl Commands {
         let iroh = Iroh::new(client);
         match self {
             Self::Doc { command } => command.run(&iroh, env).await,
-            Self::Author { command } => command.run(&iroh).await,
+            Self::Author { command } => command.run(&iroh, env).await,
         }
     }
 }
@@ -45,9 +45,18 @@ pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
     Switch { id: NamespaceId },
     /// Create a new document.
-    Init,
+    Init {
+        /// Switch to the created document (only in the Iroh console).
+        #[clap(long)]
+        switch: bool,
+    },
     /// Join a document from a ticket.
-    Join { ticket: DocTicket },
+    Join {
+        ticket: DocTicket,
+        /// Switch to the joined document (only in the Iroh console).
+        #[clap(long)]
+        switch: bool,
+    },
     /// List documents.
     List,
     /// Share a document with peers.
@@ -139,16 +148,32 @@ pub enum DocCommands {
 impl DocCommands {
     pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
-            Self::Switch { .. } => {
-                bail!("This command is only supported in the Iroh console")
+            Self::Switch { id } => {
+                env.set_doc(id)?;
             }
-            Self::Init => {
+            Self::Init { switch } => {
+                if switch && !env.is_console() {
+                    bail!("The --switch flag is only supported within the Iroh console.");
+                }
+
                 let doc = iroh.create_doc().await?;
                 println!("{}", doc.id());
+
+                if switch {
+                    env.set_doc(doc.id())?;
+                }
             }
-            Self::Join { ticket } => {
+            Self::Join { ticket, switch } => {
+                if switch && !env.is_console() {
+                    bail!("The --switch flag is only supported within the Iroh console.");
+                }
+
                 let doc = iroh.import_doc(ticket).await?;
                 println!("{}", doc.id());
+
+                if switch {
+                    env.set_doc(doc.id())?;
+                }
             }
             Self::List => {
                 let mut stream = iroh.list_docs().await?;
@@ -277,17 +302,21 @@ pub enum AuthorCommands {
     /// Set the active author (only works within the Iroh console).
     Switch { id: AuthorId },
     /// Create a new author.
-    Create,
+    Create {
+        /// Switch to the created author (only in the Iroh console).
+        #[clap(long)]
+        switch: bool,
+    },
     /// List authors.
     #[clap(alias = "ls")]
     List,
 }
 
 impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
-            Self::Switch { .. } => {
-                bail!("This command is only supported in the Iroh console")
+            Self::Switch { id } => {
+                env.set_author(id)?;
             }
             Self::List => {
                 let mut stream = iroh.list_authors().await?;
@@ -295,9 +324,17 @@ impl AuthorCommands {
                     println!("{}", author_id);
                 }
             }
-            Self::Create => {
+            Self::Create { switch } => {
+                if switch && !env.is_console() {
+                    bail!("The --switch flag is only supported within the Iroh console.");
+                }
+
                 let author_id = iroh.create_author().await?;
                 println!("{}", author_id);
+
+                if switch {
+                    env.set_author(author_id)?;
+                }
             }
         }
         Ok(())

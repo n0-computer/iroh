@@ -5,6 +5,7 @@ use std::{
     env, fmt,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -14,6 +15,7 @@ use iroh_net::{
     derp::{DerpMap, DerpRegion},
 };
 use iroh_sync::{AuthorId, NamespaceId};
+use parking_lot::Mutex;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tracing::debug;
 
@@ -212,15 +214,21 @@ impl NodeConfig {
 }
 
 /// Environment for CLI and REPL
+///
+/// This is cheaply cloneable and has interior mutability. If not running in the console
+/// environment, [Self::set_doc] and [Self::set_author] will lead to an error, as changing the
+/// environment is only supported within the console.
+#[derive(Clone, Debug)]
+pub struct ConsoleEnv(Arc<Mutex<ConsoleEnvInner>>);
+
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
-pub struct ConsoleEnv {
+struct ConsoleEnvInner {
     /// Active author. Read from IROH_AUTHOR env variable.
     /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
-    pub author: Option<AuthorId>,
+    author: Option<AuthorId>,
     /// Active doc. Read from IROH_DOC env variable. Not persisted.
-    pub doc: Option<NamespaceId>,
-    /// True if running in a Iroh console session, false for a CLI command
-    pub is_console: bool,
+    doc: Option<NamespaceId>,
+    is_console: bool,
 }
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
@@ -229,20 +237,22 @@ impl ConsoleEnv {
             Some(author) => Some(author),
             None => Self::get_console_default_author()?,
         };
-        Ok(Self {
+        let env = ConsoleEnvInner {
             author,
             doc: env_doc()?,
             is_console: true,
-        })
+        };
+        Ok(Self(Arc::new(Mutex::new(env))))
     }
 
     /// Read only from environment variables.
     pub fn for_cli() -> Result<Self> {
-        Ok(Self {
+        let env = ConsoleEnvInner {
             author: env_author()?,
             doc: env_doc()?,
             is_console: false,
-        })
+        };
+        Ok(Self(Arc::new(Mutex::new(env))))
     }
 
     fn get_console_default_author() -> anyhow::Result<Option<AuthorId>> {
@@ -263,8 +273,21 @@ impl ConsoleEnv {
         }
     }
 
-    pub fn save_author(&mut self, author: AuthorId) -> anyhow::Result<()> {
-        self.author = Some(author);
+    /// True if running in a Iroh console session, false for a CLI command
+    pub fn is_console(&self) -> bool {
+        self.0.lock().is_console
+    }
+
+    /// Set the active author.
+    ///
+    /// Will error if not running in the Iroh console.
+    /// Will persist to a file in the Iroh data dir otherwise.
+    pub fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
+        let mut inner = self.0.lock();
+        if !inner.is_console {
+            bail!("Switching the author is only supported within the Iroh console, not on the command line");
+        }
+        inner.author = Some(author);
         std::fs::write(
             ConsolePaths::DefaultAuthor.with_env()?,
             author.to_string().as_bytes(),
@@ -272,12 +295,23 @@ impl ConsoleEnv {
         Ok(())
     }
 
-    pub fn set_doc(&mut self, doc: NamespaceId) {
-        self.doc = Some(doc);
+    /// Set the active document.
+    ///
+    /// Will error if not running in the Iroh console.
+    /// Will not persist, only valid for the current console session.
+    pub fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
+        let mut inner = self.0.lock();
+        if !inner.is_console {
+            bail!("Switching the document is only supported within the Iroh console, not on the command line");
+        }
+        inner.doc = Some(doc);
+        Ok(())
     }
 
+    /// Get the active document.
     pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
-        let doc_id = arg.or(self.doc).ok_or_else(|| {
+        let inner = self.0.lock();
+        let doc_id = arg.or(inner.doc).ok_or_else(|| {
             anyhow!(
                 "Missing document id. Set the active document with the `IROH_DOC` environment variable or the `-d` option.\n\
                 In the console, you can also set the active document with `doc switch`."
@@ -286,8 +320,10 @@ impl ConsoleEnv {
         Ok(doc_id)
     }
 
+    /// Get the active author.
     pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
-        let author_id = arg.or(self.author).ok_or_else(|| {
+        let inner = self.0.lock();
+        let author_id = arg.or(inner.author).ok_or_else(|| {
             anyhow!(
                 "Missing author id. Set the active author with the `IROH_AUTHOR` environment variable or the `-a` option.\n\
                 In the console, you can also set the active author with `author switch`."
