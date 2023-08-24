@@ -219,17 +219,20 @@ pub struct ConsoleEnv {
     pub author: Option<AuthorId>,
     /// Active doc. Read from IROH_DOC env variable. Not persisted.
     pub doc: Option<NamespaceId>,
+    /// True if running in a Iroh console session, false for a CLI command
+    pub is_console: bool,
 }
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
     pub fn for_console() -> Result<Self> {
-        let author = match Self::get_console_default_author()? {
+        let author = match env_author()? {
             Some(author) => Some(author),
-            None => env_author()?,
+            None => Self::get_console_default_author()?,
         };
         Ok(Self {
             author,
             doc: env_doc()?,
+            is_console: true,
         })
     }
 
@@ -238,6 +241,7 @@ impl ConsoleEnv {
         Ok(Self {
             author: env_author()?,
             doc: env_doc()?,
+            is_console: false,
         })
     }
 
@@ -274,30 +278,39 @@ impl ConsoleEnv {
 
     pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
         let doc_id = arg.or(self.doc).ok_or_else(|| {
-            anyhow!("Missing document id. Set the current document with the `IROH_DOC` environment variable or by passing the `-d` flag.\nIn the console, you can set the active document with `doc switch`.")
+            anyhow!(
+                "Missing document id. Set the active document with the `IROH_DOC` environment variable or the `-d` option.\n\
+                In the console, you can also set the active document with `doc switch`."
+            )
         })?;
         Ok(doc_id)
     }
 
     pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
         let author_id = arg.or(self.author).ok_or_else(|| {
-            anyhow!("Missing author id. Set the current author with the `IROH_AUTHOR` environment variable or by passing the `-a` flag.\nIn the console, you can set the active author with `author switch`.")
-
-})?;
+            anyhow!(
+                "Missing author id. Set the active author with the `IROH_AUTHOR` environment variable or the `-a` option.\n\
+                In the console, you can also set the active author with `author switch`."
+            )
+        })?;
         Ok(author_id)
     }
 }
 
 fn env_author() -> Result<Option<AuthorId>> {
     match env_var(ENV_AUTHOR) {
-        Ok(s) => Ok(Some(AuthorId::from_str(&s)?)),
+        Ok(s) => Ok(Some(
+            AuthorId::from_str(&s).context("Failed to parse IROH_AUTHOR environment variable")?,
+        )),
         Err(_) => Ok(None),
     }
 }
 
 fn env_doc() -> Result<Option<NamespaceId>> {
     match env_var(ENV_DOC) {
-        Ok(s) => Ok(Some(NamespaceId::from_str(&s)?)),
+        Ok(s) => Ok(Some(
+            NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
+        )),
         Err(_) => Ok(None),
     }
 }
