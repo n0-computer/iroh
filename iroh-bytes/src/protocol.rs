@@ -114,11 +114,6 @@ pub struct CustomGetRequest {
     pub data: Bytes,
 }
 
-/// Currently all requests are get requests. But that won't always be the case.
-///
-/// Hence this type alias that will at some point be replaced by a proper enum.
-pub type AnyGetRequest = Request;
-
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct GetRequest {

@@ -383,6 +383,26 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
+    fn range_spec_seq_bytes_roundtrip_impl(
+        ranges: &[RangeSet2<ChunkNum>],
+    ) -> Vec<RangeSet2<ChunkNum>> {
+        let spec = RangeSpecSeq::from_ranges(ranges.iter().cloned());
+        let bytes = postcard::to_allocvec(&spec).unwrap();
+        let spec2: RangeSpecSeq = postcard::from_bytes(&bytes).unwrap();
+        spec2
+            .iter()
+            .map(|x| x.to_chunk_ranges())
+            .take(ranges.len())
+            .collect::<Vec<_>>()
+    }
+
+    fn mk_case(case: Vec<Range<u64>>) -> Vec<RangeSet2<ChunkNum>> {
+        case.iter()
+            .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
+            .collect::<Vec<_>>()
+    }
+
+    /// Test that the roundtrip from [`Vec<RangeSet2>`] via [`RangeSpec`] to [`RangeSpecSeq`]  and back works.
     #[test]
     fn range_spec_seq_roundtrip_cases() {
         for case in [
@@ -390,13 +410,24 @@ mod tests {
             vec![1..2, 1..2, 1..2],
             vec![1..2, 1..2, 2..3, 2..3],
         ] {
-            let case = case
-                .iter()
-                .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
-                .collect::<Vec<_>>();
+            let case = mk_case(case);
             let expected = case.clone();
             let actual = range_spec_seq_roundtrip_impl(&case);
             assert_eq!(expected, actual);
+        }
+    }
+
+    /// Test that the creation of a [`RangeSpecSeq`] from a sequence of [`RangeSet2`]s canonicalizes the result.
+    #[test]
+    fn range_spec_seq_canonical() {
+        for (case, expected_count) in [
+            (vec![0..1, 0..0], 2),
+            (vec![1..2, 1..2, 1..2], 2),
+            (vec![1..2, 1..2, 2..3, 2..3], 3),
+        ] {
+            let case = mk_case(case);
+            let spec = RangeSpecSeq::from_ranges(case);
+            assert_eq!(spec.0.len(), expected_count);
         }
     }
 
@@ -412,6 +443,13 @@ mod tests {
         fn range_spec_seq_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
             let expected = ranges.clone();
             let actual = range_spec_seq_roundtrip_impl(&ranges);
+            prop_assert_eq!(expected, actual);
+        }
+
+        #[test]
+        fn range_spec_seq_bytes_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
+            let expected = ranges.clone();
+            let actual = range_spec_seq_bytes_roundtrip_impl(&ranges);
             prop_assert_eq!(expected, actual);
         }
     }
