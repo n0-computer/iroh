@@ -18,7 +18,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use indicatif::HumanBytes;
 use iroh::{
     download::Downloader,
-    sync::{PeerSource, SyncEngine, SYNC_ALPN},
+    sync_engine::{PeerSource, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
@@ -764,7 +764,7 @@ async fn handle_connection(mut conn: quinn::Connecting, state: Arc<State>) -> an
     println!("> incoming connection with alpn {alpn}");
     match alpn.as_bytes() {
         GOSSIP_ALPN => state.gossip.handle_connection(conn.await?).await,
-        SYNC_ALPN => iroh::sync::handle_connection(conn, state.docs.clone()).await,
+        SYNC_ALPN => iroh_sync::net::handle_connection(conn, state.docs.clone()).await,
         alpn if alpn == iroh_bytes::protocol::ALPN => state.bytes.handle_connection(conn).await,
         _ => bail!("ignoring connection: unsupported ALPN protocol"),
     }

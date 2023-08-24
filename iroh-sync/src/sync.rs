@@ -728,7 +728,7 @@ mod tests {
     fn test_multikey() {
         let mut rng = rand::thread_rng();
 
-        let k = vec!["a", "c", "z"];
+        let k = ["a", "c", "z"];
 
         let mut n: Vec<_> = (0..3).map(|_| Namespace::new(&mut rng)).collect();
         n.sort_by_key(|n| n.id());
