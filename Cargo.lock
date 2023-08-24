@@ -549,6 +549,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
+name = "colored"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2674ec482fbc38012cf31e6c42ba0177b431a0cb6f15fe40efa5aab1bda516f6"
+dependencies = [
+ "is-terminal",
+ "lazy_static",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "config"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1862,12 +1873,14 @@ dependencies = [
  "bao-tree",
  "bytes",
  "clap",
+ "colored",
  "config",
  "console",
  "data-encoding",
  "derive_more",
  "dirs-next",
  "duct",
+ "ed25519-dalek",
  "flume",
  "futures",
  "genawaiter",
@@ -1904,6 +1917,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "toml 0.7.6",
  "tracing",
  "tracing-subscriber",
  "url",

@@ -16,6 +16,7 @@ rust-version = "1.67"
 anyhow = { version = "1", features = ["backtrace"] }
 bao-tree = { version = "0.6.3", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
+data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
@@ -25,6 +26,7 @@ iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
 iroh-io = { version = "0.2.2" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.5.1", path = "../iroh-net" }
+itertools = "0.11.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 iroh-sync = { version = "0.5.1", path = "../iroh-sync" }
@@ -51,26 +53,27 @@ console = { version = "0.15.5", optional = true }
 dirs-next = { version = "2.0.0", optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
-tempfile = { version = "3.4", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-data-encoding = "2.4.0"
-url = { version = "2.4", features = ["serde"] }
-
-# Examples
+rustyline = { version = "12.0.0", optional = true }
 shell-words = { version = "1.1.0", optional = true }
 shellexpand = { version = "3.1.0", optional = true }
-rustyline = { version = "12.0.0", optional = true }
-itertools = "0.11.0"
+tempfile = { version = "3.4", optional = true }
+toml = { version = "0.7.3", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+url = { version = "2.4", features = ["serde"] }
+colored = { version = "2.0.4", optional = true }
+
+# Examples
+ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional = true }
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection", "shell-words", "shellexpand", "rustyline", "colored", "toml"]
 metrics = ["iroh-metrics"]
 mem-db = []
 flat-db = []
 iroh-collection = []
 test = []
-example-sync = ["cli", "shell-words", "shellexpand", "rustyline"]
+example-sync = ["cli"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
