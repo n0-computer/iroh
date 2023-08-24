@@ -64,7 +64,7 @@ use crate::rpc_protocol::{
     StatsGetResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
     WatchResponse,
 };
-use crate::sync::{SyncEngine, SYNC_ALPN};
+use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -513,7 +513,7 @@ async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => crate::sync::handle_connection(connecting, node.sync.store.clone()).await?,
+        SYNC_ALPN => iroh_sync::net::handle_connection(connecting, node.sync.store.clone()).await?,
         alpn if alpn == iroh_bytes::protocol::ALPN => {
             iroh_bytes::provider::handle_connection(
                 connecting,

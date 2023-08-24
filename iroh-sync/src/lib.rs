@@ -32,6 +32,8 @@
 mod keys;
 #[cfg(feature = "metrics")]
 pub mod metrics;
+#[cfg(feature = "net")]
+pub mod net;
 mod ranger;
 pub mod store;
 pub mod sync;

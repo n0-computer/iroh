@@ -2,12 +2,13 @@ use anyhow::{bail, ensure, Result};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::SinkExt;
 use iroh_net::key::PublicKey;
-use iroh_sync::{store, NamespaceId, Replica};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::debug;
+
+use crate::{store, NamespaceId, Replica};
 
 #[derive(Debug, Default)]
 struct SyncCodec;
@@ -79,9 +80,9 @@ enum Message {
         /// Namespace to sync
         namespace: NamespaceId,
         /// Initial message
-        message: iroh_sync::sync::ProtocolMessage,
+        message: crate::sync::ProtocolMessage,
     },
-    Sync(iroh_sync::sync::ProtocolMessage),
+    Sync(crate::sync::ProtocolMessage),
 }
 
 /// Runs the initiator side of the sync protocol.

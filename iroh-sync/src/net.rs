@@ -1,15 +1,19 @@
-//! Implementation of the iroh-sync protocol
+//! Network implementation of the iroh-sync protocol
 
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
-use iroh_sync::{store, sync::Replica};
 use tracing::debug;
+
+use crate::{
+    net::codec::{run_alice, run_bob},
+    store,
+    sync::Replica,
+};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
-use crate::sync::codec::{run_alice, run_bob};
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 
@@ -17,12 +21,6 @@ use iroh_metrics::inc;
 pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 
 mod codec;
-mod engine;
-mod live;
-pub mod rpc;
-
-pub use engine::*;
-pub use live::*;
 
 /// Connect to a peer and sync a replica
 pub async fn connect_and_sync<S: store::Store>(

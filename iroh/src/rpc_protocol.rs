@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 pub use iroh_bytes::{baomap::ValidateProgress, provider::ProvideProgress, util::RpcResult};
 
-use crate::sync::{LiveEvent, LiveStatus, PeerSource};
+use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];

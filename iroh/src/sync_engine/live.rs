@@ -6,7 +6,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use crate::{download::Downloader, sync::connect_and_sync};
+use crate::download::Downloader;
 use anyhow::{anyhow, bail, Result};
 use futures::{
     future::{BoxFuture, Shared},
@@ -24,6 +24,7 @@ use iroh_gossip::{
 };
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use iroh_sync::{
+    net::connect_and_sync,
     store,
     sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
 };

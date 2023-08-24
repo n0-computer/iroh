@@ -4,7 +4,7 @@ use indicatif::HumanBytes;
 use iroh::{
     client::quic::Iroh,
     rpc_protocol::{DocTicket, ShareMode},
-    sync::PeerSource,
+    sync_engine::PeerSource,
 };
 use iroh_sync::{
     store::GetFilter,

@@ -1,3 +1,7 @@
+//! Handlers and actors to for live syncing [`iroh_sync`] replicas.
+//!
+//! [`iroh_sync::Replica`] is also called documents here.
+
 use std::{collections::HashSet, sync::Arc};
 
 use anyhow::anyhow;
@@ -12,7 +16,11 @@ use parking_lot::RwLock;
 
 use crate::download::Downloader;
 
-use super::{LiveSync, PeerSource};
+mod live;
+mod rpc;
+
+pub use iroh_sync::net::SYNC_ALPN;
+pub use live::*;
 
 /// The SyncEngine contains the [`LiveSync`] handle, and keeps a copy of the store and endpoint.
 ///

@@ -3,6 +3,7 @@
 
 pub use iroh_bytes as bytes;
 pub use iroh_net as net;
+pub use iroh_sync as sync;
 
 pub mod baomap;
 pub mod client;
@@ -13,7 +14,7 @@ pub mod download;
 pub mod get;
 pub mod node;
 pub mod rpc_protocol;
-pub mod sync;
+pub mod sync_engine;
 pub mod util;
 
 /// Expose metrics module

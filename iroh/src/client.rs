@@ -19,7 +19,7 @@ use crate::rpc_protocol::{
     DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
     ProviderService, ShareMode, StatsGetRequest,
 };
-use crate::sync::{LiveEvent, LiveStatus, PeerSource};
+use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
 pub mod mem;
 #[cfg(feature = "cli")]

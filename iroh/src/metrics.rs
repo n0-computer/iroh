@@ -19,8 +19,6 @@ pub struct Metrics {
     pub downloads_success: Counter,
     pub downloads_error: Counter,
     pub downloads_notfound: Counter,
-    pub initial_sync_success: Counter,
-    pub initial_sync_failed: Counter,
 }
 
 impl Default for Metrics {
@@ -34,8 +32,6 @@ impl Default for Metrics {
             downloads_success: Counter::new("Total number of successfull downloads"),
             downloads_error: Counter::new("Total number of downloads failed with error"),
             downloads_notfound: Counter::new("Total number of downloads failed with not found"),
-            initial_sync_success: Counter::new("Number of successfull initial syncs "),
-            initial_sync_failed: Counter::new("Number of failed initial syncs"),
         }
     }
 }
