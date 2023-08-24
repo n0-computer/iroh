@@ -350,7 +350,7 @@ impl Actor {
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
-                            debug!(me = ?me, "all gossip handles dropped, stop gossip actor");
+                            debug!(?me, "all gossip handles dropped, stop gossip actor");
                             break;
                         }
                     }
@@ -367,11 +367,11 @@ impl Actor {
                 (peer_id, res) = self.dialer.next() => {
                     match res {
                         Ok(conn) => {
-                            debug!(me = ?me, peer = ?peer_id, "dial successfull");
+                            debug!(?me, peer = ?peer_id, "dial successfull");
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
-                            warn!(me = ?me, peer = ?peer_id, "dial failed: {err}");
+                            warn!(?me, peer = ?peer_id, "dial failed: {err}");
                         }
                     }
                 }
@@ -397,7 +397,7 @@ impl Actor {
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(me = ?me, "handle to_actor  {msg:?}");
+        debug!(?me, "handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -408,13 +408,13 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(me = ?me, peer = ?peer_id, "connection established, start loop");
+                    debug!(?me, peer = ?peer_id, "connection established, start loop");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
-                            debug!(me = ?me, peer = ?peer_id, "connection closed without error")
+                            debug!(?me, peer = ?peer_id, "connection closed without error")
                         }
                         Err(err) => {
-                            debug!(me = ?me, peer = ?peer_id, "connection closed with error {err:?}")
+                            debug!(?me, peer = ?peer_id, "connection closed with error {err:?}")
                         }
                     }
                     in_event_tx
@@ -469,13 +469,13 @@ impl Actor {
 
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(me = ?me, "handle in_event  {event:?}");
+        debug!(?me, "handle in_event  {event:?}");
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
         }
         let out = self.state.handle(event, now);
         for event in out {
-            debug!(me = ?me, "handle out_event {event:?}");
+            debug!(?me, "handle out_event {event:?}");
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
                     if let Some(send) = self.conn_send_tx.get(&peer_id) {
@@ -484,7 +484,7 @@ impl Actor {
                             self.conn_send_tx.remove(&peer_id);
                         }
                     } else {
-                        debug!(me = ?me, peer = ?peer_id, "dial");
+                        debug!(?me, peer = ?peer_id, "dial");
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         // TODO: Enforce max length
                         self.pending_sends.entry(peer_id).or_default().push(message);
@@ -637,7 +637,7 @@ mod test {
 
     #[tokio::test]
     async fn gossip_net_smoke() {
-        let _guard = util::setup_logging();
+        let _guard = iroh_test::logging::setup();
         let (derp_map, derp_region, cleanup) = util::run_derp_and_stun([127, 0, 0, 1].into())
             .await
             .unwrap();
@@ -759,104 +759,8 @@ mod test {
             key::SecretKey,
             stun::{is, parse_binding_request, response},
         };
-        use tokio::{runtime::RuntimeFlavor, sync::oneshot};
-        use tracing::level_filters::LevelFilter;
+        use tokio::sync::oneshot;
         use tracing::{debug, info, trace};
-        use tracing_subscriber::{prelude::*, EnvFilter};
-
-        /// Configures logging for the current test, **single-threaded runtime only**.
-        ///
-        /// This setup can be used for any sync test or async test using a single-threaded tokio
-        /// runtime (the default).  For multi-threaded runtimes use [`with_logging`].
-        ///
-        /// This configures logging that will interact well with tests: logs will be captured by the
-        /// test framework and only printed on failure.
-        ///
-        /// The logging is unfiltered, it logs all crates and modules on TRACE level.  If that's too
-        /// much consider if your test is too large (or write a version that allows filtering...).
-        ///
-        /// # Example
-        ///
-        /// ```no_run
-        /// #[tokio::test]
-        /// async fn test_something() {
-        ///     let _guard = crate::test_utils::setup_logging();
-        ///     assert!(true);
-        /// }
-        #[must_use = "The tracing guard must only be dropped at the end of the test"]
-        #[allow(dead_code)]
-        pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                match handle.runtime_flavor() {
-                    RuntimeFlavor::CurrentThread => (),
-                    RuntimeFlavor::MultiThread => {
-                        panic!("setup_logging() does not work in a multi-threaded tokio runtime");
-                    }
-                    _ => panic!("unknown runtime flavour"),
-                }
-            }
-            testing_subscriber().set_default()
-        }
-
-        /// Returns the a [`tracing::Subscriber`] configured for our tests.
-        ///
-        /// This subscriber will ensure that log output is captured by the test's default output
-        /// capturing and thus is only shown with the test on failure.  By default it uses
-        /// `RUST_LOG=trace` as configuration but you can specify the `RUST_LOG` environment
-        /// variable explicitly to override this.
-        ///
-        /// To use this in a tokio multi-threaded runtime use:
-        ///
-        /// ```no_run
-        /// use tracing_future::WithSubscriber;
-        /// use crate::test_utils::testing_subscriber;
-        ///
-        /// #[tokio::test(flavor = "multi_thread")]
-        /// async fn test_something() -> Result<()> {
-        ///    async move {
-        ///        Ok(())
-        ///    }.with_subscriber(testing_subscriber()).await
-        /// }
-        /// ```
-        pub(crate) fn testing_subscriber() -> impl tracing::Subscriber {
-            let var = std::env::var_os("RUST_LOG");
-            let trace_log_layer = match var {
-                Some(_) => None,
-                None => Some(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(|| TestWriter)
-                        .with_filter(LevelFilter::TRACE),
-                ),
-            };
-            let env_log_layer = var.map(|_| {
-                tracing_subscriber::fmt::layer()
-                    .with_writer(|| TestWriter)
-                    .with_filter(EnvFilter::from_default_env())
-            });
-            tracing_subscriber::registry()
-                .with(trace_log_layer)
-                .with(env_log_layer)
-        }
-
-        /// A tracing writer that interacts well with test output capture.
-        ///
-        /// Using this writer will make sure that the output is captured normally and only printed
-        /// when the test fails.  See [`setup_logging`] to actually use this.
-        #[derive(Debug)]
-        struct TestWriter;
-
-        impl std::io::Write for TestWriter {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                print!(
-                    "{}",
-                    std::str::from_utf8(buf).expect("tried to log invalid UTF-8")
-                );
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                std::io::stdout().flush()
-            }
-        }
 
         /// A drop guard to clean up test infrastructure.
         ///

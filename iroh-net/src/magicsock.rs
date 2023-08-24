@@ -66,13 +66,13 @@ const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(self) enum CurrentPortFate {
+enum CurrentPortFate {
     Keep,
     Drop,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(self) enum Network {
+enum Network {
     Ipv4,
     Ipv6,
 }
@@ -87,7 +87,7 @@ impl From<IpAddr> for Network {
 }
 
 impl Network {
-    pub(self) fn default_addr(&self) -> IpAddr {
+    fn default_addr(&self) -> IpAddr {
         match self {
             Self::Ipv4 => Ipv4Addr::UNSPECIFIED.into(),
             Self::Ipv6 => Ipv6Addr::UNSPECIFIED.into(),
@@ -95,7 +95,7 @@ impl Network {
     }
 
     #[cfg(test)]
-    pub(self) fn local_addr(&self) -> IpAddr {
+    fn local_addr(&self) -> IpAddr {
         match self {
             Self::Ipv4 => Ipv4Addr::LOCALHOST.into(),
             Self::Ipv6 => Ipv6Addr::LOCALHOST.into(),
@@ -169,23 +169,23 @@ impl Default for Options {
 /// possible.
 #[derive(Clone, Debug)]
 pub struct MagicSock {
-    pub(self) inner: Arc<Inner>,
+    inner: Arc<Inner>,
     // Empty when closed
     actor_tasks: Arc<Mutex<Vec<AbortingJoinHandle<()>>>>,
 }
 
 /// The actual implementation of `MagicSock`.
 #[derive(derive_more::Debug)]
-pub(self) struct Inner {
+struct Inner {
     actor_sender: mpsc::Sender<ActorMessage>,
     /// Sends network messages.
     network_sender: mpsc::Sender<Vec<quinn_udp::Transmit>>,
-    pub(self) name: String,
+    name: String,
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
     on_endpoints: Option<Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>>,
     #[debug("on_derp_active: Option<Box<..>>")]
-    pub(self) on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
+    on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     /// A callback that provides a `config::NetInfo` when discovered network conditions change.
     #[debug("on_net_info: Option<Box<..>>")]
     on_net_info: Option<Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>>,
@@ -194,10 +194,10 @@ pub(self) struct Inner {
     network_recv_ch: flume::Receiver<NetworkReadResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
     network_recv_wakers: std::sync::Mutex<Option<Waker>>,
-    pub(self) network_send_wakers: std::sync::Mutex<Option<Waker>>,
+    network_send_wakers: std::sync::Mutex<Option<Waker>>,
 
     /// Key for this node.
-    pub(self) secret_key: SecretKey,
+    secret_key: SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
@@ -210,10 +210,10 @@ pub(self) struct Inner {
     /// Close was called.
     closed: AtomicBool,
     /// If the last netcheck report, reports IPv6 to be available.
-    pub(self) ipv6_reported: Arc<AtomicBool>,
+    ipv6_reported: Arc<AtomicBool>,
 
     /// None (or zero regions/nodes) means DERP is disabled.
-    pub(self) derp_map: Option<DerpMap>,
+    derp_map: Option<DerpMap>,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
 }
@@ -222,37 +222,37 @@ impl Inner {
     /// Returns the derp region we are connected to, that has the best latency.
     ///
     /// If `0`, then we are not connected to any derp region.
-    pub(self) fn my_derp(&self) -> u16 {
+    fn my_derp(&self) -> u16 {
         self.my_derp.load(Ordering::Relaxed)
     }
 
     /// Sets the derp region with the best latency.
     ///
     /// If we are not connected to any derp regions, set this to `0`.
-    pub(self) fn set_my_derp(&self, my_derp: u16) {
+    fn set_my_derp(&self, my_derp: u16) {
         self.my_derp.store(my_derp, Ordering::Relaxed);
     }
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    pub(self) async fn has_derp_region(&self, region: u16) -> bool {
+    async fn has_derp_region(&self, region: u16) -> bool {
         match &self.derp_map {
             None => false,
             Some(ref derp_map) => derp_map.contains_region(region),
         }
     }
 
-    pub(self) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
+    async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
         match &self.derp_map {
             None => None,
             Some(ref derp_map) => derp_map.get_region(region).cloned(),
         }
     }
 
-    pub(self) fn is_closing(&self) -> bool {
+    fn is_closing(&self) -> bool {
         self.closing.load(Ordering::Relaxed)
     }
 
-    pub(self) fn is_closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
 
@@ -607,8 +607,8 @@ impl MagicSock {
 /// node. In the case of shared nodes and users switching accounts, two
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
-pub(self) struct DiscoInfo {
-    pub(self) node_key: PublicKey,
+struct DiscoInfo {
+    node_key: PublicKey,
     /// The precomputed key for communication with the peer that has the `node_key` used to
     /// look up this `DiscoInfo` in MagicSock.discoInfo.
     /// Not modified once initialized.
@@ -818,7 +818,7 @@ impl Drop for WgGuard {
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub(self) enum ActorMessage {
+enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
     GetMappingAddr(PublicKey, sync::oneshot::Sender<Option<QuicMappedAddr>>),
@@ -2380,7 +2380,7 @@ fn log_endpoint_change(endpoints: &[config::Endpoint]) {
 
 /// Addresses to which to which we can send. This is either a UDP or a derp address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(self) enum SendAddr {
+enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
     /// Derp, region id.
@@ -2388,18 +2388,18 @@ pub(self) enum SendAddr {
 }
 
 impl SendAddr {
-    pub(self) fn is_derp(&self) -> bool {
+    fn is_derp(&self) -> bool {
         matches!(self, Self::Derp(_))
     }
 
-    pub(self) fn as_udp(&self) -> Option<&SocketAddr> {
+    fn as_udp(&self) -> Option<&SocketAddr> {
         match self {
             Self::Derp(_) => None,
             Self::Udp(addr) => Some(addr),
         }
     }
 
-    pub(self) fn derp_region(&self) -> Option<u16> {
+    fn derp_region(&self) -> Option<u16> {
         match self {
             Self::Derp(region) => Some(*region),
             Self::Udp(_) => None,
@@ -2407,7 +2407,7 @@ impl SendAddr {
     }
 
     /// Returns the mapped version or the actual `SocketAddr`.
-    pub(self) fn as_socket_addr(&self) -> SocketAddr {
+    fn as_socket_addr(&self) -> SocketAddr {
         match self {
             Self::Derp(region) => SocketAddr::new(DERP_MAGIC_IP, *region),
             Self::Udp(addr) => *addr,
@@ -2837,7 +2837,7 @@ pub(crate) mod tests {
         })
     }
 
-    pub fn setup_logging() {
+    pub fn setup_multithreaded_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -2847,7 +2847,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        setup_logging();
+        setup_multithreaded_logging();
 
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
@@ -3019,7 +3019,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        setup_logging();
+        setup_multithreaded_logging();
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
         };
@@ -3063,7 +3063,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();
@@ -3206,7 +3206,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();

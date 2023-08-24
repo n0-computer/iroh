@@ -8,7 +8,7 @@ use crate::{
     key::SecretKey,
 };
 
-use super::Client;
+use super::{client::MeshClientEvent, Client};
 
 /// Spawns, connects, and manages special [`crate::derp::http::Client`].
 ///
@@ -43,7 +43,9 @@ impl MeshClients {
         }
     }
 
-    pub(crate) async fn mesh(&mut self) -> anyhow::Result<Vec<tokio::sync::oneshot::Receiver<()>>> {
+    pub(crate) async fn mesh(
+        &mut self,
+    ) -> anyhow::Result<Vec<tokio::sync::mpsc::Receiver<MeshClientEvent>>> {
         let addrs = match &self.mesh_addrs {
             MeshAddrs::Addrs(urls) => urls.to_owned(),
             MeshAddrs::DerpMap(derp_map) => {
@@ -68,7 +70,7 @@ impl MeshClients {
                 .expect("will only fail if no `server_url` is present");
 
             let packet_forwarder_handler = self.packet_fwd.clone();
-            let (sender, recv) = tokio::sync::oneshot::channel();
+            let (sender, recv) = tokio::sync::mpsc::channel(32);
             self.tasks.spawn(
                 async move {
                     if let Err(e) = client
@@ -102,25 +104,21 @@ pub enum MeshAddrs {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::derp::{http::ServerBuilder, ReceivedMessage};
     use anyhow::Result;
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
 
     #[tokio::test]
     async fn test_mesh_network() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = iroh_test::logging::setup();
 
-        // TODO(ramfox): figure out why this fails on later rounds
-        // for i in 0..10 {
-        // println!("TEST_MESH_NETWORK: round {i}");
-        test_mesh_network_once().await?;
-        // }
+        for i in 0..10 {
+            println!("TEST_MESH_NETWORK: round {i}");
+            test_mesh_network_once().await?;
+        }
         Ok(())
     }
 
@@ -149,23 +147,29 @@ mod tests {
             .parse()
             .unwrap();
 
-        let server_a_meshed = derp_server_a
+        let mut server_a_meshed = derp_server_a
             .re_mesh(MeshAddrs::Addrs(vec![b_url.clone()]))
             .await?;
-        let server_b_meshed = derp_server_b
+        let mut server_b_meshed = derp_server_b
             .re_mesh(MeshAddrs::Addrs(vec![a_url.clone()]))
             .await?;
 
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            futures::future::try_join_all(server_a_meshed),
-        )
-        .await??;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            futures::future::try_join_all(server_b_meshed),
-        )
-        .await??;
+        let server_a_chans = &mut server_a_meshed;
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            for chan in server_a_chans {
+                let msg = chan.recv().await.unwrap();
+                assert!(matches!(msg, MeshClientEvent::Meshed));
+            }
+        })
+        .await?;
+        let server_b_chans = &mut server_b_meshed;
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            for chan in server_b_chans {
+                let msg = chan.recv().await.unwrap();
+                assert!(matches!(msg, MeshClientEvent::Meshed));
+            }
+        })
+        .await?;
 
         let alice_key = SecretKey::generate();
         println!("client alice: {:?}", alice_key.public());
@@ -181,6 +185,35 @@ mod tests {
             .build(bob_key.clone())?;
         let _ = bob.connect().await?;
 
+        // wait for the mesh clients to be present in the servers
+        let server_a_chans = &mut server_a_meshed;
+        let bob_key_public = bob_key.public();
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            for chan in server_a_chans {
+                let msg = chan.recv().await.unwrap();
+                if let MeshClientEvent::PeerPresent { peer } = msg {
+                    assert_eq!(peer, bob_key_public);
+                } else {
+                    panic!("unexpected event: {:?}", msg);
+                }
+            }
+        })
+        .await?;
+
+        let server_b_chans = &mut server_b_meshed;
+        let alice_key_public = alice_key.public();
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            for chan in server_b_chans {
+                let msg = chan.recv().await.unwrap();
+                if let MeshClientEvent::PeerPresent { peer } = msg {
+                    assert_eq!(peer, alice_key_public);
+                } else {
+                    panic!("unexpected event: {:?}", msg);
+                }
+            }
+        })
+        .await?;
+
         let msg = "howdy, bob!";
         println!("send message from alice to bob");
         alice.send(bob_key.public(), msg.into()).await?;
@@ -189,7 +222,7 @@ mod tests {
         // client and the server
         let b = bob.clone();
         let alice_pub_key = alice_key.public();
-        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        tokio::time::timeout(Duration::from_secs(5), async move {
             loop {
                 let (recv, _) = b.recv_detail().await?;
                 if let ReceivedMessage::ReceivedPacket { source, data } = recv {
@@ -211,7 +244,7 @@ mod tests {
 
         // ensure alice gets the message, but allow other chatter between the
         // client and the server
-        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        tokio::time::timeout(Duration::from_secs(5), async move {
             loop {
                 let (recv, _) = alice.recv_detail().await?;
                 if let ReceivedMessage::ReceivedPacket { source, data } = recv {
