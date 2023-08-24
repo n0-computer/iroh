@@ -1,32 +1,72 @@
-//! Implementation of the iroh-sync protocol
-
-use std::net::SocketAddr;
-
-use anyhow::{bail, ensure, Context, Result};
-use bytes::BytesMut;
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
-use iroh_sync::{
-    store,
-    sync::{NamespaceId, Replica},
-};
+use anyhow::{bail, ensure, Result};
+use bytes::{Buf, BufMut, BytesMut};
+use futures::SinkExt;
+use iroh_net::key::PublicKey;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::{debug, trace};
+use tokio_stream::StreamExt;
+use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
+use tracing::debug;
 
-#[cfg(feature = "metrics")]
-use crate::metrics::Metrics;
-#[cfg(feature = "metrics")]
-use iroh_metrics::inc;
+use crate::{store, NamespaceId, Replica};
 
-/// The ALPN identifier for the iroh-sync protocol
-pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
+#[derive(Debug, Default)]
+struct SyncCodec;
 
-mod engine;
-mod live;
-pub mod rpc;
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 1024; // This is likely too large, but lets have some restrictions
 
-pub use engine::*;
-pub use live::*;
+impl Decoder for SyncCodec {
+    type Item = Message;
+    type Error = anyhow::Error;
+    fn decode(
+        &mut self,
+        src: &mut BytesMut,
+    ) -> std::result::Result<Option<Self::Item>, Self::Error> {
+        if src.len() < 4 {
+            return Ok(None);
+        }
+        let bytes: [u8; 4] = src[..4].try_into().unwrap();
+        let frame_len = u32::from_be_bytes(bytes) as usize;
+        ensure!(
+            frame_len <= MAX_MESSAGE_SIZE,
+            "received message that is too large: {}",
+            frame_len
+        );
+        if src.len() < 4 + frame_len {
+            return Ok(None);
+        }
+
+        let message: Message = postcard::from_bytes(&src[4..4 + frame_len])?;
+        src.advance(4 + frame_len);
+        Ok(Some(message))
+    }
+}
+
+impl Encoder<Message> for SyncCodec {
+    type Error = anyhow::Error;
+
+    fn encode(
+        &mut self,
+        item: Message,
+        dst: &mut BytesMut,
+    ) -> std::result::Result<(), Self::Error> {
+        let len =
+            postcard::serialize_with_flavor(&item, postcard::ser_flavors::Size::default()).unwrap();
+        ensure!(
+            len <= MAX_MESSAGE_SIZE,
+            "attempting to send message that is too large {}",
+            len
+        );
+
+        dst.put_u32(u32::try_from(len).expect("already checked"));
+        if dst.len() < 4 + len {
+            dst.resize(4 + len, 0u8);
+        }
+        postcard::to_slice(&item, &mut dst[4..])?;
+
+        Ok(())
+    }
+}
 
 /// Sync Protocol
 ///
@@ -40,47 +80,21 @@ enum Message {
         /// Namespace to sync
         namespace: NamespaceId,
         /// Initial message
-        message: iroh_sync::sync::ProtocolMessage,
+        message: crate::sync::ProtocolMessage,
     },
-    Sync(iroh_sync::sync::ProtocolMessage),
-}
-
-/// Connect to a peer and sync a replica
-pub async fn connect_and_sync<S: store::Store>(
-    endpoint: &MagicEndpoint,
-    doc: &Replica<S::Instance>,
-    peer_id: PublicKey,
-    derp_region: Option<u16>,
-    addrs: &[SocketAddr],
-) -> anyhow::Result<()> {
-    debug!("sync with peer {}: start", peer_id);
-    let connection = endpoint
-        .connect(peer_id, SYNC_ALPN, derp_region, addrs)
-        .await
-        .context("dial_and_sync")?;
-    let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
-    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer_id).await;
-
-    #[cfg(feature = "metrics")]
-    if res.is_ok() {
-        inc!(Metrics, initial_sync_success);
-    } else {
-        inc!(Metrics, initial_sync_failed);
-    }
-
-    debug!("sync with peer {}: finish {:?}", peer_id, res);
-    res
+    Sync(crate::sync::ProtocolMessage),
 }
 
 /// Runs the initiator side of the sync protocol.
-pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut R,
     alice: &Replica<S::Instance>,
     other_peer_id: PublicKey,
 ) -> Result<()> {
     let other_peer_id = *other_peer_id.as_bytes();
-    let mut buffer = BytesMut::with_capacity(1024);
+    let mut reader = FramedRead::new(reader, SyncCodec);
+    let mut writer = FramedWrite::new(writer, SyncCodec);
 
     // Init message
 
@@ -88,15 +102,12 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
         namespace: alice.namespace(),
         message: alice.sync_initial_message().map_err(Into::into)?,
     };
-    let msg_bytes = postcard::to_stdvec(&init_message)?;
-    iroh_bytes::protocol::write_lp(writer, &msg_bytes).await?;
+    writer.send(init_message).await?;
 
     // Sync message loop
 
-    while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        trace!("read {}", read.len());
-        let msg = postcard::from_bytes(&read)?;
-        match msg {
+    while let Some(msg) = reader.next().await {
+        match msg? {
             Message::Init { .. } => {
                 bail!("unexpected message: init");
             }
@@ -105,7 +116,7 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
                     .sync_process_message(msg, other_peer_id)
                     .map_err(Into::into)?
                 {
-                    send_sync_message(writer, msg).await?;
+                    writer.send(Message::Sync(msg)).await?;
                 } else {
                     break;
                 }
@@ -116,49 +127,21 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
     Ok(())
 }
 
-/// Handle an iroh-sync connection and sync all shared documents in the replica store.
-pub async fn handle_connection<S: store::Store>(
-    connecting: quinn::Connecting,
-    replica_store: S,
-) -> Result<()> {
-    let connection = connecting.await?;
-    let peer_id = get_peer_id(&connection).await?;
-    let (mut send_stream, mut recv_stream) = connection.accept_bi().await?;
-    debug!(peer = ?peer_id, "incoming sync: start");
-
-    let res = run_bob(&mut send_stream, &mut recv_stream, replica_store, peer_id).await;
-
-    #[cfg(feature = "metrics")]
-    if res.is_ok() {
-        inc!(Metrics, initial_sync_success);
-    } else {
-        inc!(Metrics, initial_sync_failed);
-    }
-
-    res?;
-    send_stream.finish().await?;
-
-    debug!(peer = ?peer_id, "incoming sync: done");
-
-    Ok(())
-}
-
 /// Runs the receiver side of the sync protocol.
-pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut R,
     replica_store: S,
     other_peer_id: PublicKey,
 ) -> Result<()> {
     let other_peer_id = *other_peer_id.as_bytes();
-    let mut buffer = BytesMut::with_capacity(1024);
+    let mut reader = FramedRead::new(reader, SyncCodec);
+    let mut writer = FramedWrite::new(writer, SyncCodec);
 
     let mut replica = None;
-    while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        trace!("read {}", read.len());
-        let msg = postcard::from_bytes(&read)?;
 
-        match msg {
+    while let Some(msg) = reader.next().await {
+        match msg? {
             Message::Init { namespace, message } => {
                 ensure!(replica.is_none(), "double init message");
 
@@ -169,7 +152,7 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
                             .sync_process_message(message, other_peer_id)
                             .map_err(Into::into)?
                         {
-                            send_sync_message(writer, msg).await?;
+                            writer.send(Message::Sync(msg)).await?;
                         } else {
                             break;
                         }
@@ -186,7 +169,7 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
                         .sync_process_message(msg, other_peer_id)
                         .map_err(Into::into)?
                     {
-                        send_sync_message(writer, msg).await?;
+                        writer.send(Message::Sync(msg)).await?;
                     } else {
                         break;
                     }
@@ -198,15 +181,6 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
         }
     }
 
-    Ok(())
-}
-
-async fn send_sync_message<W: AsyncWrite + Unpin>(
-    stream: &mut W,
-    msg: iroh_sync::sync::ProtocolMessage,
-) -> Result<()> {
-    let msg_bytes = postcard::to_stdvec(&Message::Sync(msg))?;
-    iroh_bytes::protocol::write_lp(stream, &msg_bytes).await?;
     Ok(())
 }
 

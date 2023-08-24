@@ -16,10 +16,8 @@ use crate::{
         DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
         DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
-    sync::KeepCallback,
+    sync_engine::{KeepCallback, LiveStatus, PeerSource, SyncEngine},
 };
-
-use super::{engine::SyncEngine, LiveStatus, PeerSource};
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;

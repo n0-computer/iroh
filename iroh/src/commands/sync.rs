@@ -5,6 +5,7 @@ use indicatif::HumanBytes;
 use iroh::{
     client::quic::Iroh,
     rpc_protocol::{DocTicket, ShareMode},
+    sync_engine::LiveEvent,
 };
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
@@ -261,10 +262,10 @@ impl DocCommands {
                 while let Some(event) = stream.next().await {
                     let event = event?;
                     match event {
-                        iroh::sync::LiveEvent::InsertLocal { entry } => {
+                        LiveEvent::InsertLocal { entry } => {
                             println!("local change:  {}", fmt_entry(&entry))
                         }
-                        iroh::sync::LiveEvent::InsertRemote {
+                        LiveEvent::InsertRemote {
                             entry,
                             from,
                             content_status,
@@ -276,7 +277,7 @@ impl DocCommands {
                                 content_status
                             )
                         }
-                        iroh::sync::LiveEvent::ContentReady { hash } => {
+                        LiveEvent::ContentReady { hash } => {
                             println!("content ready: {}", fmt_short(hash.as_bytes()))
                         }
                     }
