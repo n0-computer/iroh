@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use iroh::client::quic::RpcClient;
@@ -7,7 +7,7 @@ use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::sync,
+    commands::{sync::{self, DocCommands, AuthorCommands}, RpcCommands},
     config::{ConsoleEnv, ConsolePaths},
 };
 
@@ -16,24 +16,37 @@ pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
     println!("Type `{}` for a list of commands.", "help".bold());
     let mut repl_rx = Repl::spawn(env.clone());
     while let Some((event, reply)) = repl_rx.recv().await {
-        let (next, res) = match event {
-            ReplCmd::Rpc(super::RpcCommands::Sync(sync::Commands::Doc {
-                command: sync::DocCommands::Switch { id },
-            })) => {
-                env.set_doc(id);
-                (ToRepl::UpdateEnv(env.clone()), Ok(()))
+        let fut = async {
+            match event {
+                // handle doc switch command
+                ReplCmd::Rpc(RpcCommands::Sync(sync::Commands::Doc {
+                    command: DocCommands::Switch { id },
+                })) => {
+                    env.set_doc(id);
+                    (ToRepl::UpdateEnv(env.clone()), Ok(()))
+                }
+                // handle author switch command
+                ReplCmd::Rpc(RpcCommands::Sync(sync::Commands::Author {
+                    command: AuthorCommands::Switch { id },
+                })) => {
+                    let res = env.save_author(id);
+                    (ToRepl::UpdateEnv(env.clone()), res)
+                }
+                // handle any other comand
+                ReplCmd::Rpc(cmd) => {
+                    let res = cmd.run(client.clone(), env.clone()).await;
+                    (ToRepl::Continue, res)
+                }
+                // handle exit
+                ReplCmd::Exit => (ToRepl::Exit, Ok(())),
             }
-            ReplCmd::Rpc(super::RpcCommands::Sync(sync::Commands::Author {
-                command: sync::AuthorCommands::Switch { id },
-            })) => {
-                let res = env.save_author(id);
-                (ToRepl::UpdateEnv(env.clone()), res)
-            }
-            ReplCmd::Rpc(cmd) => {
-                let res = cmd.run(client.clone(), env.clone()).await;
-                (ToRepl::Continue, res)
-            }
-            ReplCmd::Exit => (ToRepl::Exit, Ok(())),
+        };
+
+        // allow to abort a running command with Ctrl-C
+        let (next, res) = tokio::select! {
+            biased;
+            _ = tokio::signal::ctrl_c() => (ToRepl::Continue, Err(anyhow!("aborted"))),
+            (next, res) = fut => (next, res)
         };
 
         if let Err(err) = res {
@@ -137,7 +150,7 @@ impl Repl {
 #[derive(Debug, Parser)]
 pub enum ReplCmd {
     #[clap(flatten)]
-    Rpc(#[clap(subcommand)] super::RpcCommands),
+    Rpc(#[clap(subcommand)] RpcCommands),
     /// Quit the Iroh console
     #[clap(alias = "quit")]
     Exit,
