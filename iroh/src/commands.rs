@@ -10,7 +10,7 @@ use futures::StreamExt;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::tls::{Keypair, PeerId};
+use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
@@ -132,7 +132,7 @@ impl Cli {
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash: ticket.hash(),
-                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()?),
+                        opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()?),
                         token: ticket.token().cloned(),
                         single: !ticket.recursive(),
                     }
@@ -146,7 +146,7 @@ impl Cli {
                             keylog: self.keylog,
                             derp_region: region,
                             derp_map: config.derp_map()?,
-                            keypair: Keypair::generate(),
+                            secret_key: SecretKey::generate(),
                         },
                         token,
                         single,
@@ -304,14 +304,14 @@ pub enum Commands {
         /// The hash to retrieve, as a Blake3 CID
         #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
         hash: Option<Hash>,
-        /// PeerId of the provider
+        /// PublicKey of the provider
         #[clap(
             long,
             short,
             conflicts_with = "ticket",
             required_unless_present = "ticket"
         )]
-        peer: Option<PeerId>,
+        peer: Option<PublicKey>,
         /// Addresses of the provider
         #[clap(long, short)]
         addrs: Vec<SocketAddr>,
@@ -349,14 +349,14 @@ pub enum Commands {
         /// treat as collection, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         recursive: Option<bool>,
-        /// PeerId of the provider
+        /// PublicKey of the provider
         #[clap(
             long,
             short,
             conflicts_with = "ticket",
             required_unless_present = "ticket"
         )]
-        peer: Option<PeerId>,
+        peer: Option<PublicKey>,
         /// Addresses of the provider
         #[clap(
             long,
@@ -414,9 +414,9 @@ pub fn create_quinn_client(
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> Result<quinn::Endpoint> {
-    let keypair = iroh_net::tls::Keypair::generate();
+    let secret_key = iroh_net::key::SecretKey::generate();
     let tls_client_config =
-        iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
+        iroh_net::tls::make_client_config(&secret_key, None, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let mut endpoint = quinn::Endpoint::client(bind_addr)?;
     let mut transport_config = quinn::TransportConfig::default();

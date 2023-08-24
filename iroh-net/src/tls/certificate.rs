@@ -8,7 +8,7 @@
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use x509_parser::prelude::*;
 
-use super::{Keypair, PeerId, PublicKey, Signature};
+use crate::key::{PublicKey, SecretKey, Signature};
 
 /// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identier 1.3.6.1.4.1.53594.1.1,
@@ -35,11 +35,11 @@ struct SignedKey<'a> {
 }
 
 /// Generates a self-signed TLS certificate that includes a libp2p-specific
-/// certificate extension containing the public key of the given keypair.
+/// certificate extension containing the public key of the given secret key.
 pub fn generate(
-    identity_keypair: &Keypair,
+    identity_secret_key: &SecretKey,
 ) -> Result<(rustls::Certificate, rustls::PrivateKey), GenError> {
-    // Keypair used to sign the certificate.
+    // SecretKey used to sign the certificate.
     // SHOULD NOT be related to the host's key.
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
@@ -51,7 +51,7 @@ pub fn generate(
         let mut params = rcgen::CertificateParams::new(vec![]);
         params.distinguished_name = rcgen::DistinguishedName::new();
         params.custom_extensions.push(make_libp2p_extension(
-            identity_keypair,
+            identity_secret_key,
             &certificate_keypair,
         )?);
         params.alg = P2P_SIGNATURE_ALGORITHM;
@@ -91,10 +91,10 @@ pub struct P2pCertificate<'a> {
 /// and a signature performed using the private host key.
 #[derive(Debug)]
 pub struct P2pExtension {
-    public_key: super::PublicKey,
+    public_key: crate::key::PublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
-    signature: super::Signature,
+    signature: crate::key::Signature,
 }
 
 /// An error that occurs during certificate generation.
@@ -135,13 +135,9 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
         if oid == &p2p_ext_oid {
             let signed_key =
                 SignedKey::from_der(ext.value).map_err(|_| webpki::Error::ExtensionValueInvalid)?;
-            let public_key_raw: [u8; 32] = signed_key
-                .public_key
-                .as_bytes()
-                .try_into()
-                .map_err(|_| webpki::Error::UnknownIssuer)?;
+            let public_key_raw = signed_key.public_key.as_bytes();
             let public_key =
-                PublicKey::from_bytes(&public_key_raw).map_err(|_| webpki::Error::UnknownIssuer)?;
+                PublicKey::try_from(public_key_raw).map_err(|_| webpki::Error::UnknownIssuer)?;
 
             let signature = Signature::from_slice(signed_key.signature.as_bytes())
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
@@ -175,7 +171,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
 }
 
 fn make_libp2p_extension(
-    identity_keypair: &Keypair,
+    identity_secret_key: &SecretKey,
     certificate_keypair: &rcgen::KeyPair,
 ) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
@@ -186,10 +182,10 @@ fn make_libp2p_extension(
         msg.extend(P2P_SIGNING_PREFIX);
         msg.extend(certificate_keypair.public_key_der());
 
-        identity_keypair.sign(&msg)
+        identity_secret_key.sign(&msg)
     };
 
-    let public_key = identity_keypair.public();
+    let public_key = identity_secret_key.public();
     let signature = signature.to_bytes();
     let key = SignedKey {
         public_key: OctetStringRef::new(&public_key.as_bytes()[..]).unwrap(),
@@ -207,12 +203,12 @@ fn make_libp2p_extension(
 }
 
 impl P2pCertificate<'_> {
-    /// The [`PeerId`] of the remote peer.
-    pub fn peer_id(&self) -> PeerId {
-        self.extension.public_key.into()
+    /// The [`PublicKey`] of the remote peer.
+    pub fn peer_id(&self) -> PublicKey {
+        self.extension.public_key
     }
 
-    /// Verify the `signature` of the `message` signed by the private key corresponding to the public key stored
+    /// Verify the `signature` of the `message` signed by the secret key corresponding to the public key stored
     /// in the certificate.
     pub fn verify_signature(
         &self,
@@ -285,7 +281,6 @@ impl P2pCertificate<'_> {
     /// 4. be self signed;
     /// 5. contain a valid signature in the specific libp2p extension.
     fn verify(&self) -> Result<(), webpki::Error> {
-        use ed25519_dalek::Verifier;
         use webpki::Error;
 
         // The certificate MUST have NotBefore and NotAfter fields set
@@ -387,12 +382,12 @@ mod tests {
 
     #[test]
     fn sanity_check() {
-        let keypair = Keypair::generate();
+        let secret_key = SecretKey::generate();
 
-        let (cert, _) = generate(&keypair).unwrap();
+        let (cert, _) = generate(&secret_key).unwrap();
         let parsed_cert = parse(&cert).unwrap();
 
         assert!(parsed_cert.verify().is_ok());
-        assert_eq!(keypair.public(), parsed_cert.extension.public_key);
+        assert_eq!(secret_key.public(), parsed_cert.extension.public_key);
     }
 }

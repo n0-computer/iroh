@@ -138,8 +138,8 @@ use futures::future::Either;
 use futures::{Future, FutureExt};
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
-    self, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry,
-    ReadableStore, ValidateProgress,
+    self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    PartialMapEntry, ReadableStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -266,6 +266,10 @@ impl MapEntry<Store> for PartialEntry {
         }
         .boxed()
     }
+
+    fn is_complete(&self) -> bool {
+        false
+    }
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
@@ -298,7 +302,7 @@ impl PartialMapEntry<Store> for PartialEntry {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(path.clone())
+                .open(path)
         })
         .boxed()
     }
@@ -417,6 +421,7 @@ pub struct Entry {
     /// the hash is not part of the entry itself
     hash: blake3::Hash,
     entry: EntryData,
+    is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
@@ -450,6 +455,10 @@ impl MapEntry<Store> for Entry {
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
         self.entry.data_reader().boxed()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 }
 
@@ -562,6 +571,7 @@ impl Map for Store {
             let data = state.data.get(hash).cloned();
             Some(Entry {
                 hash: blake3::Hash::from(*hash),
+                is_complete: true,
                 entry: EntryData {
                     data: if let Some(data) = data {
                         Either::Left(data)
@@ -591,6 +601,7 @@ impl Map for Store {
             );
             Some(Entry {
                 hash: blake3::Hash::from(*hash),
+                is_complete: false,
                 entry: EntryData {
                     data: Either::Right((data_path, entry.size)),
                     outboard: Either::Right(outboard_path),
@@ -599,6 +610,17 @@ impl Map for Store {
         } else {
             tracing::trace!("got none {}", hash);
             None
+        }
+    }
+
+    fn contains(&self, hash: &Hash) -> EntryStatus {
+        let state = self.0.state.read().unwrap();
+        if state.complete.contains_key(hash) {
+            EntryStatus::Complete
+        } else if state.partial.contains_key(hash) {
+            EntryStatus::Partial
+        } else {
+            EntryStatus::NotFound
         }
     }
 }
@@ -716,11 +738,7 @@ impl Store {
                     Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-                (
-                    hash,
-                    CompleteEntry::new_external(size, path.clone()),
-                    outboard,
-                )
+                (hash, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
                 let uuid = rand::thread_rng().gen::<[u8; 16]>();

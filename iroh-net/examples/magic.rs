@@ -1,12 +1,11 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::{default_derp_map, TEST_REGION_ID},
     derp::DerpMap,
+    key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    tls::{Keypair, PeerId},
     MagicEndpoint,
 };
 use tracing::{debug, info};
@@ -42,11 +41,11 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
-    let keypair = match args.secret {
+    let secret_key = match args.secret {
         None => {
-            let keypair = Keypair::generate();
-            println!("our secret key: {}", fmt_secret(&keypair));
-            keypair
+            let secret_key = SecretKey::generate();
+            println!("our secret key: {}", fmt_secret(&secret_key));
+            secret_key
         }
         Some(key) => parse_secret(&key)?,
     };
@@ -58,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let endpoint = MagicEndpoint::builder()
-        .keypair(keypair)
+        .secret_key(secret_key)
         .alpns(vec![args.alpn.to_string().into_bytes()])
         .enable_derp(derp_map)
         .bind(args.bind_port)
@@ -97,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
             addrs,
             derp_region,
         } => {
-            let peer_id: PeerId = peer_id.parse()?;
+            let peer_id: PublicKey = peer_id.parse()?;
             let addrs = addrs.unwrap_or_default();
             let conn = endpoint
                 .connect(peer_id, EXAMPLE_ALPN, derp_region, &addrs)
@@ -117,16 +116,16 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fmt_secret(keypair: &Keypair) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
+fn fmt_secret(secret_key: &SecretKey) -> String {
+    let mut text = data_encoding::BASE32_NOPAD.encode(&secret_key.to_bytes());
     text.make_ascii_lowercase();
     text
 }
-fn parse_secret(secret: &str) -> anyhow::Result<Keypair> {
+fn parse_secret(secret: &str) -> anyhow::Result<SecretKey> {
     let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
         .decode(secret.to_ascii_uppercase().as_bytes())?
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
-    let key = SecretKey::from_bytes(&bytes);
-    Ok(key.into())
+    let key = SecretKey::from(bytes);
+    Ok(key)
 }

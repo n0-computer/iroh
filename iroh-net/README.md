@@ -4,7 +4,7 @@ This crate contains the networking support for iroh. Iroh networking is built on
 
 Peer to peer connectivity is established with the help of a _DERP server_ or _derper_. The DERP server provides Session Traversal Utilities for NAT [(STUN)](https://en.wikipedia.org/wiki/STUN) for the peers and connection coordination using the [DERP protocol](https://pkg.go.dev/tailscale.com/derp) (Designated Relay for Encrypted Packets protocol). If no direct connection can be established, the connection is relayed via the DERP server.
 
-Peers must know and do verify the PeerID of each other before they can connect. When using a DERP server to aid the connection establishment they will register with a home DERP server using their PeerId.  Other peers which can not establish a direct connection can then establish connection via this DERP server.  This will try to assist establishing a direct connection using STUN and holepunching but continue relaying if not possible.
+Peers must know and do verify the PeerID of each other before they can connect. When using a DERP server to aid the connection establishment they will register with a home DERP server using their PublicKey.  Other peers which can not establish a direct connection can then establish connection via this DERP server.  This will try to assist establishing a direct connection using STUN and holepunching but continue relaying if not possible.
 
 Peers can also connect directly without using a DERP server. For this, however the listening peer must be directly reachable by the connecting peer via one of it's addresses.
 

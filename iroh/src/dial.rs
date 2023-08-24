@@ -11,18 +11,18 @@ use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
-use iroh_net::tls::{Keypair, PeerId};
+use iroh_net::key::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 
 /// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// The keypair of the node
-    pub keypair: Keypair,
+    /// The secret key of the node
+    pub secret_key: SecretKey,
     /// The addresses to connect to
     pub addrs: Vec<SocketAddr>,
     /// The peer id to dial
-    pub peer_id: PeerId,
+    pub peer_id: PublicKey,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
     /// The configuration of the derp services
@@ -38,7 +38,7 @@ pub struct Options {
 /// it is preferable to create an endpoint and use `connect` on the endpoint.
 pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
-        .keypair(opts.keypair)
+        .secret_key(opts.secret_key)
         .keylog(opts.keylog);
     let endpoint = match opts.derp_map {
         Some(derp_map) => endpoint.enable_derp(derp_map),
@@ -65,7 +65,7 @@ pub struct Ticket {
     /// The hash to retrieve.
     hash: Hash,
     /// The peer ID identifying the provider.
-    peer: PeerId,
+    peer: PublicKey,
     /// Optional Request token.
     token: Option<RequestToken>,
     /// The socket addresses the provider is listening on.
@@ -82,7 +82,7 @@ impl Ticket {
     /// Creates a new ticket.
     pub fn new(
         hash: Hash,
-        peer: PeerId,
+        peer: PublicKey,
         addrs: Vec<SocketAddr>,
         token: Option<RequestToken>,
         recursive: bool,
@@ -116,8 +116,8 @@ impl Ticket {
         self.hash
     }
 
-    /// The [`PeerId`] of the provider for this ticket.
-    pub fn peer(&self) -> PeerId {
+    /// The [`PublicKey`] of the provider for this ticket.
+    pub fn peer(&self) -> PublicKey {
         self.peer
     }
 
@@ -158,7 +158,7 @@ impl Ticket {
         self,
     ) -> (
         Hash,
-        PeerId,
+        PublicKey,
         Vec<SocketAddr>,
         Option<RequestToken>,
         bool,
@@ -175,12 +175,12 @@ impl Ticket {
         (hash, peer, addrs, token, recursive, derp_region)
     }
 
-    /// Convert this ticket into a [`Options`], adding the given keypair.
-    pub fn as_get_options(&self, keypair: Keypair, derp_map: Option<DerpMap>) -> Options {
+    /// Convert this ticket into a [`Options`], adding the given secret key.
+    pub fn as_get_options(&self, secret_key: SecretKey, derp_map: Option<DerpMap>) -> Options {
         Options {
             peer_id: self.peer,
             addrs: self.addrs.clone(),
-            keypair,
+            secret_key,
             keylog: true,
             derp_region: self.derp_region,
             derp_map,
@@ -212,7 +212,6 @@ impl FromStr for Ticket {
 #[cfg(test)]
 mod tests {
     use bao_tree::blake3;
-    use iroh_net::tls::Keypair;
 
     use super::*;
 
@@ -220,7 +219,7 @@ mod tests {
     fn test_ticket_base32_roundtrip() {
         let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
-        let peer = PeerId::from(Keypair::generate().public());
+        let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let derp_region = Some(0);

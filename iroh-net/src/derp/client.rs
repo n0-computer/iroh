@@ -4,23 +4,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
-use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use bytes::Bytes;
+use futures::stream::Stream;
+use futures::{Sink, SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
-use super::client_conn::Io;
-use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
-    read_frame,
+    codec::{
+        recv_frame, write_frame, DerpCodec, Frame, FrameType, MAX_PACKET_SIZE,
+        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+    },
     types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
-    write_frame, FrameType, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, NOT_PREFERRED, PREFERRED,
-    PROTOCOL_VERSION,
 };
 
-use crate::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::{PublicKey, SecretKey};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -40,7 +42,9 @@ pub struct Client {
     inner: Arc<InnerClient>,
 }
 
-#[derive(Debug)]
+type DerpReader = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>, DerpCodec>;
+
+#[derive(derive_more::Debug)]
 pub struct InnerClient {
     // our local addrs
     local_addr: SocketAddr,
@@ -51,7 +55,8 @@ pub struct InnerClient {
     /// JoinHandle for the [`ClientWriter`] task
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
-    reader: Mutex<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>>,
+    #[debug("Mutex<DerpReader>")]
+    reader: Mutex<DerpReader>,
     /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
 }
@@ -61,7 +66,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        debug!(%dstkey, len=packet.len(), "[DERP] send");
+        debug!(%dstkey, len = packet.len(), "[DERP] send");
 
         self.inner
             .writer_channel
@@ -174,95 +179,53 @@ impl Client {
     }
 
     async fn recv_0(&self) -> Result<ReceivedMessage> {
-        // in practice, quic packets (and thus DERP frames) are under 1.5 KiB
-        let mut frame_payload = BytesMut::with_capacity(1024 + 512);
-        loop {
-            let mut reader = self.inner.reader.lock().await;
-            let (frame_type, frame_len) =
-                match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
-                    Ok((t, l)) => (t, l),
-                    Err(e) => {
-                        self.close().await;
-                        bail!(e);
-                    }
-                };
-
-            match frame_type {
-                FrameType::KeepAlive => {
-                    // A one-way keep-alive message that doesn't require an ack.
-                    // This predated FrameType::Ping/FrameType::Pong.
-                    return Ok(ReceivedMessage::KeepAlive);
-                }
-                FrameType::PeerGone => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
-                        tracing::warn!(
-                            "unexpected: dropping short PEER_GONE frame from DERP server"
-                        );
-                        continue;
-                    }
-                    return Ok(ReceivedMessage::PeerGone(PublicKey::try_from(
-                        &frame_payload[..PUBLIC_KEY_LENGTH],
-                    )?));
-                }
-                FrameType::PeerPresent => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
-                        tracing::warn!(
-                            "unexpected: dropping short PEER_PRESENT frame from DERP server"
-                        );
-                        continue;
-                    }
-                    return Ok(ReceivedMessage::PeerPresent(PublicKey::try_from(
-                        &frame_payload[..PUBLIC_KEY_LENGTH],
-                    )?));
-                }
-                FrameType::RecvPacket => {
-                    if (frame_len) < PUBLIC_KEY_LENGTH {
-                        tracing::warn!("unexpected: dropping short packet from DERP server");
-                        continue;
-                    }
-                    let (source, data) = parse_recv_frame(frame_payload)?;
-                    let packet = ReceivedMessage::ReceivedPacket { source, data };
-                    return Ok(packet);
-                }
-                FrameType::Ping => {
-                    if frame_len < 8 {
-                        tracing::warn!("unexpected: dropping short PING frame");
-                        continue;
-                    }
-                    let ping = <[u8; 8]>::try_from(&frame_payload[..8])?;
-                    return Ok(ReceivedMessage::Ping(ping));
-                }
-                FrameType::Pong => {
-                    if frame_len < 8 {
-                        tracing::warn!("unexpected: dropping short PONG frame");
-                        continue;
-                    }
-                    let pong = <[u8; 8]>::try_from(&frame_payload[..8])?;
-                    return Ok(ReceivedMessage::Pong(pong));
-                }
-                FrameType::Health => {
-                    let problem = Some(String::from_utf8_lossy(&frame_payload).into());
-                    return Ok(ReceivedMessage::Health { problem });
-                }
-                FrameType::Restarting => {
-                    if frame_len < 8 {
-                        tracing::warn!("unexpected: dropping short server restarting frame");
-                        continue;
-                    }
-                    let reconnect_in = <[u8; 4]>::try_from(&frame_payload[..4])?;
-                    let try_for = <[u8; 4]>::try_from(&frame_payload[4..8])?;
-                    let reconnect_in =
-                        Duration::from_millis(u32::from_be_bytes(reconnect_in) as u64);
-                    let try_for = Duration::from_millis(u32::from_be_bytes(try_for) as u64);
-                    return Ok(ReceivedMessage::ServerRestarting {
-                        reconnect_in,
-                        try_for,
-                    });
-                }
-                _ => {
-                    frame_payload.clear();
-                }
+        let mut reader = self.inner.reader.lock().await;
+        let frame = match reader.next().await {
+            Some(Ok(frame)) => frame,
+            Some(Err(err)) => {
+                self.close().await;
+                bail!(err);
             }
+            None => {
+                self.close().await;
+                bail!("EOF: reader stream ended");
+            }
+        };
+
+        match frame {
+            Frame::KeepAlive => {
+                // A one-way keep-alive message that doesn't require an ack.
+                // This predated FrameType::Ping/FrameType::Pong.
+                Ok(ReceivedMessage::KeepAlive)
+            }
+            Frame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
+            Frame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
+            Frame::RecvPacket { src_key, content } => {
+                let packet = ReceivedMessage::ReceivedPacket {
+                    source: src_key,
+                    data: content,
+                };
+                Ok(packet)
+            }
+            Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+            Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+            Frame::Health { problem } => {
+                let problem = std::str::from_utf8(&problem)?.to_owned();
+                let problem = Some(problem);
+                Ok(ReceivedMessage::Health { problem })
+            }
+            Frame::Restarting {
+                reconnect_in,
+                try_for,
+            } => {
+                let reconnect_in = Duration::from_millis(reconnect_in as u64);
+                let try_for = Duration::from_millis(try_for as u64);
+                Ok(ReceivedMessage::ServerRestarting {
+                    reconnect_in,
+                    try_for,
+                })
+            }
+            _ => bail!("unexpected packet: {:?}", frame.typ()),
         }
     }
 
@@ -297,12 +260,13 @@ impl Client {
 
     /// The [`PublicKey`] of the [`super::server::Server`] this [`Client`] is connected with.
     pub fn server_public_key(self) -> PublicKey {
-        self.inner.server_public_key.clone()
+        self.inner.server_public_key
     }
 }
 
 /// The kinds of messages we can send to the [`super::server::Server`]
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),
@@ -332,61 +296,62 @@ enum ClientWriterMessage {
 /// the server.
 struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
     recv_msgs: mpsc::Receiver<ClientWriterMessage>,
-    writer: W,
+    writer: FramedWrite<W, DerpCodec>,
     rate_limiter: Option<RateLimiter>,
 }
 
 impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
     async fn run(mut self) -> Result<()> {
-        loop {
-            match self.recv_msgs.recv().await {
-                None => {
-                    bail!("channel unexpectedly closed");
-                }
-                Some(ClientWriterMessage::Packet((key, bytes))) => {
+        while let Some(msg) = self.recv_msgs.recv().await {
+            match msg {
+                ClientWriterMessage::Packet((key, bytes)) => {
                     // TODO: the rate limiter is only used on this method, is it because it's the only method that
                     // theoretically sends a bunch of data, or is it an oversight? For example,
                     // the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
-                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
+                    send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
                 }
-                Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
+                ClientWriterMessage::FwdPacket((srckey, dstkey, bytes)) => {
                     tokio::time::timeout(
                         Duration::from_secs(5),
-                        forward_packet(&mut self.writer, srckey, dstkey, &bytes),
+                        forward_packet(&mut self.writer, srckey, dstkey, bytes),
                     )
                     .await??;
                 }
-                Some(ClientWriterMessage::Pong(msg)) => {
-                    send_pong(&mut self.writer, &msg).await?;
+                ClientWriterMessage::Pong(data) => {
+                    write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::Ping(msg)) => {
-                    send_ping(&mut self.writer, &msg).await?;
+                ClientWriterMessage::Ping(data) => {
+                    write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::NotePreferred(preferred)) => {
-                    send_note_preferred(&mut self.writer, preferred).await?;
+                ClientWriterMessage::NotePreferred(preferred) => {
+                    write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::WatchConnectionChanges) => {
-                    watch_connection_changes(&mut self.writer).await?;
+                ClientWriterMessage::WatchConnectionChanges => {
+                    write_frame(&mut self.writer, Frame::WatchConns, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::ClosePeer(target)) => {
-                    close_peer(&mut self.writer, target).await?;
+                ClientWriterMessage::ClosePeer(peer) => {
+                    write_frame(&mut self.writer, Frame::ClosePeer { peer }, None).await?;
+                    self.writer.flush().await?;
                 }
-                Some(ClientWriterMessage::Shutdown) => {
+                ClientWriterMessage::Shutdown => {
                     return Ok(());
                 }
             }
         }
+
+        bail!("channel unexpectedly closed");
     }
 }
 
 /// The Builder returns a [`Client`] starts a [`ClientWriter`] run task.
-pub struct ClientBuilder<W>
-where
-    W: AsyncWrite + Send + Unpin + 'static,
-{
+pub struct ClientBuilder {
     secret_key: SecretKey,
-    reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
-    writer: W,
+    reader: DerpReader,
+    writer: FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>, DerpCodec>,
     local_addr: SocketAddr,
     mesh_key: Option<MeshKey>,
     is_prober: bool,
@@ -394,20 +359,17 @@ where
     can_ack_pings: bool,
 }
 
-impl<W> ClientBuilder<W>
-where
-    W: AsyncWrite + Send + Unpin + 'static,
-{
+impl ClientBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: SocketAddr,
-        reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
-        writer: W,
+        reader: Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
+        writer: Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
     ) -> Self {
         Self {
             secret_key,
-            reader,
-            writer,
+            reader: FramedRead::new(reader, DerpCodec),
+            writer: FramedWrite::new(writer, DerpCodec),
             local_addr,
             mesh_key: None,
             is_prober: false,
@@ -438,20 +400,12 @@ where
         self
     }
 
-    async fn server_handshake(
-        &mut self,
-        buf: Option<Bytes>,
-    ) -> Result<(PublicKey, Option<RateLimiter>)> {
+    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>)> {
         debug!("server_handshake: started");
-        let server_key = if let Some(buf) = buf {
-            recv_server_key(buf.chain(&mut self.reader))
-                .await
-                .context("failed to receive server key")?
-        } else {
-            recv_server_key(&mut self.reader)
-                .await
-                .context("failed to receive server key")?
-        };
+        let server_key = recv_server_key(&mut self.reader)
+            .await
+            .context("failed to receive server key")?;
+
         debug!("server_handshake: received server_key: {:?}", server_key);
 
         if let Some(expected_key) = &self.server_public_key {
@@ -466,19 +420,21 @@ where
             is_prober: self.is_prober,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::derp::send_client_key(
+        let shared_secret = self.secret_key.shared(&server_key);
+        crate::derp::codec::send_client_key(
             &mut self.writer,
-            &self.secret_key,
-            &server_key,
+            &shared_secret,
+            &self.secret_key.public(),
             &client_info,
         )
         .await?;
-        let mut buf = BytesMut::new();
-        let (frame_type, _) =
-            crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::ServerInfo, frame_type);
-        let msg = self.secret_key.open_from(&server_key, &buf)?;
-        let info: ServerInfo = postcard::from_bytes(&msg)?;
+
+        let Frame::ServerInfo { encrypted_message } = recv_frame(FrameType::ServerInfo, &mut self.reader).await? else {
+            bail!("expected server info");
+        };
+        let mut buf = encrypted_message.to_vec();
+        shared_secret.open(&mut buf)?;
+        let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
                 "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
@@ -494,9 +450,9 @@ where
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client> {
+    pub async fn build(mut self) -> Result<Client> {
         // exchange information with the server
-        let (server_public_key, rate_limiter) = self.server_handshake(buf).await?;
+        let (server_public_key, rate_limiter) = self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -527,26 +483,14 @@ where
     }
 }
 
-pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Result<PublicKey> {
-    // expecting MAGIC followed by 32 bytes that contain the server key
-    let magic_len = MAGIC.len();
-    let expected_frame_len = magic_len + 32;
-    let mut buf = BytesMut::with_capacity(expected_frame_len);
-    let (frame_type, frame_len) = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await?;
-
-    if expected_frame_len != frame_len
-        || frame_type != FrameType::ServerKey
-        || buf[..magic_len] != *MAGIC.as_bytes()
-    {
-        bail!("invalid server greeting");
+pub(crate) async fn recv_server_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
+    stream: S,
+) -> Result<PublicKey> {
+    if let Frame::ServerKey { key } = recv_frame(FrameType::ServerKey, stream).await? {
+        Ok(key)
+    } else {
+        bail!("expected server key");
     }
-
-    get_key_from_slice(&buf[magic_len..expected_frame_len])
-}
-
-// errors if `frame_len` is less than the expected [`PUBLIC_KEY_LENGTH`]
-fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
-    Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -610,39 +554,36 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
-    mut writer: W,
+pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+    mut writer: S,
     rate_limiter: &Option<RateLimiter>,
-    dstkey: PublicKey,
-    packet: &[u8],
+    dst_key: PublicKey,
+    packet: Bytes,
 ) -> Result<()> {
     ensure!(
         packet.len() <= MAX_PACKET_SIZE,
         "packet too big: {}",
         packet.len()
     );
-    let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+
+    let frame = Frame::SendPacket { dst_key, packet };
     if let Some(rate_limiter) = rate_limiter {
-        if rate_limiter.check_n(frame_len).is_err() {
+        if rate_limiter.check_n(frame.len()).is_err() {
             tracing::warn!("dropping send: rate limit reached");
             return Ok(());
         }
     }
-    write_frame(
-        &mut writer,
-        FrameType::SendPacket,
-        &[dstkey.as_bytes(), packet],
-    )
-    .await?;
+    writer.send(frame).await?;
     writer.flush().await?;
+
     Ok(())
 }
 
-pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    srckey: PublicKey,
-    dstkey: PublicKey,
-    packet: &[u8],
+pub(crate) async fn forward_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+    mut writer: S,
+    src_key: PublicKey,
+    dst_key: PublicKey,
+    packet: Bytes,
 ) -> Result<()> {
     ensure!(
         packet.len() <= MAX_PACKET_SIZE,
@@ -652,70 +593,14 @@ pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
 
     write_frame(
         &mut writer,
-        FrameType::ForwardPacket,
-        &[srckey.as_bytes(), dstkey.as_bytes(), packet],
+        Frame::ForwardPacket {
+            src_key,
+            dst_key,
+            packet,
+        },
+        None,
     )
     .await?;
     writer.flush().await?;
     Ok(())
-}
-
-pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    send_ping_or_pong(&mut writer, FrameType::Ping, data).await
-}
-
-async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
-    send_ping_or_pong(&mut writer, FrameType::Pong, data).await
-}
-
-async fn send_ping_or_pong<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    frame_type: FrameType,
-    data: &[u8; 8],
-) -> Result<()> {
-    write_frame(&mut writer, frame_type, &[data]).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    preferred: bool,
-) -> Result<()> {
-    let byte = {
-        if preferred {
-            [PREFERRED]
-        } else {
-            [NOT_PREFERRED]
-        }
-    };
-    write_frame(&mut writer, FrameType::NotePreferred, &[&byte]).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
-    write_frame(&mut writer, FrameType::WatchConns, &[]).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    target: PublicKey,
-) -> Result<()> {
-    write_frame(&mut writer, FrameType::ClosePeer, &[target.as_bytes()]).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-pub(crate) fn parse_recv_frame(frame: BytesMut) -> Result<(PublicKey, Bytes)> {
-    ensure!(
-        frame.len() >= PUBLIC_KEY_LENGTH,
-        "frame is shorter than expected"
-    );
-    Ok((
-        PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
-        frame.freeze().slice(PUBLIC_KEY_LENGTH..),
-    ))
 }

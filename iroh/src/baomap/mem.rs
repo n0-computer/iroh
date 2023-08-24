@@ -24,6 +24,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_bytes::baomap;
 use iroh_bytes::baomap::range_collections::RangeSet2;
+use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
@@ -204,6 +205,7 @@ pub struct Entry {
     hash: blake3::Hash,
     outboard: PreOrderOutboard<MemFile>,
     data: MemFile,
+    is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
@@ -225,6 +227,10 @@ impl MapEntry<Store> for Entry {
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone()).boxed()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 }
 
@@ -261,6 +267,10 @@ impl MapEntry<Store> for PartialEntry {
     fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone().into()).boxed()
     }
+
+    fn is_complete(&self) -> bool {
+        false
+    }
 }
 
 impl Map for Store {
@@ -280,6 +290,7 @@ impl Map for Store {
                     data: outboard.data.clone().into(),
                 },
                 data: data.clone().into(),
+                is_complete: true,
             })
         } else if let Some((data, outboard)) = state.partial.get(hash) {
             Some(Entry {
@@ -290,9 +301,21 @@ impl Map for Store {
                     data: outboard.data.clone().into(),
                 },
                 data: data.clone().into(),
+                is_complete: false,
             })
         } else {
             None
+        }
+    }
+
+    fn contains(&self, hash: &Hash) -> EntryStatus {
+        let state = self.0.state.read().unwrap();
+        if state.complete.contains_key(hash) {
+            EntryStatus::Complete
+        } else if state.partial.contains_key(hash) {
+            EntryStatus::Partial
+        } else {
+            EntryStatus::NotFound
         }
     }
 }
@@ -378,7 +401,7 @@ impl PartialMap for Store {
             .write()
             .unwrap()
             .partial
-            .insert(hash, (data.clone(), ob2.clone()));
+            .insert(hash, (data.clone(), ob2));
         Ok(PartialEntry {
             hash: hash.into(),
             outboard: PreOrderOutboard {

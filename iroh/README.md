@@ -14,7 +14,7 @@ Because iroh builds the CLI by default, you should disable `default-features` wh
 
 ```toml
 [dependencies]
-iroh = { version: "...", default-features = false }
+iroh = { version = "...", default-features = false }
 ```
 
 ## Running Examples

@@ -15,7 +15,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.66"
+  MSRV: "1.67"
 
 jobs:
   build_and_test_nix:
@@ -276,7 +276,7 @@ jobs:
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
     - name: clippy check (all features)
-      run: cargo clippy --workspace --all-features --all-targets
+      run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
 
     - name: clippy check (no features)
       run: cargo clippy --workspace --no-default-features --lib --bins --tests
