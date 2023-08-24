@@ -43,6 +43,9 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 /// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
+/// True to only use DERP for all connections.
+const DERPER_ONLY: bool = cfg!(feature = "derp-only");
+
 /// A conneciton endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
 #[derive(Debug)]
@@ -152,6 +155,9 @@ impl Endpoint {
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
+        if DERPER_ONLY {
+            return (None, self.derp_addr, false);
+        }
         match self.best_addr {
             Some(ref best_addr) => {
                 if !self.is_best_addr_valid(*now) {
