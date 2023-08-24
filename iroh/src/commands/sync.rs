@@ -18,7 +18,7 @@ pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
     Switch { id: NamespaceId },
     /// Create a new document.
-    Init {
+    New {
         /// Switch to the created document (only in the Iroh console).
         #[clap(long)]
         switch: bool,
@@ -123,7 +123,7 @@ pub enum AuthorCommands {
     /// Set the active author (only works within the Iroh console).
     Switch { author: AuthorId },
     /// Create a new author.
-    Create {
+    New {
         /// Switch to the created author (only in the Iroh console).
         #[clap(long)]
         switch: bool,
@@ -140,7 +140,7 @@ impl DocCommands {
                 env.set_doc(doc)?;
                 println!("Active doc is now {}", fmt_short(doc.as_bytes()));
             }
-            Self::Init { switch } => {
+            Self::New { switch } => {
                 if switch && !env.is_console() {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
@@ -301,7 +301,7 @@ impl AuthorCommands {
                     println!("{}", author_id);
                 }
             }
-            Self::Create { switch } => {
+            Self::New { switch } => {
                 if switch && !env.is_console() {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
