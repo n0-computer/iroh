@@ -14,53 +14,29 @@ use crate::{
 pub async fn run(client: RpcClient, env: ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
-    let mut repl_rx = Repl::spawn(env.clone());
-    while let Some((event, reply)) = repl_rx.recv().await {
-        let fut = async {
-            match event {
-                ReplCmd::Rpc(cmd) => {
-                    let res = cmd.run(client.clone(), env.clone()).await;
-                    (ToRepl::Continue, res)
-                }
-                ReplCmd::Exit => (ToRepl::Exit, Ok(())),
-            }
-        };
-
+    let mut from_repl = Repl::spawn(env.clone());
+    while let Some((cmd, reply)) = from_repl.recv().await {
         // allow to abort a running command with Ctrl-C
-        let (next, res) = tokio::select! {
+        tokio::select! {
             biased;
-            _ = tokio::signal::ctrl_c() => {
-                println!("aborted");
-                (ToRepl::Continue, Ok(()))
+            _ = tokio::signal::ctrl_c() => {},
+            res = cmd.run(client.clone(), env.clone()) => {
+                if let Err(err) = res {
+                    println!("{} {:?}", "Error:".red().bold(), err)
+                }
             }
-            (next, res) = fut => (next, res)
-        };
-
-        if let Err(err) = res {
-            println!("{} {:?}", "Error:".red().bold(), err)
         }
-
-        reply.send(next).ok();
+        reply.send(()).ok();
     }
     Ok(())
 }
 
-/// Reply to the repl after a command completed
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum ToRepl {
-    /// Continue execution by reading the next command
-    Continue,
-    /// Exit the repl
-    Exit,
-}
-
 pub struct Repl {
     env: ConsoleEnv,
-    cmd_tx: mpsc::Sender<(ReplCmd, oneshot::Sender<ToRepl>)>,
+    cmd_tx: mpsc::Sender<(RpcCommands, oneshot::Sender<()>)>,
 }
 impl Repl {
-    pub fn spawn(env: ConsoleEnv) -> mpsc::Receiver<(ReplCmd, oneshot::Sender<ToRepl>)> {
+    pub fn spawn(env: ConsoleEnv) -> mpsc::Receiver<(RpcCommands, oneshot::Sender<()>)> {
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
         let repl = Repl { env, cmd_tx };
         std::thread::spawn(move || {
@@ -84,23 +60,18 @@ impl Repl {
                 Ok(line) => {
                     rl.add_history_entry(line.as_str())?;
                     let cmd = parse_cmd::<ReplCmd>(&line);
-                    if let Some(cmd) = cmd {
-                        self.cmd_tx.blocking_send((cmd, reply_tx))?;
-                    } else {
-                        continue;
+                    match cmd {
+                        None => continue,
+                        Some(ReplCmd::Exit) => break,
+                        Some(ReplCmd::Rpc(cmd)) => self.cmd_tx.blocking_send((cmd, reply_tx))?,
                     }
                 }
-                Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
-                    self.cmd_tx.blocking_send((ReplCmd::Exit, reply_tx))?;
-                }
+                Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
                 Err(ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }
             // wait for reply from main thread
-            match reply_rx.blocking_recv()? {
-                ToRepl::Continue => continue,
-                ToRepl::Exit => break,
-            }
+            reply_rx.blocking_recv()?;
         }
         rl.save_history(&history_path).ok();
         Ok(())
