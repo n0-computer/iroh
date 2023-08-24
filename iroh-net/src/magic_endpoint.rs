@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
 use tracing::{debug, trace};
 
@@ -153,6 +153,13 @@ impl MagicEndpointBuilder {
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
+        ensure!(
+            self.derp_map
+                .as_ref()
+                .map(|m| !m.is_empty())
+                .unwrap_or(true),
+            "Derp server enabled but DerpMap is empty",
+        );
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let mut server_config = make_server_config(
             &secret_key,

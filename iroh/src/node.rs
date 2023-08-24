@@ -23,7 +23,7 @@ use crate::rpc_protocol::{
     ProviderService, ShareRequest, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -283,6 +283,13 @@ where
     pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
+        ensure!(
+            self.derp_map
+                .as_ref()
+                .map(|m| !m.is_empty())
+                .unwrap_or(true),
+            "Derp server enabled but DerpMap is empty",
+        );
 
         let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let mut transport_config = quinn::TransportConfig::default();
