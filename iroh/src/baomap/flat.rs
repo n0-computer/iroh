@@ -214,7 +214,7 @@ impl CompleteEntry {
         }
         self.size = new.size;
         self.owned_data |= new.owned_data;
-        self.external.extend(new.external.into_iter());
+        self.external.extend(new.external);
         Ok(())
     }
 }
