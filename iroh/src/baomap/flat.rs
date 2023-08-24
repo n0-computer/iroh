@@ -981,14 +981,22 @@ impl Store {
             let owned_data = data_path.is_some();
             let size = if let Some(data_path) = &data_path {
                 let Ok(meta) = std::fs::metadata(data_path) else {
-                    tracing::warn!("unable to open owned data file {}. removing {}", data_path.display(), hex::encode(hash));
-                    continue
+                    tracing::warn!(
+                        "unable to open owned data file {}. removing {}",
+                        data_path.display(),
+                        hex::encode(hash)
+                    );
+                    continue;
                 };
                 meta.len()
             } else if let Some(external) = external.iter().next() {
                 let Ok(meta) = std::fs::metadata(external) else {
-                    tracing::warn!("unable to open external data file {}. removing {}", external.display(), hex::encode(hash));
-                    continue
+                    tracing::warn!(
+                        "unable to open external data file {}. removing {}",
+                        external.display(),
+                        hex::encode(hash)
+                    );
+                    continue;
                 };
                 meta.len()
             } else {
@@ -1046,26 +1054,38 @@ impl Store {
         let mut partial = BTreeMap::new();
         for (hash, entries) in partial_index {
             let best = if !complete.contains_key(&hash) {
-                entries.iter().filter_map(|(uuid, (data_path, outboard_path))| {
-                let data_path = data_path.as_ref()?;
-                let outboard_path = outboard_path.as_ref()?;
-                let Ok(data_meta) = std::fs::metadata(data_path) else {
-                    tracing::warn!("unable to open partial data file {}", data_path.display());
-                    return None
-                };
-                let Ok(outboard_file) = std::fs::File::open(outboard_path) else {
-                    tracing::warn!("unable to open partial outboard file {}", outboard_path.display());
-                    return None
-                };
-                let mut expected_size = [0u8; 8];
-                let Ok(_) = outboard_file.read_at(0, &mut expected_size) else {
-                    tracing::warn!("partial outboard file is missing length {}", outboard_path.display());
-                    return None
-                };
-                let current_size = data_meta.len();
-                let expected_size = u64::from_le_bytes(expected_size);
-                Some((current_size, expected_size, uuid))
-            }).max_by_key(|x| x.0)
+                entries
+                    .iter()
+                    .filter_map(|(uuid, (data_path, outboard_path))| {
+                        let data_path = data_path.as_ref()?;
+                        let outboard_path = outboard_path.as_ref()?;
+                        let Ok(data_meta) = std::fs::metadata(data_path) else {
+                            tracing::warn!(
+                                "unable to open partial data file {}",
+                                data_path.display()
+                            );
+                            return None;
+                        };
+                        let Ok(outboard_file) = std::fs::File::open(outboard_path) else {
+                            tracing::warn!(
+                                "unable to open partial outboard file {}",
+                                outboard_path.display()
+                            );
+                            return None;
+                        };
+                        let mut expected_size = [0u8; 8];
+                        let Ok(_) = outboard_file.read_at(0, &mut expected_size) else {
+                            tracing::warn!(
+                                "partial outboard file is missing length {}",
+                                outboard_path.display()
+                            );
+                            return None;
+                        };
+                        let current_size = data_meta.len();
+                        let expected_size = u64::from_le_bytes(expected_size);
+                        Some((current_size, expected_size, uuid))
+                    })
+                    .max_by_key(|x| x.0)
             } else {
                 None
             };
