@@ -17,7 +17,7 @@ use parking_lot::RwLock;
 use crate::download::Downloader;
 
 mod live;
-mod rpc;
+pub mod rpc;
 
 pub use iroh_sync::net::SYNC_ALPN;
 pub use live::*;
