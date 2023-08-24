@@ -17,6 +17,7 @@ use iroh_bytes::{
 use iroh_net::key::PublicKey;
 use tokio::sync::oneshot;
 use tokio_util::{sync::CancellationToken, time::delay_queue};
+use tracing::{debug, error, info, trace, warn};
 
 /// Download identifier.
 // Mainly for readability.
@@ -159,12 +160,18 @@ struct DownloadInfo {
     // problem with this is that a download future could relate to multiple intents. And in the
     // future one intent can have multiple download futures if we paralelize large collection
     // downloads.
-    sender: oneshot::Sender<u64>,
+    sender: oneshot::Sender<DownloadResult>,
 }
 
 enum Message {
-    Start { kind: Download, id: Id },
-    Cancel { id: Id },
+    Start {
+        kind: Download,
+        id: Id,
+        sender: oneshot::Sender<DownloadResult>,
+    },
+    Cancel {
+        id: Id,
+    },
 }
 
 /// Information about a request.
@@ -203,23 +210,78 @@ pub struct DownloadService {
     current_requests: HashMap<(Hash, RangeSpecSeq), RequestInfo>,
     /// Queue of scheduled requests.
     scheduled_requests: delay_queue::DelayQueue<(Hash, RangeSpecSeq)>,
-    /// Downloas underway.
+    /// Downloads underway.
     in_progress_downloads: FuturesUnordered<tokio::time::Sleep>,
 }
 
 impl DownloadService {
+    /// Handle receiving a [`Message`].
     fn handle_message(&mut self, msg: Message) {
         match msg {
-            Message::Start { kind, id } => todo!(),
-            Message::Cancel { id } => todo!(),
+            Message::Start { kind, id, sender } => self.handle_start_download(kind, id, sender),
+            Message::Cancel { id } => self.handle_cancel_download(id),
         }
     }
 
-    fn cancel_download(&mut self, id: Id) {
+    /// Handle a [`Message::Start`].
+    ///
+    /// This will not start the download right away. Instead, if this intent maps to a request that
+    /// already exists, it will register it with it. If the request is new it will schedule it.
+    fn handle_start_download(
+        &mut self,
+        kind: Download,
+        id: Id,
+        sender: oneshot::Sender<DownloadResult>,
+    ) {
+        // map this intent to a download request.
+        let download_key = (*kind.hash(), kind.ranges());
+
+        // register the intent
+        let remaining_retries = 3; // TODO(@divma): we can receive a number of retries if we want or even a strategy
+        let intent_info = DownloadInfo {
+            kind,
+            remaining_retries,
+            sender,
+        };
+        self.registered_intents.insert(id, intent_info);
+
+        // check if there is already a download request for this and what state it is
+        match self.current_requests.entry(download_key) {
+            Entry::Occupied(mut entry) => {
+                // the associated request already exists for another intent, register it
+                entry.get_mut().intents.push(id);
+                let (hash, ranges) = entry.key();
+                let info = entry.get();
+                trace!(%hash, ?ranges, ?info, "intent registered with existing request");
+            }
+            Entry::Vacant(mut entry) => {
+                // TODO(@divma): we could also receive an initial delay, or make it part of the
+                // (re)try strategy
+
+                // since this request is new, schedule it
+                let timeout = std::time::Duration::from_millis(300);
+                let delay_key = self.scheduled_requests.insert(entry.key().clone(), timeout);
+                let (hash, ranges) = entry.key();
+                info!(%hash, ?ranges, "new request scheduled");
+
+                let intents = vec![id];
+                let state = RequestState::Scheduled { delay_key };
+                entry.insert(RequestInfo { intents, state });
+            }
+        }
+    }
+
+    /// Cancels the download request.
+    ///
+    /// This removes the registerd download intent and, depending on it's state, it will either
+    /// remove it from the scheduled requests, or cancel the future.
+    fn handle_cancel_download(&mut self, id: Id) {
         // remove the intent first
-        let Some(DownloadInfo { kind, ..  }) = self.registered_intents.remove(&id) else {
-            // TODO(@divma): log that the requested intent to be canceled is not present
-            return
+        let Some(DownloadInfo { kind, .. }) = self.registered_intents.remove(&id) else {
+            // unlikely scenario to occur but this is reachable in a race between a download being
+            // finished and the requester cancelling it before polling the result
+            debug!(%id, "intent to cancel no longer present");
+            return;
         };
 
         // get the hash and ranges this intent maps to
@@ -239,8 +301,9 @@ impl DownloadService {
         // if this was the last intent associated with the request, cancel it or remove it from the
         // schedule queue accordingly
         if intents.is_empty() {
-            let state = occupied_entry.remove().state;
-            match state {
+            let ((hash, ranges), info) = occupied_entry.remove_entry();
+            debug!(%hash, ?ranges, ?info, "request cancelled");
+            match info.state {
                 RequestState::Scheduled { delay_key } => {
                     self.scheduled_requests.remove(&delay_key);
                 }
