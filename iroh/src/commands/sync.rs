@@ -38,7 +38,7 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc_id: Option<NamespaceId>,
+        doc: Option<NamespaceId>,
         mode: ShareMode,
     },
     /// Set an entry in a document.
@@ -48,7 +48,7 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc_id: Option<NamespaceId>,
+        doc: Option<NamespaceId>,
         /// Author of the entry.
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
@@ -69,7 +69,7 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc_id: Option<NamespaceId>,
+        doc: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
         /// If true, get all entries that start with KEY.
@@ -95,7 +95,7 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc_id: Option<NamespaceId>,
+        doc: Option<NamespaceId>,
         /// Filter by author.
         #[clap(short, long)]
         author: Option<AuthorId>,
@@ -113,14 +113,14 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc_id: Option<NamespaceId>,
+        doc: Option<NamespaceId>,
     },
 }
 
 #[derive(Debug, Clone, Parser)]
 pub enum AuthorCommands {
     /// Set the active author (only works within the Iroh console).
-    Switch { id: AuthorId },
+    Switch { author: AuthorId },
     /// Create a new author.
     Create {
         /// Switch to the created author (only in the Iroh console).
@@ -135,8 +135,9 @@ pub enum AuthorCommands {
 impl DocCommands {
     pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
-            Self::Switch { id } => {
-                env.set_doc(id)?;
+            Self::Switch { id: doc } => {
+                env.set_doc(doc)?;
+                println!("Active doc is now {}", fmt_short(doc.as_bytes()));
             }
             Self::Init { switch } => {
                 if switch && !env.is_console() {
@@ -148,6 +149,7 @@ impl DocCommands {
 
                 if switch {
                     env.set_doc(doc.id())?;
+                    println!("Active doc is now {}", fmt_short(doc.id().as_bytes()));
                 }
             }
             Self::Join { ticket, switch } => {
@@ -160,6 +162,7 @@ impl DocCommands {
 
                 if switch {
                     env.set_doc(doc.id())?;
+                    println!("Active doc is now {}", fmt_short(doc.id().as_bytes()));
                 }
             }
             Self::List => {
@@ -168,18 +171,18 @@ impl DocCommands {
                     println!("{}", id)
                 }
             }
-            Self::Share { doc_id, mode } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
+            Self::Share { doc, mode } => {
+                let doc = iroh.get_doc(env.doc(doc)?).await?;
                 let ticket = doc.share(mode).await?;
                 println!("{}", ticket);
             }
             Self::Set {
-                doc_id,
+                doc,
                 author,
                 key,
                 value,
             } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
+                let doc = iroh.get_doc(env.doc(doc)?).await?;
                 let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
@@ -187,14 +190,14 @@ impl DocCommands {
                 println!("{}", fmt_entry(entry.entry()));
             }
             Self::Get {
-                doc_id,
+                doc,
                 key,
                 prefix,
                 author,
                 old,
                 content,
             } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
+                let doc = iroh.get_doc(env.doc(doc)?).await?;
                 let mut filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
@@ -230,12 +233,12 @@ impl DocCommands {
                 }
             }
             Self::Keys {
-                doc_id,
+                doc,
                 old,
                 prefix,
                 author,
             } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
+                let doc = iroh.get_doc(env.doc(doc)?).await?;
                 let filter = match old {
                     true => GetFilter::all(),
                     false => GetFilter::latest(),
@@ -252,8 +255,8 @@ impl DocCommands {
                     println!("{}", fmt_entry(entry.entry()));
                 }
             }
-            Self::Watch { doc_id } => {
-                let doc = iroh.get_doc(env.doc(doc_id)?).await?;
+            Self::Watch { doc } => {
+                let doc = iroh.get_doc(env.doc(doc)?).await?;
                 let mut stream = doc.subscribe().await?;
                 while let Some(event) = stream.next().await {
                     let event = event?;
@@ -287,8 +290,9 @@ impl DocCommands {
 impl AuthorCommands {
     pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
-            Self::Switch { id } => {
-                env.set_author(id)?;
+            Self::Switch { author } => {
+                env.set_author(author)?;
+                println!("Active author is now {}", fmt_short(author.as_bytes()));
             }
             Self::List => {
                 let mut stream = iroh.list_authors().await?;
@@ -306,6 +310,7 @@ impl AuthorCommands {
 
                 if switch {
                     env.set_author(author_id)?;
+                    println!("Active author is now {}", fmt_short(author_id.as_bytes()));
                 }
             }
         }
