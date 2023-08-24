@@ -113,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mesh_network() -> Result<()> {
-        let _guard = crate::test_utils::setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         for i in 0..10 {
             println!("TEST_MESH_NETWORK: round {i}");

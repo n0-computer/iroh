@@ -270,7 +270,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     let hash = request.hash;
 
     // if the request is just for the root, we don't need to deserialize the collection
-    let just_root = matches!(request.ranges.single(), Some((0, _)));
+    let just_root = matches!(request.ranges.as_single(), Some((0, _)));
     let mut c = if !just_root {
         // use the collection parser to parse the collection
         let (c, stats) = collection_parser.parse(0, &mut data).await?;
