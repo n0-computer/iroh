@@ -222,7 +222,7 @@ impl Cli {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
-    /// Diagnostic commands for the derp relay protocol.
+    /// Diagnostic commands for the iroh hole punching protocols.
     Doctor {
         /// Commands for doctor - defined in the mod
         #[clap(subcommand)]
