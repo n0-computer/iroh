@@ -429,7 +429,9 @@ impl ClientBuilder {
         )
         .await?;
 
-        let Frame::ServerInfo { encrypted_message } = recv_frame(FrameType::ServerInfo, &mut self.reader).await? else {
+        let Frame::ServerInfo { encrypted_message } =
+            recv_frame(FrameType::ServerInfo, &mut self.reader).await?
+        else {
             bail!("expected server info");
         };
         let mut buf = encrypted_message.to_vec();
