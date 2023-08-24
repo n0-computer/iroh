@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use iroh::client::quic::RpcClient;
@@ -7,7 +7,10 @@ use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::{sync::{self, DocCommands, AuthorCommands}, RpcCommands},
+    commands::{
+        sync::{self, AuthorCommands, DocCommands},
+        RpcCommands,
+    },
     config::{ConsoleEnv, ConsolePaths},
 };
 
@@ -45,7 +48,10 @@ pub async fn run(client: RpcClient, mut env: ConsoleEnv) -> Result<()> {
         // allow to abort a running command with Ctrl-C
         let (next, res) = tokio::select! {
             biased;
-            _ = tokio::signal::ctrl_c() => (ToRepl::Continue, Err(anyhow!("aborted"))),
+            _ = tokio::signal::ctrl_c() => {
+                println!("aborted");
+                (ToRepl::Continue, Ok(()))
+            }
             (next, res) = fut => (next, res)
         };
 

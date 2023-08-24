@@ -214,7 +214,7 @@ impl NodeConfig {
 /// Environment for CLI and REPL
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct ConsoleEnv {
-    /// Active author. Read from IROH_AUTHOR env variable. 
+    /// Active author. Read from IROH_AUTHOR env variable.
     /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
     pub author: Option<AuthorId>,
     /// Active doc. Read from IROH_DOC env variable. Not persisted.
@@ -274,14 +274,14 @@ impl ConsoleEnv {
 
     pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
         let doc_id = arg.or(self.doc).ok_or_else(|| {
-            anyhow!("Missing document id. Set the current document with the `IROH_DOC` environment variable or by passing the `-d` flag. In the console, you can set the active document with `set-doc`.")
+            anyhow!("Missing document id. Set the current document with the `IROH_DOC` environment variable or by passing the `-d` flag.\nIn the console, you can set the active document with `doc switch`.")
         })?;
         Ok(doc_id)
     }
 
     pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
         let author_id = arg.or(self.author).ok_or_else(|| {
-            anyhow!("Missing author id. Set the current author with the `IROH_AUTHOR` environment variable or by passing the `-a` flag. In the console, you can set the active author with `set-author`.")
+            anyhow!("Missing author id. Set the current author with the `IROH_AUTHOR` environment variable or by passing the `-a` flag.\nIn the console, you can set the active author with `author switch`.")
 
 })?;
         Ok(author_id)

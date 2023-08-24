@@ -52,7 +52,10 @@ pub enum DocCommands {
     List,
     /// Share a document with peers.
     Share {
-        /// Set the document
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         mode: ShareMode,
@@ -62,13 +65,13 @@ pub enum DocCommands {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `set-doc`.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         /// Author of the entry.
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
-        /// Within the Iroh console, the active author can also set with `set-author`.
+        /// Within the Iroh console, the active author can also set with `author switch`.
         #[clap(short, long)]
         author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
@@ -83,7 +86,7 @@ pub enum DocCommands {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `set-doc`.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string).
@@ -109,7 +112,7 @@ pub enum DocCommands {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `set-doc`.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
         /// Filter by author.
@@ -127,7 +130,7 @@ pub enum DocCommands {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `set-doc`.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
     },
