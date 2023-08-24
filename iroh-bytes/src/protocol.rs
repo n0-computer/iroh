@@ -114,7 +114,8 @@
 //! [`GetRequest::single`] that only requires the hash of the blob.
 //!
 //! ```rust
-//! # let hash: iroh_bytes::Hash = todo!();
+//! # use iroh_bytes::protocol::GetRequest;
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let request = GetRequest::single(hash);
 //! ```
 //!
@@ -132,10 +133,15 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let hash: iroh_bytes::Hash = todo!();
-//! let spec = RangeSpecSeq::from_ranges([RangeSet2::from(0..10)]);
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! let spec = RangeSpecSeq::from_ranges([RangeSet2::from(..ChunkNum(10))]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
+//!
+//! Here `ChunkNum` is a newtype wrapper around `u64` that is used to indicate
+//! that we are talking about chunk numbers, not bytes.
 //!
 //! While not that common, it is also possible to request multiple ranges of a
 //! single blob. For example, if we want to retrieve chunks `0-10` and `100-110`
@@ -143,8 +149,10 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let hash: iroh_bytes::Hash = todo!();
-//! let ranges = RangeSet2::from(0..10) | RangeSet2::from(100..110);
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! let ranges = &RangeSet2::from(..ChunkNum(10)) | &RangeSet2::from(ChunkNum(100)..ChunkNum(110));
 //! let spec = RangeSpecSeq::from_ranges([ranges]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -181,7 +189,9 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let hash: iroh_bytes::Hash = todo!();
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::all();
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -205,11 +215,13 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let hash: iroh_bytes::Hash = todo!();
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([
 //!   RangeSet2::empty(), // we don't need the collection itself
 //!   RangeSet2::empty(), // we don't need the first child either
-//!   RangeSet2::from(1000000..), // we need the second child from chunk 1000000 onwards
+//!   RangeSet2::from(ChunkNum(1000000)..), // we need the second child from chunk 1000000 onwards
 //!   RangeSet2::all(), // we need the third child completely
 //! ]);
 //! let request = GetRequest::new(hash, spec);
@@ -226,10 +238,12 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let hash: iroh_bytes::Hash = todo!();
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges_infinite([
 //!   RangeSet2::all(), // the collection itself
-//!   RangeSet2::from(0..1), // the first chunk of each child
+//!   RangeSet2::from(..ChunkNum(1)), // the first chunk of each child
 //! ]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -241,7 +255,9 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let hash: iroh_bytes::Hash = todo!();
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([
 //!   RangeSet2::empty(), // we don't need the collection itself
 //!   RangeSet2::empty(), // we don't need the first child either
@@ -255,7 +271,9 @@
 //!
 //! ```rust
 //! # use range_collections::range_set::RangeSet2;
-//! # let child_hash: iroh_bytes::Hash = todo!();
+//! # use bao_tree::ChunkNum;
+//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+//! # let child_hash: iroh_bytes::Hash = [0; 32].into();
 //! let request = GetRequest::single(child_hash);
 //! ```
 //!
