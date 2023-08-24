@@ -12,6 +12,7 @@ use tracing::{debug, trace};
 
 use crate::{
     config,
+    defaults::default_derp_map,
     derp::DerpMap,
     key,
     magicsock::{self, Callbacks, MagicSock},
@@ -20,7 +21,7 @@ use crate::{
 };
 
 /// Builder for [MagicEndpoint]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MagicEndpointBuilder {
     keypair: Option<Keypair>,
     derp_map: Option<DerpMap>,
@@ -29,6 +30,20 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
+}
+
+impl Default for MagicEndpointBuilder {
+    fn default() -> Self {
+        Self {
+            keypair: Default::default(),
+            derp_map: Some(default_derp_map()),
+            alpn_protocols: Default::default(),
+            transport_config: Default::default(),
+            concurrent_connections: Default::default(),
+            keylog: Default::default(),
+            callbacks: Default::default(),
+        }
+    }
 }
 
 impl MagicEndpointBuilder {
@@ -65,7 +80,11 @@ impl MagicEndpointBuilder {
     /// The provided `derp_map` must contain at least one region with a configured derp
     /// node.  If an invalid [`DerpMap`] is provided [`bind`] will result in an error.
     ///
+    /// When calling neither this, nor [`disable_derp`] the builder uses the
+    /// [`default_derp_map`] containing number0's global derp servers.
+    ///
     /// [`bind`]: MagicEndpointBuilder::bind
+    /// [`disable_derp`]: MagicEndpointBuilder::disable_derp
     pub fn enable_derp(mut self, derp_map: DerpMap) -> Self {
         self.derp_map = Some(derp_map);
         self
