@@ -10,9 +10,6 @@ pub mod protocol;
 pub mod provider;
 pub mod util;
 
-#[cfg(test)]
-pub(crate) mod test_utils;
-
 pub use crate::util::Hash;
 use bao_tree::BlockSize;
 
