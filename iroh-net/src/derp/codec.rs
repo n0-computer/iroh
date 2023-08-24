@@ -621,7 +621,6 @@ pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use crate::derp::codec::DerpCodec;
@@ -676,6 +675,13 @@ mod tests {
         assert_eq!(client_info, got_client_info);
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[cfg(not(debug_assertions))]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
 
     fn secret_key() -> impl Strategy<Value = SecretKey> {
         prop::array::uniform32(any::<u8>()).prop_map(SecretKey::from)
@@ -749,7 +755,6 @@ mod tests {
     proptest! {
 
         /// this test is slow in debug mode, so only run it in release mode
-        #[cfg(not(debug_assertions))]
         #[test]
         fn frame_roundtrip(frame in frame()) {
             let mut buf = BytesMut::new();
