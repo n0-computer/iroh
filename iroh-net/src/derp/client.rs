@@ -554,7 +554,7 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_packet<S: Sink<Frame, Error = anyhow::Error> + Unpin>(
     mut writer: S,
     rate_limiter: &Option<RateLimiter>,
     dst_key: PublicKey,
@@ -579,7 +579,7 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     Ok(())
 }
 
-pub(crate) async fn forward_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn forward_packet<S: Sink<Frame, Error = anyhow::Error> + Unpin>(
     mut writer: S,
     src_key: PublicKey,
     dst_key: PublicKey,
