@@ -156,7 +156,7 @@ impl GetRequest {
         Self {
             hash,
             token: None,
-            ranges: RangeSpecSeq::new([RangeSet2::all()]),
+            ranges: RangeSpecSeq::from_ranges([RangeSet2::all()]),
         }
     }
 

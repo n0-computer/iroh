@@ -190,20 +190,42 @@ impl RangeSpecSeq {
         Self(smallvec![(0, RangeSpec::all())])
     }
 
-    /// Creates a new range spec sequence from a sequence of range sets.
-    pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
-        let mut prev = RangeSet2::empty();
+    /// Convenience function to create a [`RangeSpecSeq`] from a finite sequence of range sets.
+    pub fn from_ranges(
+        ranges: impl IntoIterator<Item = impl AsRef<RangeSetRef<ChunkNum>>>,
+    ) -> Self {
+        Self::new(
+            ranges
+                .into_iter()
+                .map(RangeSpec::new)
+                .chain(std::iter::once(RangeSpec::EMPTY)),
+        )
+    }
+
+    /// Convenience function to create a [`RangeSpecSeq`] from a sequence of range sets.
+    ///
+    /// Compared to [`RangeSpecSeq::from_ranges`], this will not add an empty range spec at the end, so the final
+    /// range spec will repeat forever.
+    pub fn from_ranges_infinite(
+        ranges: impl IntoIterator<Item = impl AsRef<RangeSetRef<ChunkNum>>>,
+    ) -> Self {
+        Self::new(ranges.into_iter().map(RangeSpec::new))
+    }
+
+    /// Creates a new range spec sequence from a sequence of range specs.
+    ///
+    /// This will merge adjacent range specs with the same value and thus make
+    /// sure that the resulting sequence is as compact as possible.
+    pub fn new(children: impl IntoIterator<Item = RangeSpec>) -> Self {
         let mut count = 0;
         let mut res = SmallVec::new();
-        for v in children
-            .into_iter()
-            .chain(std::iter::once(RangeSet2::empty()))
-        {
-            if v == prev {
+        let before_all = RangeSpec::EMPTY;
+        for v in children.into_iter() {
+            let prev = res.last().map(|(_count, spec)| spec).unwrap_or(&before_all);
+            if &v == prev {
                 count += 1;
             } else {
-                res.push((count, RangeSpec::new(&v)));
-                prev = v;
+                res.push((count, v.clone()));
                 count = 1;
             }
         }
@@ -354,7 +376,7 @@ mod tests {
     }
 
     fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
-        let spec = RangeSpecSeq::new(ranges.iter().cloned());
+        let spec = RangeSpecSeq::from_ranges(ranges.iter().cloned());
         spec.iter()
             .map(|x| x.to_chunk_ranges())
             .take(ranges.len())
