@@ -1,5 +1,5 @@
 use anyhow::{bail, ensure, Result};
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use futures::SinkExt;
 use iroh_net::key::PublicKey;
 use iroh_sync::{store, NamespaceId, Replica};
@@ -21,28 +21,23 @@ impl Decoder for SyncCodec {
         &mut self,
         src: &mut BytesMut,
     ) -> std::result::Result<Option<Self::Item>, Self::Error> {
-        // ensure we never attempt to read more than MAX_MESSAGE_SIZE
-        let max_len = std::cmp::min(src.len(), MAX_MESSAGE_SIZE);
-
-        match postcard::take_from_bytes(&src[..max_len]) {
-            Ok((message, rest)) => {
-                // how many bytes we consumed
-                let consumed = max_len - rest.len();
-                src.advance(consumed);
-                Ok(Some(message))
-            }
-            Err(err) => match err {
-                postcard::Error::DeserializeUnexpectedEnd => {
-                    // Message too large
-                    if max_len == MAX_MESSAGE_SIZE {
-                        bail!("attempted to read message larger than MAX_MESSAGE_SIZE");
-                    }
-                    // We haven't read enough yet
-                    Ok(None)
-                }
-                _ => Err(err.into()),
-            },
+        if src.len() < 4 {
+            return Ok(None);
         }
+        let bytes: [u8; 4] = src[..4].try_into().unwrap();
+        let frame_len = u32::from_be_bytes(bytes) as usize;
+        ensure!(
+            frame_len <= MAX_MESSAGE_SIZE,
+            "received message that is too large: {}",
+            frame_len
+        );
+        if src.len() < 4 + frame_len {
+            return Ok(None);
+        }
+
+        let message: Message = postcard::from_bytes(&src[4..4 + frame_len])?;
+        src.advance(4 + frame_len);
+        Ok(Some(message))
     }
 }
 
@@ -62,8 +57,11 @@ impl Encoder<Message> for SyncCodec {
             len
         );
 
-        dst.resize(len, 0u8);
-        postcard::to_slice(&item, dst)?;
+        dst.put_u32(u32::try_from(len).expect("already checked"));
+        if dst.len() < 4 + len {
+            dst.resize(4 + len, 0u8);
+        }
+        postcard::to_slice(&item, &mut dst[4..])?;
 
         Ok(())
     }
