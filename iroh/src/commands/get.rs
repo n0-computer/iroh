@@ -170,7 +170,7 @@ impl GetInteractive {
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let query = if self.single {
             // just get the entire first item
-            RangeSpecSeq::new([RangeSet2::all()])
+            RangeSpecSeq::from_ranges([RangeSet2::all()])
         } else {
             // get everything (collection and children)
             RangeSpecSeq::all()

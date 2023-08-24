@@ -22,7 +22,7 @@ use quinn::RecvStream;
 use range_collections::RangeSet2;
 use tracing::{debug, error};
 
-use crate::protocol::{AnyGetRequest, RangeSpecSeq};
+use crate::protocol::RangeSpecSeq;
 use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
@@ -51,7 +51,7 @@ impl Stats {
 pub mod fsm {
     use std::{io, result};
 
-    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, MAX_MESSAGE_SIZE};
+    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
 
     use super::*;
 
@@ -79,7 +79,7 @@ pub mod fsm {
     }
 
     /// The entry point of the get response machine
-    pub fn start(connection: quinn::Connection, request: AnyGetRequest) -> AtInitial {
+    pub fn start(connection: quinn::Connection, request: Request) -> AtInitial {
         AtInitial::new(connection, request)
     }
 
@@ -116,7 +116,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtInitial {
         connection: quinn::Connection,
-        request: AnyGetRequest,
+        request: Request,
     }
 
     impl AtInitial {
@@ -124,7 +124,7 @@ pub mod fsm {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        pub fn new(connection: quinn::Connection, request: AnyGetRequest) -> Self {
+        pub fn new(connection: quinn::Connection, request: Request) -> Self {
             Self {
                 connection,
                 request,
@@ -152,7 +152,7 @@ pub mod fsm {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
-        request: AnyGetRequest,
+        request: Request,
     }
 
     /// Possible next states after the handshake has been sent
@@ -274,11 +274,11 @@ pub mod fsm {
 
             // 3. Turn a possible custom request into a get request
             let request = match request {
-                AnyGetRequest::Get(get_request) => {
+                Request::Get(get_request) => {
                     // we already have a get request, just return it
                     get_request
                 }
-                AnyGetRequest::CustomGet(_) => {
+                Request::CustomGet(_) => {
                     // we sent a custom request, so we need the actual GetRequest from the response
                     let response_len = reader
                         .read_u64_le()

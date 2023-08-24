@@ -31,11 +31,11 @@ use iroh_bytes::{
     baomap::{PartialMap, Store},
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{
-        fsm::{self},
-        fsm::{ConnectedNext, DecodeError},
+        fsm::ConnectedNext,
+        fsm::{self, DecodeError},
         Stats,
     },
-    protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
+    protocol::{CustomGetRequest, GetRequest, Request, RequestToken},
     provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
@@ -602,7 +602,7 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
 /// Run a get request with the default collection parser
 async fn run_get_request(
     opts: iroh::dial::Options,
-    request: AnyGetRequest,
+    request: Request,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
     run_custom_get_request(opts, request, IrohCollectionParser).await
 }
@@ -610,7 +610,7 @@ async fn run_get_request(
 /// Run a get request with a custom collection parser
 async fn run_custom_get_request<C: CollectionParser>(
     opts: iroh::dial::Options,
-    request: AnyGetRequest,
+    request: Request,
     collection_parser: C,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
     let connection = iroh::dial::dial(opts).await?;
@@ -790,14 +790,16 @@ async fn test_custom_request_blob() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
+        let request = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         });
         let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
-        let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
+        let ConnectedNext::StartRoot(start) = connected.next().await? else {
+            panic!()
+        };
         let header = start.next();
         let (_, actual) = header.concatenate_into_vec().await?;
         assert_eq!(actual, expected);
@@ -824,7 +826,7 @@ async fn test_custom_request_collection() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = CustomGetRequest {
+        let request = CustomGetRequest {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         }

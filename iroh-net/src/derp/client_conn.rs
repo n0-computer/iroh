@@ -395,7 +395,7 @@ where
             "unexpected request to update mesh peers on a connection that is not able to mesh"
         );
         let scheduled_updates: Vec<_> = if updates.len() < 16 {
-            updates.drain(..).collect()
+            std::mem::take(&mut updates)
         } else {
             updates.drain(..16).collect()
         };

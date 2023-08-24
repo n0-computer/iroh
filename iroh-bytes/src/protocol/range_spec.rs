@@ -167,7 +167,7 @@ impl RangeSpecSeq {
 
     /// If this range seq describes a range for a single item, returns the offset
     /// and range spec for that item
-    pub fn single(&self) -> Option<(u64, &RangeSpec)> {
+    pub fn as_single(&self) -> Option<(u64, &RangeSpec)> {
         // we got two elements,
         // the first element starts at offset 0,
         // and the second element is empty
@@ -176,7 +176,7 @@ impl RangeSpecSeq {
         }
         let (fst_ofs, fst_val) = &self.0[0];
         let (snd_ofs, snd_val) = &self.0[1];
-        if *fst_ofs == 0 && *snd_ofs == 1 && snd_val.is_empty() {
+        if *snd_ofs - *fst_ofs == 1 && snd_val.is_empty() {
             Some((*fst_ofs, fst_val))
         } else {
             None
@@ -190,20 +190,42 @@ impl RangeSpecSeq {
         Self(smallvec![(0, RangeSpec::all())])
     }
 
-    /// Creates a new range spec sequence from a sequence of range sets.
-    pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
-        let mut prev = RangeSet2::empty();
+    /// Convenience function to create a [`RangeSpecSeq`] from a finite sequence of range sets.
+    pub fn from_ranges(
+        ranges: impl IntoIterator<Item = impl AsRef<RangeSetRef<ChunkNum>>>,
+    ) -> Self {
+        Self::new(
+            ranges
+                .into_iter()
+                .map(RangeSpec::new)
+                .chain(std::iter::once(RangeSpec::EMPTY)),
+        )
+    }
+
+    /// Convenience function to create a [`RangeSpecSeq`] from a sequence of range sets.
+    ///
+    /// Compared to [`RangeSpecSeq::from_ranges`], this will not add an empty range spec at the end, so the final
+    /// range spec will repeat forever.
+    pub fn from_ranges_infinite(
+        ranges: impl IntoIterator<Item = impl AsRef<RangeSetRef<ChunkNum>>>,
+    ) -> Self {
+        Self::new(ranges.into_iter().map(RangeSpec::new))
+    }
+
+    /// Creates a new range spec sequence from a sequence of range specs.
+    ///
+    /// This will merge adjacent range specs with the same value and thus make
+    /// sure that the resulting sequence is as compact as possible.
+    pub fn new(children: impl IntoIterator<Item = RangeSpec>) -> Self {
         let mut count = 0;
         let mut res = SmallVec::new();
-        for v in children
-            .into_iter()
-            .chain(std::iter::once(RangeSet2::empty()))
-        {
-            if v == prev {
+        let before_all = RangeSpec::EMPTY;
+        for v in children.into_iter() {
+            let prev = res.last().map(|(_count, spec)| spec).unwrap_or(&before_all);
+            if &v == prev {
                 count += 1;
             } else {
-                res.push((count, RangeSpec::new(&v)));
-                prev = v;
+                res.push((count, v.clone()));
                 count = 1;
             }
         }
@@ -354,13 +376,33 @@ mod tests {
     }
 
     fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
-        let spec = RangeSpecSeq::new(ranges.iter().cloned());
+        let spec = RangeSpecSeq::from_ranges(ranges.iter().cloned());
         spec.iter()
             .map(|x| x.to_chunk_ranges())
             .take(ranges.len())
             .collect::<Vec<_>>()
     }
 
+    fn range_spec_seq_bytes_roundtrip_impl(
+        ranges: &[RangeSet2<ChunkNum>],
+    ) -> Vec<RangeSet2<ChunkNum>> {
+        let spec = RangeSpecSeq::from_ranges(ranges.iter().cloned());
+        let bytes = postcard::to_allocvec(&spec).unwrap();
+        let spec2: RangeSpecSeq = postcard::from_bytes(&bytes).unwrap();
+        spec2
+            .iter()
+            .map(|x| x.to_chunk_ranges())
+            .take(ranges.len())
+            .collect::<Vec<_>>()
+    }
+
+    fn mk_case(case: Vec<Range<u64>>) -> Vec<RangeSet2<ChunkNum>> {
+        case.iter()
+            .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
+            .collect::<Vec<_>>()
+    }
+
+    /// Test that the roundtrip from [`Vec<RangeSet2>`] via [`RangeSpec`] to [`RangeSpecSeq`]  and back works.
     #[test]
     fn range_spec_seq_roundtrip_cases() {
         for case in [
@@ -368,13 +410,24 @@ mod tests {
             vec![1..2, 1..2, 1..2],
             vec![1..2, 1..2, 2..3, 2..3],
         ] {
-            let case = case
-                .iter()
-                .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
-                .collect::<Vec<_>>();
+            let case = mk_case(case);
             let expected = case.clone();
             let actual = range_spec_seq_roundtrip_impl(&case);
             assert_eq!(expected, actual);
+        }
+    }
+
+    /// Test that the creation of a [`RangeSpecSeq`] from a sequence of [`RangeSet2`]s canonicalizes the result.
+    #[test]
+    fn range_spec_seq_canonical() {
+        for (case, expected_count) in [
+            (vec![0..1, 0..0], 2),
+            (vec![1..2, 1..2, 1..2], 2),
+            (vec![1..2, 1..2, 2..3, 2..3], 3),
+        ] {
+            let case = mk_case(case);
+            let spec = RangeSpecSeq::from_ranges(case);
+            assert_eq!(spec.0.len(), expected_count);
         }
     }
 
@@ -390,6 +443,13 @@ mod tests {
         fn range_spec_seq_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
             let expected = ranges.clone();
             let actual = range_spec_seq_roundtrip_impl(&ranges);
+            prop_assert_eq!(expected, actual);
+        }
+
+        #[test]
+        fn range_spec_seq_bytes_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
+            let expected = ranges.clone();
+            let actual = range_spec_seq_bytes_roundtrip_impl(&ranges);
             prop_assert_eq!(expected, actual);
         }
     }
