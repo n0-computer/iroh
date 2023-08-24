@@ -109,8 +109,21 @@ enum SyncState {
     Failed(anyhow::Error),
 }
 
+/// Sync status for a document
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LiveStatus {
+    /// Whether this document is in the live sync
+    pub active: bool,
+    /// Number of event listeners registered
+    pub subscriptions: usize,
+}
+
 #[derive(derive_more::Debug)]
 enum ToActor<S: store::Store> {
+    Status {
+        namespace: NamespaceId,
+        s: sync::oneshot::Sender<Option<LiveStatus>>,
+    },
     StartSync {
         replica: Replica<S::Instance>,
         peers: Vec<PeerSource>,
@@ -136,9 +149,18 @@ enum ToActor<S: store::Store> {
     },
 }
 
+/// Whether to keep a live event callback active.
+#[derive(Debug)]
+pub enum KeepCallback {
+    /// Keep active
+    Keep,
+    /// Drop this callback
+    Drop,
+}
+
 /// Callback used for tracking [`LiveEvent`]s.
 pub type OnLiveEventCallback =
-    Box<dyn Fn(LiveEvent) -> BoxFuture<'static, ()> + Send + Sync + 'static>;
+    Box<dyn Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static>;
 
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -264,7 +286,7 @@ impl<S: store::Store> LiveSync<S> {
     /// Subscribes `cb` to events on this `namespace`.
     pub async fn subscribe<F>(&self, namespace: NamespaceId, cb: F) -> Result<RemovalToken>
     where
-        F: Fn(LiveEvent) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+        F: Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static,
     {
         let (s, r) = sync::oneshot::channel();
         self.to_actor_tx
@@ -291,6 +313,16 @@ impl<S: store::Store> LiveSync<S> {
             .await?;
         let token = r.await?;
         Ok(token)
+    }
+
+    /// Get status for a document
+    pub async fn status(&self, namespace: NamespaceId) -> Result<Option<LiveStatus>> {
+        let (s, r) = sync::oneshot::channel();
+        self.to_actor_tx
+            .send(ToActor::<S>::Status { namespace, s })
+            .await?;
+        let status = r.await?;
+        Ok(status)
     }
 }
 
@@ -320,7 +352,7 @@ struct Actor<S: store::Store, B: baomap::Store> {
 }
 
 /// Token needed to remove inserted callbacks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RemovalToken(u64);
 
 impl<S: store::Store, B: baomap::Store> Actor<S, B> {
@@ -367,11 +399,15 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         Some(ToActor::StopSync { namespace }) => self.stop_sync(&namespace).await?,
                         Some(ToActor::JoinPeers { namespace, peers }) => self.join_gossip_and_start_initial_sync(&namespace, peers).await?,
                         Some(ToActor::Subscribe { namespace, cb, s }) => {
-                            let subscribe_result = self.subscribe(&namespace, cb).await;
-                            s.send(subscribe_result).ok();
+                            let result = self.subscribe(&namespace, cb).await;
+                            s.send(result).ok();
                         },
                         Some(ToActor::Unsubscribe { namespace, token, s }) => {
                             let result = self.unsubscribe(&namespace, token).await;
+                            s.send(result).ok();
+                        },
+                        Some(ToActor::Status { namespace , s }) => {
+                            let result = self.status(&namespace).await;
                             s.send(result).ok();
                         },
                     }
@@ -389,7 +425,6 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     }
                 }
                 Some((topic, peer, res)) = self.pending_syncs.next() => {
-                    // let (topic, peer, res) = res.context("task sync_with_peer paniced")?;
                     self.on_sync_finished(topic, peer, res);
 
                 }
@@ -403,7 +438,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
                 Some(res) = self.pending_downloads.next() => {
                     if let Some((topic, hash)) = res {
-                        if let Some(subs) = self.event_subscriptions.get(&topic) {
+                        if let Some(subs) = self.event_subscriptions.get_mut(&topic) {
                             let event = LiveEvent::ContentReady { hash };
                             notify_all(subs, event).await;
                         }
@@ -451,6 +486,23 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
+    async fn status(&mut self, namespace: &NamespaceId) -> Option<LiveStatus> {
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        if self.replicas.contains_key(&topic) {
+            let subscriptions = self
+                .event_subscriptions
+                .get(&topic)
+                .map(|map| map.len())
+                .unwrap_or_default();
+            Some(LiveStatus {
+                active: true,
+                subscriptions,
+            })
+        } else {
+            None
+        }
+    }
+
     async fn subscribe(
         &mut self,
         namespace: &NamespaceId,
@@ -474,7 +526,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     async fn unsubscribe(&mut self, namespace: &NamespaceId, token: RemovalToken) -> bool {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
         if let Some(subs) = self.event_subscriptions.get_mut(&topic) {
-            return subs.remove(&token.0).is_some();
+            let res = subs.remove(&token.0).is_some();
+            return res;
         }
 
         false
@@ -591,7 +644,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         signed_entry: SignedEntry,
     ) -> Result<()> {
         let topic = TopicId::from_bytes(*signed_entry.entry().namespace().as_bytes());
-        let subs = self.event_subscriptions.get(&topic);
+        let subs = self.event_subscriptions.get_mut(&topic);
         match origin {
             InsertOrigin::Local => {
                 let entry = signed_entry.entry().clone();
@@ -643,6 +696,15 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 }
 
-async fn notify_all(subs: &HashMap<u64, OnLiveEventCallback>, event: LiveEvent) {
-    futures::future::join_all(subs.values().map(|sub| sub(event.clone()))).await;
+async fn notify_all(subs: &mut HashMap<u64, OnLiveEventCallback>, event: LiveEvent) {
+    let res = futures::future::join_all(
+        subs.iter()
+            .map(|(idx, sub)| sub(event.clone()).map(|res| (*idx, res))),
+    )
+    .await;
+    for (idx, res) in res {
+        if matches!(res, KeepCallback::Drop) {
+            subs.remove(&idx);
+        }
+    }
 }

@@ -19,7 +19,7 @@ use crate::rpc_protocol::{
     DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
     ProviderService, ShareMode, StatsGetRequest,
 };
-use crate::sync::{LiveEvent, PeerSource};
+use crate::sync::{LiveEvent, LiveStatus, PeerSource};
 
 pub mod mem;
 #[cfg(feature = "cli")]
@@ -219,7 +219,13 @@ where
             .rpc
             .server_streaming(DocSubscribeRequest { doc_id: self.id })
             .await?;
-        Ok(stream.map_ok(|res| res.event).map_err(Into::into))
+        Ok(flatten(stream).map_ok(|res| res.event).map_err(Into::into))
+    }
+
+    /// Get status info for this document
+    pub async fn status(&self) -> anyhow::Result<LiveStatus> {
+        let res = self.rpc.rpc(DocInfoRequest { doc_id: self.id }).await??;
+        Ok(res.status)
     }
 }
 

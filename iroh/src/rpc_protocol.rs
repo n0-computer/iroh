@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 pub use iroh_bytes::{baomap::ValidateProgress, provider::ProvideProgress, util::RpcResult};
 
-use crate::sync::{LiveEvent, PeerSource};
+use crate::sync::{LiveEvent, LiveStatus, PeerSource};
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -328,7 +328,7 @@ impl Msg<ProviderService> for DocSubscribeRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for DocSubscribeRequest {
-    type Response = DocSubscribeResponse;
+    type Response = RpcResult<DocSubscribeResponse>;
 }
 
 /// Response to [`DocSubscribeRequest`]
@@ -458,7 +458,10 @@ impl RpcMsg<ProviderService> for DocInfoRequest {
 /// Response to [`DocInfoRequest`]
 // TODO: actually provide info
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocInfoResponse {}
+pub struct DocInfoResponse {
+    /// Live sync status
+    pub status: LiveStatus,
+}
 
 /// Start to sync a doc with peers.
 #[derive(Serialize, Deserialize, Debug)]
@@ -653,7 +656,7 @@ pub enum ProviderResponse {
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),
-    DocSubscribe(DocSubscribeResponse),
+    DocSubscribe(RpcResult<DocSubscribeResponse>),
 
     BytesGet(RpcResult<BytesGetResponse>),
 

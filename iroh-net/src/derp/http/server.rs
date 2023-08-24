@@ -104,10 +104,12 @@ impl Server {
     }
 
     /// Mesh this server to a new list of derp servers.
-    pub async fn re_mesh(
+    #[cfg(test)]
+    pub(crate) async fn re_mesh(
         &mut self,
         mesh_addrs: MeshAddrs,
-    ) -> Result<Vec<tokio::sync::oneshot::Receiver<()>>> {
+    ) -> Result<Vec<tokio::sync::mpsc::Receiver<super::client::MeshClientEvent>>> {
+        tracing::trace!("re_mesh: with {:?}", mesh_addrs);
         let (mesh_key, server_key, packet_fwd) = if let Some(server) = &self.server {
             let mesh_key = if let Some(key) = server.mesh_key() {
                 key

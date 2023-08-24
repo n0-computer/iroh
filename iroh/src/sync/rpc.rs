@@ -7,16 +7,19 @@ use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
 use rand::rngs::OsRng;
 
-use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-    DocCreateRequest, DocCreateResponse, DocGetRequest, DocGetResponse, DocImportRequest,
-    DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
-    DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-    DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
-    DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+use crate::{
+    rpc_protocol::{
+        AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
+        DocCreateRequest, DocCreateResponse, DocGetRequest, DocGetResponse, DocImportRequest,
+        DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
+        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+    },
+    sync::KeepCallback,
 };
 
-use super::{engine::SyncEngine, PeerSource};
+use super::{engine::SyncEngine, LiveStatus, PeerSource};
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;
@@ -74,9 +77,13 @@ impl<S: Store> SyncEngine<S> {
     }
 
     pub async fn doc_info(&self, req: DocInfoRequest) -> RpcResult<DocInfoResponse> {
-        let replica = self.get_replica(&req.doc_id)?;
-        self.start_sync(replica.namespace(), vec![]).await?;
-        Ok(DocInfoResponse {})
+        let _replica = self.get_replica(&req.doc_id)?;
+        let status = self.live.status(req.doc_id).await?;
+        let status = status.unwrap_or(LiveStatus {
+            active: false,
+            subscriptions: 0,
+        });
+        Ok(DocInfoResponse { status })
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
@@ -100,19 +107,31 @@ impl<S: Store> SyncEngine<S> {
     pub async fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
-    ) -> impl Stream<Item = DocSubscribeResponse> {
+    ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
         let (s, r) = flume::bounded(64);
-        self.live
-            .subscribe(req.doc_id, move |event| {
+        let res = self
+            .live
+            .subscribe(req.doc_id, {
                 let s = s.clone();
-                async move {
-                    s.send_async(DocSubscribeResponse { event }).await.ok();
+                move |event| {
+                    let s = s.clone();
+                    async move {
+                        // Send event over the channel, unsubscribe if the channel is closed.
+                        match s.send_async(Ok(DocSubscribeResponse { event })).await {
+                            Err(_err) => KeepCallback::Drop,
+                            Ok(()) => KeepCallback::Keep,
+                        }
+                    }
+                    .boxed()
                 }
-                .boxed()
             })
-            .await
-            .unwrap(); // TODO: handle error
-
+            .await;
+        match res {
+            Err(err) => {
+                s.send_async(Err(err.into())).await.ok();
+            }
+            Ok(_token) => {}
+        };
         r.into_stream()
     }
 
