@@ -207,7 +207,7 @@ impl RpcMsg<ProviderService> for ShutdownRequest {
 
 /// A request to get information about the identity of the node
 ///
-/// See [`SttausResponse`] for the response.
+/// See [`StatusResponse`] for the response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatusRequest;
 
