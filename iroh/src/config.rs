@@ -492,8 +492,7 @@ mod tests {
 
     #[test]
     fn test_default_settings() {
-        let config: NodeConfig =
-            load_config(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
+        let config = NodeConfig::load(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
 
         assert_eq!(config.derp_regions.len(), 2);
     }
