@@ -72,7 +72,7 @@ impl GetInteractive {
         // spin up temp node and ask it to download the data for us
         let mut provider = iroh::node::Node::builder(db).collection_parser(IrohCollectionParser);
         if let Some(ref dm) = self.opts.derp_map {
-            provider = provider.derp_map(dm.clone());
+            provider = provider.enable_derp(dm.clone());
         }
         let provider = provider
             .runtime(&iroh_bytes::util::runtime::Handle::from_currrent(1)?)

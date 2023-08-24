@@ -39,6 +39,7 @@ use iroh_bytes::{
     util::runtime,
     util::Hash,
 };
+use iroh_net::defaults::default_derp_map;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -142,7 +143,7 @@ impl<D: Map> Builder<D> {
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
-            derp_map: None,
+            derp_map: Some(default_derp_map()),
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
@@ -198,9 +199,31 @@ where
         }
     }
 
-    /// Sets the `[DerpMap]`
-    pub fn derp_map(mut self, dm: DerpMap) -> Self {
+    /// Enables using DERP servers to assist in establishing connectivity.
+    ///
+    /// DERP servers are used to discover other nodes by [`PublicKey`] and also help
+    /// establish connections between peers by being an initial relay for traffic while
+    /// assisting in holepunching to establish a direct connection between peers.
+    ///
+    /// The provided `derp_map` must contain at least one region with a configured derp
+    /// node.
+    ///
+    /// When calling neither this, nor [`disable_derp`] the builder uses the
+    /// [`default_derp_map`] containing number0's global derp servers.
+    ///
+    /// [`disable_derp`]: Builder::disable_derp
+    pub fn enable_derp(mut self, dm: DerpMap) -> Self {
         self.derp_map = Some(dm);
+        self
+    }
+
+    /// Disables using DERP servers.
+    ///
+    /// See [`enable_derp`] for details.
+    ///
+    /// [`enable_derp`]: Builder::enable_derp
+    pub fn disable_derp(mut self) -> Self {
+        self.derp_map = None;
         self
     }
 

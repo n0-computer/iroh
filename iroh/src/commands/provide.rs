@@ -138,7 +138,7 @@ async fn provide<D: Store>(
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
-        builder = builder.derp_map(dm);
+        builder = builder.enable_derp(dm);
     }
     let builder = builder.bind_addr(opts.addr).runtime(rt);
 
