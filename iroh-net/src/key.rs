@@ -57,6 +57,18 @@ impl PublicKey {
         self.public.as_bytes()
     }
 
+    /// Construct a `PublicKey` from a slice of bytes.
+    ///
+    /// # Warning
+    ///
+    /// This will return a [`SignatureError`] if the bytes passed into this method do not represent
+    /// a valid `ed25519_dalek` curve point. Will never fail for bytes return from [`Self::as_bytes`].
+    /// See [`VerifyingKey::from_bytes`] for details.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
+        let public = VerifyingKey::from_bytes(bytes)?;
+        Ok(public.into())
+    }
+
     fn public_crypto_box(&self) -> crypto_box::PublicKey {
         crypto_box::PublicKey::from_bytes(self.public_crypto_box)
     }
@@ -78,6 +90,15 @@ impl TryFrom<&[u8]> for PublicKey {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let public = VerifyingKey::try_from(bytes)?;
         Ok(public.into())
+    }
+}
+
+impl TryFrom<&[u8; 32]> for PublicKey {
+    type Error = SignatureError;
+
+    #[inline]
+    fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
     }
 }
 
@@ -240,6 +261,12 @@ impl SecretKey {
         self.secret.to_bytes()
     }
 
+    /// Create a secret key from its byte representation.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let secret = SigningKey::from_bytes(bytes);
+        secret.into()
+    }
+
     fn secret_crypto_box(&self) -> &crypto_box::SecretKey {
         self.secret_crypto_box
             .get_or_init(|| secret_ed_box(&self.secret))
@@ -257,8 +284,7 @@ impl From<SigningKey> for SecretKey {
 
 impl From<[u8; 32]> for SecretKey {
     fn from(value: [u8; 32]) -> Self {
-        let secret = SigningKey::from(value);
-        secret.into()
+        Self::from_bytes(&value)
     }
 }
 

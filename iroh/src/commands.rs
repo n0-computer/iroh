@@ -1,25 +1,20 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
 use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
+use iroh::client::quic::RpcClient;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::key::{PublicKey, SecretKey};
-use quic_rpc::transport::quinn::QuinnConnection;
-use quic_rpc::RpcClient;
 
 use crate::config::Config;
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
-const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
@@ -28,6 +23,7 @@ pub mod doctor;
 pub mod get;
 pub mod list;
 pub mod provide;
+pub mod sync;
 pub mod validate;
 
 /// Send data.
@@ -216,6 +212,10 @@ impl Cli {
                 Ok(())
             }
             Commands::Doctor { command } => self::doctor::run(command, config).await,
+            Commands::Sync { command, rpc_port } => {
+                let client = make_rpc_client(rpc_port).await?;
+                command.run(client).await
+            }
         }
     }
 }
@@ -390,59 +390,28 @@ pub enum Commands {
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
+    Sync {
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+        #[clap(subcommand)]
+        command: sync::Commands,
+    },
 }
 
-async fn make_rpc_client(
-    rpc_port: u16,
-) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
-{
-    let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
-    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
-    let server_name = "localhost".to_string();
-    let connection = QuinnConnection::new(endpoint, addr, server_name);
-    let client = RpcClient::<ProviderService, _>::new(connection);
-    // Do a version request to check if the server is running.
-    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
-        .await
-        .context("iroh server is not running")??;
-    Ok(client)
-}
-
-pub fn create_quinn_client(
-    bind_addr: SocketAddr,
-    alpn_protocols: Vec<Vec<u8>>,
-    keylog: bool,
-) -> Result<quinn::Endpoint> {
-    let secret_key = iroh_net::key::SecretKey::generate();
-    let tls_client_config =
-        iroh_net::tls::make_client_config(&secret_key, None, alpn_protocols, keylog)?;
-    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-    client_config.transport_config(Arc::new(transport_config));
-    endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+pub async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
+    iroh::client::quic::connect_raw(rpc_port).await
 }
 
 #[cfg(feature = "metrics")]
-pub fn init_metrics_collection(
+pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
     rt: &iroh_bytes::util::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    use iroh_metrics::core::Metric;
-
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
-        iroh_metrics::core::Core::init(|reg, metrics| {
-            metrics.insert(iroh::metrics::Metrics::new(reg));
-            metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
-        });
-
+        // metrics are initilaized in iroh::node::Node::spawn
+        // here we only start the server
         return Some(rt.main().spawn(async move {
             if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
                 eprintln!("Failed to start metrics server: {e}");

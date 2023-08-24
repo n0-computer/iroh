@@ -5,6 +5,7 @@ members = [
   "iroh-gossip",
   "iroh-metrics",
   "iroh-net",
+  "iroh-sync",
   "iroh-test",
 ]
 
