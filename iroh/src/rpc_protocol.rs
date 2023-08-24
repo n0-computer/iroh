@@ -186,10 +186,6 @@ impl ServerStreamingMsg<ProviderService> for ListCollectionsRequest {
     type Response = ListCollectionsResponse;
 }
 
-/// A request to watch for the node status
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchRequest;
-
 /// A request to get the version of the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionRequest;
@@ -211,19 +207,12 @@ impl RpcMsg<ProviderService> for ShutdownRequest {
 
 /// A request to get information about the identity of the node
 ///
-/// See [`IdResponse`] for the response.
+/// See [`SttausResponse`] for the response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatusRequest;
 
 impl RpcMsg<ProviderService> for StatusRequest {
     type Response = StatusResponse;
-}
-
-/// The response to a watch request
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchResponse {
-    /// The version of the node
-    pub version: String,
 }
 
 /// The response to a version request
@@ -237,6 +226,10 @@ pub struct StatusResponse {
     pub version: String,
 }
 
+/// A request to watch for the node status
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchRequest;
+
 impl Msg<ProviderService> for WatchRequest {
     type Pattern = ServerStreaming;
 }
@@ -244,6 +237,14 @@ impl Msg<ProviderService> for WatchRequest {
 impl ServerStreamingMsg<ProviderService> for WatchRequest {
     type Response = WatchResponse;
 }
+
+/// The response to a watch request
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchResponse {
+    /// The version of the node
+    pub version: String,
+}
+
 
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
