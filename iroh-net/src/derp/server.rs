@@ -805,11 +805,20 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // expect mesh update message on client c about all peers in the network (a, b, & c)
-        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await? else { anyhow::bail!("expected PeerPresent") };
+        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await?
+        else {
+            anyhow::bail!("expected PeerPresent")
+        };
         let mut peers = vec![peer];
-        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await? else { anyhow::bail!("expected PeerPresent") };
+        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await?
+        else {
+            anyhow::bail!("expected PeerPresent")
+        };
         peers.push(peer);
-        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await? else { anyhow::bail!("expected PeerPresent") };
+        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await?
+        else {
+            anyhow::bail!("expected PeerPresent")
+        };
         peers.push(peer);
         assert!(peers.contains(&key_a));
         assert!(peers.contains(&key_b));
@@ -926,8 +935,11 @@ mod tests {
             .await?;
 
             // get the server info
-            let Frame::ServerInfo { encrypted_message } = recv_frame(FrameType::ServerInfo, &mut client_reader)
-                .await? else { anyhow::bail!("expected ServerInfo") };
+            let Frame::ServerInfo { encrypted_message } =
+                recv_frame(FrameType::ServerInfo, &mut client_reader).await?
+            else {
+                anyhow::bail!("expected ServerInfo")
+            };
             let mut buf = encrypted_message.to_vec();
             shared_secret.open(&mut buf)?;
             let _info: ServerInfo = postcard::from_bytes(&buf)?;

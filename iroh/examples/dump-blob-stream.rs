@@ -94,7 +94,10 @@ fn stream_children(
         let connected = initial.next().await?;
         // read the first bytes
         let ConnectedNext::StartRoot(start_root) = connected.next().await? else {
-            return Err(io::Error::new(io::ErrorKind::Other, "failed to parse collection"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failed to parse collection",
+            ));
         };
         // check that we requestded the whole collection
         if !start_root.ranges().is_all() {
@@ -107,7 +110,10 @@ fn stream_children(
         let header: iroh_bytes::get::fsm::AtBlobHeader = start_root.next();
         let (root_end, collection) = header.concatenate_into_vec().await?;
         let Ok(collection) = Collection::from_bytes(&collection) else {
-            return Err(io::Error::new(io::ErrorKind::Other, "failed to parse collection"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failed to parse collection",
+            ));
         };
         let mut curr = root_end.next();
         let closing = loop {

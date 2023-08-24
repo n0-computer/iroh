@@ -159,7 +159,9 @@ fn make_partial(
         }
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Ok(name) = iroh::baomap::flat::FileName::from_str(name) else { continue };
+        let Ok(name) = iroh::baomap::flat::FileName::from_str(name) else {
+            continue;
+        };
         match name {
             iroh::baomap::flat::FileName::Data(hash) => {
                 let data = files.entry(hash).or_default();
