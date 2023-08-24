@@ -8,10 +8,11 @@ use std::time::Duration;
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use hyper::upgrade::Upgraded;
+use hyper::upgrade::{Parts, Upgraded};
 use hyper::{header::UPGRADE, Body, Request};
 use iroh_metrics::inc;
 use rand::Rng;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
@@ -21,12 +22,12 @@ use tracing::{debug, info_span, instrument, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
-    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, client_conn::Io,
-    metrics::Metrics, server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey,
-    PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, metrics::Metrics,
+    server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey, PacketForwarder,
+    ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
-use crate::key;
+use crate::key::{PublicKey, SecretKey};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -121,7 +122,7 @@ impl std::fmt::Debug for Client {
 }
 
 struct InnerClient {
-    secret_key: key::node::SecretKey,
+    secret_key: SecretKey,
     get_region:
         Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
@@ -134,7 +135,7 @@ struct InnerClient {
     ping_tracker: Mutex<HashMap<[u8; 8], oneshot::Sender<()>>>,
     mesh_key: Option<MeshKey>,
     is_prober: bool,
-    server_public_key: Option<key::node::PublicKey>,
+    server_public_key: Option<PublicKey>,
     url: Option<Url>,
 }
 
@@ -153,7 +154,7 @@ pub struct ClientBuilder {
     /// Default is false
     is_prober: bool,
     /// Expected PublicKey of the server
-    server_public_key: Option<key::node::PublicKey>,
+    server_public_key: Option<PublicKey>,
     /// Server url.
     ///
     /// If the `url` field and `get_region` field are both `None`, the `ClientBuilder`
@@ -221,7 +222,7 @@ impl ClientBuilder {
     }
 
     /// Indicate this client is the preferred way to communicate
-    /// to the peer with this client's [`key::node::PublicKey`]
+    /// to the peer with this client's [`PublicKey`]
     pub fn is_preferred(mut self, is: bool) -> Self {
         self.is_preferred = is;
         self
@@ -242,7 +243,7 @@ impl ClientBuilder {
     /// Build the [`Client`]
     ///
     /// Will error if there is no region or no url set.
-    pub fn build(self, key: key::node::SecretKey) -> anyhow::Result<Client> {
+    pub fn build(self, key: SecretKey) -> anyhow::Result<Client> {
         anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
         Ok(Client {
             inner: Arc::new(InnerClient {
@@ -263,17 +264,25 @@ impl ClientBuilder {
         })
     }
 
-    /// The expected [`key::node::PublicKey`] of the [`super::server::Server`] we are connecting to.
-    pub fn server_public_key(mut self, server_public_key: key::node::PublicKey) -> Self {
+    /// The expected [`PublicKey`] of the [`super::server::Server`] we are connecting to.
+    pub fn server_public_key(mut self, server_public_key: PublicKey) -> Self {
         self.server_public_key = Some(server_public_key);
         self
     }
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum MeshClientEvent {
+    Meshed,
+    PeerPresent { peer: PublicKey },
+    PeerGone { peer: PublicKey },
+}
+
 impl Client {
     /// The public key for this client
-    pub fn public_key(&self) -> key::node::PublicKey {
-        self.inner.secret_key.public_key()
+    pub fn public_key(&self) -> PublicKey {
+        self.inner.secret_key.public()
     }
 
     /// Let the server know that this client is the preferred client
@@ -327,7 +336,7 @@ impl Client {
         if self.inner.is_closed.load(Ordering::Relaxed) {
             return Err(ClientError::Closed);
         }
-        let key = self.inner.secret_key.public_key();
+        let key = self.inner.secret_key.public();
         async move {
             // acquire lock on the derp client
             // we must hold onto the lock until we are sure we have a connection
@@ -336,10 +345,7 @@ impl Client {
             let mut derp_client_lock = self.inner.derp_client.lock().await;
             if let Some(derp_client) = &*derp_client_lock {
                 trace!("already had connection");
-                return Ok((
-                    derp_client.clone(),
-                    self.inner.conn_gen.load(Ordering::SeqCst),
-                ));
+                return Ok((derp_client.clone(), self.current_conn()));
             }
 
             trace!("no connection, trying to connect");
@@ -349,12 +355,21 @@ impl Client {
 
             let derp_client_clone = derp_client.clone();
             *derp_client_lock = Some(derp_client_clone);
-            let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
+            let conn_gen = self.next_conn();
+
             trace!("got connection, conn num {conn_gen}");
             Ok((derp_client, conn_gen))
         }
         .instrument(info_span!("client-connect", %key))
         .await
+    }
+
+    fn current_conn(&self) -> usize {
+        self.inner.conn_gen.load(Ordering::SeqCst)
+    }
+
+    fn next_conn(&self) -> usize {
+        self.inner.conn_gen.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     async fn current_region(&self) -> Result<DerpRegion, ClientError> {
@@ -447,7 +462,7 @@ impl Client {
             debug!("Starting TLS handshake");
             // TODO: review TLS config
             let mut roots = rustls::RootCertStore::empty();
-            roots.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+            roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
                 rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
                     ta.subject,
                     ta.spki,
@@ -536,19 +551,16 @@ impl Client {
         };
 
         debug!("connection upgraded");
-        let (io, read_buf) =
+        let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
-
-        // TODO: unify client loop
-        let (reader, writer) = tokio::io::split(io);
 
         let derp_client =
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
                 .mesh_key(self.inner.mesh_key)
                 .can_ack_pings(self.inner.can_ack_pings)
                 .prober(self.inner.is_prober)
-                .server_public_key(self.inner.server_public_key.clone())
-                .build(Some(read_buf))
+                .server_public_key(self.inner.server_public_key)
+                .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
@@ -855,7 +867,7 @@ impl Client {
     ///
     /// If there is an error sending the packet, it closes the underlying derp connection before
     /// returning.
-    pub async fn send(&self, dst_key: key::node::PublicKey, b: Bytes) -> Result<(), ClientError> {
+    pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
         debug!("send");
         let (client, _) = self.connect().await?;
         if client.send(dst_key, b).await.is_err() {
@@ -892,9 +904,7 @@ impl Client {
     ///
     /// If there is an error sending the message, it closes the underlying derp connection before
     /// returning.
-    pub async fn watch_connection_changes(
-        &self,
-    ) -> Result<(key::node::PublicKey, usize), ClientError> {
+    pub async fn watch_connection_changes(&self) -> Result<(PublicKey, usize), ClientError> {
         debug!("watch_connection_changes");
         let (client, conn_gen) = self.connect().await?;
         if client.watch_connection_changes().await.is_err() {
@@ -911,7 +921,7 @@ impl Client {
     ///
     /// If there is an error sending, it closes the underlying derp connection before
     /// returning.
-    pub async fn close_peer(&self, target: key::node::PublicKey) -> Result<(), ClientError> {
+    pub async fn close_peer(&self, target: PublicKey) -> Result<(), ClientError> {
         debug!("close_peer");
         let (client, _) = self.connect().await?;
         if client.close_peer(target).await.is_err() {
@@ -930,25 +940,27 @@ impl Client {
     /// from that server, we will get `PeerPresent` and `PeerGone` messages. We
     /// then and and remove that derp server as a `PacketForwarder` respectfully.
     ///
-    /// If you pass in a `meshed_once` sender, it will send the first
-    /// time we return successfully from `watch_connection_changes`, indicating
-    /// that the given server is aware that this client exists and wants to
-    /// track network changes
+    /// If you pass in a `mesh_events` sender, it will send events about the mesh
+    /// activities.
+    /// [`MeshClientEvent::Meshed`] is sent the when we return successfully from `watch_connection_changes`,
+    /// indicating that the given server is aware that this client exists and wants to
+    /// track network changes.
+    /// When peers connect and disconnect, [`MeshClientEvent::PeerPresent`] and  [`MeshClientEvent::PeerGone`]
+    /// are sent respectively.
     ///
-    /// This `meshed_once` sender is typically used for aligning the mesh network
-    /// during tests.
-    pub async fn run_mesh_client(
+    /// This sender is typically used for aligning the mesh network during tests.
+    pub(crate) async fn run_mesh_client(
         self,
         packet_forwarder_handler: PacketForwarderHandler<Client>,
-        mut meshed_once: Option<tokio::sync::oneshot::Sender<()>>,
+        mesh_events: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
     ) -> anyhow::Result<()> {
         // connect to the remote server & request to watching the remote's state changes
         let own_key = self.public_key();
         loop {
             let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
                 Ok(key) => {
-                    if let Some(sender) = meshed_once.take() {
-                        if let Err(e) = sender.send(()) {
+                    if let Some(ref sender) = mesh_events {
+                        if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
                             bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
                         }
                     }
@@ -965,7 +977,7 @@ impl Client {
                 bail!("detected self-connect; closing this client");
             }
 
-            let peers_present = PeersPresent::new(server_public_key.clone());
+            let peers_present = PeersPresent::new(server_public_key);
             tracing::info!("Connected to mesh derp server {server_public_key:?}");
 
             // receive detail loop
@@ -986,6 +998,7 @@ impl Client {
                     // for the same peer key in the derp server in the future, we may
                     // be okay to just listen for future peer present
                     // messages without re establishing this connection as a "watcher"
+                    tracing::trace!("new connection: {} != {}", conn_gen, last_conn_gen);
                     break;
                 }
                 match msg {
@@ -994,18 +1007,27 @@ impl Client {
                         if key == own_key {
                             continue;
                         }
-                        peers_present.insert(key.clone()).await?;
+                        peers_present.insert(key).await?;
                         packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
+                        if let Some(ref chan) = mesh_events {
+                            chan.send(MeshClientEvent::PeerPresent { peer: key })
+                                .await?;
+                        }
                     }
                     ReceivedMessage::PeerGone(key) => {
                         // ignore notifications about ourself
                         if key == own_key {
                             continue;
                         }
-                        peers_present.remove(key.clone()).await?;
+                        peers_present.remove(key).await?;
                         packet_forwarder_handler.remove_packet_forwarder(key)?;
+                        if let Some(ref chan) = mesh_events {
+                            chan.send(MeshClientEvent::PeerGone { peer: key }).await?;
+                        }
                     }
-                    _ => {}
+                    other => {
+                        warn!("mesh: received unexpected message: {:?}", other);
+                    }
                 }
             }
         }
@@ -1031,13 +1053,13 @@ struct PeersPresent {
 #[derive(Debug)]
 enum PeersPresentMsg {
     /// Add a peer
-    PeerPresent(key::node::PublicKey),
+    PeerPresent(PublicKey),
     /// Remove a peer
-    PeerGone(key::node::PublicKey),
+    PeerGone(PublicKey),
 }
 
 impl PeersPresent {
-    fn new(remote_server_key: key::node::PublicKey) -> Self {
+    fn new(remote_server_key: PublicKey) -> Self {
         let (send, mut recv) = channel(PEERS_PRESENT_QUEUE);
         let actor_task = tokio::spawn(async move {
             let mut map = HashSet::new();
@@ -1078,14 +1100,14 @@ impl PeersPresent {
         }
     }
 
-    async fn insert(&self, key: key::node::PublicKey) -> anyhow::Result<()> {
+    async fn insert(&self, key: PublicKey) -> anyhow::Result<()> {
         self.actor_channel
             .send(PeersPresentMsg::PeerPresent(key))
             .await?;
         Ok(())
     }
 
-    async fn remove(&self, key: key::node::PublicKey) -> anyhow::Result<()> {
+    async fn remove(&self, key: PublicKey) -> anyhow::Result<()> {
         self.actor_channel
             .send(PeersPresentMsg::PeerGone(key))
             .await?;
@@ -1100,18 +1122,13 @@ impl Drop for PeersPresent {
 }
 
 impl PacketForwarder for Client {
-    fn forward_packet(
-        &mut self,
-        srckey: key::node::PublicKey,
-        dstkey: key::node::PublicKey,
-        packet: bytes::Bytes,
-    ) {
+    fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: bytes::Bytes) {
         let packet_forwarder = self.clone();
         tokio::spawn(async move {
             // attempt to send the packet 3 times
             for _ in 0..3 {
-                let srckey = srckey.clone();
-                let dstkey = dstkey.clone();
+                let srckey = srckey;
+                let dstkey = dstkey;
                 let packet = packet.clone();
                 debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {
@@ -1135,14 +1152,27 @@ enum UseIp {
 
 fn downcast_upgrade(
     upgraded: Upgraded,
-) -> anyhow::Result<(Box<dyn Io + Send + Sync + 'static>, Bytes)> {
+) -> anyhow::Result<(
+    Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
+    Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
+)> {
     match upgraded.downcast::<tokio::net::TcpStream>() {
-        Ok(parts) => Ok((Box::new(parts.io), parts.read_buf)),
+        Ok(Parts { read_buf, io, .. }) => {
+            let (reader, writer) = tokio::io::split(io);
+            // Prepend data to the reader to avoid data loss
+            let reader = std::io::Cursor::new(read_buf).chain(reader);
+
+            Ok((Box::new(reader), Box::new(writer)))
+        }
         Err(upgraded) => {
-            if let Ok(parts) =
+            if let Ok(Parts { read_buf, io, .. }) =
                 upgraded.downcast::<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>()
             {
-                return Ok((Box::new(parts.io), parts.read_buf));
+                let (reader, writer) = tokio::io::split(io);
+                // Prepend data to the reader to avoid data loss
+                let reader = std::io::Cursor::new(read_buf).chain(reader);
+
+                return Ok((Box::new(reader), Box::new(writer)));
             }
 
             bail!(
@@ -1174,10 +1204,7 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        derp::{http::ServerBuilder, types::ServerMessage},
-        key::node::SecretKey,
-    };
+    use crate::derp::{http::ServerBuilder, types::ServerMessage};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
@@ -1253,7 +1280,7 @@ mod tests {
         let mesh_client_key = mesh_client.public_key();
         tracing::info!("mesh client public key: {mesh_client_key:?}");
 
-        let (send, recv) = tokio::sync::oneshot::channel();
+        let (send, mut recv) = tokio::sync::mpsc::channel(32);
         // spawn a task to run the mesh client
         let mesh_task = tokio::spawn(
             async move {
@@ -1264,7 +1291,8 @@ mod tests {
             .instrument(info_span!("mesh-client")),
         );
 
-        tokio::time::timeout(Duration::from_secs(5), recv).await??;
+        let msg = tokio::time::timeout(Duration::from_secs(5), recv.recv()).await?;
+        assert!(matches!(msg, Some(MeshClientEvent::Meshed)));
 
         // create another client that will become a normal peer for the derp server
         let normal_client = ClientBuilder::new()

@@ -5,9 +5,8 @@ use bytes::Bytes;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
-use super::client_conn::ClientConnManager;
-use super::PROTOCOL_VERSION;
-use crate::key::node::PublicKey;
+use super::{client_conn::ClientConnBuilder, codec::PROTOCOL_VERSION};
+use crate::key::PublicKey;
 
 /// A key to identify if a node belongs in a mesh
 pub type MeshKey = [u8; 32];
@@ -118,7 +117,8 @@ where
     ClosePeer(PublicKey),
     SendPacket((PublicKey, Packet)),
     SendDiscoPacket((PublicKey, Packet)),
-    CreateClient(ClientConnManager),
+    #[debug("CreateClient")]
+    CreateClient(ClientConnBuilder<P>),
     RemoveClient((PublicKey, usize)),
     AddPacketForwarder {
         key: PublicKey,

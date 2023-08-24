@@ -3,26 +3,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
-use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
-use crate::{
-    disco::looks_like_disco_wrapper,
-    key::node::{PublicKey, PUBLIC_KEY_LENGTH},
-};
+use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
+use super::codec::{DerpCodec, Frame};
 use super::server::MaybeTlsStream;
 use super::{
+    codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
-    read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -85,7 +84,7 @@ where
 {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) io: MaybeTlsStream,
+    pub(crate) io: Framed<MaybeTlsStream, DerpCodec>,
     pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
@@ -119,7 +118,7 @@ impl ClientConnManager {
     pub fn new<P>(
         key: PublicKey,
         conn_num: usize,
-        io: MaybeTlsStream,
+        io: Framed<MaybeTlsStream, DerpCodec>,
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
@@ -129,7 +128,7 @@ impl ClientConnManager {
         P: PacketForwarder,
     {
         let done = CancellationToken::new();
-        let client_id = (key.clone(), conn_num);
+        let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
@@ -148,7 +147,7 @@ impl ClientConnManager {
             mesh_update_r,
             mesh_update_s: mesh_update_s.clone(),
 
-            key: key.clone(),
+            key,
             preferred: Arc::clone(&preferred),
             server_channel: server_channel.clone(),
         };
@@ -162,7 +161,7 @@ impl ClientConnManager {
                 let conn_num = io_client_id.1;
                 let res = conn_io.run(io_done).await;
                 let _ = server_channel
-                    .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
+                    .send(ServerMessage::RemoveClient((key, conn_num)))
                     .await;
                 match res {
                     Err(e) => {
@@ -244,7 +243,7 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     /// Indicates whether this client can mesh
     can_mesh: bool,
     /// Io to talk to the client
-    io: MaybeTlsStream,
+    io: Framed<MaybeTlsStream, DerpCodec>,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -287,8 +286,6 @@ where
         // ticks immediately
         keep_alive.tick().await;
 
-        let mut read_buf = BytesMut::new();
-
         loop {
             trace!("tick");
             tokio::select! {
@@ -300,9 +297,20 @@ where
                     self.io.flush().await?;
                     return Ok(());
                 }
-                read_res = read_frame(&mut self.io, MAX_FRAME_SIZE, &mut read_buf) => {
+                read_res = self.io.next() => {
                     trace!("handle read");
-                    self.handle_read(read_res, &mut read_buf).await?;
+                    match read_res {
+                        Some(Ok(frame)) => {
+                            self.handle_read(frame).await?;
+                        }
+                        Some(Err(err)) => {
+                            return Err(err);
+                        }
+                        None => {
+                            // Unexpected EOF
+                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "read stream ended").into());
+                        }
+                    }
                 }
                 peer = self.peer_gone.recv() => {
                     let peer = peer.context("Server.peer_gone dropped")?;
@@ -340,11 +348,11 @@ where
         }
     }
 
-    /// Send  [`FrameType::KeepAlive`], does not flush
+    /// Sends a `keep alive` frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.io, FrameType::KeepAlive, &[], self.timeout).await
+        write_frame(&mut self.io, Frame::KeepAlive, self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -353,7 +361,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame_timeout(&mut self.io, FrameType::Pong, &[&data], self.timeout).await
+        write_frame(&mut self.io, Frame::Pong { data }, self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -362,26 +370,14 @@ where
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(
-            &mut self.io,
-            FrameType::PeerGone,
-            &[peer.as_bytes()],
-            self.timeout,
-        )
-        .await
+        write_frame(&mut self.io, Frame::PeerGone { peer }, self.timeout).await
     }
 
     /// Sends a peer present frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame_timeout(
-            &mut self.io,
-            FrameType::PeerPresent,
-            &[peer.as_bytes()],
-            self.timeout,
-        )
-        .await
+        write_frame(&mut self.io, Frame::PeerPresent { peer }, self.timeout).await
     }
 
     // TODO: golang comment:
@@ -430,80 +426,62 @@ where
     /// are only valid until this function returns, do not retain the slices.
     /// Does not flush.
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
-        let srckey = packet.src;
-        let contents = packet.bytes;
-        inc_by!(Metrics, bytes_sent, contents.len().try_into().unwrap());
-        if srckey.is_zero() {
-            // TODO: ensure we handle this correctly on the client side
-            write_frame_timeout(
-                &mut self.io,
-                FrameType::RecvPacket,
-                &[&contents],
-                self.timeout,
-            )
-            .await
-        } else {
-            write_frame_timeout(
-                &mut self.io,
-                FrameType::RecvPacket,
-                &[srckey.as_bytes(), &contents],
-                self.timeout,
-            )
-            .await
-        }
+        let src_key = packet.src;
+        let content = packet.bytes;
+        inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
+        write_frame(
+            &mut self.io,
+            Frame::RecvPacket { src_key, content },
+            self.timeout,
+        )
+        .await
     }
 
     /// Handles read results.
-    async fn handle_read(
-        &mut self,
-        read_res: Result<(FrameType, usize)>,
-        buf: &mut BytesMut,
-    ) -> Result<()> {
-        match read_res {
-            Ok((frame_type, frame_len)) => {
-                // TODO: "note client activity", meaning we update the server that the client with this
-                // public key was the last one to receive data
-                // it will be relevant when we add the ability to hold onto multiple clients
-                // for the same public key
-                let frame = buf.split_to(frame_len);
-                match frame_type {
-                    FrameType::NotePreferred => {
-                        self.handle_frame_note_preferred(&frame)?;
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    FrameType::SendPacket => {
-                        self.handle_frame_send_packet(&frame).await?;
-                        inc_by!(Metrics, bytes_recv, frame_len as u64);
-                    }
-                    FrameType::ForwardPacket => {
-                        self.handle_frame_forward_packet(&frame).await?;
-                        inc!(Metrics, packets_forwarded_in);
-                    }
-                    FrameType::WatchConns => {
-                        self.handle_frame_watch_conns(&frame).await?;
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    FrameType::ClosePeer => {
-                        self.handle_frame_close_peer(&frame).await?;
-                        inc!(Metrics, other_packets_recv);
-                    }
-                    FrameType::Ping => {
-                        self.handle_frame_ping(&frame).await?;
-                        inc!(Metrics, got_ping);
-                    }
-                    FrameType::Unknown => {
-                        inc!(Metrics, unknown_frames);
-                        buf.clear();
-                    }
-                    _ => {
-                        inc!(Metrics, other_packets_recv);
-                        buf.clear();
-                    }
-                }
-                Ok(())
+    async fn handle_read(&mut self, frame: Frame) -> Result<()> {
+        // TODO: "note client activity", meaning we update the server that the client with this
+        // public key was the last one to receive data
+        // it will be relevant when we add the ability to hold onto multiple clients
+        // for the same public key
+        match frame {
+            Frame::NotePreferred { preferred } => {
+                self.handle_frame_note_preferred(preferred)?;
+                inc!(Metrics, other_packets_recv);
             }
-            Err(err) => Err(err),
+            Frame::SendPacket { dst_key, packet } => {
+                let packet_len = packet.len();
+                self.handle_frame_send_packet(dst_key, packet).await?;
+                inc_by!(Metrics, bytes_recv, packet_len as u64);
+            }
+            Frame::ForwardPacket {
+                src_key,
+                dst_key,
+                packet,
+            } => {
+                self.handle_frame_forward_packet(src_key, dst_key, packet)
+                    .await?;
+                inc!(Metrics, packets_forwarded_in);
+            }
+            Frame::WatchConns => {
+                self.handle_frame_watch_conns().await?;
+                inc!(Metrics, other_packets_recv);
+            }
+            Frame::ClosePeer { peer } => {
+                self.handle_frame_close_peer(peer).await?;
+                inc!(Metrics, other_packets_recv);
+            }
+            Frame::Ping { data } => {
+                self.handle_frame_ping(data).await?;
+                inc!(Metrics, got_ping);
+            }
+            Frame::Health { .. } => {
+                inc!(Metrics, other_packets_recv);
+            }
+            _ => {
+                inc!(Metrics, unknown_frames);
+            }
         }
+        Ok(())
     }
 
     /// Preferred indicates if this is the preferred connection to the client with
@@ -535,21 +513,13 @@ where
         Ok(())
     }
 
-    fn handle_frame_note_preferred(&mut self, data: &[u8]) -> Result<()> {
-        ensure!(
-            data.len() == 1,
-            "FrameType::NotePreferred content is an unexpected size"
-        );
-        self.set_preferred(data[0] == PREFERRED)
+    fn handle_frame_note_preferred(&mut self, preferred: bool) -> Result<()> {
+        self.set_preferred(preferred)
     }
 
-    async fn handle_frame_watch_conns(&mut self, data: &[u8]) -> Result<()> {
-        ensure!(
-            data.is_empty(),
-            "FrameType::WatchConns content is an unexpected size"
-        );
+    async fn handle_frame_watch_conns(&mut self) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
-        self.send_server(ServerMessage::AddWatcher(self.key.clone()))
+        self.send_server(ServerMessage::AddWatcher(self.key))
             .await?;
 
         Ok(())
@@ -564,26 +534,18 @@ where
     }
 
     // assumes ping is 8 bytes
-    async fn handle_frame_ping(&mut self, data: &[u8]) -> Result<()> {
-        ensure!(
-            data.len() == 8,
-            "FrameType::Ping unexpected length {}",
-            data.len()
-        );
+    async fn handle_frame_ping(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO:stats
         // c.s.gotPing.Add(1)
 
         // TODO: add rate limiter
-
-        let data = <[u8; 8]>::try_from(data).unwrap();
         self.send_pong(data).await?;
         inc!(Metrics, sent_pong);
         Ok(())
     }
 
-    async fn handle_frame_close_peer(&self, data: &[u8]) -> Result<()> {
+    async fn handle_frame_close_peer(&self, key: PublicKey) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
-        let key = PublicKey::try_from(data)?;
         self.send_server(ServerMessage::ClosePeer(key)).await?;
         Ok(())
     }
@@ -594,9 +556,13 @@ where
     ///
     /// Errors if this client is not a trusted mesh peer, or if the keys cannot
     /// be parsed correctly, or if the packet is larger than MAX_PACKET_SIZE
-    async fn handle_frame_forward_packet(&self, data: &[u8]) -> Result<()> {
+    async fn handle_frame_forward_packet(
+        &self,
+        srckey: PublicKey,
+        dstkey: PublicKey,
+        data: Bytes,
+    ) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
-        let (srckey, dstkey, data) = parse_forward_packet(data)?;
 
         // TODO: stats:
         // s.packetsRecv.Add(1)
@@ -605,7 +571,7 @@ where
 
         let packet = Packet {
             src: srckey,
-            bytes: Bytes::from(data.to_owned()),
+            bytes: data,
         };
         self.transfer_packet(dstkey, packet).await
     }
@@ -615,13 +581,12 @@ where
     ///
     /// Errors if the key cannot be parsed correctly, or if the packet is
     /// larger than MAX_PACKET_SIZE
-    async fn handle_frame_send_packet(&self, data: &[u8]) -> Result<()> {
-        let (dstkey, data) = parse_send_packet(data)?;
+    async fn handle_frame_send_packet(&self, dst_key: PublicKey, data: Bytes) -> Result<()> {
         let packet = Packet {
-            src: self.key.clone(),
-            bytes: Bytes::from(data.to_owned()),
+            src: self.key,
+            bytes: data,
         };
-        self.transfer_packet(dstkey, packet).await
+        self.transfer_packet(dst_key, packet).await
     }
 
     /// Send the given packet to the server. The server will attempt to
@@ -642,39 +607,12 @@ where
     }
 }
 
-fn parse_forward_packet(data: &[u8]) -> Result<(PublicKey, PublicKey, &[u8])> {
-    ensure!(
-        data.len() >= PUBLIC_KEY_LENGTH * 2,
-        "short FORWARD_PACKET frame"
-    );
-
-    let packet_len = data.len() - (PUBLIC_KEY_LENGTH * 2);
-    ensure!(
-        packet_len <= MAX_PACKET_SIZE,
-        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-    );
-    let srckey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
-    let dstkey = PublicKey::try_from(&data[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
-    let data = &data[PUBLIC_KEY_LENGTH * 2..];
-
-    Ok((srckey, dstkey, data))
-}
-
-fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
-    ensure!(data.len() >= PUBLIC_KEY_LENGTH, "short SEND_PACKET frame");
-    let packet_len = data.len() - PUBLIC_KEY_LENGTH;
-    ensure!(
-        packet_len <= MAX_PACKET_SIZE,
-        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-    );
-    let dstkey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
-    let data = &data[PUBLIC_KEY_LENGTH..];
-    Ok((dstkey, data))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use crate::derp::codec::{recv_frame, FrameType};
+    use crate::key::SecretKey;
 
     use super::*;
 
@@ -689,20 +627,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
-        let mut buf = BytesMut::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
         let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
-        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let (io, mut io_rw) = tokio::io::duplex(1024);
+        let key = SecretKey::generate().public();
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: MaybeTlsStream::Test(io),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -710,7 +648,7 @@ mod tests {
             mesh_update_r,
             mesh_update_s: mesh_update_s.clone(),
 
-            key: key.clone(),
+            key,
             server_channel: server_channel_s,
             preferred: Arc::clone(&preferred),
         };
@@ -726,86 +664,82 @@ mod tests {
         // send packet
         println!("  send packet");
         let packet = Packet {
-            src: key.clone(),
+            src: key,
             bytes: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::RecvPacket, frame_type);
-        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(key, got_key);
-        assert_eq!(&data[..], got_data);
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(
+            frame,
+            Frame::RecvPacket {
+                src_key: key,
+                content: data.to_vec().into()
+            }
+        );
 
         // send disco packet
         println!("  send disco packet");
         disco_send_queue_s.send(packet.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::RecvPacket, frame_type);
-        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
-        assert_eq!(key, got_key);
-        assert_eq!(&data[..], got_data);
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(
+            frame,
+            Frame::RecvPacket {
+                src_key: key,
+                content: data.to_vec().into()
+            }
+        );
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(key.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::PeerGone, frame_type);
-        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
-        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        peer_gone_s.send(key).await?;
+        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // send mesh_upate
         let updates = vec![
             PeerConnState {
-                peer: key.clone(),
+                peer: key,
                 present: true,
             },
             PeerConnState {
-                peer: key.clone(),
+                peer: key,
                 present: false,
             },
         ];
 
         mesh_update_s.send(updates.clone()).await?;
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::PeerPresent, frame_type);
-        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
-        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let frame = recv_frame(FrameType::PeerPresent, &mut io_rw).await?;
+        assert_eq!(frame, Frame::PeerPresent { peer: key });
 
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::PeerGone, frame_type);
-        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
-        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(frame, Frame::PeerGone { peer: key });
 
         // Read tests
         println!("--read");
 
         // send ping, expect pong
         let data = b"pingpong";
-        crate::derp::client::send_ping(&mut io_rw, data).await?;
+        write_frame(&mut io_rw, Frame::Ping { data: *data }, None).await?;
 
         // recv pong
         println!(" recv pong");
-        let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FrameType::Pong, frame_type);
-        assert_eq!(8, frame_len);
-        assert_eq!(data, &buf[..]);
+        let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
+        assert_eq!(frame, Frame::Pong { data: *data });
 
         // change preferred to false
         println!("  preferred: false");
-        crate::derp::client::send_note_preferred(&mut io_rw, false).await?;
+        write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         println!("  preferred: true");
-        crate::derp::client::send_note_preferred(&mut io_rw, true).await?;
+        write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
         // add this client as a watcher
-        crate::derp::client::watch_connection_changes(&mut io_rw).await?;
+        write_frame(&mut io_rw, Frame::WatchConns, None).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
@@ -816,8 +750,8 @@ mod tests {
 
         // send message to close a peer
         println!("  close peer");
-        let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
-        crate::derp::client::close_peer(&mut io_rw, target.clone()).await?;
+        let target = SecretKey::generate().public();
+        write_frame(&mut io_rw, Frame::ClosePeer { peer: target }, None).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
@@ -829,7 +763,8 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -848,7 +783,8 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), &disco_data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -863,8 +799,8 @@ mod tests {
 
         // forward packet
         println!("  forward packet");
-        let fwd_key = PublicKey::from([0x03; PUBLIC_KEY_LENGTH]);
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key.clone(), target.clone(), data)
+        let fwd_key = SecretKey::generate().public();
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, Bytes::from_static(data))
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -880,13 +816,8 @@ mod tests {
 
         // forward disco packet
         println!("  forward disco packet");
-        crate::derp::client::forward_packet(
-            &mut io_rw,
-            fwd_key.clone(),
-            target.clone(),
-            &disco_data,
-        )
-        .await?;
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, disco_data.clone().into())
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -912,14 +843,15 @@ mod tests {
         let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
-        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let (io, mut io_rw) = tokio::io::duplex(1024);
+        let key = SecretKey::generate().public();
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: MaybeTlsStream::Test(io),
+            io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -927,7 +859,7 @@ mod tests {
             mesh_update_r,
             mesh_update_s: mesh_update_s.clone(),
 
-            key: key.clone(),
+            key,
             server_channel: server_channel_s,
             preferred: Arc::clone(&preferred),
         };
@@ -941,9 +873,10 @@ mod tests {
         // send packet
         println!("   send packet");
         let data = b"hello world!";
-        let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
+        let target = SecretKey::generate().public();
 
-        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {

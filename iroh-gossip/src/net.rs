@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -41,21 +41,21 @@ const TO_ACTOR_CAP: usize = 64;
 const IN_EVENT_CAP: usize = 1024;
 
 /// Events emitted from the gossip protocol
-pub type Event = proto::Event<PeerId>;
+pub type Event = proto::Event<PublicKey>;
 /// Commands for the gossip protocol
-pub type Command = proto::Command<PeerId>;
+pub type Command = proto::Command<PublicKey>;
 
-type InEvent = proto::InEvent<PeerId>;
-type OutEvent = proto::OutEvent<PeerId>;
-type Timer = proto::Timer<PeerId>;
-type ProtoMessage = proto::Message<PeerId>;
+type InEvent = proto::InEvent<PublicKey>;
+type OutEvent = proto::OutEvent<PublicKey>;
+type Timer = proto::Timer<PublicKey>;
+type ProtoMessage = proto::Message<PublicKey>;
 
 /// Publish and subscribe on gossiping topics.
 ///
 /// Each topic is a separate broadcast tree with separate memberships.
 ///
 /// A topic has to be joined before you can publish or subscribe on the topic.
-/// To join the swarm for a topic, you have to know the [PeerId] of at least one peer that also joined the topic.
+/// To join the swarm for a topic, you have to know the [PublicKey] of at least one peer that also joined the topic.
 ///
 /// Messages published on the swarm will be delivered to all peers that joined the swarm for that
 /// topic. You will also be relaying (gossiping) messages published by other peers.
@@ -123,7 +123,7 @@ impl Gossip {
     /// Join a topic and connect to peers.
     ///
     ///
-    /// This method only asks for [`PeerId`]s. You must supply information on how to
+    /// This method only asks for [`PublicKey`]s. You must supply information on how to
     /// connect to these peers manually before, by calling [`MagicEndpoint::add_known_addrs`] on
     /// the underlying [`MagicEndpoint`].
     ///
@@ -135,7 +135,11 @@ impl Gossip {
     /// could be contacted. Usually you will want to add a timeout yourself.
     ///
     /// TODO: Resolve to an error once all connection attempts failed.
-    pub async fn join(&self, topic: TopicId, peers: Vec<PeerId>) -> anyhow::Result<JoinTopicFut> {
+    pub async fn join(
+        &self,
+        topic: TopicId,
+        peers: Vec<PublicKey>,
+    ) -> anyhow::Result<JoinTopicFut> {
         let (tx, rx) = oneshot::channel();
         self.send(ToActor::Join(topic, peers, tx)).await?;
         Ok(JoinTopicFut(rx))
@@ -272,9 +276,9 @@ enum ConnOrigin {
 enum ToActor {
     /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
     /// (happens internally in the actor).
-    ConnIncoming(PeerId, ConnOrigin, quinn::Connection),
+    ConnIncoming(PublicKey, ConnOrigin, quinn::Connection),
     /// Join a topic with a list of peers. Reply with oneshot once at least one peer joined.
-    Join(TopicId, Vec<PeerId>, oneshot::Sender<anyhow::Result<()>>),
+    Join(TopicId, Vec<PublicKey>, oneshot::Sender<anyhow::Result<()>>),
     /// Leave a topic, send disconnect messages and drop all state.
     Quit(TopicId),
     /// Broadcast a message on a topic.
@@ -310,7 +314,7 @@ impl fmt::Debug for ToActor {
 /// Actor that sends and handles messages between the connection and main state loops
 struct Actor {
     /// Protocol state
-    state: proto::State<PeerId, StdRng>,
+    state: proto::State<PublicKey, StdRng>,
     endpoint: MagicEndpoint,
     /// Dial machine to connect to peers
     dialer: Dialer,
@@ -325,11 +329,11 @@ struct Actor {
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
-    conns: HashMap<PeerId, quinn::Connection>,
+    conns: HashMap<PublicKey, quinn::Connection>,
     /// Channels to send outbound messages into the connection loops
-    conn_send_tx: HashMap<PeerId, mpsc::Sender<ProtoMessage>>,
+    conn_send_tx: HashMap<PublicKey, mpsc::Sender<ProtoMessage>>,
     /// Queued messages that were to be sent before a dial completed
-    pending_sends: HashMap<PeerId, Vec<ProtoMessage>>,
+    pending_sends: HashMap<PublicKey, Vec<ProtoMessage>>,
     /// Broadcast senders for active topic subscriptions from the application
     subscribers_topic: HashMap<TopicId, broadcast::Sender<Event>>,
     /// Broadcast senders for wildcard subscriptions from the application
@@ -346,7 +350,7 @@ impl Actor {
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
-                            debug!(me = ?me, "all gossip handles dropped, stop gossip actor");
+                            debug!(?me, "all gossip handles dropped, stop gossip actor");
                             break;
                         }
                     }
@@ -363,11 +367,11 @@ impl Actor {
                 (peer_id, res) = self.dialer.next() => {
                     match res {
                         Ok(conn) => {
-                            debug!(me = ?me, peer = ?peer_id, "dial successfull");
+                            debug!(?me, peer = ?peer_id, "dial successfull");
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
-                            warn!(me = ?me, peer = ?peer_id, "dial failed: {err}");
+                            warn!(?me, peer = ?peer_id, "dial failed: {err}");
                         }
                     }
                 }
@@ -393,7 +397,7 @@ impl Actor {
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(me = ?me, "handle to_actor  {msg:?}");
+        debug!(?me, "handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -404,13 +408,13 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(me = ?me, peer = ?peer_id, "connection established, start loop");
+                    debug!(?me, peer = ?peer_id, "connection established, start loop");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
-                            debug!(me = ?me, peer = ?peer_id, "connection closed without error")
+                            debug!(?me, peer = ?peer_id, "connection closed without error")
                         }
                         Err(err) => {
-                            debug!(me = ?me, peer = ?peer_id, "connection closed with error {err:?}")
+                            debug!(?me, peer = ?peer_id, "connection closed with error {err:?}")
                         }
                     }
                     in_event_tx
@@ -465,13 +469,13 @@ impl Actor {
 
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(me = ?me, "handle in_event  {event:?}");
+        debug!(?me, "handle in_event  {event:?}");
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
         }
         let out = self.state.handle(event, now);
         for event in out {
-            debug!(me = ?me, "handle out_event {event:?}");
+            debug!(?me, "handle out_event {event:?}");
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
                     if let Some(send) = self.conn_send_tx.get(&peer_id) {
@@ -480,7 +484,7 @@ impl Actor {
                             self.conn_send_tx.remove(&peer_id);
                         }
                     } else {
-                        debug!(me = ?me, peer = ?peer_id, "dial");
+                        debug!(?me, peer = ?peer_id, "dial");
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         // TODO: Enforce max length
                         self.pending_sends.entry(peer_id).or_default().push(message);
@@ -559,7 +563,7 @@ async fn wait_for_neighbor_up(mut sub: broadcast::Receiver<Event>) -> anyhow::Re
 }
 
 async fn connection_loop(
-    from: PeerId,
+    from: PublicKey,
     conn: quinn::Connection,
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
@@ -752,6 +756,7 @@ mod test {
         use anyhow::Result;
         use iroh_net::{
             derp::{DerpMap, UseIpv4, UseIpv6},
+            key::SecretKey,
             stun::{is, parse_binding_request, response},
         };
         use tokio::sync::oneshot;
@@ -775,7 +780,7 @@ mod test {
         ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
-            let server_key = iroh_net::key::node::SecretKey::generate();
+            let server_key = SecretKey::generate();
             let server = iroh_net::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
                 .secret_key(Some(server_key))
                 .tls_config(None)

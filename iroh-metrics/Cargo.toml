@@ -9,7 +9,7 @@ authors = ["arqu <asmir@n0.computer>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.66"
+rust-version = "1.67"
 
 [dependencies]
 prometheus-client = { version = "0.21.0", optional = true }

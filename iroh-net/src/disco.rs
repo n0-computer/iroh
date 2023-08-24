@@ -25,9 +25,9 @@ use std::{
 
 use anyhow::{anyhow, ensure, Result};
 
-use crate::net::ip::to_canonical;
+use crate::{key, net::ip::to_canonical};
 
-use super::{key, stun};
+use super::{key::PublicKey, stun};
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -46,7 +46,7 @@ const TX_LEN: usize = 12;
 /// Header: Type | Version
 const HEADER_LEN: usize = 2;
 
-const PING_LEN: usize = TX_LEN + key::node::PUBLIC_KEY_LENGTH;
+const PING_LEN: usize = TX_LEN + key::PUBLIC_KEY_LENGTH;
 const PONG_LEN: usize = TX_LEN + EP_LENGTH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,7 +72,7 @@ impl TryFrom<u8> for MessageType {
 
 const MESSAGE_HEADER_LEN: usize = MAGIC_LEN + KEY_LEN;
 
-pub fn encode_message(sender: &key::node::PublicKey, seal: Vec<u8>) -> Vec<u8> {
+pub fn encode_message(sender: &PublicKey, seal: Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(MESSAGE_HEADER_LEN);
     out.extend_from_slice(MAGIC.as_bytes());
     out.extend_from_slice(sender.as_bytes());
@@ -92,14 +92,15 @@ pub fn looks_like_disco_wrapper(p: &[u8]) -> bool {
 
 /// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source,
 /// and the part that is the box.
-pub fn source_and_box(p: &[u8]) -> Option<([u8; KEY_LEN], &[u8])> {
+pub fn source_and_box(p: &[u8]) -> Option<(PublicKey, &[u8])> {
     if !looks_like_disco_wrapper(p) {
         return None;
     }
 
-    let source = p[MAGIC_LEN..MAGIC_LEN + KEY_LEN].try_into().unwrap();
+    let source = &p[MAGIC_LEN..MAGIC_LEN + KEY_LEN];
+    let sender = PublicKey::try_from(source).ok()?;
     let sealed_box = &p[MAGIC_LEN + KEY_LEN..];
-    Some((source, sealed_box))
+    Some((sender, sealed_box))
 }
 
 /// A discovery message.
@@ -118,7 +119,7 @@ pub struct Ping {
     /// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
     /// netmap data to reduce the discokey:nodekey relation from 1:N to 1:1.
-    pub node_key: key::node::PublicKey,
+    pub node_key: PublicKey,
 }
 
 /// A response a Ping.
@@ -150,11 +151,8 @@ impl Ping {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
-        let raw_key: [u8; key::node::PUBLIC_KEY_LENGTH] = p
-            [TX_LEN..TX_LEN + key::node::PUBLIC_KEY_LENGTH]
-            .try_into()
-            .unwrap();
-        let node_key = key::node::PublicKey::from(raw_key);
+        let raw_key = &p[TX_LEN..TX_LEN + key::PUBLIC_KEY_LENGTH];
+        let node_key = PublicKey::try_from(raw_key)?;
         let tx_id = stun::TransactionId::from(tx_id);
 
         Ok(Ping { tx_id, node_key })
@@ -313,6 +311,8 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 #[cfg(test)]
 mod tests {
+    use crate::key::SecretKey;
+
     use super::*;
 
     #[test]
@@ -327,9 +327,10 @@ mod tests {
                 name: "ping_with_nodekey_src",
                 m: Message::Ping(Ping {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    node_key: key::node::PublicKey::from([0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 31]),
+                    node_key: PublicKey::try_from(&[
+                        190, 243, 65, 104, 37, 102, 175, 75, 243, 22, 69, 200, 167, 107, 24, 63, 216, 140, 120, 43, 4, 112, 16, 62, 117, 155, 45, 215, 72, 175, 40, 189][..]).unwrap(),
                 }),
-                want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1e 1f",
+                want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c be f3 41 68 25 66 af 4b f3 16 45 c8 a7 6b 18 3f d8 8c 78 2b 04 70 10 3e 75 9b 2d d7 48 af 28 bd",
             },
             Test {
                 name: "pong",
@@ -380,31 +381,32 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = key::node::SecretKey::generate();
-        let sender_node_key: key::node::PublicKey = sender_key.public_key();
+        let sender_key = SecretKey::generate();
+        let recv_key = SecretKey::generate();
+
         let msg = Message::Ping(Ping {
             tx_id: stun::TransactionId::default(),
-            node_key: sender_node_key,
+            node_key: sender_key.public(),
         });
 
-        let sender_disco_key = key::node::SecretKey::generate();
-        let recv_disco_key = key::node::SecretKey::generate();
-        let shared = sender_disco_key.shared(&recv_disco_key.public_key());
-        let seal = shared.seal(&msg.as_bytes());
-        let bytes = encode_message(&sender_disco_key.public_key(), seal.clone());
+        let shared = sender_key.shared(&recv_key.public());
+        let mut seal = msg.as_bytes();
+        shared.seal(&mut seal);
+
+        let bytes = encode_message(&sender_key.public(), seal.clone());
 
         assert!(looks_like_disco_wrapper(&bytes));
-        assert_eq!(
-            source_and_box(&bytes).unwrap().0,
-            sender_disco_key.public_key().as_ref()
-        );
+        assert_eq!(source_and_box(&bytes).unwrap().0, sender_key.public());
 
         let (raw_key, seal_back) = source_and_box(&bytes).unwrap();
-        assert_eq!(raw_key, sender_disco_key.public_key().as_ref());
+        assert_eq!(raw_key, sender_key.public());
         assert_eq!(seal_back, seal);
 
-        let shared_recv = recv_disco_key.shared(&sender_disco_key.public_key());
-        let open_seal = shared_recv.open(seal_back).unwrap();
+        let shared_recv = recv_key.shared(&sender_key.public());
+        let mut open_seal = seal_back.to_vec();
+        shared_recv
+            .open(&mut open_seal)
+            .expect("failed to open seal_back");
         let msg_back = Message::from_bytes(&open_seal).unwrap();
         assert_eq!(msg_back, msg);
     }

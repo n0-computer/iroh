@@ -7,6 +7,7 @@ use tokio::sync::oneshot;
 use tracing::{info_span, Instrument};
 
 use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::key::SecretKey;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -26,7 +27,7 @@ pub(crate) async fn run_derp_and_stun(
 ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
     // TODO: pass a mesh_key?
 
-    let server_key = crate::key::node::SecretKey::generate();
+    let server_key = SecretKey::generate();
     let tls_config = crate::derp::http::make_tls_config();
     let server = crate::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
         .secret_key(Some(server_key))

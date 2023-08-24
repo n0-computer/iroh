@@ -17,10 +17,8 @@ use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, UseIpv4, UseIpv6},
-    key::node::SecretKey,
-    netcheck, portmapper,
-    tls::{Keypair, PeerId, PublicKey},
-    MagicEndpoint,
+    key::{PublicKey, SecretKey},
+    netcheck, portmapper, MagicEndpoint,
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -30,26 +28,26 @@ use iroh_metrics::core::Core;
 use iroh_net::metrics::MagicsockMetrics;
 
 #[derive(Debug, Clone, derive_more::Display)]
-pub enum PrivateKey {
-    /// Generate random private key
+pub enum SecretKeyOption {
+    /// Generate random secret key
     Random,
-    /// Use local private key
+    /// Use local secret key
     Local,
-    /// Explicitly specify a private key
+    /// Explicitly specify a secret key
     Hex(String),
 }
 
-impl std::str::FromStr for PrivateKey {
+impl std::str::FromStr for SecretKeyOption {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s_lower = s.to_ascii_lowercase();
         Ok(if s_lower == "random" {
-            PrivateKey::Random
+            SecretKeyOption::Random
         } else if s_lower == "local" {
-            PrivateKey::Local
+            SecretKeyOption::Local
         } else {
-            PrivateKey::Hex(s.to_string())
+            SecretKeyOption::Hex(s.to_string())
         })
     }
 }
@@ -69,9 +67,9 @@ pub enum Commands {
     },
     /// Wait for incoming requests from iroh doctor connect
     Accept {
-        /// Our own private key, in hex. If not specified, the locally configured key will be used.
-        #[clap(long, default_value_t = PrivateKey::Local)]
-        private_key: PrivateKey,
+        /// Our own secret key, in hex. If not specified, the locally configured key will be used.
+        #[clap(long, default_value_t = SecretKeyOption::Local)]
+        secret_key: SecretKeyOption,
 
         /// Number of bytes to send to the remote for each test
         #[clap(long, default_value_t = 1024 * 1024 * 16)]
@@ -94,9 +92,9 @@ pub enum Commands {
         #[clap(long)]
         remote_endpoint: Vec<SocketAddr>,
 
-        /// Our own private key, in hex. If not specified, a random key will be generated.
-        #[clap(long, default_value_t = PrivateKey::Random)]
-        private_key: PrivateKey,
+        /// Our own secret key, in hex. If not specified, a random key will be generated.
+        #[clap(long, default_value_t = SecretKeyOption::Random)]
+        secret_key: SecretKeyOption,
 
         /// Use a local derp relay
         ///
@@ -489,12 +487,12 @@ fn configure_local_derp_map() -> DerpMap {
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 
 async fn make_endpoint(
-    private_key: SecretKey,
+    secret_key: SecretKey,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<MagicEndpoint> {
     tracing::info!(
         "public key: {}",
-        hex::encode(private_key.public_key().as_bytes())
+        hex::encode(secret_key.public().as_bytes())
     );
     tracing::info!("derp map {:#?}", derp_map);
 
@@ -517,7 +515,7 @@ async fn make_endpoint(
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
     let endpoint = MagicEndpoint::builder()
-        .keypair(private_key.into())
+        .secret_key(secret_key)
         .alpns(vec![DR_DERP_ALPN.to_vec()])
         .derp_map(derp_map)
         .transport_config(transport_config)
@@ -536,16 +534,15 @@ async fn make_endpoint(
 
 async fn connect(
     dial: String,
-    private_key: SecretKey,
+    secret_key: SecretKey,
     remote_endpoints: Vec<SocketAddr>,
     derp_region: Option<u16>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(private_key.clone(), derp_map).await?;
+    let endpoint = make_endpoint(secret_key, derp_map).await?;
 
     let bytes = hex::decode(dial)?;
-    let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-    let peer_id = PeerId::from(PublicKey::from_bytes(&bytes).context("failed to parse PeerId")?);
+    let peer_id = PublicKey::try_from(&bytes[..]).context("failed to parse PublicKey")?;
 
     tracing::info!("dialing {:?}", peer_id);
     let conn = endpoint
@@ -575,11 +572,11 @@ fn format_addr(addr: SocketAddr) -> String {
 }
 
 async fn accept(
-    private_key: SecretKey,
+    secret_key: SecretKey,
     config: TestConfig,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(private_key.clone(), derp_map).await?;
+    let endpoint = make_endpoint(secret_key.clone(), derp_map).await?;
 
     let endpoints = endpoint.local_endpoints().await?;
     let remote_addrs = endpoints
@@ -589,7 +586,7 @@ async fn accept(
         .join(" ");
     println!(
             "Run\n\niroh doctor connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
-            hex::encode(private_key.public_key().as_bytes()),
+            hex::encode(secret_key.public().as_bytes()),
             remote_addrs,
         );
     println!("Omit the --remote-endpoint args to connect just by key.");
@@ -657,7 +654,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 }
 
 async fn derp_regions(config: Config) -> anyhow::Result<()> {
-    let key = iroh_net::key::node::SecretKey::generate();
+    let key = SecretKey::generate();
     let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
@@ -769,20 +766,18 @@ impl std::fmt::Display for RegionDetails {
     }
 }
 
-fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
-    Ok(match private_key {
-        PrivateKey::Random => SecretKey::generate(),
-        PrivateKey::Hex(hex) => {
+fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
+    Ok(match secret_key {
+        SecretKeyOption::Random => SecretKey::generate(),
+        SecretKeyOption::Hex(hex) => {
             let bytes = hex::decode(hex)?;
-            let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-            SecretKey::from(bytes)
+            SecretKey::try_from(&bytes[..])?
         }
-        PrivateKey::Local => {
-            let path = IrohPaths::Keypair.with_env()?;
+        SecretKeyOption::Local => {
+            let path = IrohPaths::SecretKey.with_env()?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
-                let keypair = Keypair::try_from_openssh(bytes)?;
-                SecretKey::from(keypair.secret().to_bytes())
+                SecretKey::try_from_openssh(bytes)?
             } else {
                 println!(
                     "Local key not found in {}. Using random key.",
@@ -802,7 +797,7 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
         } => report(stun_host, stun_port, config).await,
         Commands::Connect {
             dial,
-            private_key,
+            secret_key,
             local_derper,
             derp_region,
             remote_endpoint,
@@ -812,11 +807,11 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             } else {
                 (config.derp_map(), derp_region)
             };
-            let private_key = create_secret_key(private_key)?;
-            connect(dial, private_key, remote_endpoint, derp_region, derp_map).await
+            let secret_key = create_secret_key(secret_key)?;
+            connect(dial, secret_key, remote_endpoint, derp_region, derp_map).await
         }
         Commands::Accept {
-            private_key,
+            secret_key,
             local_derper,
             size,
             iterations,
@@ -826,9 +821,9 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             } else {
                 config.derp_map()
             };
-            let private_key = create_secret_key(private_key)?;
+            let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            accept(private_key, config, derp_map).await
+            accept(secret_key, config, derp_map).await
         }
         Commands::PortMap {
             protocol,
