@@ -146,6 +146,35 @@ async fn sync_full_basic() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn sync_subscribe_stop() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt).await?;
+    let client = node.client();
+
+    let doc = client.create_doc().await?;
+    let author = client.create_author().await?;
+    doc.start_sync(vec![]).await?;
+
+    let status = doc.status().await?;
+    assert!(status.active);
+    assert_eq!(status.subscriptions, 0);
+
+    let sub = doc.subscribe().await?;
+    let status = doc.status().await?;
+    assert_eq!(status.subscriptions, 1);
+    drop(sub);
+
+    doc.set_bytes(author, b"x".to_vec(), b"x".to_vec()).await?;
+    let status = doc.status().await?;
+    assert_eq!(status.subscriptions, 0);
+
+    node.shutdown();
+
+    Ok(())
+}
+
 async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());
