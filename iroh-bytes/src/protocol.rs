@@ -69,7 +69,7 @@
 //! ## Getter defined requests
 //!
 //! In this case the getter knows the hash of the blob it wants to retrieve and
-//! whether it wants to retrieve the a single blob or a collection.
+//! whether it wants to retrieve a single blob or a collection.
 //!
 //! The getter needs to define exactly what it wants to retrieve and send the
 //! request to the provider.
@@ -315,6 +315,23 @@
 //! Request tokens are an optional feature of the protocol. They are opaque byte
 //! sequences that are associated with a single request. Applications can use
 //! request tokens to implement request level authorization.
+//!
+//! # Requesting multiple unrelated blobs
+//!
+//! Currently, the protocol does not support requesting multiple unrelated blobs
+//! in a single request. As an alternative, you can create a collection
+//! on the provider side and use that to efficiently retrieve the blobs.
+//!
+//! If that is not possible, you can create a custom request handler that
+//! accepts a custom request struct that contains the hashes of the blobs.
+//!
+//! If neither of these options are possible, you have no choice but to do
+//! multiple requests. However, note that multiple requests will be multiplexed
+//! over a single connection, and the overhead of a new QUIC stream on an existing
+//! connection is very low.
+//!
+//! In case nodes are permanently exchanging data, it is probably valuable to
+//! keep a connection open and reuse it for multiple requests.
 use std::fmt::{self, Display};
 use std::io;
 use std::str::FromStr;
