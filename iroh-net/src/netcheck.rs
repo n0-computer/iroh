@@ -840,13 +840,12 @@ mod tests {
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
     use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
     use crate::ping::Pinger;
-    use crate::test_utils::setup_logging;
 
     use super::*;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
-        let _guard = setup_logging();
+        let _guard = iroh_test::logging::setup();
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
@@ -890,7 +889,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
-        let _guard = setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         let mut client = Client::new(None)
             .await

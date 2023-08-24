@@ -2814,7 +2814,7 @@ pub(crate) mod tests {
         })
     }
 
-    pub fn setup_logging() {
+    pub fn setup_multithreaded_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -2824,7 +2824,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        setup_logging();
+        setup_multithreaded_logging();
 
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
@@ -2996,7 +2996,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        setup_logging();
+        setup_multithreaded_logging();
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
         };
@@ -3040,7 +3040,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();
@@ -3183,7 +3183,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();
