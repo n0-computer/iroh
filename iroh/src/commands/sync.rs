@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
@@ -10,35 +10,7 @@ use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
 use crate::config::ConsoleEnv;
 
-use super::RpcClient;
-
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Subcommand, Debug, Clone)]
-pub enum Commands {
-    /// Manage documents
-    Doc {
-        #[clap(subcommand)]
-        command: DocCommands,
-    },
-
-    /// Manage document authors
-    Author {
-        #[clap(subcommand)]
-        command: AuthorCommands,
-    },
-}
-
-impl Commands {
-    pub async fn run(self, client: RpcClient, env: ConsoleEnv) -> Result<()> {
-        let iroh = Iroh::new(client);
-        match self {
-            Self::Doc { command } => command.run(&iroh, env).await,
-            Self::Author { command } => command.run(&iroh, env).await,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
@@ -143,6 +115,21 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc_id: Option<NamespaceId>,
     },
+}
+
+#[derive(Debug, Clone, Parser)]
+pub enum AuthorCommands {
+    /// Set the active author (only works within the Iroh console).
+    Switch { id: AuthorId },
+    /// Create a new author.
+    Create {
+        /// Switch to the created author (only in the Iroh console).
+        #[clap(long)]
+        switch: bool,
+    },
+    /// List authors.
+    #[clap(alias = "ls")]
+    List,
 }
 
 impl DocCommands {
@@ -297,21 +284,6 @@ impl DocCommands {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
-pub enum AuthorCommands {
-    /// Set the active author (only works within the Iroh console).
-    Switch { id: AuthorId },
-    /// Create a new author.
-    Create {
-        /// Switch to the created author (only in the Iroh console).
-        #[clap(long)]
-        switch: bool,
-    },
-    /// List authors.
-    #[clap(alias = "ls")]
-    List,
-}
-
 impl AuthorCommands {
     pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         match self {
@@ -351,7 +323,8 @@ fn fmt_entry(entry: &Entry) -> String {
     format!("@{author}: {key} = {hash} ({len})",)
 }
 
-fn fmt_short(hash: impl AsRef<[u8]>) -> String {
+/// Format the first 5 bytes of a byte string in bas32
+pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
     text.make_ascii_lowercase();
     format!("{}…", &text)

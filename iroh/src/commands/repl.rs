@@ -2,12 +2,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use iroh::client::quic::RpcClient;
-use iroh_gossip::proto::util::base32;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::RpcCommands,
+    commands::{sync::fmt_short, RpcCommands},
     config::{ConsoleEnv, ConsolePaths},
 };
 
@@ -129,11 +128,4 @@ fn parse_cmd<C: Subcommand>(s: &str) -> Option<C> {
             None
         }
     }
-}
-
-fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    // we use 5 bytes because this always results in 8 character string in base32
-    let len = bytes.len().min(5);
-    base32::fmt(&bytes[..len])
 }

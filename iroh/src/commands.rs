@@ -4,7 +4,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use iroh::client::quic::RpcClient;
+use iroh::client::quic::{Iroh, RpcClient};
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
@@ -13,7 +13,7 @@ use iroh_net::key::{PublicKey, SecretKey};
 use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
-// use self::sync::SyncEnv;
+use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -275,9 +275,17 @@ impl FullCommands {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RpcCommands {
-    /// Doc and author commands
-    #[clap(flatten)]
-    Sync(#[clap(subcommand)] sync::Commands),
+    /// Manage documents
+    Doc {
+        #[clap(subcommand)]
+        command: DocCommands,
+    },
+
+    /// Manage document authors
+    Author {
+        #[clap(subcommand)]
+        command: AuthorCommands,
+    },
     /// Manage blobs
     Blob {
         #[clap(subcommand)]
@@ -335,10 +343,12 @@ impl NodeCommands {
 
 impl RpcCommands {
     pub async fn run(self, client: RpcClient, env: ConsoleEnv) -> Result<()> {
+        let iroh = Iroh::new(client.clone());
         match self {
             Self::Node { command } => command.run(client).await,
             Self::Blob { command } => command.run(client).await,
-            Self::Sync(command) => command.run(client, env).await,
+            Self::Doc { command } => command.run(&iroh, env).await,
+            Self::Author { command } => command.run(&iroh, env).await,
         }
     }
 }
