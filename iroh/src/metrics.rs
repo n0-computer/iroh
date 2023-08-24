@@ -67,6 +67,7 @@ pub fn get_metrics() -> anyhow::Result<HashMap<String, CounterStats>> {
     let mut map = HashMap::new();
     let core =
         iroh_metrics::core::Core::get().ok_or_else(|| anyhow::anyhow!("metrics are disabled"))?;
+    collect(core.get_collector::<crate::metrics::Metrics>(), &mut map);
     collect(
         core.get_collector::<iroh_sync::metrics::Metrics>(),
         &mut map,
