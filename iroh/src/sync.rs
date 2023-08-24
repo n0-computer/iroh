@@ -2,48 +2,27 @@
 
 use std::net::SocketAddr;
 
-use anyhow::{bail, ensure, Context, Result};
-use bytes::BytesMut;
+use anyhow::{Context, Result};
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
-use iroh_sync::{
-    store,
-    sync::{NamespaceId, Replica},
-};
-use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::{debug, trace};
+use iroh_sync::{store, sync::Replica};
+use tracing::debug;
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
+use crate::sync::codec::{run_alice, run_bob};
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 
 /// The ALPN identifier for the iroh-sync protocol
 pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 
+mod codec;
 mod engine;
 mod live;
 pub mod rpc;
 
 pub use engine::*;
 pub use live::*;
-
-/// Sync Protocol
-///
-/// - Init message: signals which namespace is being synced
-/// - N Sync messages
-///
-/// On any error and on success the substream is closed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum Message {
-    Init {
-        /// Namespace to sync
-        namespace: NamespaceId,
-        /// Initial message
-        message: iroh_sync::sync::ProtocolMessage,
-    },
-    Sync(iroh_sync::sync::ProtocolMessage),
-}
 
 /// Connect to a peer and sync a replica
 pub async fn connect_and_sync<S: store::Store>(
@@ -72,50 +51,6 @@ pub async fn connect_and_sync<S: store::Store>(
     res
 }
 
-/// Runs the initiator side of the sync protocol.
-pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    reader: &mut R,
-    alice: &Replica<S::Instance>,
-    other_peer_id: PublicKey,
-) -> Result<()> {
-    let other_peer_id = *other_peer_id.as_bytes();
-    let mut buffer = BytesMut::with_capacity(1024);
-
-    // Init message
-
-    let init_message = Message::Init {
-        namespace: alice.namespace(),
-        message: alice.sync_initial_message().map_err(Into::into)?,
-    };
-    let msg_bytes = postcard::to_stdvec(&init_message)?;
-    iroh_bytes::protocol::write_lp(writer, &msg_bytes).await?;
-
-    // Sync message loop
-
-    while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        trace!("read {}", read.len());
-        let msg = postcard::from_bytes(&read)?;
-        match msg {
-            Message::Init { .. } => {
-                bail!("unexpected message: init");
-            }
-            Message::Sync(msg) => {
-                if let Some(msg) = alice
-                    .sync_process_message(msg, other_peer_id)
-                    .map_err(Into::into)?
-                {
-                    send_sync_message(writer, msg).await?;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Handle an iroh-sync connection and sync all shared documents in the replica store.
 pub async fn handle_connection<S: store::Store>(
     connecting: quinn::Connecting,
@@ -141,175 +76,4 @@ pub async fn handle_connection<S: store::Store>(
     debug!(peer = ?peer_id, "incoming sync: done");
 
     Ok(())
-}
-
-/// Runs the receiver side of the sync protocol.
-pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    reader: &mut R,
-    replica_store: S,
-    other_peer_id: PublicKey,
-) -> Result<()> {
-    let other_peer_id = *other_peer_id.as_bytes();
-    let mut buffer = BytesMut::with_capacity(1024);
-
-    let mut replica = None;
-    while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        trace!("read {}", read.len());
-        let msg = postcard::from_bytes(&read)?;
-
-        match msg {
-            Message::Init { namespace, message } => {
-                ensure!(replica.is_none(), "double init message");
-
-                match replica_store.open_replica(&namespace)? {
-                    Some(r) => {
-                        debug!("starting sync for {}", namespace);
-                        if let Some(msg) = r
-                            .sync_process_message(message, other_peer_id)
-                            .map_err(Into::into)?
-                        {
-                            send_sync_message(writer, msg).await?;
-                        } else {
-                            break;
-                        }
-                        replica = Some(r);
-                    }
-                    None => {
-                        bail!("unable to synchronize unknown namespace: {}", namespace);
-                    }
-                }
-            }
-            Message::Sync(msg) => match replica {
-                Some(ref replica) => {
-                    if let Some(msg) = replica
-                        .sync_process_message(msg, other_peer_id)
-                        .map_err(Into::into)?
-                    {
-                        send_sync_message(writer, msg).await?;
-                    } else {
-                        break;
-                    }
-                }
-                None => {
-                    bail!("unexpected sync message without init");
-                }
-            },
-        }
-    }
-
-    Ok(())
-}
-
-async fn send_sync_message<W: AsyncWrite + Unpin>(
-    stream: &mut W,
-    msg: iroh_sync::sync::ProtocolMessage,
-) -> Result<()> {
-    let msg_bytes = postcard::to_stdvec(&Message::Sync(msg))?;
-    iroh_bytes::protocol::write_lp(stream, &msg_bytes).await?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use iroh_net::key::SecretKey;
-    use iroh_sync::{
-        store::{GetFilter, Store as _},
-        sync::Namespace,
-    };
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test_sync_simple() -> Result<()> {
-        let mut rng = rand::thread_rng();
-        let alice_peer_id = SecretKey::from_bytes(&[1u8; 32]).public();
-        let bob_peer_id = SecretKey::from_bytes(&[2u8; 32]).public();
-
-        let alice_replica_store = store::memory::Store::default();
-        // For now uses same author on both sides.
-        let author = alice_replica_store.new_author(&mut rng).unwrap();
-
-        let namespace = Namespace::new(&mut rng);
-
-        let alice_replica = alice_replica_store.new_replica(namespace.clone()).unwrap();
-        alice_replica
-            .hash_and_insert("hello bob", &author, "from alice")
-            .unwrap();
-
-        let bob_replica_store = store::memory::Store::default();
-        let bob_replica = bob_replica_store.new_replica(namespace.clone()).unwrap();
-        bob_replica
-            .hash_and_insert("hello alice", &author, "from bob")
-            .unwrap();
-
-        assert_eq!(
-            bob_replica_store
-                .get(bob_replica.namespace(), GetFilter::all())
-                .unwrap()
-                .collect::<Result<Vec<_>>>()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            alice_replica_store
-                .get(alice_replica.namespace(), GetFilter::all())
-                .unwrap()
-                .collect::<Result<Vec<_>>>()
-                .unwrap()
-                .len(),
-            1
-        );
-
-        let (alice, bob) = tokio::io::duplex(64);
-
-        let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let replica = alice_replica.clone();
-        let alice_task = tokio::task::spawn(async move {
-            run_alice::<store::memory::Store, _, _>(
-                &mut alice_writer,
-                &mut alice_reader,
-                &replica,
-                bob_peer_id,
-            )
-            .await
-        });
-
-        let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_replica_store_task = bob_replica_store.clone();
-        let bob_task = tokio::task::spawn(async move {
-            run_bob::<store::memory::Store, _, _>(
-                &mut bob_writer,
-                &mut bob_reader,
-                bob_replica_store_task,
-                alice_peer_id,
-            )
-            .await
-        });
-
-        alice_task.await??;
-        bob_task.await??;
-
-        assert_eq!(
-            bob_replica_store
-                .get(bob_replica.namespace(), GetFilter::all())
-                .unwrap()
-                .collect::<Result<Vec<_>>>()
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            alice_replica_store
-                .get(alice_replica.namespace(), GetFilter::all())
-                .unwrap()
-                .collect::<Result<Vec<_>>>()
-                .unwrap()
-                .len(),
-            2
-        );
-
-        Ok(())
-    }
 }
