@@ -226,7 +226,7 @@ impl DownloadService {
     /// Handle a [`Message::Start`].
     ///
     /// This will not start the download right away. Instead, if this intent maps to a request that
-    /// already exists, it will register it with it. If the request is new it will schedule it.
+    /// already exists, it will be registered with it. If the request is new it will be schedule.
     fn handle_start_download(
         &mut self,
         kind: Download,
