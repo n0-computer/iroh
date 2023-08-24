@@ -211,9 +211,13 @@ impl NodeConfig {
     }
 }
 
+/// Environment for CLI and REPL
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct ConsoleEnv {
+    /// Active author. Read from IROH_AUTHOR env variable. 
+    /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
     pub author: Option<AuthorId>,
+    /// Active doc. Read from IROH_DOC env variable. Not persisted.
     pub doc: Option<NamespaceId>,
 }
 impl ConsoleEnv {
