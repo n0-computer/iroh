@@ -167,7 +167,7 @@ impl RangeSpecSeq {
 
     /// If this range seq describes a range for a single item, returns the offset
     /// and range spec for that item
-    pub fn single(&self) -> Option<(u64, &RangeSpec)> {
+    pub fn as_single(&self) -> Option<(u64, &RangeSpec)> {
         // we got two elements,
         // the first element starts at offset 0,
         // and the second element is empty
@@ -176,7 +176,7 @@ impl RangeSpecSeq {
         }
         let (fst_ofs, fst_val) = &self.0[0];
         let (snd_ofs, snd_val) = &self.0[1];
-        if *fst_ofs == 0 && *snd_ofs == 1 && snd_val.is_empty() {
+        if *snd_ofs - *fst_ofs == 1 && snd_val.is_empty() {
             Some((*fst_ofs, fst_val))
         } else {
             None
