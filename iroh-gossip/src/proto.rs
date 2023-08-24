@@ -99,7 +99,6 @@ mod test {
 
     use rand::SeedableRng;
     use std::{collections::HashSet, env, time::Instant};
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::{Command, Config, Event, State};
     use crate::proto::{
@@ -109,17 +108,10 @@ mod test {
         },
         TopicId,
     };
-    fn setup_logging() {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-    }
 
     #[test]
     fn hyparview_smoke() {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
         // Create a network with 4 nodes and active_view_capacity 2
         let mut config = Config::default();
         config.membership.active_view_capacity = 2;
@@ -192,7 +184,7 @@ mod test {
 
     #[test]
     fn plumtree_smoke() {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
         let config = Config::default();
         let mut network = Network::new(Instant::now());
         let broadcast_ticks = 12;
@@ -250,7 +242,7 @@ mod test {
 
     #[test]
     fn big_multiple_sender() {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
         let mut gossip_config = Config::default();
         gossip_config.broadcast.optimization_threshold = (read_var("OPTIM", 7) as u16).into();
         let config = SimulatorConfig {
@@ -271,7 +263,7 @@ mod test {
 
     #[test]
     fn big_single_sender() {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
         let mut gossip_config = Config::default();
         gossip_config.broadcast.optimization_threshold = (read_var("OPTIM", 7) as u16).into();
         let config = SimulatorConfig {
@@ -292,7 +284,7 @@ mod test {
 
     #[test]
     fn quit() {
-        setup_logging();
+        let _guard = iroh_test::logging::setup();
         // Create a network with 4 nodes and active_view_capacity 2
         let mut config = Config::default();
         config.membership.active_view_capacity = 2;

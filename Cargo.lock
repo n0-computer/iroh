@@ -1831,6 +1831,7 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
+ "iroh-test",
  "multibase",
  "nix",
  "num_cpus",
@@ -1899,7 +1900,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-futures",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1918,6 +1918,7 @@ dependencies = [
  "indexmap 2.0.0",
  "iroh-metrics",
  "iroh-net",
+ "iroh-test",
  "once_cell",
  "postcard",
  "quinn",
@@ -1957,7 +1958,6 @@ dependencies = [
  "struct_iterable",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1987,6 +1987,7 @@ dependencies = [
  "hyper",
  "igd",
  "iroh-metrics",
+ "iroh-test",
  "libc",
  "netlink-packet-route",
  "ntest",
@@ -2033,6 +2034,15 @@ dependencies = [
  "wmi",
  "x509-parser",
  "zeroize",
+]
+
+[[package]]
+name = "iroh-test"
+version = "0.5.1"
+dependencies = [
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
