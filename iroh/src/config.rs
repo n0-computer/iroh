@@ -16,7 +16,7 @@ use iroh_net::{
 };
 use iroh_sync::{AuthorId, NamespaceId};
 use parking_lot::Mutex;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
@@ -191,7 +191,7 @@ impl NodeConfig {
     pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
         let sources = [Some(config_path.as_path()), additional_config_source];
-        let config = load_config(
+        let config = Self::load(
             // potential config files
             &sources,
             // env var prefix for this config
@@ -202,6 +202,55 @@ impl NodeConfig {
         )?;
         Ok(config)
     }
+
+    /// Make a config using a default, files, environment variables, and commandline flags.
+    ///
+    /// Later items in the *file_paths* slice will have a higher priority than earlier ones.
+    ///
+    /// Environment variables are expected to start with the *env_prefix*. Nested fields can be
+    /// accessed using `.`, if your environment allows env vars with `.`
+    ///
+    /// Note: For the metrics configuration env vars, it is recommended to use the metrics
+    /// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
+    /// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
+    /// only if your environment allows it
+    pub fn load<S, V>(
+        file_paths: &[Option<&Path>],
+        env_prefix: &str,
+        flag_overrides: HashMap<S, V>,
+    ) -> Result<NodeConfig>
+    where
+        S: AsRef<str>,
+        V: Into<Value>,
+    {
+        let mut builder = config::Config::builder();
+
+        // layer on config options from files
+        for path in file_paths.iter().flatten() {
+            if path.exists() {
+                let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
+                builder = builder.add_source(File::with_name(p));
+            }
+        }
+
+        // next, add any environment variables
+        builder = builder.add_source(
+            Environment::with_prefix(env_prefix)
+                .separator("__")
+                .try_parsing(true),
+        );
+
+        // finally, override any values
+        for (flag, val) in flag_overrides.into_iter() {
+            builder = builder.set_override(flag, val)?;
+        }
+
+        let cfg = builder.build()?;
+        debug!("make_config:\n{:#?}\n", cfg);
+        let cfg = cfg.try_deserialize()?;
+        Ok(cfg)
+    }
+
     /// Constructs a `DerpMap` based on the current configuration.
     pub fn derp_map(&self) -> Option<DerpMap> {
         if self.derp_regions.is_empty() {
@@ -349,55 +398,6 @@ fn env_doc() -> Result<Option<NamespaceId>> {
         )),
         Err(_) => Ok(None),
     }
-}
-
-/// Make a config using a default, files, environment variables, and commandline flags.
-///
-/// Later items in the *file_paths* slice will have a higher priority than earlier ones.
-///
-/// Environment variables are expected to start with the *env_prefix*. Nested fields can be
-/// accessed using `.`, if your environment allows env vars with `.`
-///
-/// Note: For the metrics configuration env vars, it is recommended to use the metrics
-/// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
-/// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
-/// only if your environment allows it
-pub fn load_config<C, S, V>(
-    file_paths: &[Option<&Path>],
-    env_prefix: &str,
-    flag_overrides: HashMap<S, V>,
-) -> Result<C>
-where
-    C: DeserializeOwned,
-    S: AsRef<str>,
-    V: Into<Value>,
-{
-    let mut builder = config::Config::builder();
-
-    // layer on config options from files
-    for path in file_paths.iter().flatten() {
-        if path.exists() {
-            let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
-            builder = builder.add_source(File::with_name(p));
-        }
-    }
-
-    // next, add any environment variables
-    builder = builder.add_source(
-        Environment::with_prefix(env_prefix)
-            .separator("__")
-            .try_parsing(true),
-    );
-
-    // finally, override any values
-    for (flag, val) in flag_overrides.into_iter() {
-        builder = builder.set_override(flag, val)?;
-    }
-
-    let cfg = builder.build()?;
-    debug!("make_config:\n{:#?}\n", cfg);
-    let cfg = cfg.try_deserialize()?;
-    Ok(cfg)
 }
 
 /// Name of directory that wraps all iroh files in a given application directory
