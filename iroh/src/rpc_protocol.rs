@@ -245,7 +245,6 @@ pub struct WatchResponse {
     pub version: String,
 }
 
-
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionResponse {
