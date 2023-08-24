@@ -6,10 +6,7 @@ use iroh::{
     client::quic::Iroh,
     rpc_protocol::{DocTicket, ShareMode},
 };
-use iroh_sync::{
-    store::GetFilter,
-    sync::{AuthorId, NamespaceId, SignedEntry},
-};
+use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
 use crate::config::ConsoleEnv;
 
@@ -172,7 +169,7 @@ impl DocCommands {
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
                 let entry = doc.set_bytes(author, key, value).await?;
-                println!("{}", fmt_entry(&entry));
+                println!("{}", fmt_entry(entry.entry()));
             }
             Self::Get {
                 doc_id,
@@ -197,7 +194,7 @@ impl DocCommands {
 
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(&entry));
+                    println!("{}", fmt_entry(entry.entry()));
                     if content {
                         if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
                             match doc.get_content_bytes(&entry).await {
@@ -237,7 +234,7 @@ impl DocCommands {
                 };
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(&entry));
+                    println!("{}", fmt_entry(entry.entry()));
                 }
             }
             Self::Watch { doc_id } => {
@@ -245,7 +242,26 @@ impl DocCommands {
                 let mut stream = doc.subscribe().await?;
                 while let Some(event) = stream.next().await {
                     let event = event?;
-                    println!("{event:?}");
+                    match event {
+                        iroh::sync::LiveEvent::InsertLocal { entry } => {
+                            println!("local change:  {}", fmt_entry(&entry))
+                        }
+                        iroh::sync::LiveEvent::InsertRemote {
+                            entry,
+                            from,
+                            content_status,
+                        } => {
+                            println!(
+                                "remote change: {} (via @{}, content {:?})",
+                                fmt_entry(&entry),
+                                fmt_short(from.as_bytes()),
+                                content_status
+                            )
+                        }
+                        iroh::sync::LiveEvent::ContentReady { hash } => {
+                            println!("content ready: {}", fmt_short(hash.as_bytes()))
+                        }
+                    }
                 }
             }
         }
@@ -285,17 +301,17 @@ impl AuthorCommands {
     }
 }
 
-fn fmt_entry(entry: &SignedEntry) -> String {
-    let id = entry.entry().id();
+fn fmt_entry(entry: &Entry) -> String {
+    let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let author = fmt_hash(id.author().as_bytes());
-    let hash = entry.entry().record().content_hash();
-    let hash = fmt_hash(hash.as_bytes());
-    let len = HumanBytes(entry.entry().record().content_len());
+    let author = fmt_short(id.author().as_bytes());
+    let hash = entry.record().content_hash();
+    let hash = fmt_short(hash.as_bytes());
+    let len = HumanBytes(entry.record().content_len());
     format!("@{author}: {key} = {hash} ({len})",)
 }
 
-fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
+fn fmt_short(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
     text.make_ascii_lowercase();
     format!("{}…", &text)
