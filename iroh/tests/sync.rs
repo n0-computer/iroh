@@ -9,7 +9,7 @@ use iroh::{
     collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync::LiveEvent,
+    sync_engine::LiveEvent,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};

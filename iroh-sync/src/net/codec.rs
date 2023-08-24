@@ -186,11 +186,11 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
 
 #[cfg(test)]
 mod tests {
-    use iroh_net::key::SecretKey;
-    use iroh_sync::{
+    use crate::{
         store::{GetFilter, Store as _},
         sync::Namespace,
     };
+    use iroh_net::key::SecretKey;
 
     use super::*;
 
