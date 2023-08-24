@@ -79,7 +79,7 @@ impl<S: Store> SyncEngine<S> {
     pub async fn doc_info(&self, req: DocInfoRequest) -> RpcResult<DocInfoResponse> {
         let _replica = self.get_replica(&req.doc_id)?;
         let status = self.live.status(req.doc_id).await?;
-        let status = status.unwrap_or_else(|| LiveStatus {
+        let status = status.unwrap_or(LiveStatus {
             active: false,
             subscriptions: 0,
         });

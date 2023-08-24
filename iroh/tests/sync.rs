@@ -158,7 +158,7 @@ async fn sync_subscribe_stop() -> Result<()> {
     doc.start_sync(vec![]).await?;
 
     let status = doc.status().await?;
-    assert_eq!(status.active, true);
+    assert!(status.active);
     assert_eq!(status.subscriptions, 0);
 
     let sub = doc.subscribe().await?;
