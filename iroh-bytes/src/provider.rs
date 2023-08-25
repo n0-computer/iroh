@@ -3,9 +3,9 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
@@ -14,9 +14,7 @@ use tracing_futures::Instrument;
 
 use crate::baomap::*;
 use crate::collection::CollectionParser;
-use crate::protocol::{
-    read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
-};
+use crate::protocol::{write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken};
 use crate::util::RpcError;
 use crate::Hash;
 
@@ -232,15 +230,11 @@ pub trait CustomGetHandler: Send + Sync + Debug + 'static {
 /// contains more data than the Request, or if no valid request is sent.
 ///
 /// When successful, the buffer is empty after this function call.
-pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> Result<Request> {
-    let payload = read_lp(&mut reader, buffer)
-        .await?
-        .context("No request received")?;
+pub async fn read_request(mut reader: quinn::RecvStream) -> Result<Request> {
+    let payload = reader
+        .read_to_end(crate::protocol::MAX_MESSAGE_SIZE)
+        .await?;
     let request: Request = postcard::from_bytes(&payload)?;
-    ensure!(
-        reader.read_chunk(8, false).await?.is_none(),
-        "Extra data past request"
-    );
     Ok(request)
 }
 
@@ -415,11 +409,9 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     collection_parser: C,
 ) -> Result<()> {
-    let mut in_buffer = BytesMut::with_capacity(1024);
-
     // 1. Decode the request.
     debug!("reading request");
-    let request = match read_request(reader, &mut in_buffer).await {
+    let request = match read_request(reader).await {
         Ok(r) => r,
         Err(e) => {
             writer.notify_transfer_aborted().await;

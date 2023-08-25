@@ -255,12 +255,6 @@ pub mod fsm {
                     return Err(ConnectedNextError::RequestTooBig);
                 }
 
-                // write u64 length prefix
-                writer
-                    .write_u64_le(request_bytes.len() as u64)
-                    .await
-                    .map_err(ConnectedNextError::from_io)?;
-
                 // write the request itself
                 writer
                     .write_all(&request_bytes)
