@@ -13,6 +13,7 @@ publish = true
 rust-version = "1.67"
 
 [dependencies]
-tokio = { version = "1", features = ["rt"] }
+anyhow = "1.0.75"
+tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
