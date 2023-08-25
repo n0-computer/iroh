@@ -74,7 +74,6 @@ flat-db = []
 iroh-collection = []
 test = []
 example-sync = ["cli"]
-derp-only= ["iroh-net/derp-only"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }

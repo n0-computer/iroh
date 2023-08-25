@@ -8,7 +8,6 @@ use std::{
 
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
-#[cfg(not(feature = "derp-only"))]
 use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
@@ -106,6 +105,10 @@ impl Endpoint {
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
 
+        warn!(
+            "Endpoint::new, derp addr for {:?} set to {:?}",
+            options.public_key, options.derp_addr
+        );
         Endpoint {
             id,
             conn_sender: options.msock_sender,
@@ -150,17 +153,22 @@ impl Endpoint {
         }
     }
 
-    /// Returns the address(es) that should be used for sending the next packet.
-    /// Zero, one, or both of UDP address and DERP addr may be non-zero.
-    #[cfg(feature = "derp-only")]
-    fn addr_for_send(&mut self, _now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
-        (None, self.derp_addr, false)
+    /// Returns the derp addr of this endpoint
+    pub fn derp_addr(&self) -> Option<u16> {
+        self.derp_addr
+    }
+
+    /// Adds a derp addr for this endpoint
+    pub fn add_derp_addr(&mut self, region: u16) {
+        self.derp_addr = Some(region);
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
-    #[cfg(not(feature = "derp-only"))]
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
+        if std::option_env!("DEV_DERP_ONLY").is_some() {
+            return (None, self.derp_addr, false);
+        }
         match self.best_addr {
             Some(ref best_addr) => {
                 if !self.is_best_addr_valid(*now) {
@@ -193,7 +201,6 @@ impl Endpoint {
     }
 
     /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
-    #[cfg(not(feature = "derp-only"))]
     fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
@@ -403,6 +410,11 @@ impl Endpoint {
     }
 
     async fn start_ping(&mut self, ep: SendAddr, now: Instant, purpose: DiscoPingPurpose) {
+        if std::option_env!("DEV_DERP_ONLY").is_some() {
+            // don't attempt any hole punching in derp only mode
+            return;
+        }
+
         info!("start ping to {}: {:?}", ep, purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = self.endpoint_state.get_mut(&ep) {
@@ -441,6 +453,11 @@ impl Endpoint {
     }
 
     async fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) {
+        if std::option_env!("DEV_DERP_ONLY").is_some() {
+            // don't send or respond to any hole punching pings if we are in
+            // derp only mode
+            return;
+        }
         self.last_full_ping.replace(now);
 
         // first cleanout out all old endpoints
@@ -536,6 +553,10 @@ impl Endpoint {
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
+        warn!(
+            "update_from_node changing derp addr for {:?} to {:?} from {:?}",
+            self.public_key, self.derp_addr, n.derp
+        );
         self.derp_addr = n.derp;
 
         for st in self.endpoint_state.values_mut() {
@@ -943,7 +964,7 @@ impl Endpoint {
             self.send_pings(now, true).await;
         }
 
-        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_addr);
+        warn!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_addr);
 
         Ok((udp_addr, derp_addr))
     }
@@ -1178,7 +1199,6 @@ impl EndpointState {
     }
 
     /// Returns the most recent pong if available.
-    #[cfg(not(feature = "derp-only"))]
     fn recent_pong(&self) -> Option<&PongReply> {
         self.recent_pongs.get(self.recent_pong)
     }
