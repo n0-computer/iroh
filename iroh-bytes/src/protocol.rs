@@ -652,33 +652,33 @@ mod tests {
             (
                 Request::from(GetRequest::single(hash)),
                 r"
-              00 # enum variant for GetRequest
-              20 # hash length? why?
-              dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
-              020001000100 # the RangeSpecSeq
-              00 # no token
+                    00 # enum variant for GetRequest
+                    20 # hash length? why?
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    020001000100 # the RangeSpecSeq
+                    00 # no token
             ",
             ),
             (
                 Request::from(GetRequest::all(hash)),
                 r"
-              00 # enum variant for GetRequest
-              20 # hash length? why?
-              dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
-              01000100 # the RangeSpecSeq
-              00 # no token
+                    00 # enum variant for GetRequest
+                    20 # hash length? why?
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    01000100 # the RangeSpecSeq
+                    00 # no token
             ",
             ),
             (
                 Request::from(GetRequest::all(hash).with_token(Some(token.clone()))),
                 r"
-              00 # enum variant for GetRequest
-              20 # hash length? why?
-              dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
-              01000100 # the RangeSpecSeq
-              01 # a token
-              05 # length 5
-              54 4f 4b 45 4e # token content
+                    00 # enum variant for GetRequest
+                    20 # hash length? why?
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    01000100 # the RangeSpecSeq
+                    01 # a token
+                    05 # length 5
+                    54 4f 4b 45 4e # token content
             ",
             ),
             (
@@ -687,10 +687,10 @@ mod tests {
                     data: Bytes::from(&b"hello"[..]),
                 }),
                 r"
-              01 # enum variant for CustomGetRequest
-              00 # no token
-              05 # value length 5
-              68 65 6c 6c 6f # value content 'hello'
+                    01 # enum variant for CustomGetRequest
+                    00 # no token
+                    05 # value length 5
+                    68 65 6c 6c 6f # value content 'hello'
             ",
             ),
             (
@@ -699,12 +699,12 @@ mod tests {
                     data: Bytes::from(&b"hello"[..]),
                 }),
                 r"
-              01 # enum variant for CustomGetRequest
-              01 # a token
-              05 # length 5
-              54 4f 4b 45 4e # token content
-              05 # value length 5
-              68 65 6c 6c 6f # value content 'hello'
+                    01 # enum variant for CustomGetRequest
+                    01 # a token
+                    05 # length 5
+                    54 4f 4b 45 4e # token content
+                    05 # value length 5
+                    68 65 6c 6c 6f # value content 'hello'
             ",
             ),
         ];
