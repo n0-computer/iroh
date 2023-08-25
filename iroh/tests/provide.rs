@@ -28,9 +28,13 @@ use tokio::sync::mpsc;
 
 use bao_tree::blake3;
 use iroh_bytes::{
-    baomap::Store,
+    baomap::{PartialMap, Store},
     collection::{CollectionParser, CollectionStats, LinkStream},
-    get::{fsm, fsm::ConnectedNext, Stats},
+    get::{
+        fsm::ConnectedNext,
+        fsm::{self, DecodeError},
+        Stats,
+    },
     protocol::{CustomGetRequest, GetRequest, Request, RequestToken},
     provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
@@ -455,6 +459,92 @@ async fn test_ipv6() {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::all(hash).into();
         run_get_request(opts, request).await
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
+}
+
+/// Simulate a node that has nothing
+#[tokio::test]
+async fn test_not_found() {
+    let _ = iroh_test::logging::setup();
+    let rt = test_runtime();
+
+    let db = iroh::baomap::readonly_mem::Store::default();
+    let hash = blake3::hash(b"hello").into();
+    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
+    let node = match test_node(db, addr).runtime(&rt).spawn().await {
+        Ok(provider) => provider,
+        Err(_) => {
+            // We assume the problem here is IPv6 on this host.  If the problem is
+            // not IPv6 then other tests will also fail.
+            return;
+        }
+    };
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let opts = get_options(peer_id, addrs);
+        let request = GetRequest::single(hash).into();
+        let res = run_get_request(opts, request).await;
+        if let Err(cause) = res {
+            if let Some(e) = cause.downcast_ref::<DecodeError>() {
+                if let DecodeError::NotFound = e {
+                    Ok(())
+                } else {
+                    anyhow::bail!("expected DecodeError::NotFound, got {:?}", e);
+                }
+            } else {
+                anyhow::bail!("expected DecodeError, got {:?}", cause);
+            }
+        } else {
+            anyhow::bail!("expected error when getting non-existent blob");
+        }
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
+}
+
+/// Simulate a node that has just begun downloading a blob, but does not yet have any data
+#[tokio::test]
+async fn test_chunk_not_found_1() {
+    let _ = iroh_test::logging::setup();
+    let rt = test_runtime();
+
+    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
+    let hash = blake3::hash(&data).into();
+    let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
+    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
+    let node = match test_node(db, addr).runtime(&rt).spawn().await {
+        Ok(provider) => provider,
+        Err(_) => {
+            // We assume the problem here is IPv6 on this host.  If the problem is
+            // not IPv6 then other tests will also fail.
+            return;
+        }
+    };
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let opts = get_options(peer_id, addrs);
+        let request = GetRequest::single(hash).into();
+        let res = run_get_request(opts, request).await;
+        if let Err(cause) = res {
+            if let Some(e) = cause.downcast_ref::<DecodeError>() {
+                if let DecodeError::ParentNotFound(_) = e {
+                    Ok(())
+                } else {
+                    anyhow::bail!("expected DecodeError::ParentNotFound, got {:?}", e);
+                }
+            } else {
+                anyhow::bail!("expected DecodeError, got {:?}", cause);
+            }
+        } else {
+            anyhow::bail!("expected error when getting non-existent blob");
+        }
     })
     .await
     .expect("timeout")
