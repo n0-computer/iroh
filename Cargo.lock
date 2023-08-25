@@ -2065,6 +2065,7 @@ dependencies = [
  "os_info",
  "postcard",
  "pretty_assertions",
+ "proptest",
  "quinn",
  "quinn-proto",
  "quinn-udp",
