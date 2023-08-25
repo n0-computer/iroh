@@ -1951,6 +1951,7 @@ dependencies = [
  "hex",
  "http-body",
  "iroh-io",
+ "iroh-test",
  "multibase",
  "num_cpus",
  "once_cell",
@@ -2144,6 +2145,7 @@ dependencies = [
 name = "iroh-test"
 version = "0.5.1"
 dependencies = [
+ "anyhow",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4469,6 +4471,7 @@ dependencies = [
  "libc",
  "mio",
  "num_cpus",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.5.3",
