@@ -749,7 +749,17 @@ impl Store {
                     .join(format!("{}.temp", hex::encode(uuid)));
                 // copy the data, since it is not stable
                 progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                let size = std::fs::copy(&path, &temp_data_path)?;
+                let size = if let Some(size) = reflink::reflink_or_copy(&path, &temp_data_path)? {
+                    tracing::trace!("copied {} to {}", path.display(), temp_data_path.display());
+                    size
+                } else {
+                    tracing::trace!(
+                        "reflinked {} to {}",
+                        path.display(),
+                        temp_data_path.display()
+                    );
+                    std::fs::metadata(&temp_data_path)?.len()
+                };
                 // report the size only after the copy is done
                 progress.blocking_send(ImportProgress::Size { id, size })?;
                 // compute outboard and hash from the temp file that we own
@@ -865,7 +875,13 @@ impl Store {
             tracing::info!("copying {} to {}", source.display(), target.display());
             progress(0)?;
             // todo: progress
-            std::fs::copy(&source, &target)?;
+            let size = if let Some(size) = reflink::reflink_or_copy(&source, &target)? {
+                tracing::trace!("copied {} to {}", source.display(), target.display());
+                size
+            } else {
+                tracing::trace!("reflinked {} to {}", source.display(), target.display());
+                std::fs::metadata(&target)?.len()
+            };
             progress(size)?;
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {

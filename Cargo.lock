@@ -1906,6 +1906,7 @@ dependencies = [
  "quinn",
  "rand",
  "range-collections",
+ "reflink",
  "regex",
  "rustyline",
  "serde",
@@ -3494,6 +3495,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.29",
+]
+
+[[package]]
+name = "reflink"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc585ec28b565b4c28977ce8363a6636cedc280351ba25a7915f6c9f37f68cbe"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
