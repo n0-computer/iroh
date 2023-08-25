@@ -1,16 +1,13 @@
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod commands;
 mod config;
 
-use crate::{
-    commands::{init_metrics_collection, Cli},
-    config::{iroh_config_path, Config, CONFIG_FILE_NAME, ENV_PREFIX},
-};
+use crate::commands::Cli;
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -36,28 +33,5 @@ async fn main_impl() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-
-    let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
-    let sources = [Some(config_path.as_path()), cli.cfg.as_deref()];
-    let config = Config::load(
-        // potential config files
-        &sources,
-        // env var prefix for this config
-        ENV_PREFIX,
-        // map of present command line arguments
-        // args.make_overrides_map(),
-        HashMap::<String, String>::new(),
-    )?;
-
-    #[cfg(feature = "metrics")]
-    let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
-
-    let r = cli.run(&rt, &config).await;
-
-    #[cfg(feature = "metrics")]
-    if let Some(metrics_fut) = metrics_fut {
-        metrics_fut.abort();
-        drop(metrics_fut);
-    }
-    r
+    cli.run(&rt).await
 }

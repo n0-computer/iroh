@@ -40,6 +40,7 @@ use iroh_bytes::{
     util::runtime,
     Hash,
 };
+use iroh_sync::store;
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -50,8 +51,9 @@ fn test_runtime() -> runtime::Handle {
 fn test_node<D: Store>(
     db: D,
     addr: SocketAddr,
-) -> Builder<D, DummyServerEndpoint, IrohCollectionParser> {
-    Node::builder(db)
+) -> Builder<D, store::memory::Store, DummyServerEndpoint, IrohCollectionParser> {
+    let store = iroh_sync::store::memory::Store::default();
+    Node::builder(db, store)
         .collection_parser(IrohCollectionParser)
         .bind_addr(addr)
 }
@@ -712,7 +714,8 @@ async fn test_custom_collection_parser() {
     let collection_bytes = postcard::to_allocvec(&collection).unwrap();
     let collection_hash = db.insert(collection_bytes.clone());
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = Node::builder(db)
+    let doc_store = iroh_sync::store::memory::Store::default();
+    let node = Node::builder(db, doc_store)
         .collection_parser(CollectionsAreJustLinks)
         .bind_addr(addr)
         .runtime(&rt)

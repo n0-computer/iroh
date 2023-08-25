@@ -22,12 +22,17 @@ async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new, empty in memory database
     let mut db = iroh::baomap::readonly_mem::Store::default();
+    // create an in-memory doc store (not used in the example)
+    let doc_store = iroh_sync::store::memory::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
     // add some data and remember the hash
     let hash = db.insert(b"Hello, world!");
     // create a new node
-    let node = iroh::node::Node::builder(db).runtime(&rt).spawn().await?;
+    let node = iroh::node::Node::builder(db, doc_store)
+        .runtime(&rt)
+        .spawn()
+        .await?;
     // create a ticket
     let ticket = node.ticket(hash).await?.with_recursive(false);
     // print some info about the node
