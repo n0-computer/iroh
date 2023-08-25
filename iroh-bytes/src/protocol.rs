@@ -468,14 +468,14 @@ pub struct CustomGetRequest {
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct GetRequest {
+    /// Optional Request token
+    token: Option<RequestToken>,
     /// blake3 hash
     pub hash: Hash,
     /// The range of data to request
     ///
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
-    /// Optional Request token
-    token: Option<RequestToken>,
 }
 
 impl GetRequest {
@@ -633,6 +633,82 @@ impl TryFrom<VarInt> for Closed {
             1 => Ok(Self::ProviderTerminating),
             2 => Ok(Self::RequestReceived),
             val => Err(UnknownErrorCode(val)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
+    use super::{CustomGetRequest, GetRequest, Request, RequestToken};
+
+    #[test]
+    fn request_wire_format() {
+        let hash = [0xda; 32].into();
+        let token = RequestToken::from(Bytes::from(b"TOKEN".as_slice()));
+        let cases = [
+            (
+                Request::from(GetRequest::single(hash)),
+                r"
+                    00 # enum variant for GetRequest
+                    00 # no token
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    020001000100 # the RangeSpecSeq
+            ",
+            ),
+            (
+                Request::from(GetRequest::all(hash)),
+                r"
+                    00 # enum variant for GetRequest
+                    00 # no token
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    01000100 # the RangeSpecSeq
+            ",
+            ),
+            (
+                Request::from(GetRequest::all(hash).with_token(Some(token.clone()))),
+                r"
+                    00 # enum variant for GetRequest
+                    01 # a token
+                    05 # length 5
+                    54 4f 4b 45 4e # token content
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    01000100 # the RangeSpecSeq
+            ",
+            ),
+            (
+                Request::from(CustomGetRequest {
+                    token: None,
+                    data: Bytes::from(&b"hello"[..]),
+                }),
+                r"
+                    01 # enum variant for CustomGetRequest
+                    00 # no token
+                    05 # value length 5
+                    68 65 6c 6c 6f # value content 'hello'
+            ",
+            ),
+            (
+                Request::from(CustomGetRequest {
+                    token: Some(token),
+                    data: Bytes::from(&b"hello"[..]),
+                }),
+                r"
+                    01 # enum variant for CustomGetRequest
+                    01 # a token
+                    05 # length 5
+                    54 4f 4b 45 4e # token content
+                    05 # value length 5
+                    68 65 6c 6c 6f # value content 'hello'
+            ",
+            ),
+        ];
+        for (case, expected_hex) in cases {
+            let expected = parse_hexdump(expected_hex).unwrap();
+            let bytes = postcard::to_stdvec(&case).unwrap();
+            assert_eq_hex!(bytes, expected);
         }
     }
 }

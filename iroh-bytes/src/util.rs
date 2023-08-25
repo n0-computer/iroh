@@ -262,6 +262,8 @@ impl NonSend {
 
 #[cfg(test)]
 mod tests {
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
     use super::*;
 
     use serde_test::{assert_tokens, Token};
@@ -273,6 +275,16 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn hash_wire_format() {
+        let hash = Hash::from([0xab; 32]);
+        let serialized = postcard::to_stdvec(&hash).unwrap();
+        let expected = parse_hexdump(r"
+            ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
+        ").unwrap();
+        assert_eq_hex!(serialized, expected);
     }
 
     #[test]
