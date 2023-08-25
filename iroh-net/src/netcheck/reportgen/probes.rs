@@ -66,8 +66,7 @@ pub(super) enum Probe {
         /// are for retries on UDP loss or timeout.
         delay: Duration,
 
-        /// The name of the node name. DERP node names are globally
-        /// unique so there's no region ID.
+        /// The DERP server to send this probe to.
         node: Arc<DerpNode>,
     },
     #[display("Ipv6 after {delay:?} to {node}")]
@@ -200,7 +199,6 @@ impl ProbePlan {
     /// Creates an initial probe plan.
     pub(super) fn initial(derp_map: &DerpMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
-        let mut derp_nodes_cache = DerpNodeCache::new();
 
         let mut sorted_regions: Vec<_> = derp_map.regions().map(|r| (r.region_id, r)).collect();
         sorted_regions.sort_by_key(|(id, _)| *id);
@@ -211,7 +209,6 @@ impl ProbePlan {
 
             for attempt in 0..3 {
                 let derp_node = &region.nodes[attempt % region.nodes.len()];
-                let derp_node = derp_nodes_cache.get(derp_node);
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 if if_state.have_v4 && derp_node.ipv4.is_enabled() {
@@ -239,7 +236,6 @@ impl ProbePlan {
             let mut icmp_probes = ProbeSet::new(region.region_id, ProbeProto::Icmp);
             for attempt in 0..3 {
                 let derp_node = &region.nodes[attempt % region.nodes.len()];
-                let derp_node = derp_nodes_cache.get(derp_node);
                 let start = plan.max_delay() + DEFAULT_INITIAL_RETRANSMIT;
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
@@ -275,7 +271,6 @@ impl ProbePlan {
             return Self::initial(derp_map, if_state);
         }
         let mut plan = Self(Default::default());
-        let mut derp_nodes_cache = DerpNodeCache::new();
 
         let had_stun_ipv4 = !last_report.region_v4_latency.is_empty();
         let had_stun_ipv6 = !last_report.region_v6_latency.is_empty();
@@ -326,7 +321,6 @@ impl ProbePlan {
 
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
-                let derp_node = derp_nodes_cache.get(derp_node);
                 let delay = (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
                 if do4 {
@@ -355,7 +349,6 @@ impl ProbePlan {
             let start = plan.max_delay();
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
-                let derp_node = derp_nodes_cache.get(derp_node);
                 let delay = start
                     + (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
@@ -433,35 +426,6 @@ impl FromIterator<ProbeSet> for ProbePlan {
     }
 }
 
-/// A cache to create [`DerpNode`]s on the heap and share them.
-///
-/// The probe code needs the [`DerpNode`] a lot and they need to be sent around.  It is
-/// better to allocate those on the heap and share them using pointers.
-#[derive(Debug, Default)]
-struct DerpNodeCache {
-    inner: BTreeSet<Arc<DerpNode>>,
-}
-
-impl DerpNodeCache {
-    fn new() -> Self {
-        Default::default()
-    }
-    /// Returns a [`DerpNode`] from the cache, inserting it if needed.
-    ///
-    /// This allows you to exchange a [`DerpNode`] retrieved from the [`DerpMap`] for one
-    /// from the cache.  Eventually the [`DerpMap`] should just do this directly.
-    fn get(&mut self, node: &DerpNode) -> Arc<DerpNode> {
-        match self.inner.get(node) {
-            Some(node) => node.clone(),
-            None => {
-                let node = Arc::new(node.clone());
-                self.inner.insert(node.clone());
-                node
-            }
-        }
-    }
-}
-
 /// Sorts the regions in the [`DerpMap`] from fastest to slowest.
 ///
 /// This uses the latencies from the last report to determine the order.  Regions with no
@@ -507,8 +471,8 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let derp_map = default_derp_map();
-        let derp_node_1 = Arc::new(derp_map.get_region(1).unwrap().nodes[0].clone());
-        let derp_node_2 = Arc::new(derp_map.get_region(2).unwrap().nodes[0].clone());
+        let derp_node_1 = derp_map.get_region(1).unwrap().nodes[0].clone();
+        let derp_node_2 = derp_map.get_region(2).unwrap().nodes[0].clone();
         let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
@@ -646,8 +610,8 @@ mod tests {
         for i in 0..10 {
             println!("round {}", i);
             let derp_map = default_derp_map();
-            let derp_node_1 = Arc::new(derp_map.get_region(1).unwrap().nodes[0].clone());
-            let derp_node_2 = Arc::new(derp_map.get_region(2).unwrap().nodes[0].clone());
+            let derp_node_1 = derp_map.get_region(1).unwrap().nodes[0].clone();
+            let derp_node_2 = derp_map.get_region(2).unwrap().nodes[0].clone();
             let if_state = interfaces::State::fake();
             let mut latencies = RegionLatencies::new();
             latencies.update_region(1, Duration::from_millis(2));
