@@ -41,6 +41,7 @@ tracing-futures = "0.2.5"
 
 [dev-dependencies]
 http-body = "0.4.5"
+iroh-test = { path = "../iroh-test" }
 proptest = "1.0.0"
 tokio = { version = "1", features = ["macros", "test-util"] }
 
