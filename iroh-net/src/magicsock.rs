@@ -9,8 +9,9 @@
 //! to ensure that we can rely on the relay to send packets when two peers
 //! are unable to find direct UDP connections to each other.
 //!
-//! It does not prevent attempts at hole punching, nor does it prevent
-//! reading packets off of the UDP socket.
+//! This also prevent this node from attempting to hole punch and prevents it
+//! from responding to any hole punching attemtps. This node will still,
+//! however, read any packets that come off the UDP sockets.
 //!
 //! Based on tailscale/wgengine/magicsock
 
