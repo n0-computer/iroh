@@ -468,14 +468,14 @@ pub struct CustomGetRequest {
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct GetRequest {
+    /// Optional Request token
+    token: Option<RequestToken>,
     /// blake3 hash
     pub hash: Hash,
     /// The range of data to request
     ///
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
-    /// Optional Request token
-    token: Option<RequestToken>,
 }
 
 impl GetRequest {
@@ -653,29 +653,29 @@ mod tests {
                 Request::from(GetRequest::single(hash)),
                 r"
                     00 # enum variant for GetRequest
+                    00 # no token
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     020001000100 # the RangeSpecSeq
-                    00 # no token
             ",
             ),
             (
                 Request::from(GetRequest::all(hash)),
                 r"
                     00 # enum variant for GetRequest
+                    00 # no token
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
-                    00 # no token
             ",
             ),
             (
                 Request::from(GetRequest::all(hash).with_token(Some(token.clone()))),
                 r"
                     00 # enum variant for GetRequest
-                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
-                    01000100 # the RangeSpecSeq
                     01 # a token
                     05 # length 5
                     54 4f 4b 45 4e # token content
+                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
+                    01000100 # the RangeSpecSeq
             ",
             ),
             (
