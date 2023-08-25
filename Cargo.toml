@@ -8,6 +8,7 @@ members = [
   "iroh-sync",
   "iroh-test",
 ]
+resolver = "2"
 
 [profile.release]
 debug = true
