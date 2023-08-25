@@ -541,8 +541,8 @@ async fn run_custom_get_request<C: CollectionParser>(
     // we assume that the request includes the entire collection
     let (mut next, root, mut c) = {
         let ConnectedNext::StartRoot(sc) = connected.next().await? else {
-                panic!("request did not include collection");
-            };
+            panic!("request did not include collection");
+        };
         println!("getting collection");
         let (done, data) = sc.next().concatenate_into_vec().await?;
         let mut data = Bytes::from(data);
@@ -716,7 +716,9 @@ async fn test_custom_request_blob() {
         let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
-        let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
+        let ConnectedNext::StartRoot(start) = connected.next().await? else {
+            panic!()
+        };
         let header = start.next();
         let (_, actual) = header.concatenate_into_vec().await?;
         assert_eq!(actual, expected);

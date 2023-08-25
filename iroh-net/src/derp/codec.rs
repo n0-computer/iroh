@@ -437,6 +437,11 @@ impl Frame {
                     "invalid recv packet frame length: {}",
                     content.len()
                 );
+                let packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                ensure!(
+                    packet_len <= MAX_PACKET_SIZE,
+                    "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
+                );
                 let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
                 let content = content.slice(PUBLIC_KEY_LENGTH..);
                 Self::RecvPacket { src_key, content }
@@ -677,6 +682,7 @@ mod tests {
     }
 }
 
+/// these test are slow in debug mode, so only run them in release mode
 #[cfg(test)]
 #[cfg(not(debug_assertions))]
 mod proptests {
@@ -752,15 +758,59 @@ mod proptests {
         ]
     }
 
+    fn inject_error(buf: &mut BytesMut) {
+        fn is_fixed_size(tpe: FrameType) -> bool {
+            match tpe {
+                FrameType::ServerKey
+                | FrameType::KeepAlive
+                | FrameType::NotePreferred
+                | FrameType::WatchConns
+                | FrameType::Ping
+                | FrameType::Pong
+                | FrameType::Restarting
+                | FrameType::PeerGone
+                | FrameType::PeerPresent
+                | FrameType::ClosePeer => true,
+                FrameType::ClientInfo
+                | FrameType::ServerInfo
+                | FrameType::Health
+                | FrameType::ForwardPacket
+                | FrameType::SendPacket
+                | FrameType::RecvPacket
+                | FrameType::Unknown => false,
+            }
+        }
+        let tpe: FrameType = buf[0].into();
+        let mut len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize;
+        if is_fixed_size(tpe) {
+            buf.put_u8(0);
+            len += 1;
+        } else {
+            buf.resize(MAX_FRAME_SIZE + 1, 0);
+            len = MAX_FRAME_SIZE + 1;
+        }
+        buf[1..5].copy_from_slice(&u32::to_be_bytes(len as u32));
+    }
+
     proptest! {
 
-        /// this test is slow in debug mode, so only run it in release mode
+        // Test that we can roundtrip a frame to bytes
         #[test]
         fn frame_roundtrip(frame in frame()) {
             let mut buf = BytesMut::new();
             DerpCodec.encode(frame.clone(), &mut buf).unwrap();
             let decoded = DerpCodec.decode(&mut buf).unwrap().unwrap();
             prop_assert_eq!(frame, decoded);
+        }
+
+        // Test that typical invalid frames will result in an error
+        #[test]
+        fn broken_frame_handling(frame in frame()) {
+            let mut buf = BytesMut::new();
+            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
+            inject_error(&mut buf);
+            let decoded = DerpCodec.decode(&mut buf);
+            prop_assert!(decoded.is_err());
         }
     }
 }
