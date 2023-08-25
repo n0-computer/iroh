@@ -282,7 +282,6 @@ mod tests {
         let hash = Hash::from([0xab; 32]);
         let serialized = postcard::to_stdvec(&hash).unwrap();
         let expected = parse_hexdump(r"
-            20 # length prefix
             ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
         ").unwrap();
         assert_eq_hex!(serialized, expected);

@@ -653,7 +653,6 @@ mod tests {
                 Request::from(GetRequest::single(hash)),
                 r"
                     00 # enum variant for GetRequest
-                    20 # hash length? why?
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     020001000100 # the RangeSpecSeq
                     00 # no token
@@ -663,7 +662,6 @@ mod tests {
                 Request::from(GetRequest::all(hash)),
                 r"
                     00 # enum variant for GetRequest
-                    20 # hash length? why?
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
                     00 # no token
@@ -673,7 +671,6 @@ mod tests {
                 Request::from(GetRequest::all(hash).with_token(Some(token.clone()))),
                 r"
                     00 # enum variant for GetRequest
-                    20 # hash length? why?
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
                     01 # a token
