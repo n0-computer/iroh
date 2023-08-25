@@ -935,7 +935,7 @@ dependencies = [
  "netlink-sys",
  "once_cell",
  "system-configuration",
- "windows",
+ "windows 0.48.0",
 ]
 
 [[package]]
@@ -1727,7 +1727,7 @@ dependencies = [
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows",
+ "windows 0.48.0",
 ]
 
 [[package]]
@@ -1848,6 +1848,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ioctl-sys"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bd11f3a29434026f5ff98c730b668ba74b1033637b8817940b54d040696133c"
+
+[[package]]
 name = "ipconfig"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1906,7 +1912,7 @@ dependencies = [
  "quinn",
  "rand",
  "range-collections",
- "reflink",
+ "reflink-copy",
  "regex",
  "rustyline",
  "serde",
@@ -3498,13 +3504,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "reflink"
-version = "0.1.3"
+name = "reflink-copy"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc585ec28b565b4c28977ce8363a6636cedc280351ba25a7915f6c9f37f68cbe"
+checksum = "84b9fdc4b74744920661b70bc8daa091791c1f6940d7f9a90338754532237c29"
 dependencies = [
+ "cfg-if",
+ "ioctl-sys",
  "libc",
- "winapi",
+ "windows 0.51.1",
 ]
 
 [[package]]
@@ -5065,6 +5073,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.51.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca229916c5ee38c2f2bc1e9d8f04df975b4bd93f9955dc69fabb5d91270045c9"
+dependencies = [
+ "windows-core",
+ "windows-targets 0.48.5",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.51.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1f8cf84f35d2db49a46868f947758c7a1138116f7fac3bc844f43ade1292e64"
+dependencies = [
+ "windows-targets 0.48.5",
+]
+
+[[package]]
 name = "windows-implement"
 version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5248,7 +5275,7 @@ dependencies = [
  "log",
  "serde",
  "thiserror",
- "windows",
+ "windows 0.48.0",
 ]
 
 [[package]]

@@ -749,7 +749,9 @@ impl Store {
                     .join(format!("{}.temp", hex::encode(uuid)));
                 // copy the data, since it is not stable
                 progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                let size = if let Some(size) = reflink::reflink_or_copy(&path, &temp_data_path)? {
+                let size = if let Some(size) =
+                    reflink_copy::reflink_or_copy(&path, &temp_data_path)?
+                {
                     tracing::trace!("copied {} to {}", path.display(), temp_data_path.display());
                     size
                 } else {
@@ -875,7 +877,7 @@ impl Store {
             tracing::info!("copying {} to {}", source.display(), target.display());
             progress(0)?;
             // todo: progress
-            let size = if let Some(size) = reflink::reflink_or_copy(&source, &target)? {
+            let size = if let Some(size) = reflink_copy::reflink_or_copy(&source, &target)? {
                 tracing::trace!("copied {} to {}", source.display(), target.display());
                 size
             } else {
