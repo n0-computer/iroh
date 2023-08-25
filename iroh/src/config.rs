@@ -5,23 +5,35 @@ use std::{
     env, fmt,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use config::{Environment, File, Value};
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},
 };
+use iroh_sync::{AuthorId, NamespaceId};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
+
 /// ENV_PREFIX should be used along side the config field name to set a config field using
 /// environment variables
 /// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
 pub const ENV_PREFIX: &str = "IROH";
+
+const ENV_AUTHOR: &str = "AUTHOR";
+const ENV_DOC: &str = "DOC";
+
+/// Fetches the environment variable `IROH_<key>` from the current process.
+pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
+    env::var(format!("{ENV_PREFIX}_{key}"))
+}
 
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -32,13 +44,20 @@ pub enum IrohPaths {
     BaoFlatStoreComplete,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
     BaoFlatStorePartial,
+    /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
+    DocsDatabase,
+    /// Path to the console state
+    Console,
 }
+
 impl From<&IrohPaths> for &'static str {
     fn from(value: &IrohPaths) -> Self {
         match value {
             IrohPaths::SecretKey => "keypair",
             IrohPaths::BaoFlatStoreComplete => "blobs.v0",
             IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
+            IrohPaths::DocsDatabase => "docs.redb",
+            IrohPaths::Console => "console",
         }
     }
 }
@@ -49,6 +68,8 @@ impl FromStr for IrohPaths {
             "keypair" => Self::SecretKey,
             "blobs.v0" => Self::BaoFlatStoreComplete,
             "blobs-partial.v0" => Self::BaoFlatStorePartial,
+            "docs.redb" => Self::DocsDatabase,
+            "console" => Self::Console,
             _ => bail!("unknown file or directory"),
         })
     }
@@ -82,15 +103,79 @@ impl IrohPaths {
     }
 }
 
-/// The configuration for the iroh cli.
+#[derive(Debug, Clone, Copy)]
+pub enum ConsolePaths {
+    DefaultAuthor,
+    History,
+}
+
+impl From<&ConsolePaths> for &'static str {
+    fn from(value: &ConsolePaths) -> Self {
+        match value {
+            ConsolePaths::DefaultAuthor => "default_author.pubkey",
+            ConsolePaths::History => "history",
+        }
+    }
+}
+impl FromStr for ConsolePaths {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s {
+            "default_author.pubkey" => Self::DefaultAuthor,
+            "history" => Self::History,
+            _ => bail!("unknown file or directory"),
+        })
+    }
+}
+
+impl fmt::Display for ConsolePaths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = self.into();
+        write!(f, "{s}")
+    }
+}
+impl AsRef<Path> for ConsolePaths {
+    fn as_ref(&self) -> &Path {
+        let s: &str = self.into();
+        Path::new(s)
+    }
+}
+
+impl ConsolePaths {
+    pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
+        PathBuf::from(root.as_ref()).join(self)
+    }
+    pub fn with_env(self) -> Result<PathBuf> {
+        Self::ensure_env_dir()?;
+        Ok(self.with_root(IrohPaths::Console.with_env()?))
+    }
+    pub fn ensure_env_dir() -> Result<()> {
+        let p = IrohPaths::Console.with_env()?;
+        match std::fs::metadata(&p) {
+            Ok(meta) => match meta.is_dir() {
+                true => Ok(()),
+                false => Err(anyhow!(format!(
+                    "Expected directory but found file at `{}`",
+                    p.to_string_lossy()
+                ))),
+            },
+            Err(_) => {
+                std::fs::create_dir_all(&p)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+/// The configuration for an iroh node.
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
-pub struct Config {
+pub struct NodeConfig {
     /// The regions for DERP to use.
     pub derp_regions: Vec<DerpRegion>,
 }
 
-impl Default for Config {
+impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             // TODO(ramfox): this should probably just be a derp map
@@ -99,7 +184,25 @@ impl Default for Config {
     }
 }
 
-impl Config {
+impl NodeConfig {
+    /// Make a config from the default environment variables.
+    ///
+    /// Optionally provide an additional configuration source.
+    pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
+        let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
+        let sources = [Some(config_path.as_path()), additional_config_source];
+        let config = Self::load(
+            // potential config files
+            &sources,
+            // env var prefix for this config
+            ENV_PREFIX,
+            // map of present command line arguments
+            // args.make_overrides_map(),
+            HashMap::<String, String>::new(),
+        )?;
+        Ok(config)
+    }
+
     /// Make a config using a default, files, environment variables, and commandline flags.
     ///
     /// Later items in the *file_paths* slice will have a higher priority than earlier ones.
@@ -115,7 +218,7 @@ impl Config {
         file_paths: &[Option<&Path>],
         env_prefix: &str,
         flag_overrides: HashMap<S, V>,
-    ) -> Result<Config>
+    ) -> Result<NodeConfig>
     where
         S: AsRef<str>,
         V: Into<Value>,
@@ -154,6 +257,144 @@ impl Config {
             return Ok(None);
         }
         Some(DerpMap::from_regions(self.derp_regions.iter().cloned())).transpose()
+    }
+}
+
+/// Environment for CLI and REPL
+///
+/// This is cheaply cloneable and has interior mutability. If not running in the console
+/// environment, [Self::set_doc] and [Self::set_author] will lead to an error, as changing the
+/// environment is only supported within the console.
+#[derive(Clone, Debug)]
+pub struct ConsoleEnv(Arc<RwLock<ConsoleEnvInner>>);
+
+#[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
+struct ConsoleEnvInner {
+    /// Active author. Read from IROH_AUTHOR env variable.
+    /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
+    author: Option<AuthorId>,
+    /// Active doc. Read from IROH_DOC env variable. Not persisted.
+    doc: Option<NamespaceId>,
+    is_console: bool,
+}
+impl ConsoleEnv {
+    /// Read from environment variables and the console config file.
+    pub fn for_console() -> Result<Self> {
+        let author = match env_author()? {
+            Some(author) => Some(author),
+            None => Self::get_console_default_author()?,
+        };
+        let env = ConsoleEnvInner {
+            author,
+            doc: env_doc()?,
+            is_console: true,
+        };
+        Ok(Self(Arc::new(RwLock::new(env))))
+    }
+
+    /// Read only from environment variables.
+    pub fn for_cli() -> Result<Self> {
+        let env = ConsoleEnvInner {
+            author: env_author()?,
+            doc: env_doc()?,
+            is_console: false,
+        };
+        Ok(Self(Arc::new(RwLock::new(env))))
+    }
+
+    fn get_console_default_author() -> anyhow::Result<Option<AuthorId>> {
+        let author_path = ConsolePaths::DefaultAuthor.with_env()?;
+        if let Ok(s) = std::fs::read(&author_path) {
+            let author = String::from_utf8(s)
+                .map_err(Into::into)
+                .and_then(|s| AuthorId::from_str(&s))
+                .with_context(|| {
+                    format!(
+                        "Failed to parse author file at {}",
+                        author_path.to_string_lossy()
+                    )
+                })?;
+            Ok(Some(author))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// True if running in a Iroh console session, false for a CLI command
+    pub fn is_console(&self) -> bool {
+        self.0.read().is_console
+    }
+
+    /// Set the active author.
+    ///
+    /// Will error if not running in the Iroh console.
+    /// Will persist to a file in the Iroh data dir otherwise.
+    pub fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
+        let mut inner = self.0.write();
+        if !inner.is_console {
+            bail!("Switching the author is only supported within the Iroh console, not on the command line");
+        }
+        inner.author = Some(author);
+        std::fs::write(
+            ConsolePaths::DefaultAuthor.with_env()?,
+            author.to_string().as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    /// Set the active document.
+    ///
+    /// Will error if not running in the Iroh console.
+    /// Will not persist, only valid for the current console session.
+    pub fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
+        let mut inner = self.0.write();
+        if !inner.is_console {
+            bail!("Switching the document is only supported within the Iroh console, not on the command line");
+        }
+        inner.doc = Some(doc);
+        Ok(())
+    }
+
+    /// Get the active document.
+    pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
+        let inner = self.0.read();
+        let doc_id = arg.or(inner.doc).ok_or_else(|| {
+            anyhow!(
+                "Missing document id. Set the active document with the `IROH_DOC` environment variable or the `-d` option.\n\
+                In the console, you can also set the active document with `doc switch`."
+            )
+        })?;
+        Ok(doc_id)
+    }
+
+    /// Get the active author.
+    pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
+        let inner = self.0.read();
+        let author_id = arg.or(inner.author).ok_or_else(|| {
+            anyhow!(
+                "Missing author id. Set the active author with the `IROH_AUTHOR` environment variable or the `-a` option.\n\
+                In the console, you can also set the active author with `author switch`."
+            )
+        })?;
+        Ok(author_id)
+    }
+}
+
+fn env_author() -> Result<Option<AuthorId>> {
+    match env_var(ENV_AUTHOR) {
+        Ok(s) => Ok(Some(
+            AuthorId::from_str(&s).context("Failed to parse IROH_AUTHOR environment variable")?,
+        )),
+        Err(_) => Ok(None),
+    }
+}
+
+fn env_doc() -> Result<Option<NamespaceId>> {
+    match env_var(ENV_DOC) {
+        Ok(s) => Ok(Some(
+            NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
+        )),
+        Err(_) => Ok(None),
     }
 }
 
@@ -249,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_default_settings() {
-        let config = Config::load::<String, String>(&[][..], "__FOO", Default::default()).unwrap();
+        let config = NodeConfig::load(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
 
         assert_eq!(config.derp_regions.len(), 2);
     }
@@ -257,9 +498,11 @@ mod tests {
     #[test]
     fn test_iroh_paths_parse_roundtrip() {
         let kinds = [
+            IrohPaths::SecretKey,
             IrohPaths::BaoFlatStoreComplete,
             IrohPaths::BaoFlatStorePartial,
-            IrohPaths::SecretKey,
+            IrohPaths::DocsDatabase,
+            IrohPaths::Console,
         ];
         for iroh_path in &kinds {
             let root = PathBuf::from("/tmp");

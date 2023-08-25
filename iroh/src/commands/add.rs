@@ -7,13 +7,10 @@ use std::{
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::rpc_protocol::ProvideRequest;
+use iroh::{client::quic::RpcClient, rpc_protocol::ProvideRequest};
 use iroh_bytes::{provider::ProvideProgress, Hash};
 
-use crate::commands::make_rpc_client;
-
-pub async fn run(path: PathBuf, in_place: bool, rpc_port: u16) -> Result<()> {
-    let client = make_rpc_client(rpc_port).await?;
+pub async fn run(client: RpcClient, path: PathBuf, in_place: bool) -> Result<()> {
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
     let stream = client

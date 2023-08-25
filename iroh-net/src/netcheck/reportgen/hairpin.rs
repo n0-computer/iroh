@@ -239,9 +239,10 @@ mod tests {
         let dummy_netcheck = tokio::spawn(
             async move {
                 let netcheck::Message::InFlightStun(inflight, resp_tx) =
-            netcheck_rx.recv().await.unwrap() else {
-                panic!("Wrong message received");
-            };
+                    netcheck_rx.recv().await.unwrap()
+                else {
+                    panic!("Wrong message received");
+                };
                 resp_tx.send(()).unwrap();
 
                 let mut buf = BytesMut::zeroed(64 << 10);

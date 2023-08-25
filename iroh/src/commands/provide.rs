@@ -9,12 +9,14 @@ use std::{
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     baomap::flat,
+    client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{baomap::Store, protocol::RequestToken, util::runtime};
+use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, key::SecretKey};
+use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
@@ -23,7 +25,7 @@ use crate::config::IrohPaths;
 
 use super::{
     add::{aggregate_add_response, print_add_response},
-    MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS, RPC_ALPN,
+    MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
 };
 
 #[derive(Debug)]
@@ -57,8 +59,9 @@ pub async fn run(
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let key = Some(IrohPaths::SecretKey.with_env()?);
+    let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
-    let provider = provide(db.clone(), rt, key, opts).await?;
+    let provider = provide(db.clone(), store, rt, key, opts).await?;
     let controller = provider.controller();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -125,15 +128,16 @@ pub async fn run(
     Ok(())
 }
 
-async fn provide<D: Store>(
-    db: D,
+async fn provide<B: BaoStore, D: DocStore>(
+    bao_store: B,
+    doc_store: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
-) -> Result<Node<D>> {
+) -> Result<Node<B, D>> {
     let secret_key = get_secret_key(key).await?;
 
-    let mut builder = Node::builder(db)
+    let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);

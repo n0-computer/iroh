@@ -41,9 +41,12 @@ async fn main() -> anyhow::Result<()> {
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
 
+    // create an in-memory doc store for iroh sync (not used here)
+    let doc_store = iroh_sync::store::memory::Store::default();
+
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
-    let node = iroh::node::Node::builder(db)
+    let node = iroh::node::Node::builder(db, doc_store)
         .collection_parser(IrohCollectionParser)
         .runtime(&rt)
         .spawn()
