@@ -25,18 +25,18 @@ use iroh_net::{
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
 use tokio::sync::mpsc;
-use tracing_subscriber::{prelude::*, EnvFilter};
 
 use bao_tree::blake3;
 use iroh_bytes::{
     baomap::Store,
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{fsm, fsm::ConnectedNext, Stats},
-    protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
+    protocol::{CustomGetRequest, GetRequest, Request, RequestToken},
     provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
 };
+use iroh_sync::store;
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -47,15 +47,16 @@ fn test_runtime() -> runtime::Handle {
 fn test_node<D: Store>(
     db: D,
     addr: SocketAddr,
-) -> Builder<D, DummyServerEndpoint, IrohCollectionParser> {
-    Node::builder(db)
+) -> Builder<D, store::memory::Store, DummyServerEndpoint, IrohCollectionParser> {
+    let store = iroh_sync::store::memory::Store::default();
+    Node::builder(db, store)
         .collection_parser(IrohCollectionParser)
         .bind_addr(addr)
 }
 
 #[tokio::test]
 async fn basics() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
     transfer_data(
         vec![("hello_world", "hello world!".as_bytes().to_vec())],
@@ -66,7 +67,7 @@ async fn basics() -> Result<()> {
 
 #[tokio::test]
 async fn multi_file() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
 
     let file_opts = vec![
@@ -81,7 +82,7 @@ async fn multi_file() -> Result<()> {
 
 #[tokio::test]
 async fn many_files() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
     let num_files = [10, 100];
     for num in num_files {
@@ -100,7 +101,7 @@ async fn many_files() -> Result<()> {
 
 #[tokio::test]
 async fn sizes() -> Result<()> {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
 
     let sizes = [
@@ -349,20 +350,12 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
 }
 
-fn setup_logging() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .ok();
-}
-
 #[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let mut db = iroh::baomap::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::new(
@@ -443,7 +436,7 @@ fn create_test_db(
 
 #[tokio::test]
 async fn test_ipv6() {
-    setup_logging();
+    let _guard = iroh_test::logging::setup();
     let rt = test_runtime();
 
     let (db, hash) = create_test_db([("test", b"hello")]);
@@ -521,7 +514,7 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
 /// Run a get request with the default collection parser
 async fn run_get_request(
     opts: iroh::dial::Options,
-    request: AnyGetRequest,
+    request: Request,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
     run_custom_get_request(opts, request, IrohCollectionParser).await
 }
@@ -529,7 +522,7 @@ async fn run_get_request(
 /// Run a get request with a custom collection parser
 async fn run_custom_get_request<C: CollectionParser>(
     opts: iroh::dial::Options,
-    request: AnyGetRequest,
+    request: Request,
     collection_parser: C,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
     let connection = iroh::dial::dial(opts).await?;
@@ -631,7 +624,8 @@ async fn test_custom_collection_parser() {
     let collection_bytes = postcard::to_allocvec(&collection).unwrap();
     let collection_hash = db.insert(collection_bytes.clone());
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = Node::builder(db)
+    let doc_store = iroh_sync::store::memory::Store::default();
+    let node = Node::builder(db, doc_store)
         .collection_parser(CollectionsAreJustLinks)
         .bind_addr(addr)
         .runtime(&rt)
@@ -709,7 +703,7 @@ async fn test_custom_request_blob() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
+        let request = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         });
@@ -745,7 +739,7 @@ async fn test_custom_request_collection() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = CustomGetRequest {
+        let request = CustomGetRequest {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         }

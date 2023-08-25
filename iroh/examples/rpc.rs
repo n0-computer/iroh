@@ -47,7 +47,8 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
 
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
-    let node = iroh::node::Node::builder(db)
+    let doc_store = iroh_sync::store::memory::Store::default();
+    let node = iroh::node::Node::builder(db, doc_store)
         .secret_key(secret_key)
         .collection_parser(IrohCollectionParser)
         .runtime(&rt)

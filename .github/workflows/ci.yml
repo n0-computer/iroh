@@ -245,6 +245,9 @@ jobs:
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
+      # cross tests are currently broken vor armv7 and aarch64
+      # see https://github.com/cross-rs/cross/issues/1311
+      if: matrix.target == 'i686-unknown-linux-gnu'
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
 
   check_fmt_and_docs:
