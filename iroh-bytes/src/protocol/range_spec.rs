@@ -360,6 +360,7 @@ mod tests {
 
     use super::*;
     use bao_tree::ChunkNum;
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
     use proptest::prelude::*;
     use range_collections::RangeSet2;
 
@@ -400,6 +401,116 @@ mod tests {
         case.iter()
             .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
             .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn range_spec_wire_format() {
+        // a list of commented hex dumps and the corresponding range spec
+        let cases = [
+            (RangeSpec::EMPTY, "00"),
+            (
+                RangeSpec::all(),
+                r"
+                    01 # length prefix - 1 element
+                    00 # span width - 0. everything stating from 0 is included
+                ",
+            ),
+            (
+                RangeSpec::new(RangeSet2::from(ChunkNum(64)..)),
+                r"
+                    01 # length prefix - 1 element
+                    40 # span width - 64. everything starting from 64 is included
+                ",
+            ),
+            (
+                RangeSpec::new(RangeSet2::from(ChunkNum(10000)..)),
+                r"
+                    01 # length prefix - 1 element
+                    904E # span width - 10000, 904E in postcard varint encoding. everything starting from 10000 is included
+                ",
+            ),
+            (
+                RangeSpec::new(RangeSet2::from(..ChunkNum(64))),
+                r"
+                    02 # length prefix - 2 elements
+                    00 # span width - 0. everything stating from 0 is included
+                    40 # span width - 64. everything starting from 64 is excluded
+                ",
+            ),
+            (
+                RangeSpec::new(
+                    &RangeSet2::from(ChunkNum(1)..ChunkNum(3))
+                        | &RangeSet2::from(ChunkNum(9)..ChunkNum(13)),
+                ),
+                r"
+                    04 # length prefix - 4 elements
+                    01 # span width - 1
+                    02 # span width - 2 (3 - 1)
+                    06 # span width - 6 (9 - 3)
+                    04 # span width - 4 (13 - 9)
+                ",
+            ),
+        ];
+        for (case, expected_hex) in cases {
+            let expected = parse_hexdump(expected_hex).unwrap();
+            assert_eq_hex!(expected, postcard::to_stdvec(&case).unwrap());
+        }
+    }
+
+    #[test]
+    fn range_spec_seq_wire_format() {
+        let cases = [
+            (RangeSpecSeq::empty(), "00"),
+            (
+                RangeSpecSeq::all(),
+                r"
+                    01 # 1 tuple in total
+                    # first tuple
+                    00 # span 0 until start
+                    0100 # 1 element, RangeSpec::all()
+            ",
+            ),
+            (
+                RangeSpecSeq::from_ranges([
+                    RangeSet2::from(ChunkNum(1)..ChunkNum(3)),
+                    RangeSet2::from(ChunkNum(7)..ChunkNum(13)),
+                ]),
+                r"
+                    03 # 3 tuples in total
+                    # first tuple
+                    00 # span 0 until start
+                    020102 # range 1..3
+                    # second tuple
+                    01 # span 1 until next
+                    020706 # range 7..13
+                    # third tuple
+                    01 # span 1 until next
+                    00 # empty range forever from now
+                ",
+            ),
+            (
+                RangeSpecSeq::from_ranges_infinite([
+                    RangeSet2::empty(),
+                    RangeSet2::empty(),
+                    RangeSet2::empty(),
+                    RangeSet2::from(ChunkNum(7)..),
+                    RangeSet2::all(),
+                ]),
+                r"
+                    02 # 2 tuples in total
+                    # first tuple
+                    03 # span 3 until start (first 3 elements are empty)
+                    01 07 # range 7..
+                    # second tuple
+                    01 # span 1 until next (1 element is 7..)
+                    01 00 # RangeSet2::all() forever from now
+                ",
+            ),
+        ];
+        for (case, expected_hex) in cases {
+            let expected = parse_hexdump(expected_hex).unwrap();
+            assert_eq_hex!(expected, postcard::to_stdvec(&case).unwrap());
+        }
     }
 
     /// Test that the roundtrip from [`Vec<RangeSet2>`] via [`RangeSpec`] to [`RangeSpecSeq`]  and back works.
