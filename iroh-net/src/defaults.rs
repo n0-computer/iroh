@@ -42,7 +42,7 @@ pub fn default_na_derp_region() -> DerpRegion {
     };
     DerpRegion {
         region_id: NA_REGION_ID,
-        nodes: vec![default_n0_derp],
+        nodes: vec![default_n0_derp.into()],
         avoid: false,
         region_code: "default-1".into(),
     }
@@ -63,7 +63,7 @@ pub fn default_eu_derp_region() -> DerpRegion {
     };
     DerpRegion {
         region_id: EU_REGION_ID,
-        nodes: vec![default_n0_derp],
+        nodes: vec![default_n0_derp.into()],
         avoid: false,
         region_code: "default-2".into(),
     }

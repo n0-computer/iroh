@@ -56,7 +56,8 @@ pub(crate) async fn run_derp_and_stun(
             ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
             ipv6: UseIpv6::Disabled,
             stun_test_ip: Some(stun_addr.ip()),
-        }],
+        }
+        .into()],
         avoid: false,
     }]
     .into();

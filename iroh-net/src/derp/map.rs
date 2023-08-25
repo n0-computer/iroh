@@ -48,6 +48,15 @@ impl DerpMap {
         Arc::get_mut(&mut self.regions).and_then(|r| r.get_mut(&region_id))
     }
 
+    #[cfg(test)]
+    pub fn get_node_mut(&mut self, region_id: u16, node_idx: usize) -> Option<&mut DerpNode> {
+        Arc::get_mut(&mut self.regions)
+            .and_then(|regions| regions.get_mut(&region_id))
+            .map(|region| region.nodes.as_mut_slice())
+            .and_then(|slice| slice.get_mut(node_idx))
+            .map(Arc::make_mut)
+    }
+
     /// How many regions are known?
     pub fn len(&self) -> usize {
         self.regions.len()
@@ -83,7 +92,8 @@ impl DerpMap {
                     ipv4: derp_ipv4,
                     ipv6: derp_ipv6,
                     stun_test_ip: None,
-                }],
+                }
+                .into()],
                 avoid: false,
                 region_code: "default".into(),
             },
@@ -95,7 +105,7 @@ impl DerpMap {
     }
 
     /// Returns the [`DerpNode`] by name.
-    pub fn find_by_name(&self, node_name: &str) -> Option<&DerpNode> {
+    pub fn find_by_name(&self, node_name: &str) -> Option<&Arc<DerpNode>> {
         self.regions
             .values()
             .flat_map(|r| r.nodes.iter())
@@ -137,7 +147,7 @@ pub struct DerpRegion {
     /// A unique integer for a geographic region
     pub region_id: u16,
     /// A list of [`DerpNode`]s in this region
-    pub nodes: Vec<DerpNode>,
+    pub nodes: Vec<Arc<DerpNode>>,
     /// Whether or not to avoid this region
     pub avoid: bool,
     /// The region-specific string identifier
