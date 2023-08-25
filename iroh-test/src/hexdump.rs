@@ -7,7 +7,7 @@ pub fn parse_hexdump(s: &str) -> Result<Vec<u8>> {
     let mut result = Vec::new();
 
     for (line_number, line) in s.lines().enumerate() {
-        let data_part = line.splitn(2, '#').next().unwrap_or("");
+        let data_part = line.split('#').next().unwrap_or("");
         let cleaned: String = data_part.chars().filter(|c| !c.is_whitespace()).collect();
 
         ensure!(
@@ -37,7 +37,7 @@ pub fn print_hexdump(bytes: impl AsRef<[u8]>, line_lengths: impl AsRef<[usize]>)
         .filter(|x| **x != 0)
         .copied()
         .unwrap_or(16);
-    let mut line_lengths_iter = line_lengths.into_iter();
+    let mut line_lengths_iter = line_lengths.iter();
     let mut output = String::new();
 
     loop {
@@ -119,35 +119,35 @@ mod tests {
     #[test]
     fn test_basic_hexdump() {
         let data: &[u8] = &[0x1, 0x2, 0x3, 0x4, 0x5];
-        let output = print_hexdump(data, &[1, 2]);
+        let output = print_hexdump(data, [1, 2]);
         assert_eq!(output, "01\n02 03\n04 05\n");
     }
 
     #[test]
     fn test_newline_insertion() {
         let data: &[u8] = &[0x1, 0x2, 0x3, 0x4];
-        let output = print_hexdump(data, &[1, 0, 2]);
+        let output = print_hexdump(data, [1, 0, 2]);
         assert_eq!(output, "01\n\n02 03\n04\n");
     }
 
     #[test]
     fn test_indefinite_line_length() {
         let data: &[u8] = &[0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8];
-        let output = print_hexdump(data, &[2, 4]);
+        let output = print_hexdump(data, [2, 4]);
         assert_eq!(output, "01 02\n03 04 05 06\n07 08\n");
     }
 
     #[test]
     fn test_empty_data() {
         let data: &[u8] = &[];
-        let output = print_hexdump(data, &[1, 2]);
+        let output = print_hexdump(data, [1, 2]);
         assert_eq!(output, "");
     }
 
     #[test]
     fn test_zeros_then_default() {
         let data: &[u8] = &[0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8];
-        let output = print_hexdump(data, &[1, 0, 0, 2]);
+        let output = print_hexdump(data, [1, 0, 0, 2]);
         assert_eq!(output, "01\n\n\n02 03\n04 05\n06 07\n08\n");
     }
 }

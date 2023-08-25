@@ -452,7 +452,7 @@ mod tests {
             ),
         ];
         for (case, expected_hex) in cases {
-            let expected = parse_hexdump(&expected_hex).unwrap();
+            let expected = parse_hexdump(expected_hex).unwrap();
             assert_eq_hex!(expected, postcard::to_stdvec(&case).unwrap());
         }
     }
@@ -508,7 +508,7 @@ mod tests {
             ),
         ];
         for (case, expected_hex) in cases {
-            let expected = parse_hexdump(&expected_hex).unwrap();
+            let expected = parse_hexdump(expected_hex).unwrap();
             assert_eq_hex!(expected, postcard::to_stdvec(&case).unwrap());
         }
     }
