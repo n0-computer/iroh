@@ -56,7 +56,7 @@ const NOT_PREFERRED: u8 = 0u8;
 /// The one byte frame type at the beginning of the frame
 /// header. The second field is a big-endian u32 describing the
 /// length of the remaining frame (not including the initial 5 bytes)
-#[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum FrameType {
     /// 8B magic + 32B public key + (0+ bytes future use)
@@ -200,64 +200,6 @@ pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
         Ok((client_public_key, info, shared_secret))
     } else {
         anyhow::bail!("expected FrameType::ClientInfo");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use tokio_util::codec::{FramedRead, FramedWrite};
-
-    use crate::derp::codec::DerpCodec;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test_basic_read_write() -> anyhow::Result<()> {
-        let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec);
-        let mut writer = FramedWrite::new(writer, DerpCodec);
-
-        let expect_buf = b"hello world!";
-        let expected_frame = Frame::Health {
-            problem: expect_buf.to_vec().into(),
-        };
-        write_frame(&mut writer, expected_frame.clone(), None).await?;
-        writer.flush().await?;
-        println!("{:?}", reader);
-        let buf = recv_frame(FrameType::Health, &mut reader).await?;
-        assert_eq!(expect_buf.len(), buf.len());
-        assert_eq!(expected_frame, buf);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_send_recv_client_key() -> anyhow::Result<()> {
-        let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec);
-        let mut writer = FramedWrite::new(writer, DerpCodec);
-
-        let server_key = SecretKey::generate();
-        let client_key = SecretKey::generate();
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-            mesh_key: Some([1u8; 32]),
-            can_ack_pings: true,
-            is_prober: true,
-        };
-        println!("client_key pub {:?}", client_key.public());
-        let shared_secret = client_key.shared(&server_key.public());
-        send_client_key(
-            &mut writer,
-            &shared_secret,
-            &client_key.public(),
-            &client_info,
-        )
-        .await?;
-        let (client_pub_key, got_client_info, _) = recv_client_key(server_key, &mut reader).await?;
-        assert_eq!(client_key.public(), client_pub_key);
-        assert_eq!(client_info, got_client_info);
-        Ok(())
     }
 }
 
@@ -495,6 +437,11 @@ impl Frame {
                     "invalid recv packet frame length: {}",
                     content.len()
                 );
+                let packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                ensure!(
+                    packet_len <= MAX_PACKET_SIZE,
+                    "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
+                );
                 let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
                 let content = content.slice(PUBLIC_KEY_LENGTH..);
                 Self::RecvPacket { src_key, content }
@@ -574,7 +521,7 @@ impl Frame {
                 );
                 let packet_len = content.len() - PUBLIC_KEY_LENGTH * 2;
                 ensure!(
-                    packet_len <= MAX_PACKET_SIZE * 2,
+                    packet_len <= MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH * 2,
                     "data packet longer ({packet_len}) than {MAX_PACKET_SIZE}"
                 );
 
@@ -674,5 +621,196 @@ pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
         }
         Some(Err(err)) => Err(err),
         None => bail!("EOF: unexpected stream end, expected frame {}", frame_type),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::codec::{FramedRead, FramedWrite};
+
+    use crate::derp::codec::DerpCodec;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_basic_read_write() -> anyhow::Result<()> {
+        let (reader, writer) = tokio::io::duplex(1024);
+        let mut reader = FramedRead::new(reader, DerpCodec);
+        let mut writer = FramedWrite::new(writer, DerpCodec);
+
+        let expect_buf = b"hello world!";
+        let expected_frame = Frame::Health {
+            problem: expect_buf.to_vec().into(),
+        };
+        write_frame(&mut writer, expected_frame.clone(), None).await?;
+        writer.flush().await?;
+        println!("{:?}", reader);
+        let buf = recv_frame(FrameType::Health, &mut reader).await?;
+        assert_eq!(expect_buf.len(), buf.len());
+        assert_eq!(expected_frame, buf);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_client_key() -> anyhow::Result<()> {
+        let (reader, writer) = tokio::io::duplex(1024);
+        let mut reader = FramedRead::new(reader, DerpCodec);
+        let mut writer = FramedWrite::new(writer, DerpCodec);
+
+        let server_key = SecretKey::generate();
+        let client_key = SecretKey::generate();
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+            mesh_key: Some([1u8; 32]),
+            can_ack_pings: true,
+            is_prober: true,
+        };
+        println!("client_key pub {:?}", client_key.public());
+        let shared_secret = client_key.shared(&server_key.public());
+        send_client_key(
+            &mut writer,
+            &shared_secret,
+            &client_key.public(),
+            &client_info,
+        )
+        .await?;
+        let (client_pub_key, got_client_info, _) = recv_client_key(server_key, &mut reader).await?;
+        assert_eq!(client_key.public(), client_pub_key);
+        assert_eq!(client_info, got_client_info);
+        Ok(())
+    }
+}
+
+/// these test are slow in debug mode, so only run them in release mode
+#[cfg(test)]
+#[cfg(not(debug_assertions))]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn secret_key() -> impl Strategy<Value = SecretKey> {
+        prop::array::uniform32(any::<u8>()).prop_map(SecretKey::from)
+    }
+
+    fn key() -> impl Strategy<Value = PublicKey> {
+        secret_key().prop_map(|key| key.public())
+    }
+
+    /// Generates random data, up to the maximum packet size minus the given number of bytes
+    fn data(consumed: usize) -> impl Strategy<Value = Bytes> {
+        let len = MAX_PACKET_SIZE - consumed;
+        prop::collection::vec(any::<u8>(), 0..len).prop_map(Bytes::from)
+    }
+
+    /// Generates a random valid frame
+    fn frame() -> impl Strategy<Value = Frame> {
+        let server_key = key().prop_map(|key| Frame::ServerKey { key });
+        let client_info = (key(), data(32)).prop_map(|(client_public_key, encrypted_message)| {
+            Frame::ClientInfo {
+                client_public_key,
+                encrypted_message,
+            }
+        });
+        let server_info =
+            data(0).prop_map(|encrypted_message| Frame::ServerInfo { encrypted_message });
+        let send_packet =
+            (key(), data(32)).prop_map(|(dst_key, packet)| Frame::SendPacket { dst_key, packet });
+        let recv_packet =
+            (key(), data(32)).prop_map(|(src_key, content)| Frame::RecvPacket { src_key, content });
+        let keep_alive = Just(Frame::KeepAlive);
+        let note_preferred = any::<bool>().prop_map(|preferred| Frame::NotePreferred { preferred });
+        let peer_gone = key().prop_map(|peer| Frame::PeerGone { peer });
+        let peer_present = key().prop_map(|peer| Frame::PeerPresent { peer });
+        let watch_conns = Just(Frame::WatchConns);
+        let close_peer = key().prop_map(|peer| Frame::ClosePeer { peer });
+        let ping = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Ping { data });
+        let pong = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Pong { data });
+        let health = data(0).prop_map(|problem| Frame::Health { problem });
+        let restarting =
+            (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| Frame::Restarting {
+                reconnect_in,
+                try_for,
+            });
+        let forward_packet =
+            (key(), key(), data(64)).prop_map(|(src_key, dst_key, packet)| Frame::ForwardPacket {
+                src_key,
+                dst_key,
+                packet,
+            });
+        prop_oneof![
+            server_key,
+            client_info,
+            server_info,
+            send_packet,
+            recv_packet,
+            keep_alive,
+            note_preferred,
+            peer_gone,
+            peer_present,
+            watch_conns,
+            close_peer,
+            ping,
+            pong,
+            health,
+            restarting,
+            forward_packet,
+        ]
+    }
+
+    fn inject_error(buf: &mut BytesMut) {
+        fn is_fixed_size(tpe: FrameType) -> bool {
+            match tpe {
+                FrameType::ServerKey
+                | FrameType::KeepAlive
+                | FrameType::NotePreferred
+                | FrameType::WatchConns
+                | FrameType::Ping
+                | FrameType::Pong
+                | FrameType::Restarting
+                | FrameType::PeerGone
+                | FrameType::PeerPresent
+                | FrameType::ClosePeer => true,
+                FrameType::ClientInfo
+                | FrameType::ServerInfo
+                | FrameType::Health
+                | FrameType::ForwardPacket
+                | FrameType::SendPacket
+                | FrameType::RecvPacket
+                | FrameType::Unknown => false,
+            }
+        }
+        let tpe: FrameType = buf[0].into();
+        let mut len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize;
+        if is_fixed_size(tpe) {
+            buf.put_u8(0);
+            len += 1;
+        } else {
+            buf.resize(MAX_FRAME_SIZE + 1, 0);
+            len = MAX_FRAME_SIZE + 1;
+        }
+        buf[1..5].copy_from_slice(&u32::to_be_bytes(len as u32));
+    }
+
+    proptest! {
+
+        // Test that we can roundtrip a frame to bytes
+        #[test]
+        fn frame_roundtrip(frame in frame()) {
+            let mut buf = BytesMut::new();
+            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
+            let decoded = DerpCodec.decode(&mut buf).unwrap().unwrap();
+            prop_assert_eq!(frame, decoded);
+        }
+
+        // Test that typical invalid frames will result in an error
+        #[test]
+        fn broken_frame_handling(frame in frame()) {
+            let mut buf = BytesMut::new();
+            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
+            inject_error(&mut buf);
+            let decoded = DerpCodec.decode(&mut buf);
+            prop_assert!(decoded.is_err());
+        }
     }
 }

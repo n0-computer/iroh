@@ -198,8 +198,6 @@ mod tests {
     use tokio::sync::mpsc::error::TrySendError;
     use tracing::info;
 
-    use crate::test_utils::setup_logging;
-
     use super::*;
 
     #[tokio::test]
@@ -213,7 +211,7 @@ mod tests {
     }
 
     async fn test_hairpin(hairpinning_works: bool) {
-        let _guard = setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
         let (netcheck_tx, mut netcheck_rx) = mpsc::channel(32);
@@ -241,9 +239,10 @@ mod tests {
         let dummy_netcheck = tokio::spawn(
             async move {
                 let netcheck::Message::InFlightStun(inflight, resp_tx) =
-            netcheck_rx.recv().await.unwrap() else {
-                panic!("Wrong message received");
-            };
+                    netcheck_rx.recv().await.unwrap()
+                else {
+                    panic!("Wrong message received");
+                };
                 resp_tx.send(()).unwrap();
 
                 let mut buf = BytesMut::zeroed(64 << 10);
@@ -299,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_drop() {
-        let _guard = setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
         let (netcheck_tx, _netcheck_rx) = mpsc::channel(32);

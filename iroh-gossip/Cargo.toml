@@ -1,6 +1,6 @@
 [package]
 name = "iroh-gossip"
-version = "0.4.1"
+version = "0.5.1"
 edition = "2021"
 readme = "README.md"
 description = "gossip messages over broadcast trees"
@@ -14,7 +14,7 @@ rust-version = "1.67"
 [dependencies]
 # proto dependencies (required)
 anyhow = { version = "1", features = ["backtrace"] }
-blake3 = "1.3.3"
+blake3 = { package = "iroh-blake3", version = "1.4.3"}
 bytes = { version = "1.4.0", features = ["serde"] }
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["add", "debug", "display", "from", "try_into"] }
@@ -37,10 +37,11 @@ once_cell = "1.18.0"
 genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
-url = "2.4.0"
+iroh-test = { version = "0.5.1", path = "../iroh-test" }
 rand_chacha = "0.3.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.4.0"
 
 [features]
 default = ["net"]

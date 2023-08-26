@@ -1,0 +1,19 @@
+[package]
+name = "iroh-test"
+version = "0.5.1"
+edition = "2021"
+readme = "README.md"
+description = "Internal utilities to support testing of iroh."
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+publish = true
+
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.67"
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

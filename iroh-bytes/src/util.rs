@@ -2,7 +2,11 @@
 use anyhow::Result;
 use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    de::{self, SeqAccess},
+    ser::SerializeTuple,
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 use std::{fmt, result, str::FromStr};
 use thiserror::Error;
 pub mod io;
@@ -83,6 +87,18 @@ impl From<[u8; 32]> for Hash {
     }
 }
 
+impl From<Hash> for [u8; 32] {
+    fn from(value: Hash) -> Self {
+        *value.as_bytes()
+    }
+}
+
+impl From<&[u8; 32]> for Hash {
+    fn from(value: &[u8; 32]) -> Self {
+        Hash(blake3::Hash::from(*value))
+    }
+}
+
 impl PartialOrd for Hash {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.0.as_bytes().cmp(other.0.as_bytes()))
@@ -144,7 +160,13 @@ impl Serialize for Hash {
     where
         S: Serializer,
     {
-        serializer.serialize_bytes(self.0.as_bytes())
+        // Fixed-length structures, including arrays, are supported in Serde as tuples
+        // See: https://serde.rs/impl-serialize.html#serializing-a-tuple
+        let mut s = serializer.serialize_tuple(32)?;
+        for item in self.0.as_bytes() {
+            s.serialize_element(item)?;
+        }
+        s.end()
     }
 }
 
@@ -153,7 +175,7 @@ impl<'de> Deserialize<'de> for Hash {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_bytes(HashVisitor)
+        deserializer.deserialize_tuple(32, HashVisitor)
     }
 }
 
@@ -166,12 +188,22 @@ impl<'de> de::Visitor<'de> for HashVisitor {
         write!(f, "an array of 32 bytes containing hash data")
     }
 
-    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    /// Process a sequence into an array
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
     where
-        E: de::Error,
+        A: SeqAccess<'de>,
     {
-        let bytes: [u8; 32] = v.try_into().map_err(E::custom)?;
-        Ok(Hash::from(bytes))
+        let mut arr = [0u8; 32];
+        let mut i = 0;
+        while let Some(val) = seq.next_element()? {
+            arr[i] = val;
+            i += 1;
+            if i > 32 {
+                return Err(de::Error::invalid_length(i, &self));
+            }
+        }
+
+        Ok(Hash::from(arr))
     }
 }
 
@@ -202,6 +234,12 @@ impl From<anyhow::Error> for RpcError {
     }
 }
 
+impl From<std::io::Error> for RpcError {
+    fn from(e: std::io::Error) -> Self {
+        RpcError(serde_error::Error::new(&e))
+    }
+}
+
 /// A serializable result type for use in RPC responses.
 #[allow(dead_code)]
 pub type RpcResult<T> = result::Result<T, RpcError>;
@@ -224,7 +262,11 @@ impl NonSend {
 
 #[cfg(test)]
 mod tests {
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
     use super::*;
+
+    use serde_test::{assert_tokens, Token};
 
     #[test]
     fn test_hash() {
@@ -233,5 +275,41 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn hash_wire_format() {
+        let hash = Hash::from([0xab; 32]);
+        let serialized = postcard::to_stdvec(&hash).unwrap();
+        let expected = parse_hexdump(r"
+            ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
+        ").unwrap();
+        assert_eq_hex!(serialized, expected);
+    }
+
+    #[test]
+    fn test_hash_serde() {
+        let hash = Hash::new("hello");
+
+        // Hashes are serialized as 32 tuples
+        let mut tokens = Vec::new();
+        tokens.push(Token::Tuple { len: 32 });
+        for byte in hash.as_bytes() {
+            tokens.push(Token::U8(*byte));
+        }
+        tokens.push(Token::TupleEnd);
+        assert_eq!(tokens.len(), 34);
+
+        assert_tokens(&hash, &tokens);
+    }
+
+    #[test]
+    fn test_hash_postcard() {
+        let hash = Hash::new("hello");
+        let ser = postcard::to_stdvec(&hash).unwrap();
+        let de = postcard::from_bytes(&ser).unwrap();
+        assert_eq!(hash, de);
+
+        assert_eq!(ser.len(), 32);
     }
 }

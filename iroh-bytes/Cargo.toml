@@ -13,7 +13,7 @@ rust-version = "1.67"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.6.3", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.7.0", features = ["tokio_fsm"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 data-encoding = "2.3.3"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
@@ -38,11 +38,12 @@ tokio = { version = "1", features = [] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 http-body = "0.4.5"
+iroh-test = { path = "../iroh-test" }
 proptest = "1.0.0"
+serde_test = "1.0.176"
 tokio = { version = "1", features = ["macros", "test-util"] }
 
 [features]

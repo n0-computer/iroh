@@ -67,9 +67,9 @@ impl Download {
     /// Get the ranges this download is requesting.
     fn ranges(&self) -> RangeSpecSeq {
         match self {
-            Download::Blob { .. } => RangeSpecSeq::new([RangeSet2::all()]),
+            Download::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
             Download::BlobRanges { range_set, .. } => {
-                RangeSpecSeq::new([range_set.to_chunk_ranges()])
+                RangeSpecSeq::from_ranges([range_set.to_chunk_ranges()])
             }
             Download::Collection { hash } => RangeSpecSeq::all(),
             Download::CollectionRanges {

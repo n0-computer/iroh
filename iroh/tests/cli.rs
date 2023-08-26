@@ -90,16 +90,41 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
-    std::fs::create_dir_all(&dst)?;
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read directory entry in `{}`",
+                src.to_string_lossy()
+            )
+        })?;
+        let ty = entry.file_type().with_context(|| {
+            format!(
+                "failed to get file type for file `{}`",
+                entry.path().to_string_lossy()
+            )
+        })?;
+        let src = entry.path();
+        let dst = dst.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+            copy_dir_all(&src, &dst).with_context(|| {
+                format!(
+                    "failed to copy directory `{}` to `{}`",
+                    src.to_string_lossy(),
+                    dst.to_string_lossy()
+                )
+            })?;
         } else {
-            let to = dst.as_ref().join(entry.file_name());
-            std::fs::copy(entry.path(), to)?;
+            std::fs::copy(&src, &dst).with_context(|| {
+                format!(
+                    "failed to copy file `{}` to `{}`",
+                    src.to_string_lossy(),
+                    dst.to_string_lossy()
+                )
+            })?;
         }
     }
     Ok(())
@@ -134,7 +159,9 @@ fn make_partial(
         }
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Ok(name) = iroh::baomap::flat::FileName::from_str(name) else { continue };
+        let Ok(name) = iroh::baomap::flat::FileName::from_str(name) else {
+            continue;
+        };
         match name {
             iroh::baomap::flat::FileName::Data(hash) => {
                 let data = files.entry(hash).or_default();
@@ -307,7 +334,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
         cmd(
             iroh_bin(),
             [
-                "provide",
+                "start",
                 "--addr",
                 ADDR,
                 "--rpc-port",
@@ -371,7 +398,7 @@ fn cli_provide_addresses() -> Result<()> {
     let _ticket = match_provide_output(&mut provider, 1)?;
 
     // test output
-    let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
+    let get_output = cmd(iroh_bin(), ["--rpc-port", RPC_PORT, "node", "status"])
         // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
         .stdout_capture()
         .run()?;
@@ -435,7 +462,7 @@ fn make_provider_in(
     let res = cmd(
         iroh_bin(),
         [
-            "provide",
+            "start",
             path.to_str().unwrap(),
             "--addr",
             addr.unwrap_or(ADDR),

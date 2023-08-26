@@ -840,13 +840,12 @@ mod tests {
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
     use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
     use crate::ping::Pinger;
-    use crate::test_utils::setup_logging;
 
     use super::*;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
-        let _guard = setup_logging();
+        let _guard = iroh_test::logging::setup();
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
@@ -890,7 +889,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
-        let _guard = setup_logging();
+        let _guard = iroh_test::logging::setup();
 
         let mut client = Client::new(None)
             .await
@@ -914,6 +913,7 @@ mod tests {
                     ipv6: UseIpv6::TryDns,
                     stun_test_ip: None,
                 })
+                .map(Arc::new)
                 .collect(),
             avoid: false,
             region_code: "default".into(),
@@ -957,7 +957,7 @@ mod tests {
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
-        dm.get_region_mut(1).unwrap().nodes[0].stun_only = true;
+        dm.get_node_mut(1, 0).unwrap().stun_only = true;
 
         let mut client = Client::new(None).await?;
 

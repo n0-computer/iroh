@@ -15,16 +15,14 @@ use std::fmt::{self, Debug};
 use std::time::{Duration, Instant};
 
 use crate::util::Hash;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
-use bao_tree::io::DecodeError;
 use bao_tree::ChunkNum;
-use bytes::BytesMut;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use tracing::{debug, error};
 
-use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
+use crate::protocol::RangeSpecSeq;
 use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
@@ -51,20 +49,26 @@ impl Stats {
 ///
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
 pub mod fsm {
-    use std::result;
+    use std::{io, result};
 
-    use crate::protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter};
+    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
 
     use super::*;
 
     use bao_tree::{
         blake3,
-        io::fsm::{
-            OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+        io::{
+            fsm::{
+                OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext,
+                ResponseDecoderStart,
+            },
+            StartDecodeError,
         },
+        TreeNode,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -75,7 +79,7 @@ pub mod fsm {
     }
 
     /// The entry point of the get response machine
-    pub fn start(connection: quinn::Connection, request: AnyGetRequest) -> AtInitial {
+    pub fn start(connection: quinn::Connection, request: Request) -> AtInitial {
         AtInitial::new(connection, request)
     }
 
@@ -112,7 +116,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtInitial {
         connection: quinn::Connection,
-        request: AnyGetRequest,
+        request: Request,
     }
 
     impl AtInitial {
@@ -120,7 +124,7 @@ pub mod fsm {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        pub fn new(connection: quinn::Connection, request: AnyGetRequest) -> Self {
+        pub fn new(connection: quinn::Connection, request: Request) -> Self {
             Self {
                 connection,
                 request,
@@ -148,7 +152,7 @@ pub mod fsm {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
-        request: AnyGetRequest,
+        request: Request,
     }
 
     /// Possible next states after the handshake has been sent
@@ -162,6 +166,71 @@ pub mod fsm {
         Closing(AtClosing),
     }
 
+    /// Error that you can get from [`AtConnected::next`]
+    #[derive(Debug, thiserror::Error)]
+    pub enum ConnectedNextError {
+        /// Error when serializing the request
+        #[error("postcard ser: {0}")]
+        PostcardSer(postcard::Error),
+        /// The serialized request is too long to be sent
+        #[error("request too big")]
+        RequestTooBig,
+        /// Error when writing the request to the [`quinn::SendStream`]
+        #[error("write: {0}")]
+        Write(#[from] quinn::WriteError),
+        /// Error when reading a custom request from the [`quinn::RecvStream`]
+        #[error("read: {0}")]
+        Read(quinn::ReadError),
+        /// The remote side sent a custom request that is too big
+        #[error("custom request too big")]
+        CustomRequestTooBig,
+        /// Response terminated early when reading a custom request
+        #[error("eof")]
+        Eof,
+        /// Error when deserializing a received custom request
+        #[error("postcard: {0}")]
+        PostcardDe(postcard::Error),
+        /// A generic io error
+        #[error("io {0}")]
+        Io(io::Error),
+    }
+
+    impl ConnectedNextError {
+        fn from_io(cause: io::Error) -> Self {
+            if cause.kind() == io::ErrorKind::UnexpectedEof {
+                Self::Eof
+            } else if let Some(inner) = cause.get_ref() {
+                if let Some(e) = inner.downcast_ref::<quinn::WriteError>() {
+                    Self::Write(e.clone())
+                } else if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                    Self::Read(e.clone())
+                } else {
+                    Self::Io(cause)
+                }
+            } else {
+                Self::Io(cause)
+            }
+        }
+    }
+
+    impl From<ConnectedNextError> for io::Error {
+        fn from(cause: ConnectedNextError) -> Self {
+            match cause {
+                ConnectedNextError::Write(cause) => cause.into(),
+                ConnectedNextError::Read(cause) => cause.into(),
+                ConnectedNextError::Eof => io::ErrorKind::UnexpectedEof.into(),
+                ConnectedNextError::Io(cause) => cause,
+                ConnectedNextError::PostcardSer(cause) => {
+                    io::Error::new(io::ErrorKind::Other, cause)
+                }
+                ConnectedNextError::PostcardDe(cause) => {
+                    io::Error::new(io::ErrorKind::Other, cause)
+                }
+                _ => io::Error::new(io::ErrorKind::Other, cause),
+            }
+        }
+    }
+
     impl AtConnected {
         /// Send the request and move to the next state
         ///
@@ -169,7 +238,7 @@ pub mod fsm {
         /// the request requests part of the collection or not.
         ///
         /// If the request is empty, this can also move directly to `Finished`.
-        pub async fn next(self) -> Result<ConnectedNext, GetResponseError> {
+        pub async fn next(self) -> Result<ConnectedNext, ConnectedNextError> {
             let Self {
                 start,
                 mut reader,
@@ -179,9 +248,18 @@ pub mod fsm {
             // 1. Send Request
             {
                 debug!("sending request");
-                // wrap the get request in a request so we can serialize it
-                let request_bytes = postcard::to_stdvec(&request)?;
-                write_lp(&mut writer, &request_bytes).await?;
+                let request_bytes =
+                    postcard::to_stdvec(&request).map_err(ConnectedNextError::PostcardSer)?;
+
+                if request_bytes.len() > MAX_MESSAGE_SIZE {
+                    return Err(ConnectedNextError::RequestTooBig);
+                }
+
+                // write the request itself
+                writer
+                    .write_all(&request_bytes)
+                    .await
+                    .map_err(ConnectedNextError::from_io)?;
             }
 
             // 2. Finish writing before expecting a response
@@ -190,19 +268,32 @@ pub mod fsm {
 
             // 3. Turn a possible custom request into a get request
             let request = match request {
-                AnyGetRequest::Get(get_request) => {
+                Request::Get(get_request) => {
                     // we already have a get request, just return it
                     get_request
                 }
-                AnyGetRequest::CustomGet(_) => {
+                Request::CustomGet(_) => {
                     // we sent a custom request, so we need the actual GetRequest from the response
-                    let mut buffer = BytesMut::new();
-                    let response = read_lp(&mut reader, &mut buffer)
-                        .await?
-                        .context("unexpected EOF when reading response to custom get request")?;
-                    postcard::from_bytes::<GetRequest>(&response).context(
-                        "unable to deserialize response to custom get request as get request",
-                    )?
+                    let response_len = reader
+                        .read_u64_le()
+                        .await
+                        .map_err(ConnectedNextError::from_io)?;
+
+                    let mut response = if response_len < (MAX_MESSAGE_SIZE as u64) {
+                        Vec::with_capacity(response_len as usize)
+                    } else {
+                        return Err(ConnectedNextError::CustomRequestTooBig);
+                    };
+                    (&mut reader)
+                        .take(response_len)
+                        .read_to_end(&mut response)
+                        .await
+                        .map_err(ConnectedNextError::from_io)?;
+                    if response.len() != response_len as usize {
+                        return Err(ConnectedNextError::Eof);
+                    }
+                    postcard::from_bytes::<GetRequest>(&response)
+                        .map_err(ConnectedNextError::PostcardDe)?
                 }
             };
             let hash = request.hash;
@@ -332,17 +423,67 @@ pub mod fsm {
         misc: Box<Misc>,
     }
 
+    /// Error that you can get from [`AtBlobHeader::next`]
+    #[derive(Debug, thiserror::Error)]
+    pub enum AtBlobHeaderNextError {
+        /// Eof when reading the size header
+        ///
+        /// This indicates that the provider does not have the requested data.
+        #[error("not found")]
+        NotFound,
+        /// The query range was invalid for the blob
+        #[error("invalid query range")]
+        InvalidQueryRange,
+        /// Quinn read error when reading the size header
+        #[error("read: {0}")]
+        Read(quinn::ReadError),
+        /// Generic io error
+        #[error("io: {0}")]
+        Io(io::Error),
+    }
+
+    impl From<AtBlobHeaderNextError> for io::Error {
+        fn from(cause: AtBlobHeaderNextError) -> Self {
+            match cause {
+                AtBlobHeaderNextError::NotFound => {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, cause)
+                }
+                AtBlobHeaderNextError::InvalidQueryRange => {
+                    io::Error::new(io::ErrorKind::InvalidInput, cause)
+                }
+                AtBlobHeaderNextError::Read(cause) => cause.into(),
+                AtBlobHeaderNextError::Io(cause) => cause,
+            }
+        }
+    }
+
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(AtBlobContent, u64), std::io::Error> {
-            let (stream, size) = self.stream.next().await?;
-            Ok((
-                AtBlobContent {
-                    stream,
-                    misc: self.misc,
-                },
-                size,
-            ))
+        pub async fn next(self) -> Result<(AtBlobContent, u64), AtBlobHeaderNextError> {
+            match self.stream.next().await {
+                Ok((stream, size)) => Ok((
+                    AtBlobContent {
+                        stream,
+                        misc: self.misc,
+                    },
+                    size,
+                )),
+                Err(cause) => Err(match cause {
+                    StartDecodeError::NotFound => AtBlobHeaderNextError::NotFound,
+                    StartDecodeError::InvalidQueryRange => AtBlobHeaderNextError::InvalidQueryRange,
+                    StartDecodeError::Io(cause) => {
+                        if let Some(inner) = cause.get_ref() {
+                            if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                                AtBlobHeaderNextError::Read(e.clone())
+                            } else {
+                                AtBlobHeaderNextError::Io(cause)
+                            }
+                        } else {
+                            AtBlobHeaderNextError::Io(cause)
+                        }
+                    }
+                }),
+            }
         }
 
         /// Drain the response and throw away the result
@@ -353,9 +494,7 @@ pub mod fsm {
                     BlobContentNext::More((content1, Ok(_))) => {
                         content = content1;
                     }
-                    BlobContentNext::More((_, Err(e))) => {
-                        return Err(e);
-                    }
+                    BlobContentNext::More((_, Err(e))) => return Err(e),
                     BlobContentNext::Done(end) => {
                         return Ok(end);
                     }
@@ -395,7 +534,8 @@ pub mod fsm {
             data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
             let (content, _size) = self.next().await?;
-            content.write_all(data).await
+            let res = content.write_all(data).await?;
+            Ok(res)
         }
 
         /// Write the entire blob to a slice writer and to an optional outboard.
@@ -412,7 +552,8 @@ pub mod fsm {
             O: OutboardMut,
         {
             let (content, _size) = self.next().await?;
-            content.write_all_with_outboard(outboard, data).await
+            let res = content.write_all_with_outboard(outboard, data).await?;
+            Ok(res)
         }
 
         /// The hash of the blob we are reading.
@@ -433,6 +574,108 @@ pub mod fsm {
         misc: Box<Misc>,
     }
 
+    /// Decode error that you can get once you have sent the request and are
+    /// decoding the response, e.g. from [`AtBlobContent::next`].
+    ///
+    /// This is similar to [`bao_tree::io::DecodeError`], but takes into account
+    /// that we are reading from a [`quinn::RecvStream`], so read errors will be
+    /// propagated as [`DecodeError::Read`], containing a [`quinn::ReadError`].
+    /// This carries more concrete information about the error than an [`io::Error`].
+    ///
+    /// When the provider finds that it does not have a chunk that we requested,
+    /// or that the chunk is invalid, it will stop sending data without producing
+    /// an error. This is indicated by either the [`DecodeError::ParentNotFound`] or
+    /// [`DecodeError::LeafNotFound`] variant, which can be used to detect that data
+    /// is missing but the connection as well that the provider is otherwise healthy.
+    ///
+    /// The [`DecodeError::ParentHashMismatch`] and [`DecodeError::LeafHashMismatch`]
+    /// variants indicate that the provider has sent us invalid data. A well-behaved
+    /// provider should never do this, so this is an indication that the provider is
+    /// not behaving correctly.
+    ///
+    /// The [`DecodeError::InvalidQueryRange`] variant indicates that the we requested
+    /// a range that is invalid for the current blob. E.g. we requested chunk 5 for
+    /// a blob that is only 2 chunks large.
+    ///
+    /// The [`DecodeError::Io`] variant is just a fallback for any other io error that
+    /// is not actually a [`quinn::ReadError`].
+    #[derive(Debug, thiserror::Error)]
+    pub enum DecodeError {
+        /// A chunk was not found or invalid, so the provider stopped sending data
+        #[error("not found")]
+        NotFound,
+        /// A parent was not found or invalid, so the provider stopped sending data
+        #[error("parent not found {0:?}")]
+        ParentNotFound(TreeNode),
+        /// A parent was not found or invalid, so the provider stopped sending data
+        #[error("chunk not found {0}")]
+        LeafNotFound(ChunkNum),
+        /// The hash of a parent did not match the expected hash
+        #[error("parent hash mismatch: {0:?}")]
+        ParentHashMismatch(TreeNode),
+        /// The hash of a leaf did not match the expected hash
+        #[error("leaf hash mismatch: {0}")]
+        LeafHashMismatch(ChunkNum),
+        /// The query range was invalid
+        #[error("invalid query range")]
+        InvalidQueryRange,
+        /// Error when reading from the stream
+        #[error("read: {0}")]
+        Read(quinn::ReadError),
+        /// A generic io error
+        #[error("io: {0}")]
+        Io(#[from] io::Error),
+    }
+
+    impl From<AtBlobHeaderNextError> for DecodeError {
+        fn from(cause: AtBlobHeaderNextError) -> Self {
+            match cause {
+                AtBlobHeaderNextError::NotFound => Self::NotFound,
+                AtBlobHeaderNextError::Read(cause) => Self::Read(cause),
+                AtBlobHeaderNextError::Io(cause) => Self::Io(cause),
+                AtBlobHeaderNextError::InvalidQueryRange => Self::InvalidQueryRange,
+            }
+        }
+    }
+
+    impl From<DecodeError> for io::Error {
+        fn from(cause: DecodeError) -> Self {
+            match cause {
+                DecodeError::ParentNotFound(_) => {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, cause)
+                }
+                DecodeError::LeafNotFound(_) => io::Error::new(io::ErrorKind::UnexpectedEof, cause),
+                DecodeError::Read(cause) => cause.into(),
+                DecodeError::Io(cause) => cause,
+                _ => io::Error::new(io::ErrorKind::Other, cause),
+            }
+        }
+    }
+
+    impl From<bao_tree::io::DecodeError> for DecodeError {
+        fn from(value: bao_tree::io::DecodeError) -> Self {
+            match value {
+                bao_tree::io::DecodeError::ParentNotFound(x) => Self::ParentNotFound(x),
+                bao_tree::io::DecodeError::LeafNotFound(x) => Self::LeafNotFound(x),
+                bao_tree::io::DecodeError::ParentHashMismatch(node) => {
+                    Self::ParentHashMismatch(node)
+                }
+                bao_tree::io::DecodeError::LeafHashMismatch(chunk) => Self::LeafHashMismatch(chunk),
+                bao_tree::io::DecodeError::Io(cause) => {
+                    if let Some(inner) = cause.get_ref() {
+                        if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
+                            Self::Read(e.clone())
+                        } else {
+                            Self::Io(cause)
+                        }
+                    } else {
+                        Self::Io(cause)
+                    }
+                }
+            }
+        }
+    }
+
     /// The next state after reading a content item
     #[derive(Debug, From)]
     pub enum BlobContentNext {
@@ -448,13 +691,13 @@ pub mod fsm {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
-                    (next, res).into()
+                    let res = res.map_err(DecodeError::from);
+                    BlobContentNext::More((next, res))
                 }
-                ResponseDecoderReadingNext::Done(stream) => AtEndBlob {
+                ResponseDecoderReadingNext::Done(stream) => BlobContentNext::Done(AtEndBlob {
                     stream,
                     misc: self.misc,
-                }
-                .into(),
+                }),
             }
         }
 
@@ -575,7 +818,7 @@ pub mod fsm {
         }
 
         /// Finish the get response, returning statistics
-        pub async fn next(self) -> result::Result<Stats, std::io::Error> {
+        pub async fn next(self) -> result::Result<Stats, quinn::ReadError> {
             // Shut down the stream
             let (mut reader, bytes_read) = self.reader.into_parts();
             if let Some(chunk) = reader.read_chunk(8, false).await? {
