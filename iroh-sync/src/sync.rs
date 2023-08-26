@@ -212,7 +212,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
 }
 
 /// A signed entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedEntry {
     signature: EntrySignature,
     entry: Entry,
@@ -221,6 +221,18 @@ pub struct SignedEntry {
 impl From<SignedEntry> for Entry {
     fn from(value: SignedEntry) -> Self {
         value.entry
+    }
+}
+
+impl PartialOrd for SignedEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.entry.id.partial_cmp(&other.entry.id)
+    }
+}
+
+impl Ord for SignedEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entry.id.cmp(&other.entry.id)
     }
 }
 
@@ -273,7 +285,7 @@ impl SignedEntry {
 }
 
 /// Signature over an entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntrySignature {
     author_signature: Signature,
     namespace_signature: Signature,
@@ -333,7 +345,7 @@ impl EntrySignature {
 /// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
 /// [`Namespace`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
     id: RecordIdentifier,
     record: Record,
@@ -380,7 +392,7 @@ impl Entry {
 }
 
 /// The indentifier of a record.
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct RecordIdentifier {
     /// The key of the record.
     key: Vec<u8>,
@@ -388,6 +400,34 @@ pub struct RecordIdentifier {
     namespace: NamespaceId,
     /// The [`AuthorId`] of the author that wrote this record.
     author: AuthorId,
+}
+
+impl PartialEq for RecordIdentifier {
+    fn eq(&self, other: &Self) -> bool {
+        self.namespace.eq(&other.namespace)
+            && self.author.eq(&other.author)
+            && self.key.eq(&other.key)
+    }
+}
+
+impl Eq for RecordIdentifier {}
+
+impl PartialOrd for RecordIdentifier {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RecordIdentifier {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.namespace.cmp(&other.namespace) {
+            std::cmp::Ordering::Equal => match self.author.cmp(&other.author) {
+                std::cmp::Ordering::Equal => self.key.cmp(&other.key),
+                res => res,
+            },
+            res => res,
+        }
+    }
 }
 
 impl AsFingerprint for RecordIdentifier {
@@ -463,7 +503,7 @@ impl Deref for Entry {
 }
 
 /// The data part of an entry in a [`Replica`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Record {
     /// Record creation timestamp. Counted as micros since the Unix epoch.
     timestamp: u64,
@@ -533,7 +573,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        ranger::Range,
+        ranger::{Range, Store as _},
         store::{self, GetFilter},
     };
 
@@ -723,6 +763,30 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
+        let replica = store.open_replica(&my_replica.namespace())?.unwrap();
+        // Get Range of all should return all latest
+        let entries_second: Vec<_> = replica
+            .inner
+            .read()
+            .peer
+            .store()
+            .get_range(
+                Range::new(RecordIdentifier::default(), RecordIdentifier::default()),
+                None,
+            )
+            .map_err(Into::into)?
+            .collect::<Result<_, _>>()
+            .map_err(Into::into)?;
+
+        assert_eq!(entries_second.len(), 12);
+        assert_eq!(
+            entries,
+            entries_second
+                .into_iter()
+                .map(|(_, x)| x)
+                .collect::<Vec<_>>()
+        );
+
         Ok(())
     }
 
@@ -748,6 +812,9 @@ mod tests {
             assert!(ri0.contains(&range), "start");
             assert!(ri1.contains(&range), "inside");
             assert!(!ri2.contains(&range), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
         }
 
         // Just namespace
@@ -760,6 +827,9 @@ mod tests {
             assert!(ri0.contains(&range), "start");
             assert!(ri1.contains(&range), "inside");
             assert!(!ri2.contains(&range), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
         }
 
         // Just author
@@ -772,6 +842,9 @@ mod tests {
             assert!(ri0.contains(&range), "start");
             assert!(ri1.contains(&range), "inside");
             assert!(!ri2.contains(&range), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
         }
 
         // Just key and namespace
@@ -784,6 +857,26 @@ mod tests {
             assert!(ri0.contains(&range), "start");
             assert!(ri1.contains(&range), "inside");
             assert!(!ri2.contains(&range), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
+        }
+
+        // Mixed
+        {
+            // Ord should prioritize namespace - author - key
+
+            let a0 = a[0].id();
+            let a1 = a[1].id();
+            let n0 = n[0].id();
+            let n1 = n[1].id();
+            let k0 = k[0];
+            let k1 = k[1];
+
+            assert!(RecordIdentifier::new(k0, n0, a0) < RecordIdentifier::new(k1, n1, a1));
+            assert!(RecordIdentifier::new(k1, n0, a0) < RecordIdentifier::new(k0, n1, a0));
+            assert!(RecordIdentifier::new(k0, n0, a1) < RecordIdentifier::new(k1, n0, a1));
+            assert!(RecordIdentifier::new(k0, n1, a1) < RecordIdentifier::new(k1, n1, a1));
         }
     }
 
