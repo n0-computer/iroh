@@ -433,6 +433,8 @@ pub enum Request {
     Get(GetRequest),
     /// A get request that allows the receiver to create a collection
     CustomGet(CustomGetRequest),
+    /// A query request for a blob or collection
+    Query(QueryRequest),
 }
 
 impl Request {
@@ -441,6 +443,7 @@ impl Request {
         match self {
             Request::Get(get) => get.token(),
             Request::CustomGet(get) => get.token.as_ref(),
+            Request::Query(query) => query.token(),
         }
     }
 
@@ -449,6 +452,7 @@ impl Request {
         match &mut self {
             Request::Get(get) => get.token = value,
             Request::CustomGet(get) => get.token = value,
+            Request::Query(query) => query.token = value,
         }
         self
     }
@@ -479,6 +483,81 @@ pub struct GetRequest {
 }
 
 impl GetRequest {
+    /// Request a blob or collection with specified ranges
+    pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
+        Self {
+            hash,
+            ranges,
+            token: None,
+        }
+    }
+
+    /// Request a collection and all its children
+    pub fn all(hash: Hash) -> Self {
+        Self {
+            hash,
+            token: None,
+            ranges: RangeSpecSeq::all(),
+        }
+    }
+
+    /// Request just a single blob
+    pub fn single(hash: Hash) -> Self {
+        Self {
+            hash,
+            token: None,
+            ranges: RangeSpecSeq::from_ranges([RangeSet2::all()]),
+        }
+    }
+
+    /// Set the request token
+    pub fn with_token(self, token: Option<RequestToken>) -> Self {
+        Self { token, ..self }
+    }
+
+    /// Get the request token
+    pub fn token(&self) -> Option<&RequestToken> {
+        self.token.as_ref()
+    }
+}
+
+/// A query request
+///
+/// A query request is identical to a get request, except that it describes a
+/// set of chunks for which we want availability information.
+///
+/// The answer to a query request is a set of chunks that are available, encoded
+/// as a [`RangeSpecSeq`].
+///
+/// The provider has to compute the availability information only for the requested
+/// ranges, not for the entire blob or collection. The response must contain
+/// availability information for the requested ranges, but may contain availability
+/// information for additional ranges if expedient. E.g. if the provider has
+/// a blob completely available, it may send `RangeSet2::all()` for that blob
+/// instead of limiting the response to the requested ranges.
+///
+/// However, the provider should take care to minimize the size of the response.
+/// E.g. if we have complex availability information for a range that was not
+/// requested, it should be omitted.
+///
+/// The availability information is a snapshot at one point in time.
+/// There is no guarantee that the availability won't change.
+///
+/// E.g. availability might increase when the provider is itself downloading
+/// data from other providers, or decrease when the provider is deleting data.
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+pub struct QueryRequest {
+    /// blake3 hash
+    pub hash: Hash,
+    /// The range of data we request availability information for
+    ///
+    /// The first element is the parent, all subsequent elements are children.
+    pub ranges: RangeSpecSeq,
+    /// Optional Request token
+    token: Option<RequestToken>,
+}
+
+impl QueryRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
         Self {

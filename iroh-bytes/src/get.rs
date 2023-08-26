@@ -295,6 +295,15 @@ pub mod fsm {
                     postcard::from_bytes::<GetRequest>(&response)
                         .map_err(ConnectedNextError::PostcardDe)?
                 }
+                Request::Query(_) => {
+                    // todo: take the query request out of the state machine entirely
+                    // the state machine is really for get requests and custom get requests,
+                    // not for query requests
+                    return Err(ConnectedNextError::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "query request not supported",
+                    )));
+                }
             };
             let hash = request.hash;
             let ranges_iter = RangesIter::new(request.ranges);

@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 use tracing::{debug, debug_span, warn};
@@ -14,7 +15,9 @@ use tracing_futures::Instrument;
 
 use crate::baomap::*;
 use crate::collection::CollectionParser;
-use crate::protocol::{write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken};
+use crate::protocol::{
+    write_lp, CustomGetRequest, GetRequest, QueryRequest, RangeSpec, Request, RequestToken,
+};
 use crate::util::RpcError;
 use crate::Hash;
 
@@ -434,6 +437,7 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
         Request::CustomGet(request) => {
             handle_custom_get(db, request, writer, custom_get_handler, collection_parser).await
         }
+        Request::Query(request) => handle_query(db, request, collection_parser, writer).await,
     }
 }
 async fn handle_custom_get<E: EventSender, D: Map, C: CollectionParser>(
@@ -519,6 +523,17 @@ pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
     };
 
     Ok(())
+}
+
+/// Handle a single standard get request.
+pub async fn handle_query<D: Map, E: EventSender, C: CollectionParser>(
+    _db: D,
+    _request: QueryRequest,
+    _collection_parser: C,
+    mut writer: ResponseWriter<E>,
+) -> Result<()> {
+    writer.inner.reset(VarInt::from_u32(1))?;
+    anyhow::bail!("query not implemented");
 }
 
 /// A helper struct that combines a quinn::SendStream with auxiliary information
