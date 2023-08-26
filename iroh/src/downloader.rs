@@ -8,9 +8,10 @@ use std::{
     task::Poll::{Pending, Ready},
 };
 
-use futures::{stream::FuturesUnordered, FutureExt};
+use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
-    baomap::range_collections::RangeSet2,
+    baomap::{range_collections::RangeSet2, Store},
+    collection::CollectionParser,
     protocol::{RangeSpec, RangeSpecSeq},
     Hash,
 };
@@ -200,7 +201,9 @@ enum RequestState {
 }
 
 #[derive(Debug)]
-pub struct DownloadService {
+pub struct DownloadService<S, C> {
+    store: S,
+    collection_parser: C,
     /// Download requests as received by the [`Downloader`]. These requests might be underway or
     /// pending.
     registered_intents: HashMap<Id, DownloadInfo>,
@@ -214,13 +217,30 @@ pub struct DownloadService {
     in_progress_downloads: FuturesUnordered<tokio::time::Sleep>,
 }
 
-impl DownloadService {
+impl<S: Store, C: CollectionParser> DownloadService<S, C> {
     /// Handle receiving a [`Message`].
     fn handle_message(&mut self, msg: Message) {
         match msg {
             Message::Start { kind, id, sender } => self.handle_start_download(kind, id, sender),
             Message::Cancel { id } => self.handle_cancel_download(id),
         }
+    }
+
+    async fn poll_schedulled(&mut self) {
+        let download_key = self.scheduled_requests.next().await.unwrap().into_inner();
+        let RequestInfo { intents, state } = self.current_requests.get_mut(&download_key).unwrap();
+        let cancellation = CancellationToken::new();
+        *state = match state {
+            RequestState::Scheduled { .. } => RequestState::Active { cancellation },
+            RequestState::Active { .. } => unreachable!("request was scheduled"),
+        };
+
+        // TODO(@divma): needs
+        // - db
+        // - collection parser
+        // - connection
+        // - sender whatever that it
+        // crate::get::get(db, collection_parser, conn, hash, recursive, sender)
     }
 
     /// Handle a [`Message::Start`].
@@ -262,7 +282,7 @@ impl DownloadService {
                 let timeout = std::time::Duration::from_millis(300);
                 let delay_key = self.scheduled_requests.insert(entry.key().clone(), timeout);
                 let (hash, ranges) = entry.key();
-                info!(%hash, ?ranges, "new request scheduled");
+                debug!(%hash, ?ranges, "new request scheduled");
 
                 let intents = vec![id];
                 let state = RequestState::Scheduled { delay_key };
