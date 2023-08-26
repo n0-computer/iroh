@@ -496,10 +496,13 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     ) -> Result<Fingerprint> {
         // TODO: optimize?
 
-        let elements = self.get_range(range.clone(), limit.cloned())?;
+        let mut elements: Vec<_> = self
+            .get_range(range.clone(), limit.cloned())?
+            .collect::<Result<_, _>>()?;
+        elements.sort();
+
         let mut fp = Fingerprint::empty();
         for el in elements {
-            let el = el?;
             fp ^= el.0.as_fingerprint();
         }
 
@@ -537,20 +540,28 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         range: Range<RecordIdentifier>,
         limit: Option<Range<RecordIdentifier>>,
     ) -> Result<Self::RangeIterator<'_>> {
-        // TODO: implement inverted range
-        let range_start = range.x();
-        let range_end = range.y();
-
-        let start = (
-            range_start.namespace_bytes(),
-            range_start.author_bytes(),
-            range_start.key(),
-        );
-        let end = (
-            range_end.namespace_bytes(),
-            range_end.author_bytes(),
-            range_end.key(),
-        );
+        let (start, end) = if range.x() == range.y() {
+            let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+            let end = (self.namespace.as_bytes(), &[255u8; 32], &[][..]);
+            (start, end)
+        } else {
+            let (range_start, range_end) = if range.x() < range.y() {
+                (range.y(), range.x())
+            } else {
+                (range.x(), range.y())
+            };
+            let start = (
+                range_start.namespace_bytes(),
+                range_start.author_bytes(),
+                range_start.key(),
+            );
+            let end = (
+                range_end.namespace_bytes(),
+                range_end.author_bytes(),
+                range_end.key(),
+            );
+            (start, end)
+        };
         let iter = RangeLatestIterator::try_new(
             self.store.db.begin_read()?,
             |read_tx| {

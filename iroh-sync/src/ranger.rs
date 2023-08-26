@@ -630,11 +630,12 @@ where
     // pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
     //     self.store.remove(k)
     // }
-    //
-    // /// Returns a refernce to the underlying store.
-    // pub fn store(&self) -> &S {
-    //     &self.store
-    // }
+
+    /// Returns a refernce to the underlying store.
+    #[cfg(test)]
+    pub fn store(&self) -> &S {
+        &self.store
+    }
 }
 
 /// Sadly <https://doc.rust-lang.org/std/primitive.usize.html#method.div_ceil> is still unstable..
