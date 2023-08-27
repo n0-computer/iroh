@@ -411,11 +411,11 @@ impl Endpoint {
     }
 
     async fn start_ping(&mut self, ep: SendAddr, now: Instant, purpose: DiscoPingPurpose) {
-        if std::option_env!("DEV_DERP_ONLY").is_some() {
-            // don't attempt any hole punching in derp only mode
-            trace!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
-            return;
-        }
+        // if std::option_env!("DEV_DERP_ONLY").is_some() {
+        //     // don't attempt any hole punching in derp only mode
+        //     trace!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
+        //     return;
+        // }
 
         info!("start ping to {}: {:?}", ep, purpose);
         if purpose != DiscoPingPurpose::Cli {
@@ -455,14 +455,14 @@ impl Endpoint {
     }
 
     async fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) {
-        if std::option_env!("DEV_DERP_ONLY").is_some() {
-            // don't send or respond to any hole punching pings if we are in
-            // derp only mode
-            trace!(
-                "in `DEV_DERP_ONLY` mode, ignoring request to respond to a hole punching attempt."
-            );
-            return;
-        }
+        // if std::option_env!("DEV_DERP_ONLY").is_some() {
+        //     // don't send or respond to any hole punching pings if we are in
+        //     // derp only mode
+        //     trace!(
+        //         "in `DEV_DERP_ONLY` mode, ignoring request to respond to a hole punching attempt."
+        //     );
+        //     return;
+        // }
         self.last_full_ping.replace(now);
 
         // first cleanout out all old endpoints
