@@ -1,5 +1,33 @@
 //! Handle downloading blobs and collections concurrently and from multiple peers.
 //!
+//! The [`DownloadService`] interacts with five main components to this end.
+//! - [`Dialer`]: Used to queue opening connection to peers we need perform downloads.
+//! - [`AvailabilityRegistry`]: Where the downloader obtains information about peers that could be
+//!   used to perform a download.
+//! - [`Store`]: Where data is stored.
+//! - [`CollectionParser`]: Used by the [`GetRequest`] associated logic to identify blobs encoding
+//!   collections.
+//!
+//! Once a download request is recevied, the logic is as follows:
+//! 1. The [`AvailabilityRegistry`] is queried for peers. From these peers some are selected
+//!    priorizing connected peers with lower number of active requests. If no useful peer is
+//!    connected, or useful connected peers have no capacity to perform the request, a connection
+//!    attempt is started using the [`Dialer`].
+//! 2. The download is queued for processing at a later time. Downloads are not performed right
+//!    away. Instead, they are initially delayed to allow the peer to obtain the data itself, and
+//!    to wait for the new connection to be established if necessary.
+//! 3. Once a request is ready to be sent after a delay (initial or for a retry), the preferred
+//!    peer is used if available. The request is now considered active.
+//!
+//! Concurrency is limited in different ways:
+//! - *Total number of active request:* This is a way to prevent a self DoS by overwhelming our own
+//!   bandwith capacity. This is a best effort heuristic since it doesn't take into account how
+//!   much data we are actually requesting ort receiving.
+//! - *Total number of connected peers:* Peer connections are kept for a longer time than they are
+//!   strictly needed since it's likely they will be usefull soon again.
+//! - *Requests per peer*: to avoid overwhelming peers with requests, the number of concurrent
+//!   requests to a single peer is also limited.
+//!
 
 #![allow(clippy::all, unused, missing_docs)]
 
