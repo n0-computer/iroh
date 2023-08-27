@@ -102,6 +102,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
         namespace: alice.namespace(),
         message: alice.sync_initial_message().map_err(Into::into)?,
     };
+    println!("alice -> bob: {:#?}", init_message);
     writer.send(init_message).await?;
 
     // Sync message loop
@@ -116,6 +117,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
                     .sync_process_message(msg, other_peer_id)
                     .map_err(Into::into)?
                 {
+                    println!("alice -> bob: {:#?}", msg);
                     writer.send(Message::Sync(msg)).await?;
                 } else {
                     break;
@@ -152,6 +154,7 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
                             .sync_process_message(message, other_peer_id)
                             .map_err(Into::into)?
                         {
+                            println!("bob -> alice: {:#?}", msg);
                             writer.send(Message::Sync(msg)).await?;
                         } else {
                             break;
@@ -398,13 +401,20 @@ mod tests {
                 alice_task.await??;
                 bob_task.await??;
 
+                let alice_messages = alice_replica_store
+                    .get(alice_replica.namespace(), GetFilter::all())
+                    .unwrap()
+                    .collect::<Result<Vec<_>>>()
+                    .unwrap();
+                println!(
+                    "alice has: {:#?}",
+                    alice_messages
+                        .iter()
+                        .map(|e| (e.author(), std::str::from_utf8(&e.key()).unwrap()))
+                        .collect::<Vec<_>>()
+                );
                 assert_eq!(
-                    alice_replica_store
-                        .get(alice_replica.namespace(), GetFilter::all())
-                        .unwrap()
-                        .collect::<Result<Vec<_>>>()
-                        .unwrap()
-                        .len(),
+                    alice_messages.len(),
                     2 * num_messages * num_authors,
                     "alice is missing messages"
                 );

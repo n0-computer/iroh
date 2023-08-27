@@ -494,15 +494,12 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         range: &Range<RecordIdentifier>,
         limit: Option<&Range<RecordIdentifier>>,
     ) -> Result<Fingerprint> {
-        // TODO: optimize?
-
-        let mut elements: Vec<_> = self
-            .get_range(range.clone(), limit.cloned())?
-            .collect::<Result<_, _>>()?;
-        elements.sort();
+        // TODO: optimize
+        let elements = self.get_range(range.clone(), limit.cloned())?;
 
         let mut fp = Fingerprint::empty();
         for el in elements {
+            let el = el?;
             fp ^= el.0.as_fingerprint();
         }
 
