@@ -27,7 +27,6 @@
 //!   strictly needed since it's likely they will be usefull soon again.
 //! - *Requests per peer*: to avoid overwhelming peers with requests, the number of concurrent
 //!   requests to a single peer is also limited.
-//!
 
 #![allow(clippy::all, unused, missing_docs)]
 
@@ -43,6 +42,7 @@ use iroh_bytes::{
     protocol::{RangeSpec, RangeSpecSeq},
     Hash,
 };
+use iroh_gossip::net::util::Dialer;
 use iroh_net::key::PublicKey;
 use tokio::sync::oneshot;
 use tokio_util::{sync::CancellationToken, time::delay_queue};
@@ -51,6 +51,22 @@ use tracing::{debug, error, info, trace, warn};
 /// Download identifier.
 // Mainly for readability.
 pub type Id = u64;
+
+pub trait AvailabilityRegistry {
+    type CandidateIter: Iterator<Item = PublicKey>;
+    fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter;
+}
+
+/// Concurrency limits for the [`DownloadService`].
+#[derive(Debug)]
+pub struct ConcurrencyLimits {
+    /// Maximum number of requests the service performs concurrently.
+    max_concurrent_requests: u8,
+    /// Maximum number of requests performed by a single peer concurrently.
+    max_concurrent_requests_per_peer: u8,
+    /// Maximum number of open connections the service maintains.
+    max_open_connections: u8,
+}
 
 /// Download requests the [`Downloader`] handles.
 #[derive(Debug)]
@@ -219,6 +235,9 @@ enum RequestState {
         /// Key to manage the delay associated with this scheduled request.
         #[debug(skip)]
         delay_key: delay_queue::Key,
+        /// If this attempt was scheduled with a known potential peer, this is stored here to
+        /// prevent another query to the [`AvailabilityRegistry`].
+        next_peer: Option<PublicKey>,
     },
     /// Request is underway.
     Active {
@@ -228,10 +247,31 @@ enum RequestState {
     },
 }
 
+/// Information about a connected peer.
+#[derive(derive_more::Debug)]
+struct PeerInfo {
+    /// Connection to this peer.
+    #[debug(skip)]
+    connection: quinn::Connection,
+    /// Number of active requests this peer is performing for us.
+    // TODO(@divma): unsure if we want to keep track of the specific ids for this requests
+    active_requests: u8,
+}
+
 #[derive(Debug)]
-pub struct DownloadService<S, C> {
+pub struct DownloadService<S, C, R> {
+    /// The store to which data is downloaded.
     store: S,
+    /// Parser to idenfity blobs encoding collections.
     collection_parser: C,
+    /// Registry to query for peers that we believe have the data we are looking for.
+    availabiliy_registry: R,
+    /// Dialer to get connections for required peers.
+    dialer: Dialer,
+    /// Limits to concurrent tasks handled by the service.
+    concurrency_limits: ConcurrencyLimits,
+    /// Available peers to use and their relevant information.
+    peers: HashMap<PublicKey, PeerInfo>,
     /// Download requests as received by the [`Downloader`]. These requests might be underway or
     /// pending.
     registered_intents: HashMap<Id, DownloadInfo>,
@@ -245,7 +285,29 @@ pub struct DownloadService<S, C> {
     in_progress_downloads: FuturesUnordered<tokio::time::Sleep>,
 }
 
-impl<S: Store, C: CollectionParser> DownloadService<S, C> {
+impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> DownloadService<S, C, R> {
+    fn new(
+        store: S,
+        collection_parser: C,
+        availabiliy_registry: R,
+        endpoint: iroh_net::MagicEndpoint,
+        concurrency_limits: ConcurrencyLimits,
+    ) -> Self {
+        let dialer = Dialer::new(endpoint);
+        DownloadService {
+            store,
+            collection_parser,
+            availabiliy_registry,
+            dialer,
+            concurrency_limits,
+            peers: HashMap::default(),
+            registered_intents: HashMap::default(),
+            current_requests: HashMap::default(),
+            scheduled_requests: delay_queue::DelayQueue::default(),
+            in_progress_downloads: FuturesUnordered::default(),
+        }
+    }
+
     /// Handle receiving a [`Message`].
     fn handle_message(&mut self, msg: Message) {
         match msg {
@@ -264,8 +326,6 @@ impl<S: Store, C: CollectionParser> DownloadService<S, C> {
         };
 
         // TODO(@divma): needs
-        // - db
-        // - collection parser
         // - connection
         // - sender whatever that it
         // crate::get::get(db, collection_parser, conn, hash, recursive, sender)
@@ -313,7 +373,11 @@ impl<S: Store, C: CollectionParser> DownloadService<S, C> {
                 debug!(%hash, ?ranges, "new request scheduled");
 
                 let intents = vec![id];
-                let state = RequestState::Scheduled { delay_key };
+                // TODO(@divma): query the AvailabilityRegistry
+                let state = RequestState::Scheduled {
+                    delay_key,
+                    next_peer: None,
+                };
                 entry.insert(RequestInfo { intents, state });
             }
         }
@@ -352,7 +416,7 @@ impl<S: Store, C: CollectionParser> DownloadService<S, C> {
             let ((hash, ranges), info) = occupied_entry.remove_entry();
             debug!(%hash, ?ranges, ?info, "request cancelled");
             match info.state {
-                RequestState::Scheduled { delay_key } => {
+                RequestState::Scheduled { delay_key, .. } => {
                     self.scheduled_requests.remove(&delay_key);
                 }
                 RequestState::Active { cancellation } => {
@@ -360,11 +424,5 @@ impl<S: Store, C: CollectionParser> DownloadService<S, C> {
                 }
             }
         }
-    }
-}
-
-impl Downloader {
-    pub fn add_source(&self, id: u64, source: PublicKey) {
-        // TODO(@divma): send the add source message
     }
 }
