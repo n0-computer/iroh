@@ -81,10 +81,10 @@ pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Conne
 
 /// Dial peers and maintain a queue of pending dials
 ///
-/// This wraps a [MagicEndpoint], connects to peers through the endpoint, stores
+/// This wraps a [`MagicEndpoint`], connects to peers through the endpoint, stores
 /// the pending connect futures and emits finished connect results.
 ///
-/// TODO: Move to iroh-net
+// TODO: Move to iroh-net
 #[derive(Debug)]
 pub struct Dialer {
     endpoint: MagicEndpoint,
@@ -146,6 +146,11 @@ impl Dialer {
             }
             true => futures::future::pending().await,
         }
+    }
+
+    /// Number of pending connections to be opened.
+    pub fn pending_count(&self) -> usize {
+        self.pending_peers.len()
     }
 }
 
