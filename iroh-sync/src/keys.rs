@@ -266,7 +266,7 @@ impl Ord for AuthorId {
 /// Utilities for working with byte array identifiers
 // TODO: copy-pasted from iroh-gossip/src/proto/util.rs
 // Unify into iroh-common crate or similar
-mod base32 {
+pub(super) mod base32 {
     /// Convert to a base32 string
     pub fn fmt(bytes: impl AsRef<[u8]>) -> String {
         let mut text = data_encoding::BASE32_NOPAD.encode(bytes.as_ref());

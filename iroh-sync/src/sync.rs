@@ -278,10 +278,25 @@ impl SignedEntry {
 }
 
 /// Signature over an entry.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntrySignature {
     author_signature: Signature,
     namespace_signature: Signature,
+}
+
+impl Debug for EntrySignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EntrySignature")
+            .field(
+                "namespace_signature",
+                &base32::fmt(&self.namespace_signature.to_bytes()),
+            )
+            .field(
+                "author_signature",
+                &base32::fmt(&self.author_signature.to_bytes()),
+            )
+            .finish()
+    }
 }
 
 impl EntrySignature {
@@ -385,7 +400,7 @@ impl Entry {
 }
 
 /// The indentifier of a record.
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RecordIdentifier {
     /// The key of the record.
     key: Vec<u8>,
@@ -393,6 +408,16 @@ pub struct RecordIdentifier {
     namespace: NamespaceId,
     /// The [`AuthorId`] of the author that wrote this record.
     author: AuthorId,
+}
+
+impl Debug for RecordIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecordIdentifier")
+            .field("namespace", &self.namespace)
+            .field("author", &self.author)
+            .field("key", &std::string::String::from_utf8_lossy(&self.key))
+            .finish()
+    }
 }
 
 impl PartialEq for RecordIdentifier {

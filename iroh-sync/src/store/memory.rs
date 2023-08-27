@@ -505,11 +505,16 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     ) -> Result<Fingerprint, Self::Error> {
         let elements = self.get_range(range.clone(), limit.cloned())?;
         let mut fp = Fingerprint::empty();
+        let mut count = 0;
         for el in elements {
             let el = el?;
             fp ^= el.0.as_fingerprint();
+            count += 1;
         }
-
+        println!("get fingerprint for {:?}: {} items", range, count);
+        if range.x() == range.y() {
+            assert_eq!(count, self.len()?);
+        }
         Ok(fp)
     }
 
