@@ -146,7 +146,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 SYNC_ALPN.to_vec(),
                 iroh_bytes::protocol::ALPN.to_vec(),
             ])
-            .derp_map(derp_map)
             .on_endpoints({
                 let gossip_cell = gossip_cell.clone();
                 Box::new(move |endpoints| {
@@ -157,9 +156,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     // trigger oneshot on the first endpoint update
                     initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
                 })
-            })
-            .bind(args.bind_port)
-            .await?;
+            });
+        let endpoint = match derp_map {
+            Some(derp_map) => endpoint.enable_derp(derp_map),
+            None => endpoint,
+        };
+        let endpoint = endpoint.bind(args.bind_port).await?;
 
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());

@@ -113,7 +113,6 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
-        .derp_map(derp_map)
         .on_endpoints({
             let gossip_cell = gossip_cell.clone();
             let notify = notify.clone();
@@ -125,9 +124,12 @@ async fn main() -> anyhow::Result<()> {
                 // notify the outer task of the initial endpoint update (later updates are not interesting)
                 notify.notify_one();
             })
-        })
-        .bind(args.bind_port)
-        .await?;
+        });
+    let endpoint = match derp_map {
+        Some(derp_map) => endpoint.enable_derp(derp_map),
+        None => endpoint,
+    };
+    let endpoint = endpoint.bind(args.bind_port).await?;
     println!("> our peer id: {}", endpoint.peer_id());
 
     // create the gossip protocol

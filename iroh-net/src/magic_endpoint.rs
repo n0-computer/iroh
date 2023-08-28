@@ -6,12 +6,13 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
 use tracing::{debug, trace};
 
 use crate::{
     config,
+    defaults::default_derp_map,
     derp::DerpMap,
     key::{PublicKey, SecretKey},
     magicsock::{self, Callbacks, MagicSock},
@@ -20,7 +21,7 @@ use crate::{
 };
 
 /// Builder for [MagicEndpoint]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MagicEndpointBuilder {
     secret_key: Option<SecretKey>,
     derp_map: Option<DerpMap>,
@@ -29,6 +30,20 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
+}
+
+impl Default for MagicEndpointBuilder {
+    fn default() -> Self {
+        Self {
+            secret_key: Default::default(),
+            derp_map: Some(default_derp_map()),
+            alpn_protocols: Default::default(),
+            transport_config: Default::default(),
+            concurrent_connections: Default::default(),
+            keylog: Default::default(),
+            callbacks: Default::default(),
+        }
+    }
 }
 
 impl MagicEndpointBuilder {
@@ -56,14 +71,32 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Specify the DERP servers that are used by this endpoint.
+    /// Enables using DERP servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other peers by [`PublicKey`] and also
-    /// help establish connections between peers by being an initial relay
-    /// for traffic while assisting in holepunching to establish a direct
-    /// connection between the peers.
-    pub fn derp_map(mut self, derp_map: Option<DerpMap>) -> Self {
-        self.derp_map = derp_map;
+    /// DERP servers are used to discover other peers by [`PublicKey`] and also help
+    /// establish connections between peers by being an initial relay for traffic while
+    /// assisting in holepunching to establish a direct connection between peers.
+    ///
+    /// The provided `derp_map` must contain at least one region with a configured derp
+    /// node.  If an invalid [`DerpMap`] is provided [`bind`] will result in an error.
+    ///
+    /// When calling neither this, nor [`disable_derp`] the builder uses the
+    /// [`default_derp_map`] containing number0's global derp servers.
+    ///
+    /// [`bind`]: MagicEndpointBuilder::bind
+    /// [`disable_derp`]: MagicEndpointBuilder::disable_derp
+    pub fn enable_derp(mut self, derp_map: DerpMap) -> Self {
+        self.derp_map = Some(derp_map);
+        self
+    }
+
+    /// Disables using DERP servers.
+    ///
+    /// See [`enable_derp`] for details.
+    ///
+    /// [`enable_derp`]: MagicEndpointBuilder::enable_derp
+    pub fn disable_derp(mut self) -> Self {
+        self.derp_map = None;
         self
     }
 
@@ -119,7 +152,14 @@ impl MagicEndpointBuilder {
     /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
-    pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
+    pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
+        ensure!(
+            self.derp_map
+                .as_ref()
+                .map(|m| !m.is_empty())
+                .unwrap_or(true),
+            "Derp server enabled but DerpMap is empty",
+        );
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let mut server_config = make_server_config(
             &secret_key,
@@ -134,7 +174,7 @@ impl MagicEndpointBuilder {
             secret_key,
             bind_port,
             Some(server_config),
-            self.derp_map,
+            self.derp_map.unwrap_or_default(),
             Some(self.callbacks),
             self.keylog,
         )
@@ -147,7 +187,7 @@ fn make_server_config(
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
-) -> anyhow::Result<quinn::ServerConfig> {
+) -> Result<quinn::ServerConfig> {
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
@@ -178,13 +218,13 @@ impl MagicEndpoint {
         secret_key: SecretKey,
         bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
-        derp_map: Option<DerpMap>,
+        derp_map: DerpMap,
         callbacks: Option<Callbacks>,
         keylog: bool,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
-            derp_map: Some(derp_map.unwrap_or_default()),
+            derp_map,
             secret_key: secret_key.clone(),
             callbacks: callbacks.unwrap_or_default(),
         })
@@ -226,7 +266,7 @@ impl MagicEndpoint {
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
-    pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
+    pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         self.msock.local_addr()
     }
 
@@ -236,7 +276,7 @@ impl MagicEndpoint {
     /// This list contains both the locally-bound addresses and the endpoint's
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
-    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<config::Endpoint>> {
+    pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         self.msock.local_endpoints().await
     }
 
@@ -263,7 +303,7 @@ impl MagicEndpoint {
         alpn: &[u8],
         derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
-    ) -> anyhow::Result<quinn::Connection> {
+    ) -> Result<quinn::Connection> {
         if derp_region.is_some() || !known_addrs.is_empty() {
             self.add_known_addrs(node_id, derp_region, known_addrs)
                 .await?;
@@ -313,7 +353,7 @@ impl MagicEndpoint {
         node_id: PublicKey,
         derp_region: Option<u16>,
         endpoints: &[SocketAddr],
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         match (endpoints.is_empty(), derp_region) {
             (true, None) => {
                 anyhow::bail!(
@@ -370,7 +410,7 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> anyhow::Result<()> {
+    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
         self.endpoint.wait_idle().await;
         // TODO: Now wait-idle on msock!
@@ -391,7 +431,7 @@ impl MagicEndpoint {
 /// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
 pub async fn accept_conn(
     mut conn: quinn::Connecting,
-) -> anyhow::Result<(PublicKey, String, quinn::Connection)> {
+) -> Result<(PublicKey, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
     let peer_id = get_peer_id(&conn).await?;
@@ -399,7 +439,7 @@ pub async fn accept_conn(
 }
 
 /// Extract the ALPN protocol from the peer's TLS certificate.
-pub async fn get_alpn(connecting: &mut quinn::Connecting) -> anyhow::Result<String> {
+pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
     let data = connecting.handshake_data().await?;
     match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
@@ -411,7 +451,7 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> anyhow::Result<Stri
 }
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
-pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PublicKey> {
+pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => anyhow::bail!("no peer certificate found"),
@@ -458,7 +498,7 @@ mod tests {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_map(Some(derp_map))
+                        .enable_derp(derp_map)
                         .bind(0)
                         .await
                         .unwrap();
@@ -491,7 +531,7 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .derp_map(Some(derp_map))
+                    .enable_derp(derp_map)
                     .bind(0)
                     .await
                     .unwrap();

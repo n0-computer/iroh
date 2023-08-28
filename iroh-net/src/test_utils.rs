@@ -40,7 +40,7 @@ pub(crate) async fn run_derp_and_stun(
 
     let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(stun_ip).await?;
     let region_id = 1;
-    let m: DerpMap = [DerpRegion {
+    let m = DerpMap::from_regions([DerpRegion {
         region_id,
         region_code: "test".into(),
         nodes: vec![DerpNode {
@@ -59,8 +59,8 @@ pub(crate) async fn run_derp_and_stun(
         }
         .into()],
         avoid: false,
-    }]
-    .into();
+    }])
+    .expect("hardcoded");
 
     let (tx, rx) = oneshot::channel();
     tokio::spawn(

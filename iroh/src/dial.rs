@@ -39,10 +39,12 @@ pub struct Options {
 pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(opts.secret_key)
-        .derp_map(opts.derp_map)
-        .keylog(opts.keylog)
-        .bind(0)
-        .await?;
+        .keylog(opts.keylog);
+    let endpoint = match opts.derp_map {
+        Some(derp_map) => endpoint.enable_derp(derp_map),
+        None => endpoint,
+    };
+    let endpoint = endpoint.bind(0).await?;
     endpoint
         .connect(
             opts.peer_id,

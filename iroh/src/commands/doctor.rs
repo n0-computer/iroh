@@ -246,7 +246,7 @@ async fn report(
             // creating a derp map from host name and stun port
             DerpMap::default_from_node(url, stun_port, UseIpv4::TryDns, UseIpv6::TryDns, 0)
         }
-        None => config.derp_map().expect("derp map not configured"),
+        None => config.derp_map()?.unwrap_or_default(),
     };
     println!("getting report using derp map {dm:#?}");
 
@@ -520,13 +520,15 @@ async fn make_endpoint(
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![DR_DERP_ALPN.to_vec()])
-        .derp_map(derp_map)
         .transport_config(transport_config)
         .on_net_info(Box::new(on_net_info))
         .on_endpoints(Box::new(on_endpoints))
-        .on_derp_active(Box::new(on_derp_active))
-        .bind(0)
-        .await?;
+        .on_derp_active(Box::new(on_derp_active));
+    let endpoint = match derp_map {
+        Some(derp_map) => endpoint.enable_derp(derp_map),
+        None => endpoint,
+    };
+    let endpoint = endpoint.bind(0).await?;
 
     tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
         .await
@@ -808,7 +810,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let (derp_map, derp_region) = if local_derper {
                 (Some(configure_local_derp_map()), Some(TEST_REGION_ID))
             } else {
-                (config.derp_map(), derp_region)
+                (config.derp_map()?, derp_region)
             };
             let secret_key = create_secret_key(secret_key)?;
             connect(dial, secret_key, remote_endpoint, derp_region, derp_map).await
@@ -822,7 +824,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let derp_map = if local_derper {
                 Some(configure_local_derp_map())
             } else {
-                config.derp_map()
+                config.derp_map()?
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };

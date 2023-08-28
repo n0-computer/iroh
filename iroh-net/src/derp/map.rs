@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -125,13 +126,24 @@ impl DerpMap {
             region_id,
         )
     }
-}
 
-impl<T: IntoIterator<Item = DerpRegion>> From<T> for DerpMap {
-    fn from(value: T) -> Self {
-        DerpMap {
-            regions: Arc::new(value.into_iter().map(|r| (r.region_id, r)).collect()),
+    /// Constructs the [`DerpMap`] from an iterator of [`DerpRegion`]s.
+    pub fn from_regions(value: impl IntoIterator<Item = DerpRegion>) -> Result<Self> {
+        let mut map = HashMap::new();
+        for region in value.into_iter() {
+            ensure!(!map.contains_key(&region.region_id), "Duplicate region id");
+            ensure!(!region.nodes.is_empty(), "A DerpRegion must have DerpNodes");
+            for node in region.nodes.iter() {
+                ensure!(
+                    node.region_id == region.region_id,
+                    "DerpNode region_id does not match DerpRegion region_id"
+                );
+            }
+            map.insert(region.region_id, region);
         }
+        Ok(DerpMap {
+            regions: map.into(),
+        })
     }
 }
 

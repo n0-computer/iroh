@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -36,6 +36,7 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReaderExt;
+use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
     config::Endpoint,
@@ -159,7 +160,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
-            derp_map: None,
+            derp_map: Some(default_derp_map()),
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
@@ -219,9 +220,31 @@ where
         }
     }
 
-    /// Sets the `[DerpMap]`
-    pub fn derp_map(mut self, dm: DerpMap) -> Self {
+    /// Enables using DERP servers to assist in establishing connectivity.
+    ///
+    /// DERP servers are used to discover other nodes by [`PublicKey`] and also help
+    /// establish connections between peers by being an initial relay for traffic while
+    /// assisting in holepunching to establish a direct connection between peers.
+    ///
+    /// The provided `derp_map` must contain at least one region with a configured derp
+    /// node.
+    ///
+    /// When calling neither this, nor [`disable_derp`] the builder uses the
+    /// [`default_derp_map`] containing number0's global derp servers.
+    ///
+    /// [`disable_derp`]: Builder::disable_derp
+    pub fn enable_derp(mut self, dm: DerpMap) -> Self {
         self.derp_map = Some(dm);
+        self
+    }
+
+    /// Disables using DERP servers.
+    ///
+    /// See [`enable_derp`] for details.
+    ///
+    /// [`enable_derp`]: Builder::enable_derp
+    pub fn disable_derp(mut self) -> Self {
+        self.derp_map = None;
         self
     }
 
@@ -281,6 +304,13 @@ where
     pub async fn spawn(self) -> Result<Node<D, S>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
+        ensure!(
+            self.derp_map
+                .as_ref()
+                .map(|m| !m.is_empty())
+                .unwrap_or(true),
+            "Derp server enabled but DerpMap is empty",
+        );
 
         // Initialize the metrics collection.
         //
@@ -305,7 +335,6 @@ where
             .secret_key(self.secret_key.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
-            .derp_map(self.derp_map)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .on_endpoints(Box::new(move |eps| {
@@ -319,9 +348,12 @@ where
                 if !endpoints_update_s.is_disconnected() {
                     endpoints_update_s.send(()).ok();
                 }
-            }))
-            .bind(self.bind_addr.port())
-            .await?;
+            }));
+        let endpoint = match self.derp_map {
+            Some(derp_map) => endpoint.enable_derp(derp_map),
+            None => endpoint,
+        };
+        let endpoint = endpoint.bind(self.bind_addr.port()).await?;
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);

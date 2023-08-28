@@ -898,7 +898,7 @@ mod tests {
         let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
         let region_id = 1;
-        let dm: DerpMap = [DerpRegion {
+        let dm = DerpMap::from_regions([DerpRegion {
             region_id,
             nodes: stun_servers
                 .into_iter()
@@ -917,8 +917,8 @@ mod tests {
                 .collect(),
             avoid: false,
             region_code: "default".into(),
-        }]
-        .into();
+        }])
+        .expect("hardcoded");
         dbg!(&dm);
 
         let r = client
