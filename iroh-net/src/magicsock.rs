@@ -916,17 +916,17 @@ impl Actor {
         loop {
             tokio::select! {
                 Some(transmits) = self.network_receiver.recv() => {
-                    trace!("tick: network send");
+                    trace!(target:"actor", "tick: network send");
                     self.send_network(transmits).await;
                 }
                 Some(msg) = self.msg_receiver.recv() => {
-                    trace!(?msg, "tick: msg");
+                    trace!(target:"actor", ?msg, "tick: msg");
                     if self.handle_actor_message(msg).await {
                         return Ok(());
                     }
                 }
                 Some(msg) = self.ip_receiver.recv() => {
-                    trace!("tick: ip_receiver");
+                    trace!(target:"actor", "tick: ip_receiver");
                     match msg {
                         IpPacket::Disco { sender, sealed_box, src } => {
                             self.handle_disco_message(sender, &sealed_box, src, None).await;
@@ -947,17 +947,17 @@ impl Actor {
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
-                    trace!("tick: re_stun {:?}", tick);
+                    trace!(target:"actor", "tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
                 }
                 Ok(()) = portmap_watcher.changed() => {
-                    trace!("tick: portmap changed");
+                    trace!(target:"actor", "tick: portmap changed");
                     let new_external_address = *portmap_watcher.borrow();
                     debug!("external address updated: {new_external_address:?}");
                     self.re_stun("portmap_updated").await;
                 },
                 _ = endpoint_heartbeat_timer.tick() => {
-                    trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
+                    trace!(target:"actor", "tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
                     for (_, ep) in self.peer_map.endpoints_mut() {
                         ep.stayin_alive().await;
@@ -965,13 +965,13 @@ impl Actor {
                 }
                 _ = endpoints_update_receiver.changed() => {
                     let reason = *endpoints_update_receiver.borrow();
-                    trace!("tick: endpoints update receiver {:?}", reason);
+                    trace!(target:"actor", "tick: endpoints update receiver {:?}", reason);
                     if let Some(reason) = reason {
                         self.update_endpoints(reason).await;
                     }
                 }
                 else => {
-                    trace!("tick: other");
+                    trace!(target:"actor", "tick: other");
                 }
             }
         }
@@ -1762,6 +1762,7 @@ impl Actor {
 
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
+                warn!("sending call me maybe to {public_key:?}");
                 if let Err(err) = msg_sender
                     .send(ActorMessage::SendDiscoMessage {
                         dst: SendAddr::Derp(derp_addr),
