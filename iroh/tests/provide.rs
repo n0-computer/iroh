@@ -55,6 +55,7 @@ fn test_node<D: Store>(
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
         .collection_parser(IrohCollectionParser)
+        .enable_derp(iroh_net::defaults::default_derp_map())
         .bind_addr(addr)
 }
 
@@ -149,9 +150,9 @@ fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Option
         secret_key: SecretKey::generate(),
         peer_id,
         addrs,
-        derp_region: None,
+        derp_region: Some(1),
         keylog: false,
-        derp_map: None,
+        derp_map: Some(iroh_net::defaults::default_derp_map()),
     }
 }
 
@@ -567,7 +568,10 @@ async fn test_run_ticket() {
 
     let no_token_ticket = node.ticket(hash).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = no_token_ticket.as_get_options(SecretKey::generate(), None);
+        let opts = no_token_ticket.as_get_options(
+            SecretKey::generate(),
+            Some(iroh_net::defaults::default_derp_map()),
+        );
         let request = GetRequest::all(no_token_ticket.hash()).into();
         let response = run_get_request(opts, request).await;
         assert!(response.is_err());
@@ -582,7 +586,14 @@ async fn test_run_ticket() {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
             .into();
-        run_get_request(ticket.as_get_options(SecretKey::generate(), None), request).await
+        run_get_request(
+            ticket.as_get_options(
+                SecretKey::generate(),
+                Some(iroh_net::defaults::default_derp_map()),
+            ),
+            request,
+        )
+        .await
     })
     .await
     .expect("timeout")
@@ -717,6 +728,7 @@ async fn test_custom_collection_parser() {
     let doc_store = iroh_sync::store::memory::Store::default();
     let node = Node::builder(db, doc_store)
         .collection_parser(CollectionsAreJustLinks)
+        .enable_derp(iroh_net::defaults::default_derp_map())
         .bind_addr(addr)
         .runtime(&rt)
         .spawn()
@@ -908,11 +920,12 @@ async fn test_token_passthrough() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(30), async move {
         let endpoint = MagicEndpoint::builder()
             .secret_key(SecretKey::generate())
+            .enable_derp(iroh_net::defaults::default_derp_map())
             .keylog(true)
             .bind(0)
             .await?;
         endpoint
-            .connect(peer_id, &iroh_bytes::protocol::ALPN, None, &addrs)
+            .connect(peer_id, &iroh_bytes::protocol::ALPN, Some(1), &addrs)
             .await
             .context("failed to connect to provider")?;
         let request = GetRequest::all(hash).with_token(token).into();
