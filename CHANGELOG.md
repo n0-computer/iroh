@@ -1,3 +1,51 @@
+# [v0.6.0-alpha](https://github.com/n0-computer/iroh/compare/v0.5.1...v0.6.0-alpha) (2023-08-28)
+
+_This is the first alpha preview of iroh v0.6.0. iroh v0.6.0 is targeting a Sept 25th release date._
+
+v0.6.0 is a big step toward iroh 1.0. It introduces documents, the See our [docs pages](https://iroh.computer/docs) for a detailed look at the new iroh.
+
+## Introducing documents
+
+Documents are mutable key-value stores that authors read from, write to, and sync with, subscribing to live updates in real time. For more on documents, see the [docmuents, uh, documentation](https://iroh.computer/docs/layers/documents)
+
+## Iroh console is here to help
+
+this release includes `iroh console` an admin, debugging, and API exploration tool. It's a REPL that can give live feedback as documents change, users sync, etc. For a detailed rundown on console commands, see the [iroh command documentation](https://iroh.computer/docs/commands)
+
+
+### Bug Fixes
+
+* **ci:** correctly detect forks ([#1327](https://github.com/n0-computer/iroh/issues/1327)) ([80c54aa](https://github.com/n0-computer/iroh/commit/80c54aa2ba1d16914dc9b09ca283136fe16a46a1))
+* enable derp metrics ([#1268](https://github.com/n0-computer/iroh/issues/1268)) ([faad31a](https://github.com/n0-computer/iroh/commit/faad31ad84212da608851b228fe4d05e7d0e5811))
+* **iroh-bytes:** Hash should be serialized as array not bytes ([#1410](https://github.com/n0-computer/iroh/issues/1410)) ([116eea9](https://github.com/n0-computer/iroh/commit/116eea9eaf40d81ebaadd62c5f0f6259781c57f8))
+* **iroh-bytes:** range spec seq identification of single blobs ([#1421](https://github.com/n0-computer/iroh/issues/1421)) ([c3e701f](https://github.com/n0-computer/iroh/commit/c3e701f18140c1f96ca99276d223ae0a5c737752))
+* **iroh-net:** do not panic on RIB issues ([#1313](https://github.com/n0-computer/iroh/issues/1313)) ([8ede947](https://github.com/n0-computer/iroh/commit/8ede9473b15c46eef16a444767480360894ba70c))
+* **iroh-net:** portmapper priority follows described priority strategy ([#1324](https://github.com/n0-computer/iroh/issues/1324)) ([f60101a](https://github.com/n0-computer/iroh/commit/f60101a8ab75acd2ead1d5c62fbd5d179e948fac))
+* **iroh-net:** remove `transparent` attribute from mapping debug + log bump ([#1339](https://github.com/n0-computer/iroh/issues/1339)) ([2878e79](https://github.com/n0-computer/iroh/commit/2878e797163661cb921978d5a68139968b6f7e5c))
+* **iroh-net:** split packets on send ([#1380](https://github.com/n0-computer/iroh/issues/1380)) ([57a2dee](https://github.com/n0-computer/iroh/commit/57a2dee84af44d2877b8bddf7f0b790f4be879d8))
+* **iroh-net:** use base32 encoding in the derper config for SecretKey ([#1385](https://github.com/n0-computer/iroh/issues/1385)) ([b8a1de8](https://github.com/n0-computer/iroh/commit/b8a1de8a39e28b4c02a9904374a43037d70f834c))
+* **iroh:** atomically write keyfile ([7752b5a](https://github.com/n0-computer/iroh/commit/7752b5a663876f9af293d5aea5fdfd3fe53ee1fa))
+* **iroh:** pass derp map when setting up provider ([#1347](https://github.com/n0-computer/iroh/issues/1347)) ([391db92](https://github.com/n0-computer/iroh/commit/391db92a64e877eff4c61fcdb7e4a099aba0c4c0))
+* **iroh:** Try to fix flaky test_token_passthrough test ([#1419](https://github.com/n0-computer/iroh/issues/1419)) ([a1d4a4d](https://github.com/n0-computer/iroh/commit/a1d4a4d71b7f8c954c8b5627f31617ddef6bcdf6))
+* **netcheck:** Build test ProbePlan from fake interface data ([#1266](https://github.com/n0-computer/iroh/issues/1266)) ([f671aa5](https://github.com/n0-computer/iroh/commit/f671aa509a92f96b63404815acbbbe479c888aa4)), closes [#1263](https://github.com/n0-computer/iroh/issues/1263)
+* Remove obsolete and unused module ([#1279](https://github.com/n0-computer/iroh/issues/1279)) ([4c67385](https://github.com/n0-computer/iroh/commit/4c67385982d8e0c57399c9f275a2aaf3e19ac9b5))
+* **tests:** bring back MagicEndpoint connect-close test ([#1282](https://github.com/n0-computer/iroh/issues/1282)) ([4b1f79c](https://github.com/n0-computer/iroh/commit/4b1f79c5aedd44fe8e703f67d916368ba35e917f)), closes [#1183](https://github.com/n0-computer/iroh/issues/1183)
+
+
+### Features
+
+* add iroh-sync and integrate into iroh node ([#1333](https://github.com/n0-computer/iroh/issues/1333)) ([3f141be](https://github.com/n0-computer/iroh/commit/3f141be6fd2951f10c97ff8434fd78fc40a1afcc)), closes [#1216](https://github.com/n0-computer/iroh/issues/1216) [#1149](https://github.com/n0-computer/iroh/issues/1149) [#1344](https://github.com/n0-computer/iroh/issues/1344) [#1356](https://github.com/n0-computer/iroh/issues/1356) [#1366](https://github.com/n0-computer/iroh/issues/1366) [#1334](https://github.com/n0-computer/iroh/issues/1334) [#1354](https://github.com/n0-computer/iroh/issues/1354) [#1354](https://github.com/n0-computer/iroh/issues/1354)
+* Iroh console (REPL) and restructured CLI ([#1356](https://github.com/n0-computer/iroh/issues/1356)) ([b73d950](https://github.com/n0-computer/iroh/commit/b73d9504d64ac09bbd7c675d1047d948edbfd0f6)), closes [#1216](https://github.com/n0-computer/iroh/issues/1216) [/github.com/clap-rs/clap/discussions/5070#discussioncomment-6721310](https://github.com//github.com/clap-rs/clap/discussions/5070/issues/discussioncomment-6721310)
+* **iroh-bytes:** remove unneeded u64 length prefix ([#1408](https://github.com/n0-computer/iroh/issues/1408)) ([6d9eac7](https://github.com/n0-computer/iroh/commit/6d9eac7fef834ceb5fd980c9031aea722b08ac2f))
+* iroh-gossip ([#1149](https://github.com/n0-computer/iroh/issues/1149)) ([7f8463f](https://github.com/n0-computer/iroh/commit/7f8463f48587e2173f7d8fb8851e4beea148d7de))
+* **iroh-net:** add `DEV_DERP_ONLY` env variable for testing the derp relay ([#1378](https://github.com/n0-computer/iroh/issues/1378)) ([34c97bb](https://github.com/n0-computer/iroh/commit/34c97bb688cbf3ffd096246b22fa85d11402738b))
+* **iroh-net:** Nat-PMP probes and mappings ([#1283](https://github.com/n0-computer/iroh/issues/1283)) ([5c38730](https://github.com/n0-computer/iroh/commit/5c387308a14e17738efed2e4bcefee02141e13cd))
+* **iroh-net:** PCP mappings ([#1261](https://github.com/n0-computer/iroh/issues/1261)) ([84e2f72](https://github.com/n0-computer/iroh/commit/84e2f721a0505ee44d04c01df0daa54dcbd400ab))
+* methods to check if a hash is complete or partial ([#1359](https://github.com/n0-computer/iroh/issues/1359)) ([8006629](https://github.com/n0-computer/iroh/commit/800662957f67030014102653004e6490ebc4ea3b))
+* **tests:** Improve test_utils to warn about mutli-runtime tests ([#1280](https://github.com/n0-computer/iroh/issues/1280)) ([62522dc](https://github.com/n0-computer/iroh/commit/62522dccaefaeca9ac13393329d3fbe7db48b203))
+
+
+
 # [v0.5.1](https://github.com/n0-computer/iroh/compare/v0.4.1...v0.5.1) (2023-08-28)
 
 ## Connectivity Intensifies 
