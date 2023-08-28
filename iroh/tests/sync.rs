@@ -36,7 +36,7 @@ fn test_node(
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
         .collection_parser(IrohCollectionParser)
-        .derp_map(iroh_net::defaults::default_derp_map())
+        .enable_derp(iroh_net::defaults::default_derp_map())
         .runtime(&rt)
         .bind_addr(addr)
 }
