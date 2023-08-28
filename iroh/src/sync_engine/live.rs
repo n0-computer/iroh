@@ -116,7 +116,7 @@ pub struct LiveStatus {
     /// Whether this document is in the live sync
     pub active: bool,
     /// Number of event listeners registered
-    pub subscriptions: usize,
+    pub subscriptions: u64,
 }
 
 #[derive(derive_more::Debug)]
@@ -493,7 +493,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             let subscriptions = self
                 .event_subscriptions
                 .get(&topic)
-                .map(|map| map.len())
+                .map(|map| map.len() as u64)
                 .unwrap_or_default();
             Some(LiveStatus {
                 active: true,
@@ -667,7 +667,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             InsertOrigin::Sync(peer_id) => {
                 let from = PublicKey::from_bytes(&peer_id)?;
                 let entry = signed_entry.entry();
-                let hash = *entry.record().content_hash();
+                let hash = entry.record().content_hash();
 
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.

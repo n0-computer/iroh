@@ -10,6 +10,7 @@ use std::{fmt::Debug, sync::Arc, time::SystemTime};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
+use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
@@ -217,6 +218,12 @@ pub struct SignedEntry {
     entry: Entry,
 }
 
+impl From<SignedEntry> for Entry {
+    fn from(value: SignedEntry) -> Self {
+        value.entry
+    }
+}
+
 impl SignedEntry {
     pub(crate) fn new(signature: EntrySignature, entry: Entry) -> Self {
         SignedEntry { signature, entry }
@@ -245,13 +252,13 @@ impl SignedEntry {
     }
 
     /// Get the content [`struct@Hash`] of the entry.
-    pub fn content_hash(&self) -> &Hash {
-        self.entry().record().content_hash()
+    pub fn content_hash(&self) -> Hash {
+        self.entry().content_hash()
     }
 
     /// Get the content length of the entry.
     pub fn content_len(&self) -> u64 {
-        self.entry().record().content_len()
+        self.entry().content_len()
     }
 
     /// Get the [`AuthorId`] of the entry.
@@ -460,6 +467,13 @@ impl RecordIdentifier {
     }
 }
 
+impl Deref for Entry {
+    type Target = Record;
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
 /// The data part of an entry in a [`Replica`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -492,8 +506,8 @@ impl Record {
     }
 
     /// Get the [`struct@Hash`] of the content data of this record.
-    pub fn content_hash(&self) -> &Hash {
-        &self.hash
+    pub fn content_hash(&self) -> Hash {
+        self.hash
     }
 
     /// Create a new record with a timestamp of the current system date.
