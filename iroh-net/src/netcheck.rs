@@ -14,7 +14,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
 use crate::util::CancelOnDrop;
@@ -691,58 +691,61 @@ impl Actor {
     }
 
     fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        let mut log = "report: ".to_string();
-        log += &format!("udp={}", r.udp);
+        // Since we are to String the writes are infallible.
+        use std::fmt::Write;
+
+        let mut log = String::with_capacity(256);
+        write!(log, "report: ").ok();
+        write!(log, "udp={}", r.udp).ok();
         if !r.ipv4 {
-            log += &format!(" v4={}", r.ipv4)
+            write!(log, "v v4={}", r.ipv4).ok();
         }
         if !r.udp {
-            log += &format!(" icmpv4={}", r.icmpv4)
+            write!(log, " icmpv4={}", r.icmpv4).ok();
         }
 
-        log += &format!(" v6={}", r.ipv6);
+        write!(log, " v6={}", r.ipv6).ok();
         if !r.ipv6 {
-            log += &format!(" v6os={}", r.os_has_ipv6);
+            write!(log, " v6os={}", r.os_has_ipv6).ok();
         }
-        log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
-        log += &format!(" hair={:?}", r.hair_pinning);
+        write!(log, " mapvarydest={:?}", r.mapping_varies_by_dest_ip).ok();
+        write!(log, " hair={:?}", r.hair_pinning).ok();
         if let Some(probe) = &r.portmap_probe {
-            log += &format!(" {}", probe);
+            write!(log, " {}", probe).ok();
         } else {
-            log += " portmap=?";
+            write!(log, " portmap=?").ok();
         }
         if let Some(ipp) = r.global_v4 {
-            log += &format!(" v4a={ipp}");
+            write!(log, " v4a={ipp}").ok();
         }
         if let Some(ipp) = r.global_v6 {
-            log += &format!(" v6a={ipp}");
+            write!(log, " v6a={ipp}").ok();
         }
         if let Some(c) = r.captive_portal {
-            log += &format!(" captiveportal={c}");
+            write!(log, " captiveportal={c}").ok();
         }
-        log += &format!(" derp={}", r.preferred_derp);
+        write!(log, " derp={}", r.preferred_derp).ok();
         if r.preferred_derp != 0 {
-            log += " derpdist=";
+            write!(log, " derpdist=").ok();
             let mut need_comma = false;
             for rid in &dm.region_ids() {
                 if let Some(d) = r.region_v4_latency.get(*rid) {
                     if need_comma {
-                        log += ",";
+                        write!(log, ",").ok();
                     }
-                    log += &format!("{}v4:{}", rid, d.as_millis());
+                    write!(log, "{}v4:{}", rid, d.as_millis()).ok();
                     need_comma = true;
                 }
                 if let Some(d) = r.region_v6_latency.get(*rid) {
                     if need_comma {
-                        log += ",";
+                        write!(log, ",").ok();
                     }
-                    log += &format!("{}v6:{}", rid, d.as_millis());
+                    write!(log, "{}v6:{}", rid, d.as_millis()).ok();
                     need_comma = true;
                 }
             }
         }
-
-        info!("{}", log);
+        debug!("{}", log);
     }
 }
 
@@ -836,6 +839,7 @@ mod tests {
 
     use bytes::BytesMut;
     use tokio::time;
+    use tracing::info;
 
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
     use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};

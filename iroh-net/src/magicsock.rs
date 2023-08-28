@@ -2202,13 +2202,6 @@ impl Actor {
         // remove moribund nodes in the next step below.
         for n in &self.net_map.as_ref().unwrap().peers {
             if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
-                // info!(
-                //     "inserting peer's endpoint {:?} - {:?} {:#?} {:#?}",
-                //     self.inner.public_key, // our own node's public key
-                //     n.key.clone(),         // public key of node endpoint being created
-                //     self.peer_map,         // map of all endpoints we know about
-                //     n,                     // node being added
-                // );
                 info!(
                     peer = ?n.key,
                     "inserting peer's endpoint in PeerMap"

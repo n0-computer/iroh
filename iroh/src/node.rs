@@ -52,7 +52,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::dial::Ticket;
 use crate::download::Downloader;
@@ -445,7 +445,7 @@ where
                             handle_rpc_request(msg, chan, &handler, &rt);
                         }
                         Err(e) => {
-                            tracing::info!("rpc request error: {:?}", e);
+                            info!("rpc request error: {:?}", e);
                         }
                     }
                 },
@@ -456,7 +456,7 @@ where
                             handle_rpc_request(msg, chan, &handler, &rt);
                         }
                         Err(_) => {
-                            tracing::info!("last controller dropped, shutting down");
+                            info!("last controller dropped, shutting down");
                             break;
                         }
                     }
@@ -466,7 +466,7 @@ where
                     let alpn = match get_alpn(&mut connecting).await {
                         Ok(alpn) => alpn,
                         Err(err) => {
-                            tracing::error!("invalid handshake: {:?}", err);
+                            error!("invalid handshake: {:?}", err);
                             continue;
                         }
                     };
@@ -865,7 +865,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             {
                 use crate::collection::{Blob, Collection};
                 use crate::util::io::pathbuf_from_name;
-                tracing::trace!("exporting collection {} to {}", hash, path.display());
+                trace!("exporting collection {} to {}", hash, path.display());
                 tokio::fs::create_dir_all(&path).await?;
                 let collection = db.get(&hash).context("collection not there")?;
                 let mut reader = collection.data_reader().await?;
@@ -876,7 +876,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }
-                    tracing::trace!("exporting blob {} to {}", hash, path.display());
+                    trace!("exporting blob {} to {}", hash, path.display());
                     let id = progress.new_id();
                     let progress1 = progress.clone();
                     db.export(*hash, path, mode, move |offset| {
@@ -915,7 +915,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     ) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
-        tracing::info!("share: {:?}", msg);
+        debug!("share: {:?}", msg);
         let conn = self
             .inner
             .endpoint
@@ -1087,11 +1087,11 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
     async fn shutdown(self, request: ShutdownRequest) {
         if request.force {
-            tracing::info!("hard shutdown requested");
+            info!("hard shutdown requested");
             std::process::exit(0);
         } else {
             // trigger a graceful shutdown
-            tracing::info!("graceful shutdown requested");
+            info!("graceful shutdown requested");
             self.inner.cancel_token.cancel();
         }
     }
@@ -1147,7 +1147,7 @@ fn handle_rpc_request<
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
-        tracing::info!(
+        info!(
             "handling rpc request: {:?} {}",
             msg,
             std::any::type_name::<E>()
