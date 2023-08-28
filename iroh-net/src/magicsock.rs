@@ -1267,6 +1267,7 @@ impl Actor {
                         self.send_derp(derp_addr, public_key, Self::split_packets(transmits));
                     }
                     Ok((Some(udp_addr), None)) => {
+                        error!("sending raw to {public_key:?} {udp_addr:?}");
                         if let Err(err) = self.send_raw(udp_addr, transmits).await {
                             warn!("failed to send UDP: {:?}", err);
                         }
