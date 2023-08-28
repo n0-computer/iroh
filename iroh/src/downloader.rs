@@ -1,6 +1,6 @@
 //! Handle downloading blobs and collections concurrently and from multiple peers.
 //!
-//! The [`DownloadService`] interacts with five main components to this end.
+//! The [`Service`] interacts with five main components to this end.
 //! - [`Dialer`]: Used to queue opening connection to peers we need perform downloads.
 //! - [`AvailabilityRegistry`]: Where the downloader obtains information about peers that could be
 //!   used to perform a download.
@@ -35,7 +35,7 @@ use std::{
     task::Poll::{Pending, Ready},
 };
 
-use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
@@ -44,7 +44,7 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::util::Dialer;
 use iroh_net::key::PublicKey;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error, info, trace, warn};
 
@@ -53,19 +53,21 @@ use tracing::{debug, error, info, trace, warn};
 pub type Id = u64;
 
 pub trait AvailabilityRegistry {
-    type CandidateIter: Iterator<Item = PublicKey>;
-    fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter;
+    type CandidateIter<'a>: Iterator<Item = &'a PublicKey>
+    where
+        Self: 'a;
+    fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter<'_>;
 }
 
-/// Concurrency limits for the [`DownloadService`].
+/// Concurrency limits for the [`Service`].
 #[derive(Debug)]
 pub struct ConcurrencyLimits {
     /// Maximum number of requests the service performs concurrently.
-    max_concurrent_requests: u8,
+    max_concurrent_requests: usize,
     /// Maximum number of requests performed by a single peer concurrently.
-    max_concurrent_requests_per_peer: u8,
+    max_concurrent_requests_per_peer: usize,
     /// Maximum number of open connections the service maintains.
-    max_open_connections: u8,
+    max_open_connections: usize,
 }
 
 /// Download requests the [`Downloader`] handles.
@@ -255,11 +257,25 @@ struct PeerInfo {
     connection: quinn::Connection,
     /// Number of active requests this peer is performing for us.
     // TODO(@divma): unsure if we want to keep track of the specific ids for this requests
-    active_requests: u8,
+    active_requests: usize,
+    /// Number of requests scheduled for this peer.
+    scheduled_requests: usize,
+}
+impl PeerInfo {
+    fn new(connection: quinn::Connection) -> PeerInfo {
+        PeerInfo {
+            connection,
+            active_requests: 0,
+            scheduled_requests: 0,
+        }
+    }
 }
 
+/// Type of future that performs a download request.
+type DownloadFut = BoxFuture<'static, (Hash, RangeSpecSeq, DownloadResult)>;
+
 #[derive(Debug)]
-pub struct DownloadService<S, C, R> {
+struct Service<S, C, R> {
     /// The store to which data is downloaded.
     store: S,
     /// Parser to idenfity blobs encoding collections.
@@ -270,6 +286,8 @@ pub struct DownloadService<S, C, R> {
     dialer: Dialer,
     /// Limits to concurrent tasks handled by the service.
     concurrency_limits: ConcurrencyLimits,
+    /// Channel to receive messages from the service's handle.
+    msg_rx: mpsc::Receiver<Message>,
     /// Available peers to use and their relevant information.
     peers: HashMap<PublicKey, PeerInfo>,
     /// Download requests as received by the [`Downloader`]. These requests might be underway or
@@ -282,29 +300,56 @@ pub struct DownloadService<S, C, R> {
     /// Queue of scheduled requests.
     scheduled_requests: delay_queue::DelayQueue<(Hash, RangeSpecSeq)>,
     /// Downloads underway.
-    in_progress_downloads: FuturesUnordered<tokio::time::Sleep>,
+    in_progress_downloads: FuturesUnordered<DownloadFut>,
 }
 
-impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> DownloadService<S, C, R> {
+impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     fn new(
         store: S,
         collection_parser: C,
         availabiliy_registry: R,
         endpoint: iroh_net::MagicEndpoint,
         concurrency_limits: ConcurrencyLimits,
+        msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
         let dialer = Dialer::new(endpoint);
-        DownloadService {
+        Service {
             store,
             collection_parser,
             availabiliy_registry,
             dialer,
             concurrency_limits,
+            msg_rx,
             peers: HashMap::default(),
             registered_intents: HashMap::default(),
             current_requests: HashMap::default(),
             scheduled_requests: delay_queue::DelayQueue::default(),
             in_progress_downloads: FuturesUnordered::default(),
+        }
+    }
+
+    async fn run(mut self) {
+        loop {
+            // check if we have capacity to dequeue another scheduled request
+            let at_capacity = self.at_request_capacity();
+            tokio::select! {
+                (peer, conn_result) = self.dialer.next() => {
+                    self.on_connection_ready(peer, conn_result);
+                }
+                maybe_msg = self.msg_rx.recv() => {
+                    match maybe_msg {
+                        Some(msg) => self.handle_message(msg),
+                        None => return self.shutdown(),
+                    }
+                }
+                Some((hash, ranges, result)) = self.in_progress_downloads.next() => {
+                    self.on_download_completed(hash, ranges, result);
+                }
+                Some(expired) = self.scheduled_requests.next(), if !at_capacity => {
+                    let (hash, ranges) = expired.into_inner();
+                    self.on_scheduled_request_ready(hash, ranges);
+                }
+            }
         }
     }
 
@@ -316,25 +361,10 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> DownloadService<S, 
         }
     }
 
-    async fn poll_schedulled(&mut self) {
-        let download_key = self.scheduled_requests.next().await.unwrap().into_inner();
-        let RequestInfo { intents, state } = self.current_requests.get_mut(&download_key).unwrap();
-        let cancellation = CancellationToken::new();
-        *state = match state {
-            RequestState::Scheduled { .. } => RequestState::Active { cancellation },
-            RequestState::Active { .. } => unreachable!("request was scheduled"),
-        };
-
-        // TODO(@divma): needs
-        // - connection
-        // - sender whatever that it
-        // crate::get::get(db, collection_parser, conn, hash, recursive, sender)
-    }
-
     /// Handle a [`Message::Start`].
     ///
     /// This will not start the download right away. Instead, if this intent maps to a request that
-    /// already exists, it will be registered with it. If the request is new it will be schedule.
+    /// already exists, it will be registered with it. If the request is new it will be scheduled.
     fn handle_start_download(
         &mut self,
         kind: Download,
@@ -373,6 +403,9 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> DownloadService<S, 
                 debug!(%hash, ?ranges, "new request scheduled");
 
                 let intents = vec![id];
+
+                let candidates = self.availabiliy_registry.get_candidates(hash);
+                //
                 // TODO(@divma): query the AvailabilityRegistry
                 let state = RequestState::Scheduled {
                     delay_key,
@@ -381,6 +414,27 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> DownloadService<S, 
                 entry.insert(RequestInfo { intents, state });
             }
         }
+    }
+
+    fn get_best_candidates(&self, hash: &Hash) -> Option<PublicKey> {
+        let mut candidates = self
+            .availabiliy_registry
+            .get_candidates(hash)
+            .filter_map(|peer| {
+                match self.peers.get(peer) {
+                    Some(info)
+                        if info.active_requests
+                            >= self.concurrency_limits.max_concurrent_requests_per_peer =>
+                    {
+                        // filter out peers that do not have capacity under current concurrency limits
+                        None
+                    }
+                    Some(info) => Some((peer, Some(info.active_requests))),
+                    None => Some((peer, None)),
+                }
+            })
+            .collect::<Vec<_>>();
+        // sort candidates
     }
 
     /// Cancels the download request.
@@ -424,5 +478,52 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> DownloadService<S, 
                 }
             }
         }
+    }
+
+    async fn poll_schedulled(&mut self) {
+        let download_key = self.scheduled_requests.next().await.unwrap().into_inner();
+        let RequestInfo { intents, state } = self.current_requests.get_mut(&download_key).unwrap();
+        let cancellation = CancellationToken::new();
+        *state = match state {
+            RequestState::Scheduled { .. } => RequestState::Active { cancellation },
+            RequestState::Active { .. } => unreachable!("request was scheduled"),
+        };
+
+        // TODO(@divma): needs
+        // - connection
+        // - sender whatever that it
+        // crate::get::get(db, collection_parser, conn, hash, recursive, sender)
+    }
+
+    fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<quinn::Connection>) {
+        match result {
+            Ok(connection) => {
+                trace!(%peer, "connected to peer");
+                let peer_info = PeerInfo::new(connection);
+                self.peers.insert(peer, peer_info);
+            }
+            Err(err) => {
+                debug!(%peer, %err, "connection to peer failed")
+            }
+        }
+    }
+
+    fn on_download_completed(&mut self, hash: Hash, ranges: RangeSpecSeq, result: DownloadResult) {
+        // TODO(@divma): either send the result or handle the retries
+    }
+
+    fn on_scheduled_request_ready(&mut self, hash: Hash, ranges: RangeSpecSeq) {
+        // TODO(@divma): get the request's next peer, get the connection, add the download future
+    }
+
+    /// Returns whether the service is at capcity to perform another concurrent request.
+    fn at_request_capacity(&self) -> bool {
+        self.in_progress_downloads.len() >= self.concurrency_limits.max_concurrent_requests
+    }
+
+    fn shutdown(mut self) {
+        // TODO(@divma):
+        // cancel opening connections
+        // cancel download futures
     }
 }
