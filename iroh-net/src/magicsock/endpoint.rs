@@ -105,10 +105,6 @@ impl Endpoint {
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
 
-        warn!(
-            "Endpoint::new, derp addr for {:?} set to {:?}",
-            options.public_key, options.derp_addr
-        );
         Endpoint {
             id,
             conn_sender: options.msock_sender,
@@ -557,8 +553,8 @@ impl Endpoint {
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
-        warn!(
-            "update_from_node changing derp addr for {:?} to {:?} from {:?}",
+        debug!(
+            "Changing derp region for {:?} from {:?} to {:?}",
             self.public_key, self.derp_addr, n.derp
         );
         self.derp_addr = n.derp;

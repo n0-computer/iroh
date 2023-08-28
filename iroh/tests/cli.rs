@@ -1,10 +1,8 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-#![cfg(not(features = "derp-only"))]
 #![cfg(feature = "cli")]
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
-// use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, io};
