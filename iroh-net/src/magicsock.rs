@@ -1,9 +1,11 @@
 //! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
+//! Based on tailscale/wgengine/magicsock
+//!
 //! ### `DEV_DERP_ONLY` env var:
-//! When present, this env var will force all packets to be sent over the
-//! DERP relay connection, regardless of whether or not we have a direct
-//! UDP address for the given peer.
+//! When present at *compile time*, this env var will force all packets
+//! to be sent over the DERP relay connection, regardless of whether or
+//! not we have a direct UDP address for the given peer.
 //!
 //! The intended use is for testing the DERP protocol inside the MagicSock
 //! to ensure that we can rely on the relay to send packets when two peers
@@ -12,8 +14,6 @@
 //! This also prevent this node from attempting to hole punch and prevents it
 //! from responding to any hole punching attemtps. This node will still,
 //! however, read any packets that come off the UDP sockets.
-//!
-//! Based on tailscale/wgengine/magicsock
 
 // #[cfg(test)]
 // pub(crate) use conn::tests as conn_tests;
@@ -302,10 +302,8 @@ impl MagicSock {
             "magic-{}",
             hex::encode(&opts.secret_key.public().as_bytes()[..8])
         );
-        if std::option_env!("DEV_DERP_ONLY").is_some() {
-            tracing::warn!(
-                "creating a MagicSock that will only send packets over a DERP relay connection."
-            );
+        if crate::util::derp_only_mode() {
+            warn!("creating a MagicSock that will only send packets over a DERP relay connection.");
         }
 
         Self::with_name(name.clone(), opts)
@@ -1144,7 +1142,6 @@ impl Actor {
             }
             None => {
                 info!(peer=%dm.src, "no peer_map state found for peer");
-                warn!("adding peer {:?} to map with region {}", dm.src, region_id);
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key(),
@@ -1993,7 +1990,7 @@ impl Actor {
         {
             // Disco Ping from unseen endpoint. We will have to add the
             // endpoint later if the message is a ping
-            tracing::info!("disco: unknown sender {:?} - {}", sender, src);
+            info!("disco: unknown sender {:?} - {}", sender, src);
             unknown_sender = true;
         }
 
@@ -2043,7 +2040,7 @@ impl Actor {
                 // if we get here we got a valid ping from an unknown sender
                 // so insert an endpoint for them
                 if unknown_sender {
-                    tracing::warn!(
+                    warn!(
                         "unknown sender: {:?} with region id {:?}",
                         sender,
                         src.derp_region()
