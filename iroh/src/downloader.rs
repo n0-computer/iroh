@@ -133,31 +133,6 @@ pub enum DownloadResult {
     Failed,
 }
 
-/// Kind of sources that canm be used to perform a download.
-// TODO(@divma): likely we will end up using only onme of these. Curiously, I'm not sure which is
-// more ilkely
-#[derive(Debug)]
-pub enum Source {
-    /// Perform the download from any available source.
-    ///
-    /// Sources can be added via [`Downloader::add_source`] with [`DownloadHandle::id`].
-    // TODO(@divma): do we want to add an optional initial source?
-    // - we want. Maybe this saves a subsequent, awkward call to `add_source`
-    // - we don't want. Whatever discovery mechanism we have will be asked and the optional initial
-    // source should be registered there. If the sources registry has no peer for this download
-    // then the download fails without more retries. Reasoning behind this would be that there is
-    // no way to know when to check again for sources for this download.
-    // both options sound likely/reasonable
-    Available,
-    /// Perform the download only from sources registered for the request.
-    ///
-    /// Sources can be added via [`Downloader::add_source`] with [`DownloadHandle::id`].
-    Specific {
-        // TODO(@divma): what are we supposed to call this now?
-        source_key: PublicKey,
-    },
-}
-
 /// Handle to interact with a download request.
 #[derive(Debug)]
 pub struct DownloadHandle {
