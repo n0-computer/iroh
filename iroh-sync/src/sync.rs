@@ -402,15 +402,16 @@ impl AsFingerprint for RecordIdentifier {
 
 impl RangeKey for RecordIdentifier {
     fn contains(&self, range: &crate::ranger::Range<Self>) -> bool {
-        use crate::ranger::contains;
-
-        let key_range = range.clone().map(|x, y| (x.key, y.key));
         let namespace_range = range.clone().map(|x, y| (x.namespace, y.namespace));
+        if !namespace_range.contains(&self.namespace) {
+            return false;
+        }
         let author_range = range.clone().map(|x, y| (x.author, y.author));
-
-        contains(&self.key, &key_range)
-            && contains(&self.namespace, &namespace_range)
-            && contains(&self.author, &author_range)
+        if !author_range.contains(&self.author) {
+            return false;
+        }
+        let key_range = range.clone().map(|x, y| (x.key, y.key));
+        key_range.contains(&self.key)
     }
 }
 

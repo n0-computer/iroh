@@ -41,6 +41,20 @@ impl<K> Range<K> {
     }
 }
 
+impl<K: Ord> Range<K> {
+    pub fn is_all(&self) -> bool {
+        self.x() == self.y()
+    }
+
+    pub fn contains(&self, t: &K) -> bool {
+        match self.x().cmp(self.y()) {
+            Ordering::Equal => true,
+            Ordering::Less => self.x() <= t && t < self.y(),
+            Ordering::Greater => self.x() <= t || t < self.y(),
+        }
+    }
+}
+
 impl<K> From<(K, K)> for Range<K> {
     fn from((x, y): (K, K)) -> Self {
         Range { x, y }
@@ -50,16 +64,7 @@ impl<K> From<(K, K)> for Range<K> {
 pub trait RangeKey: Sized + Ord + Debug {
     /// Is this key inside the range?
     fn contains(&self, range: &Range<Self>) -> bool {
-        contains(self, range)
-    }
-}
-
-/// Default implementation of `contains` for `Ord` types.
-pub fn contains<T: Ord>(t: &T, range: &Range<T>) -> bool {
-    match range.x().cmp(range.y()) {
-        Ordering::Equal => true,
-        Ordering::Less => range.x() <= t && t < range.y(),
-        Ordering::Greater => range.x() <= t || t < range.y(),
+        range.contains(self)
     }
 }
 
@@ -544,7 +549,7 @@ where
                 // Select the first index, for which the key is larger than the x of the range.
                 let mut start_index = local_values
                     .iter()
-                    .position(|(k, _)| range.x() <= k)
+                    .position(|(k, _)| range.x() < k)
                     .unwrap_or(0);
                 let max_len = local_values.len();
                 for i in 0..self.split_factor {
@@ -568,11 +573,15 @@ where
                     start_index += 1;
                 }
 
+                let mut non_empty = 0;
                 for range in ranges.into_iter() {
                     let chunk: Vec<_> = self
                         .store
                         .get_range(range.clone(), self.limit.clone())?
                         .collect();
+                    if !chunk.is_empty() {
+                        non_empty += 1;
+                    }
                     // Add either the fingerprint or the item set
                     let fingerprint = self.store.get_fingerprint(&range, self.limit.as_ref())?;
                     if chunk.len() > self.max_set_size {
@@ -593,11 +602,17 @@ where
                             })
                             .collect::<Result<_, _>>()?;
                         out.push(MessagePart::RangeItem(RangeItem {
-                            range,
+                            range: range.clone(),
                             values,
                             have_local: false,
                         }));
                     }
+                }
+                if non_empty <= 1 {
+                    println!("{:?}", range);
+                    println!("{:?}", local_values);
+                    println!("{:?}", ranges);
+                    debug_assert!(non_empty > 1);
                 }
             }
         }
@@ -647,7 +662,9 @@ fn div_ceil(a: usize, b: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Debug;
+    use proptest::prelude::*;
+    use std::fmt::{self, Debug};
+    use test_strategy::proptest;
 
     use super::*;
 
@@ -1115,7 +1132,7 @@ mod tests {
     ) -> SyncResult<K, V>
     where
         K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
-        V: Clone + Debug + PartialEq,
+        V: Ord + Clone + Debug + PartialEq,
     {
         println!("Using Limit: {:?}", limit);
         let mut expected_set_alice = BTreeMap::new();
@@ -1318,5 +1335,131 @@ mod tests {
 
         assert_eq!(div_ceil(3, 2), 2);
         assert_eq!(div_ceil(5, 3), 2);
+    }
+
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+    struct TestKey(String);
+
+    impl fmt::Display for TestKey {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl fmt::Debug for TestKey {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl RangeKey for TestKey {}
+
+    impl AsFingerprint for TestKey {
+        fn as_fingerprint(&self) -> Fingerprint {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(self.0.as_bytes());
+            Fingerprint(hasher.finalize().into())
+        }
+    }
+
+    type TestSet = BTreeMap<TestKey, ()>;
+
+    fn test_key() -> impl Strategy<Value = TestKey> {
+        "[a-z0-9]{0,5}".prop_map(TestKey)
+    }
+
+    fn test_set() -> impl Strategy<Value = TestSet> {
+        prop::collection::btree_map(test_key(), Just(()), 0..10)
+    }
+
+    fn test_vec() -> impl Strategy<Value = Vec<(TestKey, ())>> {
+        test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    }
+
+    fn test_range() -> impl Strategy<Value = Range<TestKey>> {
+        // ranges with x > y are explicitly allowed - they wrap around
+        (test_key(), test_key()).prop_map(|(x, y)| Range::new(x, y))
+    }
+
+    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
+        values
+            .into_iter()
+            .map(|v| TestKey(v.as_ref().to_string()))
+            .map(|k| (k, ()))
+            .collect()
+    }
+
+    fn mk_test_vec(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(TestKey, ())> {
+        mk_test_set(values).into_iter().collect()
+    }
+
+    #[test]
+    fn simple_store_sync_1() {
+        let alice = mk_test_vec(["3"]);
+        let bob = mk_test_vec(["2", "3", "4", "5", "6", "7", "8"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[test]
+    fn simple_store_sync_2() {
+        let alice = mk_test_vec(["1", "3"]);
+        let bob = mk_test_vec(["0", "2", "3"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[test]
+    fn simple_store_sync_3() {
+        let alice = mk_test_vec(["8", "9"]);
+        let bob = mk_test_vec(["1", "2", "3"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[proptest]
+    fn simple_store_sync(
+        #[strategy(test_vec())] alice: Vec<(TestKey, ())>,
+        #[strategy(test_vec())] bob: Vec<(TestKey, ())>,
+    ) {
+        let _res = sync(None, &alice, &bob);
+    }
+
+    /// A generic fn to make a test for the get_range fn of a store.
+    fn store_get_ranges_test<S, K, V>(
+        elems: impl IntoIterator<Item = (K, V)>,
+        range: Range<K>,
+        limit: Option<Range<K>>,
+    ) -> (Vec<(K, V)>, Vec<(K, V)>)
+    where
+        S: Store<K, V> + Default,
+        K: RangeKey + Clone + Default + AsFingerprint,
+        V: Debug + Clone,
+    {
+        let mut store = S::default();
+        let elems = elems.into_iter().collect::<Vec<_>>();
+        for (k, v) in elems.iter().cloned() {
+            store.put(k, v).unwrap();
+        }
+        let mut actual = store
+            .get_range(range.clone(), limit)
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, S::Error>>()
+            .unwrap();
+        let mut expected = elems
+            .into_iter()
+            .filter(|(k, _)| k.contains(&range))
+            .collect::<Vec<_>>();
+
+        actual.sort_by(|(ak, _), (bk, _)| ak.cmp(&bk));
+        expected.sort_by(|(ak, _), (bk, _)| ak.cmp(&bk));
+        (expected, actual)
+    }
+
+    #[proptest]
+    fn simple_store_get_ranges(
+        #[strategy(test_set())] contents: BTreeMap<TestKey, ()>,
+        #[strategy(test_range())] range: Range<TestKey>,
+    ) {
+        let (expected, actual) =
+            store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents.clone(), range.clone(), None);
+        prop_assert_eq!(expected, actual);
     }
 }
