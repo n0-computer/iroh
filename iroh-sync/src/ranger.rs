@@ -648,7 +648,9 @@ fn div_ceil(a: usize, b: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Debug;
+    use proptest::prelude::*;
+    use std::fmt::{self, Debug};
+    use test_strategy::proptest;
 
     use super::*;
 
@@ -1116,7 +1118,7 @@ mod tests {
     ) -> SyncResult<K, V>
     where
         K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
-        V: Clone + Debug + PartialEq,
+        V: Ord + Clone + Debug + PartialEq,
     {
         println!("Using Limit: {:?}", limit);
         let mut expected_set_alice = BTreeMap::new();
@@ -1319,5 +1321,69 @@ mod tests {
 
         assert_eq!(div_ceil(3, 2), 2);
         assert_eq!(div_ceil(5, 3), 2);
+    }
+
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+    struct TestKey(String);
+
+    impl fmt::Display for TestKey {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl fmt::Debug for TestKey {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl RangeKey for TestKey {}
+
+    impl AsFingerprint for TestKey {
+        fn as_fingerprint(&self) -> Fingerprint {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(self.0.as_bytes());
+            Fingerprint(hasher.finalize().into())
+        }
+    }
+
+    fn test_key() -> impl Strategy<Value = TestKey> {
+        "[a-z0-9]{0,5}".prop_map(TestKey)
+    }
+
+    fn test_set() -> impl Strategy<Value = BTreeMap<TestKey, ()>> {
+        prop::collection::btree_map(test_key(), Just(()), 0..10)
+    }
+
+    fn test_vec() -> impl Strategy<Value = Vec<(TestKey, ())>> {
+        test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    }
+
+    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> BTreeMap<TestKey, ()> {
+        values
+            .into_iter()
+            .map(|v| TestKey(v.as_ref().to_string()))
+            .map(|k| (k, ()))
+            .collect()
+    }
+
+    fn mk_test_vec(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(TestKey, ())> {
+        mk_test_set(values).into_iter().collect()
+    }
+
+    #[test]
+    fn prop_test_sync_1() {
+        let alice = mk_test_vec(["3"]);
+        let bob = mk_test_vec(["", "3", "4", "5", "a", "b", "c"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[proptest]
+    fn prop_test_sync(
+        #[strategy(test_vec())] alice: Vec<(TestKey, ())>,
+        #[strategy(test_vec())] bob: Vec<(TestKey, ())>,
+    ) {
+        let _res = sync(None, &alice, &bob);
     }
 }
