@@ -563,7 +563,7 @@ impl ReplState {
                     let key = entry.entry().id().key();
                     let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                     let len = entry.entry().record().content_len();
-                    let blob = self.db.get(entry.content_hash());
+                    let blob = self.db.get(&entry.content_hash());
                     if let Some(blob) = blob {
                         let mut reader = blob.data_reader().await?;
                         let path = root.join(&relative);
@@ -597,7 +597,7 @@ impl ReplState {
                     let mut file = tokio::fs::File::create(&path).await?;
                     let blob = self
                         .db
-                        .get(entry.content_hash())
+                        .get(&entry.content_hash())
                         .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
                     let mut reader = blob.data_reader().await?;
                     copy(&mut reader, &mut file).await?;
@@ -908,7 +908,7 @@ async fn fmt_content<B: BaoStore>(db: &B, entry: &SignedEntry) -> String {
 
 async fn read_content<B: BaoStore>(db: &B, entry: &SignedEntry) -> anyhow::Result<Bytes> {
     let data = db
-        .get(entry.content_hash())
+        .get(&entry.content_hash())
         .ok_or_else(|| anyhow!("not found"))?
         .data_reader()
         .await?

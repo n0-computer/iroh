@@ -188,7 +188,7 @@ async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
         .next()
         .await
         .ok_or_else(|| anyhow!("entry not found"))??;
-    let content = doc.get_content_bytes(&entry).await?;
+    let content = doc.get_content_bytes(entry.content_hash()).await?;
     Ok(content.to_vec())
 }
 

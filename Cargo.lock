@@ -1951,6 +1951,7 @@ dependencies = [
  "hex",
  "http-body",
  "iroh-io",
+ "iroh-test",
  "multibase",
  "num_cpus",
  "once_cell",
@@ -1962,6 +1963,7 @@ dependencies = [
  "self_cell",
  "serde",
  "serde-error",
+ "serde_test",
  "smallvec",
  "subtle",
  "thiserror",
@@ -2144,6 +2146,7 @@ dependencies = [
 name = "iroh-test"
 version = "0.5.1"
 dependencies = [
+ "anyhow",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3941,6 +3944,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_test"
+version = "1.0.176"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a2f49ace1498612d14f7e0b8245519584db8299541dfe31a06374a828d620ab"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4469,6 +4481,7 @@ dependencies = [
  "libc",
  "mio",
  "num_cpus",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.5.3",

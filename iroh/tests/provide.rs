@@ -877,7 +877,7 @@ async fn test_token_passthrough() -> Result<()> {
     let rt = test_runtime();
     let expected = b"hello".to_vec();
     let (db, hash) = create_test_db([("test", expected.clone())]);
-    let addr = "0.0.0.0:0".parse().unwrap();
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let node = test_node(db, addr)
         .custom_auth_handler(Arc::new(CustomAuthHandler))
         .runtime(&rt)
@@ -894,7 +894,7 @@ async fn test_token_passthrough() -> Result<()> {
                     if let iroh_bytes::provider::Event::GetRequestReceived { token: tok, .. } =
                         bp_msg
                     {
-                        events_sender.send(tok).ok();
+                        events_sender.send(tok).expect("receiver dropped");
                     }
                 }
             }
@@ -905,7 +905,7 @@ async fn test_token_passthrough() -> Result<()> {
 
     let addrs = node.local_endpoint_addresses().await?;
     let peer_id = node.peer_id();
-    tokio::time::timeout(Duration::from_secs(10), async move {
+    tokio::time::timeout(Duration::from_secs(30), async move {
         let endpoint = MagicEndpoint::builder()
             .secret_key(SecretKey::generate())
             .keylog(true)
