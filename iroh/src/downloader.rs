@@ -70,6 +70,20 @@ pub struct ConcurrencyLimits {
     max_open_connections: usize,
 }
 
+impl ConcurrencyLimits {
+    fn at_requests_capacity(&self, active_requests: usize) -> bool {
+        active_requests >= self.max_concurrent_requests
+    }
+
+    fn peer_at_request_capacity(&self, active_peer_requests: usize) -> bool {
+        active_peer_requests >= self.max_concurrent_requests_per_peer
+    }
+
+    fn at_connections_capacity(&self, active_connections: usize) -> bool {
+        active_connections >= self.max_open_connections
+    }
+}
+
 /// Download requests the [`Downloader`] handles.
 #[derive(Debug)]
 pub enum Download {
@@ -231,7 +245,6 @@ struct PeerInfo {
     #[debug(skip)]
     connection: quinn::Connection,
     /// Number of active requests this peer is performing for us.
-    // TODO(@divma): unsure if we want to keep track of the specific ids for this requests
     active_requests: usize,
     /// Number of requests scheduled for this peer.
     scheduled_requests: usize,
@@ -391,25 +404,54 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
-    fn get_best_candidates(&self, hash: &Hash) -> Option<PublicKey> {
+    /// Gets the best candidate for a download.
+    ///
+    /// Peers are selected priorizing those with an open connection and with capacity for another
+    /// request.
+    fn get_best_candidate(&self, hash: &Hash) -> Option<PublicKey> {
         let mut candidates = self
             .availabiliy_registry
             .get_candidates(hash)
             .filter_map(|peer| {
-                match self.peers.get(peer) {
-                    Some(info)
-                        if info.active_requests
-                            >= self.concurrency_limits.max_concurrent_requests_per_peer =>
+                match self
+                    .peers
+                    .get(peer)
+                    .map(|info| info.active_requests + info.scheduled_requests)
+                {
+                    Some(assigned_requests)
+                        if self
+                            .concurrency_limits
+                            .peer_at_request_capacity(assigned_requests) =>
                     {
-                        // filter out peers that do not have capacity under current concurrency limits
+                        // filter out peers that at are at request capacity
                         None
                     }
-                    Some(info) => Some((peer, Some(info.active_requests))),
+                    Some(assigned_requests) => Some((peer, Some(assigned_requests))),
                     None => Some((peer, None)),
                 }
             })
             .collect::<Vec<_>>();
-        // sort candidates
+        // sort candidates to obtain the one with the least requests and an open connection
+        // peers we prefer go to the end of the vector to be able to pop from it (more efficient
+        // than removing the first element)
+        candidates.sort_unstable_by(|(_peer_a, info_a), (_peer_b, info_b)| {
+            use std::cmp::Ordering::*;
+            match (info_a, info_b) {
+                (None, None) => Equal, // no preference between two peers for which we don't have a connection
+                (None, Some(_)) => Less, // prefer peers with open connections
+                (Some(_), None) => Greater, // prefer peers with open connections
+                (Some(a), Some(b)) => {
+                    if a < b {
+                        Greater // prefer a, which has less requests
+                    } else if b < a {
+                        Less // prefer b, which has less requests
+                    } else {
+                        Equal // no preference between peers with same num of assigned requests
+                    }
+                }
+            }
+        });
+        candidates.pop().map(|(peer, _active_req)| peer.clone())
     }
 
     /// Cancels the download request.
