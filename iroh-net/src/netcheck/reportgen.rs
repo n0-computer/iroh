@@ -30,9 +30,7 @@ use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Instant};
-use tracing::{
-    debug, debug_span, error, info, info_span, instrument, trace, warn, Instrument, Span,
-};
+use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
@@ -260,7 +258,7 @@ impl Actor {
 
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
-                    info!(report=?pm, "Portmapper probe report");
+                    debug!(report=?pm, "Portmapper probe report");
                     self.report.portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
@@ -336,7 +334,7 @@ impl Actor {
     }
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
-        info!("finished probe: {:?}", probe_report);
+        debug!("finished probe: {:?}", probe_report);
         let derp_node = probe_report.probe.node();
         if let Some(latency) = probe_report.delay {
             self.report
@@ -419,7 +417,7 @@ impl Actor {
                 timeout *= 2;
             }
             let reportcheck = self.addr();
-            info!(
+            debug!(
                 reports=self.report.region_latency.len(),
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
@@ -532,11 +530,11 @@ impl Actor {
                     match captive_portal_check.await {
                         Ok(Ok(found)) => Some(found),
                         Ok(Err(err)) => {
-                            info!("check_captive_portal error: {:?}", err);
+                            warn!("check_captive_portal error: {:?}", err);
                             None
                         }
                         Err(_) => {
-                            info!("check_captive_portal timed out");
+                            warn!("check_captive_portal timed out");
                             None
                         }
                     }
@@ -932,7 +930,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
         .map(|s| s.to_str().unwrap_or_default())
         == Some(&expected_response);
 
-    info!(
+    debug!(
         "check_captive_portal url={} status_code={} valid_response={}",
         res.url(),
         res.status(),
