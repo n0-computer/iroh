@@ -1,7 +1,7 @@
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_bytes::util::runtime;
-use iroh_sync::{store::GetFilter, sync::SignedEntry};
+use iroh_sync::{store::GetFilter, Entry};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -22,20 +22,20 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = doc.get(GetFilter::latest()).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        let content = doc.get_content_bytes(&entry).await?;
+        let content = doc.get_content_bytes(entry.content_hash()).await?;
         println!("  content {}", String::from_utf8(content.to_vec())?)
     }
 
     Ok(())
 }
 
-fn fmt_entry(entry: &SignedEntry) -> String {
-    let id = entry.entry().id();
+fn fmt_entry(entry: &Entry) -> String {
+    let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
     let author = fmt_hash(id.author().as_bytes());
-    let hash = entry.entry().record().content_hash();
+    let hash = entry.content_hash();
     let hash = fmt_hash(hash.as_bytes());
-    let len = HumanBytes(entry.entry().record().content_len());
+    let len = HumanBytes(entry.content_len());
     format!("@{author}: {key} = {hash} ({len})",)
 }
 

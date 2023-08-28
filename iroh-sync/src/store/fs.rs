@@ -516,13 +516,14 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
             {
                 let mut record_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
                 let key = (k.namespace_bytes(), k.author_bytes(), k.key());
-                let record = v.entry().record();
+                let record = v.entry();
+                let hash = record.content_hash();
                 let value = (
                     timestamp,
                     &v.signature().namespace_signature().to_bytes(),
                     &v.signature().author_signature().to_bytes(),
                     record.content_len(),
-                    record.content_hash().as_bytes(),
+                    hash.as_bytes(),
                 );
                 record_table.insert(key, value)?;
             }

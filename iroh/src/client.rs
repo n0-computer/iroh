@@ -10,7 +10,8 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
 use iroh_sync::store::GetFilter;
-use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
+use iroh_sync::sync::{AuthorId, NamespaceId};
+use iroh_sync::Entry;
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
@@ -136,7 +137,7 @@ where
         author_id: AuthorId,
         key: Vec<u8>,
         value: Vec<u8>,
-    ) -> Result<SignedEntry> {
+    ) -> Result<Hash> {
         let res = self
             .rpc
             .rpc(DocSetRequest {
@@ -146,19 +147,18 @@ where
                 value,
             })
             .await??;
-        Ok(res.entry)
+        Ok(res.entry.content_hash())
     }
 
     /// Get the contents of an entry as a byte array.
     // TODO: add get_content_reader
-    pub async fn get_content_bytes(&self, entry: &SignedEntry) -> Result<Bytes> {
-        let hash = *entry.content_hash();
+    pub async fn get_content_bytes(&self, hash: Hash) -> Result<Bytes> {
         let bytes = self.rpc.rpc(BytesGetRequest { hash }).await??;
         Ok(bytes.data)
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_latest(&self, author_id: AuthorId, key: Vec<u8>) -> Result<SignedEntry> {
+    pub async fn get_latest(&self, author_id: AuthorId, key: Vec<u8>) -> Result<Entry> {
         let filter = GetFilter::latest().with_key(key).with_author(author_id);
         let mut stream = self.get(filter).await?;
         let entry = stream
@@ -169,7 +169,7 @@ where
     }
 
     /// Get entries.
-    pub async fn get(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<SignedEntry>>> {
+    pub async fn get(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
         let stream = self
             .rpc
             .server_streaming(DocGetRequest {
@@ -177,7 +177,7 @@ where
                 filter,
             })
             .await?;
-        Ok(flatten(stream).map_ok(|res| res.entry))
+        Ok(flatten(stream).map_ok(|res| res.entry.into()))
     }
 
     /// Share this document with peers over a ticket.
