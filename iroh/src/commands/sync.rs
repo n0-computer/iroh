@@ -187,8 +187,8 @@ impl DocCommands {
                 let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
-                let entry = doc.set_bytes(author, key, value).await?;
-                println!("{}", fmt_entry(entry.entry()));
+                let hash = doc.set_bytes(author, key, value).await?;
+                println!("{}", hash);
             }
             Self::Get {
                 doc,
@@ -213,10 +213,10 @@ impl DocCommands {
 
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(entry.entry()));
+                    println!("{}", fmt_entry(&entry));
                     if content {
                         if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
-                            match doc.get_content_bytes(&entry).await {
+                            match doc.get_content_bytes(entry.content_hash()).await {
                                 Ok(content) => match String::from_utf8(content.into()) {
                                     Ok(s) => println!("{s}"),
                                     Err(_err) => println!("<invalid UTF-8>"),
@@ -253,7 +253,7 @@ impl DocCommands {
                 };
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(entry.entry()));
+                    println!("{}", fmt_entry(&entry));
                 }
             }
             Self::Watch { doc } => {
