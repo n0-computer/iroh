@@ -1,6 +1,6 @@
 [package]
 name = "iroh-gossip"
-version = "0.5.1"
+version = "0.6.0-alpha.0"
 edition = "2021"
 readme = "README.md"
 description = "gossip messages over broadcast trees"
@@ -25,7 +25,7 @@ rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 tracing = "0.1.37"
-iroh-metrics = { path = "../iroh-metrics", version = "0.5.0" }
+iroh-metrics = { path = "../iroh-metrics", version = "0.6.0-alpha.0" }
 
 # net dependencies (optional)
 futures = { version = "0.3.25", optional = true }
@@ -38,7 +38,7 @@ genawaiter = { version = "0.99.1", default-features = false, features = ["future
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-iroh-test = { version = "0.5.1", path = "../iroh-test" }
+iroh-test = { version = "0.6.0-alpha.0", path = "../iroh-test" }
 rand_chacha = "0.3.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.4.0"
