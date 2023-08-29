@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
-use tracing::debug;
+use tracing::{trace, debug};
 
 use crate::{store, NamespaceId, Replica};
 
@@ -102,7 +102,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
         namespace: alice.namespace(),
         message: alice.sync_initial_message().map_err(Into::into)?,
     };
-    println!("alice -> bob: {:#?}", init_message);
+    trace!("alice -> bob: {:#?}", init_message);
     writer.send(init_message).await?;
 
     // Sync message loop
@@ -117,7 +117,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
                     .sync_process_message(msg, other_peer_id)
                     .map_err(Into::into)?
                 {
-                    println!("alice -> bob: {:#?}", msg);
+                    trace!("alice -> bob: {:#?}", msg);
                     writer.send(Message::Sync(msg)).await?;
                 } else {
                     break;
@@ -149,12 +149,12 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
 
                 match replica_store.open_replica(&namespace)? {
                     Some(r) => {
-                        debug!("starting sync for {}", namespace);
+                        debug!("run_bob: process initial message for {}", namespace);
                         if let Some(msg) = r
                             .sync_process_message(message, other_peer_id)
                             .map_err(Into::into)?
                         {
-                            println!("bob -> alice: {:#?}", msg);
+                            trace!("bob -> alice: {:#?}", msg);
                             writer.send(Message::Sync(msg)).await?;
                         } else {
                             break;
@@ -168,10 +168,12 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
             }
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
+                    debug!("run_bob: process message");
                     if let Some(msg) = replica
                         .sync_process_message(msg, other_peer_id)
                         .map_err(Into::into)?
                     {
+                        trace!("bob -> alice: {:#?}", msg);
                         writer.send(Message::Sync(msg)).await?;
                     } else {
                         break;
@@ -194,6 +196,7 @@ mod tests {
         sync::Namespace,
     };
     use iroh_net::key::SecretKey;
+    use rand_core::SeedableRng;
 
     use super::*;
 
@@ -309,14 +312,18 @@ mod tests {
         alice_replica_store: S,
         bob_replica_store: S,
     ) -> Result<()> {
-        let mut rng = rand::thread_rng();
+        let num_messages = &[1, 2, 5, 10, 20];
+        let num_authors = &[2, 3, 4, 5, 10, 20];
 
-        for num_messages in &[1, 2, 5, 10, 20] {
-            for num_authors in &[2, 3, 4, 5, 10, 20] {
-                println!("Using {num_authors} authors and {num_messages} messages per side");
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
+        for num_messages in num_messages {
+            for num_authors in num_authors {
+                println!(
+                    "Using {num_authors} authors and {num_messages} messages per side and author"
+                );
 
-                let alice_peer_id = SecretKey::generate().public();
-                let bob_peer_id = SecretKey::generate().public();
+                let alice_peer_id = SecretKey::generate_with_rng(&mut rng).public();
+                let bob_peer_id = SecretKey::generate_with_rng(&mut rng).public();
                 let namespace = Namespace::new(&mut rng);
 
                 let authors_alice: Vec<_> = (0..*num_authors)
@@ -406,26 +413,35 @@ mod tests {
                     .unwrap()
                     .collect::<Result<Vec<_>>>()
                     .unwrap();
-                println!(
-                    "alice has: {:#?}",
-                    alice_messages
-                        .iter()
-                        .map(|e| (e.author(), std::str::from_utf8(&e.key()).unwrap()))
-                        .collect::<Vec<_>>()
-                );
+                // println!(
+                //     "alice has {} messages: {:#?}",
+                //     alice_messages.len(),
+                //     alice_messages
+                //         .iter()
+                //         .map(|e| (e.author(), std::str::from_utf8(&e.key()).unwrap()))
+                //         .collect::<Vec<_>>()
+                // );
+                let bob_messages = bob_replica_store
+                    .get(bob_replica.namespace(), GetFilter::all())
+                    .unwrap()
+                    .collect::<Result<Vec<_>>>()
+                    .unwrap();
+                // println!(
+                //     "bob has {} messages: {:#?}",
+                //     bob_messages.len(),
+                //     bob_messages
+                //         .iter()
+                //         .map(|e| (e.author(), std::str::from_utf8(&e.key()).unwrap()))
+                //         .collect::<Vec<_>>()
+                // );
+
                 assert_eq!(
                     alice_messages.len(),
                     2 * num_messages * num_authors,
                     "alice is missing messages"
                 );
-
                 assert_eq!(
-                    bob_replica_store
-                        .get(bob_replica.namespace(), GetFilter::all())
-                        .unwrap()
-                        .collect::<Result<Vec<_>>>()
-                        .unwrap()
-                        .len(),
+                    bob_messages.len(),
                     2 * num_messages * num_authors,
                     "bob is missing messages"
                 );

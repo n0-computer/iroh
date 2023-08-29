@@ -419,11 +419,25 @@ pub struct RecordIdentifier {
 
 impl Debug for RecordIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RecordIdentifier")
-            .field("namespace", &self.namespace)
-            .field("author", &self.author)
-            .field("key", &std::string::String::from_utf8_lossy(&self.key))
-            .finish()
+        /// Convert to a base32 string limited to the first 5 bytes
+        pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
+            let len = bytes.as_ref().len().min(5);
+            let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
+            text.make_ascii_lowercase();
+            text
+        }
+        write!(
+            f,
+            "RecId({}:{}:{})",
+            fmt_short(self.namespace.as_bytes()),
+            fmt_short(self.author.as_bytes()),
+            &std::string::String::from_utf8_lossy(&self.key)
+        )
+        // f.debug_struct("RecordIdentifier")
+        //     .field("namespace", &self.namespace)
+        //     .field("author", &self.author)
+        //     .field("key", &std::string::String::from_utf8_lossy(&self.key))
+        //     .finish()
     }
 }
 

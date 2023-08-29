@@ -511,7 +511,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
             fp ^= el.0.as_fingerprint();
             count += 1;
         }
-        println!("get fingerprint for {:?}: {} items", range, count);
         if range.x() == range.y() {
             assert_eq!(count, self.len()?);
         }
