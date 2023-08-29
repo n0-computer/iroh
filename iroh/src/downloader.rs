@@ -40,6 +40,7 @@ use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
     protocol::{RangeSpec, RangeSpecSeq},
+    util::progress::IgnoreProgressSender,
     Hash,
 };
 use iroh_gossip::net::util::Dialer;
@@ -235,6 +236,8 @@ enum RequestState {
         /// Token used to cancel the future doing the request.
         #[debug(skip)]
         cancellation: CancellationToken,
+        /// Peer doing this request attempt.
+        peer: PublicKey,
     },
 }
 
@@ -348,7 +351,10 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     async fn run(mut self) {
         loop {
             // check if we have capacity to dequeue another scheduled request
-            let at_capacity = self.at_request_capacity();
+            let at_capacity = self
+                .concurrency_limits
+                .at_requests_capacity(self.in_progress_downloads.len());
+
             tokio::select! {
                 (peer, conn_result) = self.dialer.next() => {
                     self.on_connection_ready(peer, conn_result);
@@ -356,7 +362,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 maybe_msg = self.msg_rx.recv() => {
                     match maybe_msg {
                         Some(msg) => self.handle_message(msg),
-                        None => return self.shutdown(),
+                        None => return self.shutdown().await,
                     }
                 }
                 Some((hash, ranges, result)) = self.in_progress_downloads.next() => {
@@ -546,21 +552,25 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 RequestState::Scheduled { delay_key, .. } => {
                     self.scheduled_requests.remove(&delay_key);
                 }
-                RequestState::Active { cancellation } => {
+                RequestState::Active { cancellation, peer } => {
                     cancellation.cancel();
+                    if let Some(PeerInfo {
+                        state:
+                            ConnectionState::Connected {
+                                connection,
+                                active_requests,
+                            },
+                        scheduled_requests,
+                    }) = self.peers.get_mut(&peer)
+                    {
+                    } else {
+                    }
                 }
             }
         }
     }
 
     async fn poll_schedulled(&mut self) {
-        let download_key = self.scheduled_requests.next().await.unwrap().into_inner();
-        let RequestInfo { intents, state } = self.current_requests.get_mut(&download_key).unwrap();
-        let cancellation = CancellationToken::new();
-        *state = match state {
-            RequestState::Scheduled { .. } => RequestState::Active { cancellation },
-            RequestState::Active { .. } => unreachable!("request was scheduled"),
-        };
 
         // TODO(@divma): needs
         // - connection
@@ -582,10 +592,59 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     }
 
     fn on_download_completed(&mut self, hash: Hash, ranges: RangeSpecSeq, result: DownloadResult) {
+        match result {
+            DownloadResult::Success => {
+                let RequestInfo { state, .. } = self
+                    .current_requests
+                    .remove(&(hash, ranges))
+                    .expect("ready request was registered");
+                if let RequestState::Active { cancellation, peer } = state {
+                } else {
+                }
+            }
+            DownloadResult::Failed => todo!(),
+        }
         // TODO(@divma): either send the result or handle the retries
     }
 
     fn on_scheduled_request_ready(&mut self, hash: Hash, ranges: RangeSpecSeq) {
+        // TODO(@divma): coded happy paths for now
+        let request_info = self
+            .current_requests
+            .get_mut(&(hash, ranges))
+            .expect("scheduled request is registered");
+        // get the assigned peer
+        let RequestState::Scheduled {
+            delay_key,
+            next_peer,
+        } = &request_info.state
+        else {
+            unreachable!("request was scheduled")
+        };
+
+        if let Some(peer) = next_peer {
+            let peer_info = self.peers.get_mut(peer).expect("assigned peer is present");
+            // TODO(@divma): assume the peer is connected for now
+            if let ConnectionState::Connected {
+                connection,
+                active_requests,
+            } = &mut peer_info.state
+            {
+                *active_requests += 1;
+                let recursive = false;
+                let sender = IgnoreProgressSender::default();
+                crate::get::get(
+                    &self.store,
+                    &self.collection_parser,
+                    connection.clone(),
+                    hash,
+                    recursive,
+                    sender,
+                );
+            } else {
+                todo!("schedulued request needs a peer that is dialing")
+            }
+        }
         // TODO(@divma): get the request's next peer, get the connection, add the download future
     }
 
@@ -594,9 +653,8 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         self.in_progress_downloads.len() >= self.concurrency_limits.max_concurrent_requests
     }
 
-    fn shutdown(mut self) {
-        // TODO(@divma):
-        // cancel opening connections
-        // cancel download futures
+    async fn shutdown(mut self) {
+        debug!("shutting down");
+        // TODO(@divma): how to make sure the download futures end gracefully?
     }
 }
