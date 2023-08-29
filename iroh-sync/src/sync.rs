@@ -527,6 +527,11 @@ impl RecordIdentifier {
         out.extend_from_slice(&self.key);
     }
 
+    /// Get this [`RecordIdentifier`] as a tuple of byte slices.
+    pub(crate) fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
+        (self.namespace.as_bytes(), self.author.as_bytes(), &self.key)
+    }
+
     /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
         &self.key

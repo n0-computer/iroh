@@ -8,7 +8,8 @@ use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
 use redb::{
     AccessGuard, Database, MultimapRange, MultimapTableDefinition, MultimapValue,
-    ReadOnlyMultimapTable, ReadTransaction, ReadableMultimapTable, ReadableTable, TableDefinition,
+    ReadOnlyMultimapTable, ReadTransaction, ReadableMultimapTable, ReadableTable, StorageError,
+    TableDefinition,
 };
 
 use crate::{
@@ -444,6 +445,13 @@ impl StoreInstance {
     fn new(namespace: NamespaceId, store: Store) -> Self {
         StoreInstance { namespace, store }
     }
+
+    fn range_start(&self) -> RecordsId {
+        (self.namespace.as_bytes(), &[0u8; 32], &[][..])
+    }
+    fn range_end(&self) -> RecordsId {
+        (self.namespace.as_bytes(), &[255u8; 32], &[][..])
+    }
 }
 
 impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
@@ -538,119 +546,51 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         range: Range<RecordIdentifier>,
         limit: Option<Range<RecordIdentifier>>,
     ) -> Result<Self::RangeIterator<'_>> {
-        let empty_start = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
-        let empty_end = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
         // identity range: iter1 = all, iter2 = none
         let iter = if range.x() == range.y() {
-            let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
-            let end = (self.namespace.as_bytes(), &[255u8; 32], &[][..]);
+            let start = self.range_start();
+            let end = self.range_end();
             // iterator for all entries in replica
-            let iter = RangeLatestIterator::try_new(
-                self.store.db.begin_read()?,
-                |read_tx| {
-                    read_tx
-                        .open_multimap_table(RECORDS_TABLE)
-                        .map_err(anyhow::Error::from)
-                },
-                |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            let iter = RangeLatestIterator::with_range(
+                &self.store.db,
+                |table| table.range(start..end),
                 limit.clone(),
                 RangeFilter::None,
             )?;
             // empty iterator, returns nothing
-            let iter2 = RangeLatestIterator::try_new(
-                self.store.db.begin_read()?,
-                |read_tx| {
-                    read_tx
-                        .open_multimap_table(RECORDS_TABLE)
-                        .map_err(anyhow::Error::from)
-                },
-                |record_table| {
-                    record_table
-                        .range(empty_start..empty_end)
-                        .map_err(anyhow::Error::from)
-                },
-                limit.clone(),
-                RangeFilter::None,
-            )?;
+            let iter2 = RangeLatestIterator::empty(&self.store.db)?;
             iter.chain(iter2)
         // regular range: iter1 = x <= t < y, iter2 = none
         } else if range.x() < range.y() {
-            let range_start = range.x();
-            let range_end = range.y();
-            let start = (
-                range_start.namespace_bytes(),
-                range_start.author_bytes(),
-                range_start.key(),
-            );
-            let end = (
-                range_end.namespace_bytes(),
-                range_end.author_bytes(),
-                range_end.key(),
-            );
+            let start = range.x().as_byte_tuple();
+            let end = range.y().as_byte_tuple();
             // iterator for entries from range.x to range.y
-            let iter = RangeLatestIterator::try_new(
-                self.store.db.begin_read()?,
-                |read_tx| {
-                    read_tx
-                        .open_multimap_table(RECORDS_TABLE)
-                        .map_err(anyhow::Error::from)
-                },
-                |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            let iter = RangeLatestIterator::with_range(
+                &self.store.db,
+                |table| table.range(start..end),
                 limit.clone(),
                 RangeFilter::None,
             )?;
             // empty iterator
-            let iter2 = RangeLatestIterator::try_new(
-                self.store.db.begin_read()?,
-                |read_tx| {
-                    read_tx
-                        .open_multimap_table(RECORDS_TABLE)
-                        .map_err(anyhow::Error::from)
-                },
-                |record_table| {
-                    record_table
-                        .range(empty_start..empty_end)
-                        .map_err(anyhow::Error::from)
-                },
-                limit.clone(),
-                RangeFilter::None,
-            )?;
+            let iter2 = RangeLatestIterator::empty(&self.store.db)?;
             iter.chain(iter2)
         // wrap-around range: iter1 = y <= t, iter2 = x >= t
         } else {
-            let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
-            let end = (
-                range.y().namespace_bytes(),
-                range.y().author_bytes(),
-                range.y().key(),
-            );
+            let start = self.range_start();
+            let end = range.y().as_byte_tuple();
             // iterator for entries start to from range.y
-            let iter = RangeLatestIterator::try_new(
-                self.store.db.begin_read()?,
-                |read_tx| {
-                    read_tx
-                        .open_multimap_table(RECORDS_TABLE)
-                        .map_err(anyhow::Error::from)
-                },
-                |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            let iter = RangeLatestIterator::with_range(
+                &self.store.db,
+                |table| table.range(start..end),
                 limit.clone(),
                 RangeFilter::None,
             )?;
-            let start = (
-                range.x().namespace_bytes(),
-                range.x().author_bytes(),
-                range.x().key(),
-            );
-            let end = (self.namespace.as_bytes(), &[255u8; 32], &[][..]);
+            let start = range.x().as_byte_tuple();
+            let end = self.range_end();
             // iterator for entries from range.x to end
-            let iter2 = RangeLatestIterator::try_new(
-                self.store.db.begin_read()?,
-                |read_tx| {
-                    read_tx
-                        .open_multimap_table(RECORDS_TABLE)
-                        .map_err(anyhow::Error::from)
-                },
-                |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            let iter2 = RangeLatestIterator::with_range(
+                &self.store.db,
+                |table| table.range(start..end),
                 limit.clone(),
                 RangeFilter::None,
             )?;
@@ -717,6 +657,39 @@ pub struct RangeLatestIterator<'a> {
     records: MultimapRange<'this, RecordsId<'static>, RecordsValue<'static>>,
     limit: Option<Range<RecordIdentifier>>,
     filter: RangeFilter,
+}
+
+impl<'a> RangeLatestIterator<'a> {
+    fn with_range(
+        db: &'a Arc<Database>,
+        range: impl for<'this> FnOnce(
+            &'this ReadOnlyMultimapTable<'this, RecordsId<'static>, RecordsValue<'static>>,
+        ) -> Result<
+            MultimapRange<'this, RecordsId<'static>, RecordsValue<'static>>,
+            StorageError,
+        >,
+        limit: Option<Range<RecordIdentifier>>,
+        filter: RangeFilter,
+    ) -> anyhow::Result<Self> {
+        let iter = RangeLatestIterator::try_new(
+            db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_multimap_table(RECORDS_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            // |record_table| record_table.range(range).map_err(anyhow::Error::from),
+            |record_table| range(record_table).map_err(anyhow::Error::from),
+            limit,
+            filter,
+        )?;
+        Ok(iter)
+    }
+    fn empty(db: &'a Arc<Database>) -> anyhow::Result<Self> {
+        let start = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
+        let end = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
+        Self::with_range(db, |table| table.range(start..end), None, RangeFilter::None)
+    }
 }
 
 impl std::fmt::Debug for RangeLatestIterator<'_> {
