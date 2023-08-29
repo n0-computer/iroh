@@ -402,6 +402,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
 
         match self.current_requests.get_mut(&download_key) {
             Some(info) => {
+                // this intent maps to a download that already exists, simply register it
                 info.intents.push(id);
                 let (hash, ranges) = download_key;
                 trace!(%hash, ?ranges, ?info, "intent registered with existing request");
@@ -417,6 +418,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 let (hash, ranges) = download_key;
                 let next_peer = self.get_best_candidate(&hash);
                 if let Some(peer) = next_peer.as_ref() {
+                    // will dial if necessary and posible
                     self.register_scheduled_request_for_peer(peer);
                 }
                 let info = RequestInfo {
