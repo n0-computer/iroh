@@ -2126,6 +2126,7 @@ dependencies = [
  "iroh-bytes",
  "iroh-metrics",
  "iroh-net",
+ "iroh-test",
  "once_cell",
  "ouroboros",
  "parking_lot",

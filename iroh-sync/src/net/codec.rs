@@ -295,6 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_many_authors_memory() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
         let alice_store = store::memory::Store::default();
         let bob_store = store::memory::Store::default();
         test_sync_many_authors(alice_store, bob_store).await
@@ -302,6 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_many_authors_fs() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
         let tmpdir = tempfile::tempdir()?;
         let alice_store = store::fs::Store::new(tmpdir.path().join("a.db"))?;
         let bob_store = store::fs::Store::new(tmpdir.path().join("b.db"))?;
