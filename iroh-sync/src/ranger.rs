@@ -522,13 +522,15 @@ where
         // Process fingerprint messages
         for RangeFingerprint { range, fingerprint } in fingerprints {
             let local_fingerprint = self.store.get_fingerprint(&range, self.limit.as_ref())?;
-
             // Case1 Match, nothing to do
             if local_fingerprint == fingerprint {
                 continue;
             }
 
             // Case2 Recursion Anchor
+            // TODO: This is hugely inefficient and needs to be optimized
+            // For an identity range that includes everything we allocate a vec with all entries of
+            // the replica here.
             let local_values: Vec<_> = self
                 .store
                 .get_range(range.clone(), self.limit.clone())?

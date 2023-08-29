@@ -14,7 +14,7 @@ use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
@@ -46,9 +46,8 @@ pub enum InsertOrigin {
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
     inner: Arc<RwLock<InnerReplica<S>>>,
-    on_insert_sender: flume::Sender<(InsertOrigin, SignedEntry)>,
     #[allow(clippy::type_complexity)]
-    on_insert_receiver: Arc<Mutex<Option<flume::Receiver<(InsertOrigin, SignedEntry)>>>>,
+    on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -67,14 +66,12 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
-        let (s, r) = flume::bounded(16); // TODO: should this be configurable?
         Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
                 namespace,
                 peer: Peer::from_store(store),
             })),
-            on_insert_sender: s,
-            on_insert_receiver: Arc::new(Mutex::new(Some(r))),
+            on_insert_sender: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -82,9 +79,20 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     ///
     /// Only one subscription can be active at a time. If a previous subscription was created, this
     /// will return `None`.
+    ///
+    /// When subscribing to a replica, you must ensure that the returned [`flume::Receiver`] is
+    /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
+    /// the receiver to be received from.
     // TODO: Allow to clear a previous subscription?
     pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
-        self.on_insert_receiver.lock().take()
+        let mut on_insert_sender = self.on_insert_sender.write();
+        if let Some(_sender) = on_insert_sender.as_ref() {
+            None
+        } else {
+            let (s, r) = flume::bounded(16); // TODO: should this be configurable?
+            *on_insert_sender = Some(s);
+            Some(r)
+        }
     }
 
     /// Insert a new record at the given key.
@@ -109,9 +117,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         inner.peer.put(id, signed_entry.clone())?;
         drop(inner);
 
-        self.on_insert_sender
-            .send((InsertOrigin::Local, signed_entry))
-            .ok();
+        if let Some(sender) = self.on_insert_sender.read().as_ref() {
+            sender.send((InsertOrigin::Local, signed_entry)).ok();
+        }
 
         #[cfg(feature = "metrics")]
         {
@@ -158,9 +166,12 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         let id = entry.entry.id.clone();
         inner.peer.put(id, entry.clone()).map_err(Into::into)?;
         drop(inner);
-        self.on_insert_sender
-            .send((InsertOrigin::Sync(received_from), entry.clone()))
-            .ok();
+
+        if let Some(sender) = self.on_insert_sender.read().as_ref() {
+            sender
+                .send((InsertOrigin::Sync(received_from), entry.clone()))
+                .ok();
+        }
 
         #[cfg(feature = "metrics")]
         {
@@ -191,9 +202,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
             .write()
             .peer
             .process_message(message, |_key, entry| {
-                self.on_insert_sender
-                    .send((InsertOrigin::Sync(from_peer), entry))
-                    .ok();
+                if let Some(sender) = self.on_insert_sender.read().as_ref() {
+                    sender.send((InsertOrigin::Sync(from_peer), entry)).ok();
+                }
             })?;
 
         Ok(reply)
@@ -459,13 +470,11 @@ impl PartialOrd for RecordIdentifier {
 
 impl Ord for RecordIdentifier {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.namespace.cmp(&other.namespace) {
-            std::cmp::Ordering::Equal => match self.author.cmp(&other.author) {
-                std::cmp::Ordering::Equal => self.key.cmp(&other.key),
-                res => res,
-            },
-            res => res,
-        }
+        (&self.namespace, &self.author, &self.key).cmp(&(
+            &other.namespace,
+            &other.author,
+            &other.key,
+        ))
     }
 }
 
@@ -479,7 +488,15 @@ impl AsFingerprint for RecordIdentifier {
     }
 }
 
+<<<<<<< HEAD
 impl RangeKey for RecordIdentifier {}
+=======
+impl RangeKey for RecordIdentifier {
+    fn contains(&self, range: &crate::ranger::Range<Self>) -> bool {
+        crate::ranger::contains(self, &range)
+    }
+}
+>>>>>>> 762205c9 (try to fix sync reconciliation bug)
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
