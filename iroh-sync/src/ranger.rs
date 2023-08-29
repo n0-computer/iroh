@@ -544,7 +544,7 @@ where
                 // Select the first index, for which the key is larger than the x of the range.
                 let mut start_index = local_values
                     .iter()
-                    .position(|(k, _)| range.x() <= k)
+                    .position(|(k, _)| range.x() < k)
                     .unwrap_or(0);
                 let max_len = local_values.len();
                 for i in 0..self.split_factor {
@@ -568,11 +568,15 @@ where
                     start_index += 1;
                 }
 
+                let mut non_empty = 0;
                 for range in ranges.into_iter() {
                     let chunk: Vec<_> = self
                         .store
                         .get_range(range.clone(), self.limit.clone())?
                         .collect();
+                    if !chunk.is_empty() {
+                        non_empty += 1;
+                    }
                     // Add either the fingerprint or the item set
                     let fingerprint = self.store.get_fingerprint(&range, self.limit.as_ref())?;
                     if chunk.len() > self.max_set_size {
@@ -599,6 +603,7 @@ where
                         }));
                     }
                 }
+                debug_assert!(non_empty > 1);
             }
         }
 
@@ -1348,11 +1353,13 @@ mod tests {
         }
     }
 
+    type TestSet = BTreeMap<TestKey, ()>;
+
     fn test_key() -> impl Strategy<Value = TestKey> {
         "[a-z0-9]{0,5}".prop_map(TestKey)
     }
 
-    fn test_set() -> impl Strategy<Value = BTreeMap<TestKey, ()>> {
+    fn test_set() -> impl Strategy<Value = TestSet> {
         prop::collection::btree_map(test_key(), Just(()), 0..10)
     }
 
@@ -1360,7 +1367,7 @@ mod tests {
         test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
     }
 
-    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> BTreeMap<TestKey, ()> {
+    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
         values
             .into_iter()
             .map(|v| TestKey(v.as_ref().to_string()))
@@ -1375,7 +1382,14 @@ mod tests {
     #[test]
     fn prop_test_sync_1() {
         let alice = mk_test_vec(["3"]);
-        let bob = mk_test_vec(["", "3", "4", "5", "a", "b", "c"]);
+        let bob = mk_test_vec(["2", "3", "4", "5", "6", "7", "8"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[test]
+    fn prop_test_sync_2() {
+        let alice = mk_test_vec(["1", "3"]);
+        let bob = mk_test_vec(["0", "2", "3"]);
         let _res = sync(None, &alice, &bob);
     }
 
