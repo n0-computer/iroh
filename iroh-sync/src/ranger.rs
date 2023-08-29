@@ -544,37 +544,66 @@ where
                 // m0 = x < m1 < .. < mk = y, with k>= 2
                 // such that [ml, ml+1) is nonempty
                 let mut ranges = Vec::with_capacity(self.split_factor);
-                let chunk_len = div_ceil(local_values.len(), self.split_factor);
 
-                // Select the first index, for which the key is larger than the x of the range.
-                let mut start_index = local_values
+                // Select the first index, for which the key is larger or equal than the x of the range.
+                let start_index = local_values
                     .iter()
-                    .position(|(k, _)| range.x() < k)
+                    .position(|(k, _)| k >= range.x())
                     .unwrap_or(0);
-                let max_len = local_values.len();
-                for i in 0..self.split_factor {
-                    let s_index = start_index;
-                    let start = (s_index * chunk_len) % max_len;
-                    let e_index = s_index + 1;
-                    let end = (e_index * chunk_len) % max_len;
-
-                    let (x, y) = if i == 0 {
-                        // first
-                        (range.x(), &local_values[end].0)
-                    } else if i == self.split_factor - 1 {
-                        // last
-                        (&local_values[start].0, range.y())
-                    } else {
-                        // regular
-                        (&local_values[start].0, &local_values[end].0)
-                    };
-                    let range = Range::new(x.clone(), y.clone());
-                    ranges.push(range);
-                    start_index += 1;
+                // select a pivot value. pivots repeat every split_factor, so pivot(i) == pivot(i + self.split_factor * x)
+                // it is guaranteed that pivot(0) != x if local_values.len() >= 2
+                let pivot = |i: usize| {
+                    // ensure that pivots wrap around
+                    let i = i % self.split_factor;
+                    let offset = (start_index + ((i + 1) * local_values.len()) / self.split_factor)
+                        % local_values.len();
+                    &local_values[offset].0
+                };
+                if range.is_all() {
+                    // the range is the whole set, so range.x and range.y should not matter
+                    // just add all ranges as normal ranges. the last range will wrap around
+                    for i in 0..self.split_factor {
+                        let (x, y) = (pivot(i), pivot(i + 1));
+                        // don't push empty ranges
+                        if x != y {
+                            ranges.push(Range {
+                                x: x.clone(),
+                                y: y.clone(),
+                            })
+                        }
+                    }
+                } else {
+                    // guaranteed to be non-empty because
+                    // - pivot(0) is guaranteed to be != x for local_values.len() >= 2
+                    // - local_values.len() < 2 gets handled by the recursion anchor
+                    // - x != y (regular range)
+                    ranges.push(Range {
+                        x: range.x().clone(),
+                        y: pivot(0).clone(),
+                    });
+                    // this will only be executed for split_factor > 2
+                    for i in 0..self.split_factor - 2 {
+                        // don't push empty ranges
+                        let (x, y) = (pivot(i), pivot(i + 1));
+                        if x != y {
+                            ranges.push(Range {
+                                x: x.clone(),
+                                y: y.clone(),
+                            })
+                        }
+                    }
+                    // guaranteed to be non-empty because
+                    // - pivot is a value in the range
+                    // - y is the exclusive end of the range
+                    // - x != y (regular range)
+                    ranges.push(Range {
+                        x: pivot(self.split_factor - 2).clone(),
+                        y: range.y().clone(),
+                    });
                 }
 
                 let mut non_empty = 0;
-                for range in ranges.into_iter() {
+                for (i, range) in ranges.iter().enumerate() {
                     let chunk: Vec<_> = self
                         .store
                         .get_range(range.clone(), self.limit.clone())?
@@ -583,10 +612,10 @@ where
                         non_empty += 1;
                     }
                     // Add either the fingerprint or the item set
-                    let fingerprint = self.store.get_fingerprint(&range, self.limit.as_ref())?;
+                    let fingerprint = self.store.get_fingerprint(range, self.limit.as_ref())?;
                     if chunk.len() > self.max_set_size {
                         out.push(MessagePart::RangeFingerprint(RangeFingerprint {
-                            range,
+                            range: range.clone(),
                             fingerprint,
                         }));
                     } else {
