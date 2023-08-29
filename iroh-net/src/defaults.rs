@@ -24,7 +24,8 @@ pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
 
 /// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
-    [default_na_derp_region(), default_eu_derp_region()].into()
+    DerpMap::from_regions([default_na_derp_region(), default_eu_derp_region()])
+        .expect("default regions invalid")
 }
 
 /// Get the default [`DerpRegion`] for NA.

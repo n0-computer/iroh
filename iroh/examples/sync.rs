@@ -146,7 +146,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 SYNC_ALPN.to_vec(),
                 iroh_bytes::protocol::ALPN.to_vec(),
             ])
-            .derp_map(derp_map)
             .on_endpoints({
                 let gossip_cell = gossip_cell.clone();
                 Box::new(move |endpoints| {
@@ -157,9 +156,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     // trigger oneshot on the first endpoint update
                     initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
                 })
-            })
-            .bind(args.bind_port)
-            .await?;
+            });
+        let endpoint = match derp_map {
+            Some(derp_map) => endpoint.enable_derp(derp_map),
+            None => endpoint,
+        };
+        let endpoint = endpoint.bind(args.bind_port).await?;
 
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
@@ -561,7 +563,7 @@ impl ReplState {
                     let key = entry.entry().id().key();
                     let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                     let len = entry.entry().record().content_len();
-                    let blob = self.db.get(entry.content_hash());
+                    let blob = self.db.get(&entry.content_hash());
                     if let Some(blob) = blob {
                         let mut reader = blob.data_reader().await?;
                         let path = root.join(&relative);
@@ -595,7 +597,7 @@ impl ReplState {
                     let mut file = tokio::fs::File::create(&path).await?;
                     let blob = self
                         .db
-                        .get(entry.content_hash())
+                        .get(&entry.content_hash())
                         .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
                     let mut reader = blob.data_reader().await?;
                     copy(&mut reader, &mut file).await?;
@@ -906,7 +908,7 @@ async fn fmt_content<B: BaoStore>(db: &B, entry: &SignedEntry) -> String {
 
 async fn read_content<B: BaoStore>(db: &B, entry: &SignedEntry) -> anyhow::Result<Bytes> {
     let data = db
-        .get(entry.content_hash())
+        .get(&entry.content_hash())
         .ok_or_else(|| anyhow!("not found"))?
         .data_reader()
         .await?

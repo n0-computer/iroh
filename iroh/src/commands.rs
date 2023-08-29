@@ -217,7 +217,7 @@ impl FullCommands {
                         rpc_port,
                         keylog,
                         request_token,
-                        derp_map: config.derp_map(),
+                        derp_map: config.derp_map()?,
                     },
                 )
                 .await
@@ -236,7 +236,7 @@ impl FullCommands {
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash: ticket.hash(),
-                        opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()),
+                        opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()?),
                         token: ticket.token().cloned(),
                         single: !ticket.recursive(),
                     }
@@ -249,7 +249,7 @@ impl FullCommands {
                             peer_id: peer,
                             keylog,
                             derp_region: region,
-                            derp_map: config.derp_map(),
+                            derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
                         },
                         token,

@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.5.1"
+version = "0.6.0-alpha.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -22,15 +22,15 @@ flume = "0.10.14"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
-iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
+iroh-bytes = { version = "0.6.0-alpha.0", path = "../iroh-bytes" }
 iroh-io = { version = "0.2.2" }
-iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.5.1", path = "../iroh-net" }
+iroh-metrics = { version = "0.6.0-alpha.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.6.0-alpha.0", path = "../iroh-net" }
 itertools = "0.11.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-sync = { version = "0.5.1", path = "../iroh-sync" }
-iroh-gossip = { version = "0.5.1", path = "../iroh-gossip" }
+iroh-sync = { version = "0.6.0-alpha.0", path = "../iroh-sync" }
+iroh-gossip = { version = "0.6.0-alpha.0", path = "../iroh-gossip" }
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
@@ -80,7 +80,7 @@ anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
-iroh-test = { version = "0.5.1", path = "../iroh-test" }
+iroh-test = { version = "0.6.0-alpha.0", path = "../iroh-test" }
 nix = "0.26.2"
 proptest = "1.2.0"
 regex = { version = "1.7.1", features = ["std"] }

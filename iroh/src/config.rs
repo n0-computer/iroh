@@ -252,13 +252,11 @@ impl NodeConfig {
     }
 
     /// Constructs a `DerpMap` based on the current configuration.
-    pub fn derp_map(&self) -> Option<DerpMap> {
+    pub fn derp_map(&self) -> Result<Option<DerpMap>> {
         if self.derp_regions.is_empty() {
-            return None;
+            return Ok(None);
         }
-
-        let dm: DerpMap = self.derp_regions.iter().cloned().into();
-        Some(dm)
+        Some(DerpMap::from_regions(self.derp_regions.iter().cloned())).transpose()
     }
 }
 

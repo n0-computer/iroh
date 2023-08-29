@@ -1,6 +1,6 @@
 [package]
 name = "iroh-test"
-version = "0.5.1"
+version = "0.6.0-alpha.0"
 edition = "2021"
 readme = "README.md"
 description = "Internal utilities to support testing of iroh."

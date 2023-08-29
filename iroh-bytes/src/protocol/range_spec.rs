@@ -176,7 +176,7 @@ impl RangeSpecSeq {
         }
         let (fst_ofs, fst_val) = &self.0[0];
         let (snd_ofs, snd_val) = &self.0[1];
-        if *snd_ofs - *fst_ofs == 1 && snd_val.is_empty() {
+        if *snd_ofs == 1 && snd_val.is_empty() {
             Some((*fst_ofs, fst_val))
         } else {
             None

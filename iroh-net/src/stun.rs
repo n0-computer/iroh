@@ -175,35 +175,34 @@ pub mod test {
     }
 
     pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        stun.enumerate()
-            .map(|(i, addr)| {
-                let region_id = (i + 1) as u16;
-                let host = addr.ip();
-                let port = addr.port();
+        let regions = stun.enumerate().map(|(i, addr)| {
+            let region_id = (i + 1) as u16;
+            let host = addr.ip();
+            let port = addr.port();
 
-                let (ipv4, ipv6) = match host {
-                    IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::TryDns),
-                    IpAddr::V6(v6) => (UseIpv4::TryDns, UseIpv6::Some(v6)),
-                };
+            let (ipv4, ipv6) = match host {
+                IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::TryDns),
+                IpAddr::V6(v6) => (UseIpv4::TryDns, UseIpv6::Some(v6)),
+            };
 
-                let node = DerpNode {
-                    name: format!("{region_id}a"),
-                    region_id,
-                    url: format!("http://{region_id}.invalid").parse().unwrap(),
-                    ipv4,
-                    ipv6,
-                    stun_port: port,
-                    stun_only: true,
-                    stun_test_ip: None,
-                };
-                DerpRegion {
-                    region_id,
-                    region_code: "".to_string(),
-                    avoid: false,
-                    nodes: vec![node.into()],
-                }
-            })
-            .into()
+            let node = DerpNode {
+                name: format!("{region_id}a"),
+                region_id,
+                url: format!("http://{region_id}.invalid").parse().unwrap(),
+                ipv4,
+                ipv6,
+                stun_port: port,
+                stun_only: true,
+                stun_test_ip: None,
+            };
+            DerpRegion {
+                region_id,
+                region_code: "".to_string(),
+                avoid: false,
+                nodes: vec![node.into()],
+            }
+        });
+        DerpMap::from_regions(regions).expect("generated invalid region")
     }
 
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.

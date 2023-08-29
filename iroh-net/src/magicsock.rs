@@ -1,6 +1,19 @@
 //! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
+//!
+//! ### `DEV_DERP_ONLY` env var:
+//! When present at *compile time*, this env var will force all packets
+//! to be sent over the DERP relay connection, regardless of whether or
+//! not we have a direct UDP address for the given peer.
+//!
+//! The intended use is for testing the DERP protocol inside the MagicSock
+//! to ensure that we can rely on the relay to send packets when two peers
+//! are unable to find direct UDP connections to each other.
+//!
+//! This also prevent this node from attempting to hole punch and prevents it
+//! from responding to any hole punching attemtps. This node will still,
+//! however, read any packets that come off the UDP sockets.
 
 // #[cfg(test)]
 // pub(crate) use conn::tests as conn_tests;
@@ -122,8 +135,8 @@ pub struct Options {
     /// Secret key for this node.
     pub secret_key: SecretKey,
 
-    /// The [`DerpMap`] to use.
-    pub derp_map: Option<DerpMap>,
+    /// The [`DerpMap`] to use, leave empty to not use a DERP server.
+    pub derp_map: DerpMap,
 
     /// Callbacks to emit on various socket events
     pub callbacks: Callbacks,
@@ -151,7 +164,7 @@ impl Default for Options {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
-            derp_map: None,
+            derp_map: Default::default(),
             callbacks: Default::default(),
         }
     }
@@ -213,7 +226,7 @@ struct Inner {
     ipv6_reported: Arc<AtomicBool>,
 
     /// None (or zero regions/nodes) means DERP is disabled.
-    derp_map: Option<DerpMap>,
+    derp_map: DerpMap,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
 }
@@ -235,17 +248,11 @@ impl Inner {
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
     async fn has_derp_region(&self, region: u16) -> bool {
-        match &self.derp_map {
-            None => false,
-            Some(ref derp_map) => derp_map.contains_region(region),
-        }
+        self.derp_map.contains_region(region)
     }
 
     async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
-        match &self.derp_map {
-            None => None,
-            Some(ref derp_map) => derp_map.get_region(region).cloned(),
-        }
+        self.derp_map.get_region(region).cloned()
     }
 
     fn is_closing(&self) -> bool {
@@ -295,6 +302,10 @@ impl MagicSock {
             "magic-{}",
             hex::encode(&opts.secret_key.public().as_bytes()[..8])
         );
+        if crate::util::derp_only_mode() {
+            warn!("creating a MagicSock that will only send packets over a DERP relay connection.");
+        }
+
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("magicsock", %name))
             .await
@@ -1122,8 +1133,13 @@ impl Actor {
         let region_id = dm.region_id;
         let ipp = SendAddr::Derp(region_id);
 
-        let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
-            Some(ep) => ep.quic_mapped_addr,
+        let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key_mut(&dm.src) {
+            Some(ep) => {
+                if ep.derp_addr().is_none() {
+                    ep.add_derp_addr(region_id);
+                }
+                ep.quic_mapped_addr
+            }
             None => {
                 info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
@@ -1546,13 +1562,12 @@ impl Actor {
 
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
-        let derp_map = self.inner.derp_map.as_ref();
-        if derp_map.is_none() {
-            debug!("skipping netcheck, no Derp Map");
+        if self.inner.derp_map.is_empty() {
+            debug!("skipping netcheck, empty DerpMap");
             return Ok(Default::default());
         }
 
-        let derp_map = derp_map.cloned().unwrap();
+        let derp_map = self.inner.derp_map.clone();
         let net_checker = &mut self.net_checker;
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
@@ -1610,11 +1625,6 @@ impl Actor {
 
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
         {
-            let derp_map = &self.inner.derp_map;
-            if derp_map.is_none() {
-                self.inner.set_my_derp(0);
-                return false;
-            }
             let my_derp = self.inner.my_derp();
             if derp_num == my_derp {
                 // No change.
@@ -1627,11 +1637,7 @@ impl Actor {
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
-            match derp_map
-                .as_ref()
-                .expect("already checked")
-                .get_region(derp_num)
-            {
+            match self.inner.derp_map.get_region(derp_num) {
                 Some(dr) => {
                     info!("home is now derp-{} ({})", derp_num, dr.region_code);
                 }
@@ -1654,17 +1660,10 @@ impl Actor {
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
-    /// If no [`DerpMap`] exists, returns `0`.
+    /// If no the [`DerpMap`] is empty, returns `0`.
     async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
-            let derp_map = &self.inner.derp_map;
-            if derp_map.is_none() {
-                return 0;
-            }
-            let ids = derp_map
-                .as_ref()
-                .map(|d| d.region_ids())
-                .unwrap_or_default();
+            let ids = self.inner.derp_map.region_ids();
             if ids.is_empty() {
                 // No DERP regions in map.
                 return 0;
@@ -1759,6 +1758,7 @@ impl Actor {
 
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
+                warn!("sending call me maybe to {public_key:?}");
                 if let Err(err) = msg_sender
                     .send(ActorMessage::SendDiscoMessage {
                         dst: SendAddr::Derp(derp_addr),
@@ -1990,7 +1990,7 @@ impl Actor {
         {
             // Disco Ping from unseen endpoint. We will have to add the
             // endpoint later if the message is a ping
-            tracing::info!("disco: unknown sender {:?} - {}", sender, src);
+            info!("disco: unknown sender {:?} - {}", sender, src);
             unknown_sender = true;
         }
 
@@ -2040,6 +2040,11 @@ impl Actor {
                 // if we get here we got a valid ping from an unknown sender
                 // so insert an endpoint for them
                 if unknown_sender {
+                    warn!(
+                        "unknown sender: {:?} with region id {:?}",
+                        sender,
+                        src.derp_region()
+                    );
                     self.peer_map.insert_endpoint(EndpointOptions {
                         msock_sender: self.inner.actor_sender.clone(),
                         msock_public_key: self.inner.public_key(),
@@ -2202,13 +2207,6 @@ impl Actor {
         // remove moribund nodes in the next step below.
         for n in &self.net_map.as_ref().unwrap().peers {
             if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
-                // info!(
-                //     "inserting peer's endpoint {:?} - {:?} {:#?} {:#?}",
-                //     self.inner.public_key, // our own node's public key
-                //     n.key.clone(),         // public key of node endpoint being created
-                //     self.peer_map,         // map of all endpoints we know about
-                //     n,                     // node being added
-                // );
                 info!(
                     peer = ?n.key,
                     "inserting peer's endpoint in PeerMap"
@@ -2728,7 +2726,7 @@ pub(crate) mod tests {
                     on_derp_s.try_send(()).ok();
                 }))
                 .transport_config(transport_config)
-                .derp_map(Some(derp_map))
+                .enable_derp(derp_map)
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;

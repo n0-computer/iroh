@@ -465,7 +465,7 @@ where
                            self.clients.close_conn(&key);
                        },
                         ServerMessage::SendPacket((key, packet)) => {
-                           tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
+                           tracing::trace!("send packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
                             let src = packet.src;
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
