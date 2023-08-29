@@ -1496,15 +1496,15 @@ mod tests {
         let expect = Vec::from([
             EndpointInfo {
                 id: a_endpoint.id,
-                public_key: a_endpoint.public_key.clone(),
+                public_key: a_endpoint.public_key,
                 derp_region: a_endpoint.derp_addr,
-                addrs: Vec::from([(a_socket_addr.clone(), Some(latency))]),
+                addrs: Vec::from([(a_socket_addr, Some(latency))]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
             },
             EndpointInfo {
                 id: b_endpoint.id,
-                public_key: b_endpoint.public_key.clone(),
+                public_key: b_endpoint.public_key,
                 derp_region: b_endpoint.derp_addr,
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
@@ -1512,7 +1512,7 @@ mod tests {
             },
             EndpointInfo {
                 id: c_endpoint.id,
-                public_key: c_endpoint.public_key.clone(),
+                public_key: c_endpoint.public_key,
                 derp_region: c_endpoint.derp_addr,
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
@@ -1520,7 +1520,7 @@ mod tests {
             },
             EndpointInfo {
                 id: d_endpoint.id,
-                public_key: d_endpoint.public_key.clone(),
+                public_key: d_endpoint.public_key,
                 derp_region: d_endpoint.derp_addr,
                 addrs: Vec::from([(d_socket_addr, Some(latency))]),
                 conn_type: ConnectionType::Relay(0),
@@ -1530,20 +1530,20 @@ mod tests {
 
         let peer_map = PeerMap {
             by_node_key: HashMap::from([
-                (a_endpoint.public_key.clone(), a_endpoint.id),
-                (b_endpoint.public_key.clone(), b_endpoint.id),
-                (c_endpoint.public_key.clone(), c_endpoint.id),
-                (d_endpoint.public_key.clone(), d_endpoint.id),
+                (a_endpoint.public_key, a_endpoint.id),
+                (b_endpoint.public_key, b_endpoint.id),
+                (c_endpoint.public_key, c_endpoint.id),
+                (d_endpoint.public_key, d_endpoint.id),
             ]),
             by_ip_port: HashMap::from([
                 (SendAddr::Udp(a_socket_addr), a_endpoint.id),
                 (SendAddr::Udp(d_socket_addr), d_endpoint.id),
             ]),
             by_quic_mapped_addr: HashMap::from([
-                (a_endpoint.quic_mapped_addr.clone(), a_endpoint.id),
-                (b_endpoint.quic_mapped_addr.clone(), b_endpoint.id),
-                (c_endpoint.quic_mapped_addr.clone(), c_endpoint.id),
-                (d_endpoint.quic_mapped_addr.clone(), d_endpoint.id),
+                (a_endpoint.quic_mapped_addr, a_endpoint.id),
+                (b_endpoint.quic_mapped_addr, b_endpoint.id),
+                (c_endpoint.quic_mapped_addr, c_endpoint.id),
+                (d_endpoint.quic_mapped_addr, d_endpoint.id),
             ]),
             by_id: HashMap::from([
                 (a_endpoint.id, a_endpoint),

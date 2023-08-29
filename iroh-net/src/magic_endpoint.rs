@@ -292,7 +292,7 @@ impl MagicEndpoint {
     /// Get information on all the peers we have connection information about.
     ///
     /// Includes the node's [`PublicKey`], potential DERP region, it's addresses with any known
-    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are currently communicating
     /// with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     pub async fn node_infos(&self) -> anyhow::Result<Vec<NodeInfo>> {
         self.msock.tracked_endpoints().await
