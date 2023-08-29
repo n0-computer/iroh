@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 797e83179f8684388880e25a6fac7b4047eb15b03c55c1fb725b82bdbd0a4369 # shrinks to a = {TestKey("3"): ()}, b = {TestKey(""): (), TestKey("3"): (), TestKey("4"): (), TestKey("5"): (), TestKey("a"): (), TestKey("b"): (), TestKey("c"): ()}
+cc f5b7604319ead6181c2ff42e53f05e2c6f0298adf0b38ea4ae4710c43abb7663 # shrinks to input = _SimpleStoreSyncArgs { alice: [(3, ()), (a, ())], bob: [(, ()), (0, ()), (b, ())] }

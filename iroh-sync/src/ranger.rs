@@ -41,6 +41,20 @@ impl<K> Range<K> {
     }
 }
 
+impl<K: Ord> Range<K> {
+    pub fn is_all(&self) -> bool {
+        self.x() == self.y()
+    }
+
+    pub fn contains(&self, t: &K) -> bool {
+        match self.x().cmp(self.y()) {
+            Ordering::Equal => true,
+            Ordering::Less => self.x() <= t && t < self.y(),
+            Ordering::Greater => self.x() <= t || t < self.y(),
+        }
+    }
+}
+
 impl<K> From<(K, K)> for Range<K> {
     fn from((x, y): (K, K)) -> Self {
         Range { x, y }
@@ -50,16 +64,7 @@ impl<K> From<(K, K)> for Range<K> {
 pub trait RangeKey: Sized + Ord + Debug {
     /// Is this key inside the range?
     fn contains(&self, range: &Range<Self>) -> bool {
-        contains(self, range)
-    }
-}
-
-/// Default implementation of `contains` for `Ord` types.
-pub fn contains<T: Ord>(t: &T, range: &Range<T>) -> bool {
-    match range.x().cmp(range.y()) {
-        Ordering::Equal => true,
-        Ordering::Less => range.x() <= t && t < range.y(),
-        Ordering::Greater => range.x() <= t || t < range.y(),
+        range.contains(self)
     }
 }
 
@@ -597,13 +602,18 @@ where
                             })
                             .collect::<Result<_, _>>()?;
                         out.push(MessagePart::RangeItem(RangeItem {
-                            range,
+                            range: range.clone(),
                             values,
                             have_local: false,
                         }));
                     }
                 }
-                debug_assert!(non_empty > 1);
+                if non_empty <= 1 {
+                    println!("{:?}", range);
+                    println!("{:?}", local_values);
+                    println!("{:?}", ranges);
+                    debug_assert!(non_empty > 1);
+                }
             }
         }
 
@@ -1367,6 +1377,11 @@ mod tests {
         test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
     }
 
+    fn test_range() -> impl Strategy<Value = Range<TestKey>> {
+        // ranges with x > y are explicitly allowed - they wrap around
+        (test_key(), test_key()).prop_map(|(x, y)| Range::new(x, y))
+    }
+
     fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
         values
             .into_iter()
@@ -1380,24 +1395,72 @@ mod tests {
     }
 
     #[test]
-    fn prop_test_sync_1() {
+    fn simple_store_sync_1() {
         let alice = mk_test_vec(["3"]);
         let bob = mk_test_vec(["2", "3", "4", "5", "6", "7", "8"]);
         let _res = sync(None, &alice, &bob);
     }
 
     #[test]
-    fn prop_test_sync_2() {
+    fn simple_store_sync_2() {
         let alice = mk_test_vec(["1", "3"]);
         let bob = mk_test_vec(["0", "2", "3"]);
         let _res = sync(None, &alice, &bob);
     }
 
+    #[test]
+    fn simple_store_sync_3() {
+        let alice = mk_test_vec(["8", "9"]);
+        let bob = mk_test_vec(["1", "2", "3"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
     #[proptest]
-    fn prop_test_sync(
+    fn simple_store_sync(
         #[strategy(test_vec())] alice: Vec<(TestKey, ())>,
         #[strategy(test_vec())] bob: Vec<(TestKey, ())>,
     ) {
         let _res = sync(None, &alice, &bob);
+    }
+
+    /// A generic fn to make a test for the get_range fn of a store.
+    fn store_get_ranges_test<S, K, V>(
+        elems: impl IntoIterator<Item = (K, V)>,
+        range: Range<K>,
+        limit: Option<Range<K>>,
+    ) -> (Vec<(K, V)>, Vec<(K, V)>)
+    where
+        S: Store<K, V> + Default,
+        K: RangeKey + Clone + Default + AsFingerprint,
+        V: Debug + Clone,
+    {
+        let mut store = S::default();
+        let elems = elems.into_iter().collect::<Vec<_>>();
+        for (k, v) in elems.iter().cloned() {
+            store.put(k, v).unwrap();
+        }
+        let mut actual = store
+            .get_range(range.clone(), limit)
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, S::Error>>()
+            .unwrap();
+        let mut expected = elems
+            .into_iter()
+            .filter(|(k, _)| k.contains(&range))
+            .collect::<Vec<_>>();
+
+        actual.sort_by(|(ak, _), (bk, _)| ak.cmp(&bk));
+        expected.sort_by(|(ak, _), (bk, _)| ak.cmp(&bk));
+        (expected, actual)
+    }
+
+    #[proptest]
+    fn simple_store_get_ranges(
+        #[strategy(test_set())] contents: BTreeMap<TestKey, ()>,
+        #[strategy(test_range())] range: Range<TestKey>,
+    ) {
+        let (expected, actual) =
+            store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents.clone(), range.clone(), None);
+        prop_assert_eq!(expected, actual);
     }
 }
