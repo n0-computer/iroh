@@ -238,24 +238,53 @@ enum RequestState {
     },
 }
 
+/// State of the connection to this peer.
+#[derive(derive_more::Debug)]
+enum ConnectionState {
+    Dialing,
+    Connected {
+        /// Connection to this peer.
+        #[debug(skip)]
+        connection: quinn::Connection,
+        /// Number of active requests this peer is performing for us.
+        active_requests: usize,
+    },
+}
+
 /// Information about a connected peer.
 #[derive(derive_more::Debug)]
 struct PeerInfo {
-    /// Connection to this peer.
-    #[debug(skip)]
-    connection: quinn::Connection,
-    /// Number of active requests this peer is performing for us.
-    active_requests: usize,
+    state: ConnectionState,
     /// Number of requests scheduled for this peer.
     scheduled_requests: usize,
 }
 impl PeerInfo {
-    fn new(connection: quinn::Connection) -> PeerInfo {
+    fn new_dialing() -> PeerInfo {
         PeerInfo {
-            connection,
-            active_requests: 0,
+            state: ConnectionState::Dialing,
             scheduled_requests: 0,
         }
+    }
+
+    fn new_connected(connection: quinn::Connection) -> PeerInfo {
+        PeerInfo {
+            state: ConnectionState::Connected {
+                connection,
+                active_requests: 0,
+            },
+            scheduled_requests: 0,
+        }
+    }
+
+    fn assigned_requests(&self) -> usize {
+        self.scheduled_requests
+            + match &self.state {
+                ConnectionState::Dialing => 0,
+                ConnectionState::Connected {
+                    connection,
+                    active_requests,
+                } => *active_requests,
+            }
     }
 }
 
@@ -371,35 +400,34 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         };
         self.registered_intents.insert(id, intent_info);
 
-        // check if there is already a download request for this and what state it is
-        match self.current_requests.entry(download_key) {
-            Entry::Occupied(mut entry) => {
-                // the associated request already exists for another intent, register it
-                entry.get_mut().intents.push(id);
-                let (hash, ranges) = entry.key();
-                let info = entry.get();
+        match self.current_requests.get_mut(&download_key) {
+            Some(info) => {
+                info.intents.push(id);
+                let (hash, ranges) = download_key;
                 trace!(%hash, ?ranges, ?info, "intent registered with existing request");
             }
-            Entry::Vacant(mut entry) => {
-                // TODO(@divma): we could also receive an initial delay, or make it part of the
-                // (re)try strategy
-
+            None => {
                 // since this request is new, schedule it
                 let timeout = std::time::Duration::from_millis(300);
-                let delay_key = self.scheduled_requests.insert(entry.key().clone(), timeout);
-                let (hash, ranges) = entry.key();
-                debug!(%hash, ?ranges, "new request scheduled");
+                let delay_key = self
+                    .scheduled_requests
+                    .insert(download_key.clone(), timeout);
 
-                let intents = vec![id];
-
-                let candidates = self.availabiliy_registry.get_candidates(hash);
-                //
-                // TODO(@divma): query the AvailabilityRegistry
-                let state = RequestState::Scheduled {
-                    delay_key,
-                    next_peer: None,
+                // prepare the peer that will be sent this request
+                let (hash, ranges) = download_key;
+                let next_peer = self.get_best_candidate(&hash);
+                if let Some(peer) = next_peer.as_ref() {
+                    self.register_scheduled_request_for_peer(peer);
+                }
+                let info = RequestInfo {
+                    intents: vec![id],
+                    state: RequestState::Scheduled {
+                        delay_key,
+                        next_peer,
+                    },
                 };
-                entry.insert(RequestInfo { intents, state });
+                debug!(%hash, ?ranges, ?info, "new request scheduled");
+                self.current_requests.insert((hash, ranges), info);
             }
         }
     }
@@ -407,17 +435,15 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// Gets the best candidate for a download.
     ///
     /// Peers are selected priorizing those with an open connection and with capacity for another
-    /// request.
+    /// request, followed by peers we are currently dialing with capacity for another request.
+    /// Lastly, peers not connected and not dialing are considered.
     fn get_best_candidate(&self, hash: &Hash) -> Option<PublicKey> {
+        // first collect suitable candidates
         let mut candidates = self
             .availabiliy_registry
             .get_candidates(hash)
             .filter_map(|peer| {
-                match self
-                    .peers
-                    .get(peer)
-                    .map(|info| info.active_requests + info.scheduled_requests)
-                {
+                match self.peers.get(peer).map(PeerInfo::assigned_requests) {
                     Some(assigned_requests)
                         if self
                             .concurrency_limits
@@ -431,7 +457,9 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 }
             })
             .collect::<Vec<_>>();
+
         // sort candidates to obtain the one with the least requests and an open connection
+        //
         // peers we prefer go to the end of the vector to be able to pop from it (more efficient
         // than removing the first element)
         candidates.sort_unstable_by(|(_peer_a, info_a), (_peer_b, info_b)| {
@@ -451,7 +479,33 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 }
             }
         });
-        candidates.pop().map(|(peer, _active_req)| peer.clone())
+
+        // this is our best peer
+        candidates.pop().map(|(peer, _)| *peer)
+    }
+
+    /// Registers a scheduled request with the given peer.
+    ///
+    /// If the peer is not connected, a dial attempt is started if our concurrency limits allow it.
+    fn register_scheduled_request_for_peer(&mut self, peer: &PublicKey) {
+        match self.peers.get_mut(peer) {
+            Some(info) => info.scheduled_requests += 1,
+            None => {
+                if !self
+                    .concurrency_limits
+                    .at_connections_capacity(self.peers.len())
+                {
+                    debug!(%peer, "dialing peer");
+                    self.dialer.queue_dial(*peer, &iroh_bytes::protocol::ALPN);
+                    let info = PeerInfo {
+                        state: ConnectionState::Dialing,
+                        scheduled_requests: 1,
+                    };
+                } else {
+                    trace!(%peer, "required peer not dialed to maintain concurrency limits")
+                }
+            }
+        }
     }
 
     /// Cancels the download request.
@@ -516,7 +570,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         match result {
             Ok(connection) => {
                 trace!(%peer, "connected to peer");
-                let peer_info = PeerInfo::new(connection);
+                let peer_info = PeerInfo::new_connected(connection);
                 self.peers.insert(peer, peer_info);
             }
             Err(err) => {
