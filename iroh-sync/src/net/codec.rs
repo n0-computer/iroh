@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
-use tracing::{trace, debug};
+use tracing::{debug, trace};
 
 use crate::{store, NamespaceId, Replica};
 

@@ -8,10 +8,10 @@ use std::{
     str::FromStr,
 };
 
-use rand_core::CryptoRngCore;
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
+use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
