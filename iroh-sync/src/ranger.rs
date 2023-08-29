@@ -555,13 +555,18 @@ where
                 let pivot = |i: usize| {
                     // ensure that pivots wrap around
                     let i = i % self.split_factor;
-                    let offset = (start_index + ((i + 1) * local_values.len()) / self.split_factor)
-                        % local_values.len();
+                    // choose an offset. this will be
+                    // 1/2, 1 in case of split_factor == 2
+                    // 1/3, 2/3, 1 in case of split_factor == 3
+                    // etc.
+                    let offset = (local_values.len() * (i + 1)) / self.split_factor;
+                    let offset = (start_index + offset) % local_values.len();
                     &local_values[offset].0
                 };
                 if range.is_all() {
                     // the range is the whole set, so range.x and range.y should not matter
-                    // just add all ranges as normal ranges. the last range will wrap around
+                    // just add all ranges as normal ranges. Exactly one of the ranges will
+                    // wrap around, so we cover the entire set.
                     for i in 0..self.split_factor {
                         let (x, y) = (pivot(i), pivot(i + 1));
                         // don't push empty ranges
