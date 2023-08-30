@@ -108,8 +108,8 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     ) -> Result<(), S::Error> {
         let mut inner = self.inner.write();
 
-        let id = RecordIdentifier::new(key, inner.namespace.id(), author.id());
-        let record = Record::from_hash(hash, len);
+        let id = RecordIdentifier::new_current(key, inner.namespace.id(), author.id());
+        let record = Record::from_hash(id.timestamp(), hash, len);
 
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
@@ -147,9 +147,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     }
 
     /// Get the identifier for an entry in this replica.
-    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
+    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author, timestamp: u64) -> RecordIdentifier {
         let inner = self.inner.read();
-        RecordIdentifier::new(key, inner.namespace.id(), author.id())
+        RecordIdentifier::new(key, inner.namespace.id(), author.id(), timestamp)
     }
 
     /// Insert an entry into this replica which was received from a remote peer.
@@ -426,6 +426,8 @@ pub struct RecordIdentifier {
     namespace: NamespaceId,
     /// The [`AuthorId`] of the author that wrote this record.
     author: AuthorId,
+    /// Record creation timestamp. Counted as micros since the Unix epoch.
+    timestamp: u64,
 }
 
 impl Debug for RecordIdentifier {
@@ -470,6 +472,7 @@ impl AsFingerprint for RecordIdentifier {
         hasher.update(self.namespace.as_bytes());
         hasher.update(self.author.as_bytes());
         hasher.update(&self.key);
+        hasher.update(&self.timestamp.to_be_bytes());
         Fingerprint(hasher.finalize().into())
     }
 }
@@ -478,11 +481,32 @@ impl RangeKey for RecordIdentifier {}
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
-    pub fn new(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
+    pub fn new(
+        key: impl AsRef<[u8]>,
+        namespace: NamespaceId,
+        author: AuthorId,
+        timestamp: u64,
+    ) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
             namespace,
             author,
+            timestamp,
+        }
+    }
+
+    /// Create a new [`RecordIdentifier`] with the timestamp set to now.
+    pub fn new_current(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time drift")
+            .as_micros() as u64;
+
+        RecordIdentifier {
+            key: key.as_ref().to_vec(),
+            namespace,
+            author,
+            timestamp,
         }
     }
 
@@ -490,11 +514,13 @@ impl RecordIdentifier {
         key: &[u8],
         namespace: &[u8; 32],
         author: &[u8; 32],
+        timestamp: u64,
     ) -> anyhow::Result<Self> {
         Ok(RecordIdentifier {
             key: key.to_vec(),
             namespace: NamespaceId::from_bytes(namespace)?,
             author: AuthorId::from_bytes(author)?,
+            timestamp,
         })
     }
 
@@ -503,6 +529,7 @@ impl RecordIdentifier {
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(self.author.as_bytes());
         out.extend_from_slice(&self.key);
+        out.extend(&self.timestamp.to_be_bytes())
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
@@ -520,6 +547,11 @@ impl RecordIdentifier {
         self.namespace
     }
 
+    /// Get the timestamp of this record.
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
     pub(crate) fn namespace_bytes(&self) -> &[u8; 32] {
         self.namespace.as_bytes()
     }
@@ -531,6 +563,13 @@ impl RecordIdentifier {
 
     pub(crate) fn author_bytes(&self) -> &[u8; 32] {
         self.author.as_bytes()
+    }
+}
+
+impl Deref for SignedEntry {
+    type Target = Entry;
+    fn deref(&self) -> &Self::Target {
+        &self.entry
     }
 }
 
@@ -562,11 +601,6 @@ impl Record {
         }
     }
 
-    /// Get the timestamp of this record.
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
-    }
-
     /// Get the length of the data addressed by this record's content hash.
     pub fn content_len(&self) -> u64 {
         self.len
@@ -577,18 +611,23 @@ impl Record {
         self.hash
     }
 
-    /// Create a new record with a timestamp of the current system date.
-    pub fn from_hash(hash: Hash, len: u64) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("time drift")
-            .as_micros() as u64;
+    /// Get the timestamp of this record.
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
+    /// Create a new record.
+    pub fn from_hash(timestamp: u64, hash: Hash, len: u64) -> Self {
         Self::new(timestamp, len, hash)
     }
 
     // TODO: remove
     #[cfg(test)]
-    pub(crate) fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
+    pub(crate) fn from_data(
+        timestamp: u64,
+        data: impl AsRef<[u8]>,
+        namespace: NamespaceId,
+    ) -> Self {
         // Salted hash
         // TODO: do we actually want this?
         // TODO: this should probably use a namespace prefix if used
@@ -596,12 +635,12 @@ impl Record {
         hasher.update(namespace.as_bytes());
         hasher.update(data.as_ref());
         let hash = hasher.finalize();
-        Self::from_hash(hash.into(), data.as_ref().len() as u64)
+        Self::from_hash(timestamp, hash.into(), data.as_ref().len() as u64)
     }
 
     /// Serialize this record into a mutable byte array.
     pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.timestamp.to_be_bytes());
+        // Note: the timestamp is not serialized as it is transmitted through the key
         out.extend_from_slice(&self.len.to_be_bytes());
         out.extend_from_slice(self.hash.as_ref());
     }
@@ -641,8 +680,9 @@ mod tests {
         let bob = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
 
-        let record_id = RecordIdentifier::new("/my/key", myspace.id(), alice.id());
-        let record = Record::from_data(b"this is my cool data", myspace.id());
+        let record_id = RecordIdentifier::new_current("/my/key", myspace.id(), alice.id());
+        let record =
+            Record::from_data(record_id.timestamp(), b"this is my cool data", myspace.id());
         let entry = Entry::new(record_id, record);
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
@@ -843,9 +883,9 @@ mod tests {
 
         // Just key
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[1], n[0].id(), a[0].id());
-            let ri2 = RecordIdentifier::new(k[2], n[0].id(), a[0].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[1], n[0].id(), a[0].id());
+            let ri2 = RecordIdentifier::new_current(k[2], n[0].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -858,9 +898,9 @@ mod tests {
 
         // Just namespace
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[0], n[1].id(), a[0].id());
-            let ri2 = RecordIdentifier::new(k[0], n[2].id(), a[0].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[0], n[1].id(), a[0].id());
+            let ri2 = RecordIdentifier::new_current(k[0], n[2].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -873,9 +913,9 @@ mod tests {
 
         // Just author
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[0], n[0].id(), a[1].id());
-            let ri2 = RecordIdentifier::new(k[0], n[0].id(), a[2].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[0], n[0].id(), a[1].id());
+            let ri2 = RecordIdentifier::new_current(k[0], n[0].id(), a[2].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -888,9 +928,9 @@ mod tests {
 
         // Just key and namespace
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[1], n[1].id(), a[0].id());
-            let ri2 = RecordIdentifier::new(k[2], n[2].id(), a[0].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[1], n[1].id(), a[0].id());
+            let ri2 = RecordIdentifier::new_current(k[2], n[2].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");

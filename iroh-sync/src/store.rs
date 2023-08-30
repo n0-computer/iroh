@@ -68,8 +68,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The [`GetFilter`] has several methods of filtering the returned entries.
     fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
-    /// Gets the single latest entry for the specified key and author.
-    fn get_latest_by_key_and_author(
+    fn get_by_key_and_author(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
@@ -79,68 +78,47 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
 /// Filter a get query onto a namespace
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetFilter {
-    latest: bool,
-    author: Option<AuthorId>,
-    key: KeyFilter,
+pub enum GetFilter {
+    Author(AuthorId),
+    Key(KeyFilter),
 }
 
 impl Default for GetFilter {
     fn default() -> Self {
-        Self::latest()
+        Self::all()
     }
 }
 
 impl GetFilter {
     /// Create a new get filter.
-    ///
-    /// When `latest` is `true`, it will iterate over the latest entries, otherwise it will
-    /// iterate over all entires.
-    pub fn new(latest: bool) -> Self {
-        GetFilter {
-            latest,
-            author: None,
-            key: KeyFilter::All,
-        }
+    pub fn new() -> Self {
+        GetFilter::Key(KeyFilter::All)
     }
 
     /// No filter, iterate over all entries.
     pub fn all() -> Self {
-        Self::new(false)
-    }
-
-    /// Only include the latest entries.
-    pub fn latest() -> Self {
-        Self::new(true)
+        Self::new()
     }
 
     /// Set the key filter.
     pub fn with_key_filter(mut self, key_filter: KeyFilter) -> Self {
-        self.key = key_filter;
+        self = Self::Key(key_filter);
         self
     }
 
     /// Filter by exact key match.
     pub fn with_key(mut self, key: impl AsRef<[u8]>) -> Self {
-        self.key = KeyFilter::Key(key.as_ref().to_vec());
-        self
+        self.with_key_filter(KeyFilter::Key(key.as_ref().to_vec()))
     }
 
     /// Filter by prefix key match.
     pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
-        self.key = KeyFilter::Prefix(prefix.as_ref().to_vec());
-        self
+        self.with_key_filter(KeyFilter::Prefix(prefix.as_ref().to_vec()))
     }
 
     /// Filter by author.
     pub fn with_author(mut self, author: AuthorId) -> Self {
-        self.author = Some(author);
-        self
-    }
-
-    /// Include not only latest entries but also all historical entries.
-    pub fn with_history(mut self) -> Self {
-        self.latest = false;
+        self = GetFilter::Author(author);
         self
     }
 }
