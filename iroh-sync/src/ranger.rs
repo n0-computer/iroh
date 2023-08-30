@@ -608,7 +608,7 @@ where
                 }
 
                 let mut non_empty = 0;
-                for (i, range) in ranges.iter().enumerate() {
+                for range in ranges {
                     let chunk: Vec<_> = self
                         .store
                         .get_range(range.clone(), self.limit.clone())?
@@ -617,37 +617,22 @@ where
                         non_empty += 1;
                     }
                     // Add either the fingerprint or the item set
-                    let fingerprint = self.store.get_fingerprint(range, self.limit.as_ref())?;
+                    let fingerprint = self.store.get_fingerprint(&range, self.limit.as_ref())?;
                     if chunk.len() > self.max_set_size {
                         out.push(MessagePart::RangeFingerprint(RangeFingerprint {
                             range: range.clone(),
                             fingerprint,
                         }));
                     } else {
-                        let values = chunk
-                            .into_iter()
-                            .map(|el| match el {
-                                Ok((k, v)) => {
-                                    let k: K = k;
-                                    let v: V = v;
-                                    Ok((k, v))
-                                }
-                                Err(err) => Err(err),
-                            })
-                            .collect::<Result<_, _>>()?;
+                        let values = chunk.into_iter().collect::<Result<_, _>>()?;
                         out.push(MessagePart::RangeItem(RangeItem {
-                            range: range.clone(),
+                            range,
                             values,
                             have_local: false,
                         }));
                     }
                 }
-                if non_empty <= 1 {
-                    println!("{:?}", range);
-                    println!("{:?}", local_values);
-                    println!("{:?}", ranges);
-                    debug_assert!(non_empty > 1);
-                }
+                debug_assert!(non_empty > 1);
             }
         }
 
@@ -684,14 +669,6 @@ where
     // pub fn store(&self) -> &S {
     //     &self.store
     // }
-}
-
-/// Sadly <https://doc.rust-lang.org/std/primitive.usize.html#method.div_ceil> is still unstable..
-fn div_ceil(a: usize, b: usize) -> usize {
-    debug_assert!(a != 0);
-    debug_assert!(b != 0);
-
-    a / b + (a % b != 0) as usize
 }
 
 #[cfg(test)]
@@ -1313,16 +1290,6 @@ mod tests {
         assert_eq!(&all, &set[..2]);
     }
 
-    #[test]
-    fn test_div_ceil() {
-        assert_eq!(div_ceil(1, 1), 1);
-        assert_eq!(div_ceil(2, 1), 2);
-        assert_eq!(div_ceil(4, 2), 4 / 2);
-
-        assert_eq!(div_ceil(3, 2), 2);
-        assert_eq!(div_ceil(5, 3), 2);
-    }
-
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
     struct TestKey(String);
 
@@ -1409,6 +1376,7 @@ mod tests {
     }
 
     /// A generic fn to make a test for the get_range fn of a store.
+    #[allow(clippy::type_complexity)]
     fn store_get_ranges_test<S, K, V>(
         elems: impl IntoIterator<Item = (K, V)>,
         range: Range<K>,
@@ -1434,8 +1402,8 @@ mod tests {
             .filter(|(k, _)| k.contains(&range))
             .collect::<Vec<_>>();
 
-        actual.sort_by(|(ak, _), (bk, _)| ak.cmp(&bk));
-        expected.sort_by(|(ak, _), (bk, _)| ak.cmp(&bk));
+        actual.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
+        expected.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
         (expected, actual)
     }
 
