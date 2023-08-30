@@ -61,12 +61,7 @@ impl<K> From<(K, K)> for Range<K> {
     }
 }
 
-pub trait RangeKey: Sized + Ord + Debug {
-    /// Is this key inside the range?
-    fn contains(&self, range: &Range<Self>) -> bool {
-        range.contains(self)
-    }
-}
+pub trait RangeKey: Sized + Ord + Debug {}
 
 impl RangeKey for &str {}
 impl RangeKey for &[u8] {}
@@ -363,9 +358,9 @@ where
 
         let filter = |x: &K| match (&self.range, &self.limit) {
             (None, None) => true,
-            (Some(ref range), Some(ref limit)) => x.contains(range) && x.contains(limit),
-            (Some(ref range), None) => x.contains(range),
-            (None, Some(ref limit)) => x.contains(limit),
+            (Some(ref range), Some(ref limit)) => range.contains(x) && limit.contains(x),
+            (Some(ref range), None) => range.contains(x),
+            (None, Some(ref limit)) => limit.contains(x),
         };
 
         loop {
@@ -1112,7 +1107,7 @@ mod tests {
             alice.put(k.clone(), v.clone()).unwrap();
 
             let include = if let Some(ref limit) = limit {
-                k.contains(limit)
+                limit.contains(k)
             } else {
                 true
             };
@@ -1131,7 +1126,7 @@ mod tests {
         for (k, v) in bob_set {
             bob.put(k.clone(), v.clone()).unwrap();
             let include = if let Some(ref limit) = limit {
-                k.contains(limit)
+                limit.contains(k)
             } else {
                 true
             };
@@ -1376,7 +1371,7 @@ mod tests {
             .unwrap();
         let mut expected = elems
             .into_iter()
-            .filter(|(k, _)| k.contains(&range))
+            .filter(|(k, _)| range.contains(k))
             .collect::<Vec<_>>();
 
         actual.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));

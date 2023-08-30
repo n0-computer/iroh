@@ -12,7 +12,7 @@ use redb::{
 };
 
 use crate::{
-    ranger::{AsFingerprint, Fingerprint, Range, RangeKey},
+    ranger::{AsFingerprint, Fingerprint, Range},
     store::Store as _,
     sync::{
         Author, AuthorId, Entry, EntrySignature, Namespace, NamespaceId, Record, RecordIdentifier,
@@ -611,7 +611,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
 }
 
 fn matches(limit: &Option<Range<RecordIdentifier>>, x: &RecordIdentifier) -> bool {
-    limit.as_ref().map(|r| x.contains(r)).unwrap_or(true)
+    limit.as_ref().map(|r| r.contains(x)).unwrap_or(true)
 }
 
 #[self_referencing]

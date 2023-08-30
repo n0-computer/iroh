@@ -11,7 +11,7 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use rand_core::CryptoRngCore;
 
 use crate::{
-    ranger::{AsFingerprint, Fingerprint, Range, RangeKey},
+    ranger::{AsFingerprint, Fingerprint, Range},
     sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
 };
 
@@ -570,8 +570,8 @@ pub struct RangeIterator<'a> {
 
 impl RangeIterator<'_> {
     fn matches(&self, x: &RecordIdentifier) -> bool {
-        let range = self.range.as_ref().map(|r| x.contains(r)).unwrap_or(true);
-        let limit = self.limit.as_ref().map(|r| x.contains(r)).unwrap_or(true);
+        let range = self.range.as_ref().map(|r| r.contains(x)).unwrap_or(true);
+        let limit = self.limit.as_ref().map(|r| r.contains(x)).unwrap_or(true);
         range && limit
     }
 }
