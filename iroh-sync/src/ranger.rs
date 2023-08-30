@@ -70,6 +70,8 @@ pub trait RangeKey: Sized + Ord + Debug {
 
 impl RangeKey for &str {}
 impl RangeKey for &[u8] {}
+impl RangeKey for Vec<u8> {}
+impl RangeKey for String {}
 
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fingerprint(pub [u8; 32]);
@@ -674,7 +676,7 @@ where
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use std::fmt::{self, Debug};
+    use std::fmt::Debug;
     use test_strategy::proptest;
 
     use super::*;
@@ -1290,46 +1292,21 @@ mod tests {
         assert_eq!(&all, &set[..2]);
     }
 
-    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
-    struct TestKey(String);
+    type TestSet = BTreeMap<String, ()>;
 
-    impl fmt::Display for TestKey {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str(&self.0)
-        }
-    }
-
-    impl fmt::Debug for TestKey {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str(&self.0)
-        }
-    }
-
-    impl RangeKey for TestKey {}
-
-    impl AsFingerprint for TestKey {
-        fn as_fingerprint(&self) -> Fingerprint {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(self.0.as_bytes());
-            Fingerprint(hasher.finalize().into())
-        }
-    }
-
-    type TestSet = BTreeMap<TestKey, ()>;
-
-    fn test_key() -> impl Strategy<Value = TestKey> {
-        "[a-z0-9]{0,5}".prop_map(TestKey)
+    fn test_key() -> impl Strategy<Value = String> {
+        "[a-z0-9]{0,5}"
     }
 
     fn test_set() -> impl Strategy<Value = TestSet> {
         prop::collection::btree_map(test_key(), Just(()), 0..10)
     }
 
-    fn test_vec() -> impl Strategy<Value = Vec<(TestKey, ())>> {
+    fn test_vec() -> impl Strategy<Value = Vec<(String, ())>> {
         test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
     }
 
-    fn test_range() -> impl Strategy<Value = Range<TestKey>> {
+    fn test_range() -> impl Strategy<Value = Range<String>> {
         // ranges with x > y are explicitly allowed - they wrap around
         (test_key(), test_key()).prop_map(|(x, y)| Range::new(x, y))
     }
@@ -1337,12 +1314,12 @@ mod tests {
     fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
         values
             .into_iter()
-            .map(|v| TestKey(v.as_ref().to_string()))
+            .map(|v| v.as_ref().to_string())
             .map(|k| (k, ()))
             .collect()
     }
 
-    fn mk_test_vec(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(TestKey, ())> {
+    fn mk_test_vec(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(String, ())> {
         mk_test_set(values).into_iter().collect()
     }
 
@@ -1369,8 +1346,8 @@ mod tests {
 
     #[proptest]
     fn simple_store_sync(
-        #[strategy(test_vec())] alice: Vec<(TestKey, ())>,
-        #[strategy(test_vec())] bob: Vec<(TestKey, ())>,
+        #[strategy(test_vec())] alice: Vec<(String, ())>,
+        #[strategy(test_vec())] bob: Vec<(String, ())>,
     ) {
         let _res = sync(None, &alice, &bob);
     }
@@ -1409,8 +1386,8 @@ mod tests {
 
     #[proptest]
     fn simple_store_get_ranges(
-        #[strategy(test_set())] contents: BTreeMap<TestKey, ()>,
-        #[strategy(test_range())] range: Range<TestKey>,
+        #[strategy(test_set())] contents: BTreeMap<String, ()>,
+        #[strategy(test_range())] range: Range<String>,
     ) {
         let (expected, actual) =
             store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents.clone(), range.clone(), None);
