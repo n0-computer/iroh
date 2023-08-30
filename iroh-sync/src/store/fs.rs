@@ -247,15 +247,14 @@ impl Store {
         let mut author2 = *author;
         // move to next possible author, which marks the end of the range
         // TODO: is there a better way to define the range end?
-        for i in 0..32 {
-            if author2[32 - i] != 255 {
-                author2[32 - i] += 1;
+        for char in author2.iter_mut().rev() {
+            if *char != 255 {
+                *char += 1;
                 break;
             }
         }
         let end = (namespace.as_bytes(), &author2, &[][..]);
-        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)?;
-        todo!()
+        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
     }
 
     fn get_by_author_and_prefix(
@@ -276,8 +275,7 @@ impl Store {
             }
         }
         let end = (namespace.as_bytes(), author, &end_prefix[..]);
-        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)?;
-        todo!()
+        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
     }
 
     fn get_by_prefix(
