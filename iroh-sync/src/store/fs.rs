@@ -1,6 +1,6 @@
 //! On disk storage for replicas.
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{bail, Result};
 use ouroboros::self_referencing;
@@ -459,55 +459,59 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         range: Range<RecordIdentifier>,
         limit: Option<Range<RecordIdentifier>>,
     ) -> Result<Self::RangeIterator<'_>> {
-        // identity range: iter1 = all, iter2 = none
-        let iter = if range.x() == range.y() {
-            let start = range_start(&self.namespace);
-            let end = range_end(&self.namespace);
-            // iterator for all entries in replica
-            let iter = RangeLatestIterator::with_range(
-                &self.store.db,
-                |table| table.range(start..end),
-                limit.clone(),
-                RangeFilter::None,
-            )?;
-            // empty iterator, returns nothing
-            let iter2 = RangeLatestIterator::empty(&self.store.db)?;
-            iter.chain(iter2)
-        // regular range: iter1 = x <= t < y, iter2 = none
-        } else if range.x() < range.y() {
-            let start = range.x().as_byte_tuple();
-            let end = range.y().as_byte_tuple();
-            // iterator for entries from range.x to range.y
-            let iter = RangeLatestIterator::with_range(
-                &self.store.db,
-                |table| table.range(start..end),
-                limit.clone(),
-                RangeFilter::None,
-            )?;
-            // empty iterator
-            let iter2 = RangeLatestIterator::empty(&self.store.db)?;
-            iter.chain(iter2)
-        // wrap-around range: iter1 = y <= t, iter2 = x >= t
-        } else {
-            let start = range_start(&self.namespace);
-            let end = range.y().as_byte_tuple();
-            // iterator for entries start to from range.y
-            let iter = RangeLatestIterator::with_range(
-                &self.store.db,
-                |table| table.range(start..end),
-                limit.clone(),
-                RangeFilter::None,
-            )?;
-            let start = range.x().as_byte_tuple();
-            let end = range_end(&self.namespace);
-            // iterator for entries from range.x to end
-            let iter2 = RangeLatestIterator::with_range(
-                &self.store.db,
-                |table| table.range(start..end),
-                limit.clone(),
-                RangeFilter::None,
-            )?;
-            iter.chain(iter2)
+        let iter = match range.x().cmp(range.y()) {
+            // identity range: iter1 = all, iter2 = none
+            Ordering::Equal => {
+                let start = range_start(&self.namespace);
+                let end = range_end(&self.namespace);
+                // iterator for all entries in replica
+                let iter = RangeLatestIterator::with_range(
+                    &self.store.db,
+                    |table| table.range(start..end),
+                    limit.clone(),
+                    RangeFilter::None,
+                )?;
+                // empty iterator, returns nothing
+                let iter2 = RangeLatestIterator::empty(&self.store.db)?;
+                iter.chain(iter2)
+            }
+            // regular range: iter1 = x <= t < y, iter2 = none
+            Ordering::Less => {
+                let start = range.x().as_byte_tuple();
+                let end = range.y().as_byte_tuple();
+                // iterator for entries from range.x to range.y
+                let iter = RangeLatestIterator::with_range(
+                    &self.store.db,
+                    |table| table.range(start..end),
+                    limit.clone(),
+                    RangeFilter::None,
+                )?;
+                // empty iterator
+                let iter2 = RangeLatestIterator::empty(&self.store.db)?;
+                iter.chain(iter2)
+                // wrap-around range: iter1 = y <= t, iter2 = x >= t
+            }
+            Ordering::Greater => {
+                let start = range_start(&self.namespace);
+                let end = range.y().as_byte_tuple();
+                // iterator for entries start to from range.y
+                let iter = RangeLatestIterator::with_range(
+                    &self.store.db,
+                    |table| table.range(start..end),
+                    limit.clone(),
+                    RangeFilter::None,
+                )?;
+                let start = range.x().as_byte_tuple();
+                let end = range_end(&self.namespace);
+                // iterator for entries from range.x to end
+                let iter2 = RangeLatestIterator::with_range(
+                    &self.store.db,
+                    |table| table.range(start..end),
+                    limit.clone(),
+                    RangeFilter::None,
+                )?;
+                iter.chain(iter2)
+            }
         };
         Ok(iter)
     }
@@ -592,8 +596,8 @@ impl<'a> RangeLatestIterator<'a> {
         limit: Option<Range<RecordIdentifier>>,
         filter: RangeFilter,
     ) -> anyhow::Result<Self> {
-        let start = range_start(&namespace);
-        let end = range_end(&namespace);
+        let start = range_start(namespace);
+        let end = range_end(namespace);
         Self::with_range(db, |table| table.range(start..=end), limit, filter)
     }
     fn empty(db: &'a Arc<Database>) -> anyhow::Result<Self> {
@@ -693,8 +697,8 @@ impl<'a> RangeAllIterator<'a> {
         namespace: &NamespaceId,
         filter: RangeFilter,
     ) -> anyhow::Result<Self> {
-        let start = range_start(&namespace);
-        let end = range_end(&namespace);
+        let start = range_start(namespace);
+        let end = range_end(namespace);
         Self::with_range(db, |table| table.range(start..=end), filter)
     }
 }

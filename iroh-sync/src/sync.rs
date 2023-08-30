@@ -307,11 +307,11 @@ impl Debug for EntrySignature {
         f.debug_struct("EntrySignature")
             .field(
                 "namespace_signature",
-                &base32::fmt(&self.namespace_signature.to_bytes()),
+                &base32::fmt(self.namespace_signature.to_bytes()),
             )
             .field(
                 "author_signature",
-                &base32::fmt(&self.author_signature.to_bytes()),
+                &base32::fmt(self.author_signature.to_bytes()),
             )
             .finish()
     }
