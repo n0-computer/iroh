@@ -41,6 +41,20 @@ impl<K> Range<K> {
     }
 }
 
+impl<K: Ord> Range<K> {
+    pub fn is_all(&self) -> bool {
+        self.x() == self.y()
+    }
+
+    pub fn contains(&self, t: &K) -> bool {
+        match self.x().cmp(self.y()) {
+            Ordering::Equal => true,
+            Ordering::Less => self.x() <= t && t < self.y(),
+            Ordering::Greater => self.x() <= t || t < self.y(),
+        }
+    }
+}
+
 impl<K> From<(K, K)> for Range<K> {
     fn from((x, y): (K, K)) -> Self {
         Range { x, y }
@@ -50,21 +64,14 @@ impl<K> From<(K, K)> for Range<K> {
 pub trait RangeKey: Sized + Ord + Debug {
     /// Is this key inside the range?
     fn contains(&self, range: &Range<Self>) -> bool {
-        contains(self, range)
-    }
-}
-
-/// Default implementation of `contains` for `Ord` types.
-pub fn contains<T: Ord>(t: &T, range: &Range<T>) -> bool {
-    match range.x().cmp(range.y()) {
-        Ordering::Equal => true,
-        Ordering::Less => range.x() <= t && t < range.y(),
-        Ordering::Greater => range.x() <= t || t < range.y(),
+        range.contains(self)
     }
 }
 
 impl RangeKey for &str {}
 impl RangeKey for &[u8] {}
+impl RangeKey for Vec<u8> {}
+impl RangeKey for String {}
 
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fingerprint(pub [u8; 32]);
@@ -539,59 +546,87 @@ where
                 // m0 = x < m1 < .. < mk = y, with k>= 2
                 // such that [ml, ml+1) is nonempty
                 let mut ranges = Vec::with_capacity(self.split_factor);
-                let chunk_len = div_ceil(local_values.len(), self.split_factor);
 
-                // Select the first index, for which the key is larger than the x of the range.
-                let mut start_index = local_values
+                // Select the first index, for which the key is larger or equal than the x of the range.
+                let start_index = local_values
                     .iter()
-                    .position(|(k, _)| range.x() <= k)
+                    .position(|(k, _)| k >= range.x())
                     .unwrap_or(0);
-                let max_len = local_values.len();
-                for i in 0..self.split_factor {
-                    let s_index = start_index;
-                    let start = (s_index * chunk_len) % max_len;
-                    let e_index = s_index + 1;
-                    let end = (e_index * chunk_len) % max_len;
-
-                    let (x, y) = if i == 0 {
-                        // first
-                        (range.x(), &local_values[end].0)
-                    } else if i == self.split_factor - 1 {
-                        // last
-                        (&local_values[start].0, range.y())
-                    } else {
-                        // regular
-                        (&local_values[start].0, &local_values[end].0)
-                    };
-                    let range = Range::new(x.clone(), y.clone());
-                    ranges.push(range);
-                    start_index += 1;
+                // select a pivot value. pivots repeat every split_factor, so pivot(i) == pivot(i + self.split_factor * x)
+                // it is guaranteed that pivot(0) != x if local_values.len() >= 2
+                let pivot = |i: usize| {
+                    // ensure that pivots wrap around
+                    let i = i % self.split_factor;
+                    // choose an offset. this will be
+                    // 1/2, 1 in case of split_factor == 2
+                    // 1/3, 2/3, 1 in case of split_factor == 3
+                    // etc.
+                    let offset = (local_values.len() * (i + 1)) / self.split_factor;
+                    let offset = (start_index + offset) % local_values.len();
+                    &local_values[offset].0
+                };
+                if range.is_all() {
+                    // the range is the whole set, so range.x and range.y should not matter
+                    // just add all ranges as normal ranges. Exactly one of the ranges will
+                    // wrap around, so we cover the entire set.
+                    for i in 0..self.split_factor {
+                        let (x, y) = (pivot(i), pivot(i + 1));
+                        // don't push empty ranges
+                        if x != y {
+                            ranges.push(Range {
+                                x: x.clone(),
+                                y: y.clone(),
+                            })
+                        }
+                    }
+                } else {
+                    // guaranteed to be non-empty because
+                    // - pivot(0) is guaranteed to be != x for local_values.len() >= 2
+                    // - local_values.len() < 2 gets handled by the recursion anchor
+                    // - x != y (regular range)
+                    ranges.push(Range {
+                        x: range.x().clone(),
+                        y: pivot(0).clone(),
+                    });
+                    // this will only be executed for split_factor > 2
+                    for i in 0..self.split_factor - 2 {
+                        // don't push empty ranges
+                        let (x, y) = (pivot(i), pivot(i + 1));
+                        if x != y {
+                            ranges.push(Range {
+                                x: x.clone(),
+                                y: y.clone(),
+                            })
+                        }
+                    }
+                    // guaranteed to be non-empty because
+                    // - pivot is a value in the range
+                    // - y is the exclusive end of the range
+                    // - x != y (regular range)
+                    ranges.push(Range {
+                        x: pivot(self.split_factor - 2).clone(),
+                        y: range.y().clone(),
+                    });
                 }
 
-                for range in ranges.into_iter() {
+                let mut non_empty = 0;
+                for range in ranges {
                     let chunk: Vec<_> = self
                         .store
                         .get_range(range.clone(), self.limit.clone())?
                         .collect();
+                    if !chunk.is_empty() {
+                        non_empty += 1;
+                    }
                     // Add either the fingerprint or the item set
                     let fingerprint = self.store.get_fingerprint(&range, self.limit.as_ref())?;
                     if chunk.len() > self.max_set_size {
                         out.push(MessagePart::RangeFingerprint(RangeFingerprint {
-                            range,
+                            range: range.clone(),
                             fingerprint,
                         }));
                     } else {
-                        let values = chunk
-                            .into_iter()
-                            .map(|el| match el {
-                                Ok((k, v)) => {
-                                    let k: K = k;
-                                    let v: V = v;
-                                    Ok((k, v))
-                                }
-                                Err(err) => Err(err),
-                            })
-                            .collect::<Result<_, _>>()?;
+                        let values = chunk.into_iter().collect::<Result<_, _>>()?;
                         out.push(MessagePart::RangeItem(RangeItem {
                             range,
                             values,
@@ -599,6 +634,7 @@ where
                         }));
                     }
                 }
+                debug_assert!(non_empty > 1);
             }
         }
 
@@ -637,17 +673,11 @@ where
     // }
 }
 
-/// Sadly <https://doc.rust-lang.org/std/primitive.usize.html#method.div_ceil> is still unstable..
-fn div_ceil(a: usize, b: usize) -> usize {
-    debug_assert!(a != 0);
-    debug_assert!(b != 0);
-
-    a / b + (a % b != 0) as usize
-}
-
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use std::fmt::Debug;
+    use test_strategy::proptest;
 
     use super::*;
 
@@ -664,7 +694,8 @@ mod tests {
         ];
 
         let res = sync(None, &alice_set, &bob_set);
-        assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
+        res.print_messages();
+        assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
 
         // Initial message
@@ -678,7 +709,7 @@ mod tests {
 
         // Last response from Alice
         assert_eq!(res.alice_to_bob[1].parts.len(), 3);
-        assert!(res.alice_to_bob[1].parts[0].is_range_item());
+        assert!(res.alice_to_bob[1].parts[0].is_range_fingerprint());
         assert!(res.alice_to_bob[1].parts[1].is_range_fingerprint());
         assert!(res.alice_to_bob[1].parts[2].is_range_item());
 
@@ -741,7 +772,7 @@ mod tests {
 
         // No Limit
         let res = sync(None, &alice_set, &bob_set);
-        assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
+        assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
 
         // With Limit: just ape
@@ -816,57 +847,7 @@ mod tests {
             key: Vec<u8>,
         }
 
-        impl RangeKey for Multikey {
-            fn contains(&self, range: &Range<Self>) -> bool {
-                let author = range.x().author.cmp(&range.y().author);
-                let key = range.x().key.cmp(&range.y().key);
-
-                match (author, key) {
-                    (Ordering::Equal, Ordering::Equal) => {
-                        // All
-                        true
-                    }
-                    (Ordering::Equal, Ordering::Less) => {
-                        // Regular, based on key
-                        range.x().key <= self.key && self.key < range.y().key
-                    }
-                    (Ordering::Equal, Ordering::Greater) => {
-                        // Reverse, based on key
-                        range.x().key <= self.key || self.key < range.y().key
-                    }
-                    (Ordering::Less, Ordering::Equal) => {
-                        // Regular, based on author
-                        range.x().author <= self.author && self.author < range.y().author
-                    }
-                    (Ordering::Greater, Ordering::Equal) => {
-                        // Reverse, based on key
-                        range.x().author <= self.author || self.author < range.y().author
-                    }
-                    (Ordering::Less, Ordering::Less) => {
-                        // Regular, key and author
-                        range.x().key <= self.key
-                            && self.key < range.y().key
-                            && range.x().author <= self.author
-                            && self.author < range.y().author
-                    }
-                    (Ordering::Greater, Ordering::Greater) => {
-                        // Reverse, key and author
-                        (range.x().key <= self.key || self.key < range.y().key)
-                            && (range.x().author <= self.author || self.author < range.y().author)
-                    }
-                    (Ordering::Less, Ordering::Greater) => {
-                        // Regular author, Reverse key
-                        (range.x().key <= self.key || self.key < range.y().key)
-                            && (range.x().author <= self.author && self.author < range.y().author)
-                    }
-                    (Ordering::Greater, Ordering::Less) => {
-                        // Regular key, Reverse author
-                        (range.x().key <= self.key && self.key < range.y().key)
-                            && (range.x().author <= self.author || self.author < range.y().author)
-                    }
-                }
-            }
-        }
+        impl RangeKey for Multikey {}
 
         impl Debug for Multikey {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -945,7 +926,7 @@ mod tests {
         let limit = Range::new(Multikey::new(author_a, ""), Multikey::new(author_b, ""));
         let res = sync(Some(limit), &alice_set, &bob_set);
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
-        assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
+        assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
         res.assert_alice_set(
             "only author_a",
             &[
@@ -968,36 +949,37 @@ mod tests {
             ],
         );
 
-        // All authors, but only cat
-        let limit = Range::new(
-            Multikey::new(author_a, "cat"),
-            Multikey::new(author_a, "doe"),
-        );
-        let res = sync(Some(limit), &alice_set, &bob_set);
-        assert_eq!(res.alice_to_bob.len(), 1, "A -> B message count");
-        assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
+        // I don't think such a thing is possible
+        // // All authors, but only cat
+        // let limit = Range::new(
+        //     Multikey::new(author_a, "cat"),
+        //     Multikey::new(author_a, "doe"),
+        // );
+        // let res = sync(Some(limit), &alice_set, &bob_set);
+        // assert_eq!(res.alice_to_bob.len(), 1, "A -> B message count");
+        // assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
 
-        res.assert_alice_set(
-            "only cat",
-            &[
-                (Multikey::new(author_a, "ape"), 1),
-                (Multikey::new(author_a, "bee"), 1),
-                (Multikey::new(author_b, "bee"), 1),
-                (Multikey::new(author_a, "doe"), 1),
-                (Multikey::new(author_a, "cat"), 1),
-                (Multikey::new(author_b, "cat"), 1),
-            ],
-        );
+        // res.assert_alice_set(
+        //     "only cat",
+        //     &[
+        //         (Multikey::new(author_a, "ape"), 1),
+        //         (Multikey::new(author_a, "bee"), 1),
+        //         (Multikey::new(author_b, "bee"), 1),
+        //         (Multikey::new(author_a, "doe"), 1),
+        //         (Multikey::new(author_a, "cat"), 1),
+        //         (Multikey::new(author_b, "cat"), 1),
+        //     ],
+        // );
 
-        res.assert_bob_set(
-            "only cat",
-            &[
-                (Multikey::new(author_a, "ape"), 1),
-                (Multikey::new(author_a, "bee"), 1),
-                (Multikey::new(author_a, "cat"), 1),
-                (Multikey::new(author_b, "cat"), 1),
-            ],
-        );
+        // res.assert_bob_set(
+        //     "only cat",
+        //     &[
+        //         (Multikey::new(author_a, "ape"), 1),
+        //         (Multikey::new(author_a, "bee"), 1),
+        //         (Multikey::new(author_a, "cat"), 1),
+        //         (Multikey::new(author_b, "cat"), 1),
+        //     ],
+        // );
     }
 
     struct SyncResult<K, V>
@@ -1115,7 +1097,7 @@ mod tests {
     ) -> SyncResult<K, V>
     where
         K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
-        V: Clone + Debug + PartialEq,
+        V: Ord + Clone + Debug + PartialEq,
     {
         println!("Using Limit: {:?}", limit);
         let mut expected_set_alice = BTreeMap::new();
@@ -1310,13 +1292,105 @@ mod tests {
         assert_eq!(&all, &set[..2]);
     }
 
-    #[test]
-    fn test_div_ceil() {
-        assert_eq!(div_ceil(1, 1), 1);
-        assert_eq!(div_ceil(2, 1), 2);
-        assert_eq!(div_ceil(4, 2), 4 / 2);
+    type TestSet = BTreeMap<String, ()>;
 
-        assert_eq!(div_ceil(3, 2), 2);
-        assert_eq!(div_ceil(5, 3), 2);
+    fn test_key() -> impl Strategy<Value = String> {
+        "[a-z0-9]{0,5}"
+    }
+
+    fn test_set() -> impl Strategy<Value = TestSet> {
+        prop::collection::btree_map(test_key(), Just(()), 0..10)
+    }
+
+    fn test_vec() -> impl Strategy<Value = Vec<(String, ())>> {
+        test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    }
+
+    fn test_range() -> impl Strategy<Value = Range<String>> {
+        // ranges with x > y are explicitly allowed - they wrap around
+        (test_key(), test_key()).prop_map(|(x, y)| Range::new(x, y))
+    }
+
+    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
+        values
+            .into_iter()
+            .map(|v| v.as_ref().to_string())
+            .map(|k| (k, ()))
+            .collect()
+    }
+
+    fn mk_test_vec(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(String, ())> {
+        mk_test_set(values).into_iter().collect()
+    }
+
+    #[test]
+    fn simple_store_sync_1() {
+        let alice = mk_test_vec(["3"]);
+        let bob = mk_test_vec(["2", "3", "4", "5", "6", "7", "8"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[test]
+    fn simple_store_sync_2() {
+        let alice = mk_test_vec(["1", "3"]);
+        let bob = mk_test_vec(["0", "2", "3"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[test]
+    fn simple_store_sync_3() {
+        let alice = mk_test_vec(["8", "9"]);
+        let bob = mk_test_vec(["1", "2", "3"]);
+        let _res = sync(None, &alice, &bob);
+    }
+
+    #[proptest]
+    fn simple_store_sync(
+        #[strategy(test_vec())] alice: Vec<(String, ())>,
+        #[strategy(test_vec())] bob: Vec<(String, ())>,
+    ) {
+        let _res = sync(None, &alice, &bob);
+    }
+
+    /// A generic fn to make a test for the get_range fn of a store.
+    #[allow(clippy::type_complexity)]
+    fn store_get_ranges_test<S, K, V>(
+        elems: impl IntoIterator<Item = (K, V)>,
+        range: Range<K>,
+        limit: Option<Range<K>>,
+    ) -> (Vec<(K, V)>, Vec<(K, V)>)
+    where
+        S: Store<K, V> + Default,
+        K: RangeKey + Clone + Default + AsFingerprint,
+        V: Debug + Clone,
+    {
+        let mut store = S::default();
+        let elems = elems.into_iter().collect::<Vec<_>>();
+        for (k, v) in elems.iter().cloned() {
+            store.put(k, v).unwrap();
+        }
+        let mut actual = store
+            .get_range(range.clone(), limit)
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, S::Error>>()
+            .unwrap();
+        let mut expected = elems
+            .into_iter()
+            .filter(|(k, _)| k.contains(&range))
+            .collect::<Vec<_>>();
+
+        actual.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
+        expected.sort_by(|(ak, _), (bk, _)| ak.cmp(bk));
+        (expected, actual)
+    }
+
+    #[proptest]
+    fn simple_store_get_ranges(
+        #[strategy(test_set())] contents: BTreeMap<String, ()>,
+        #[strategy(test_range())] range: Range<String>,
+    ) {
+        let (expected, actual) =
+            store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents.clone(), range.clone(), None);
+        prop_assert_eq!(expected, actual);
     }
 }

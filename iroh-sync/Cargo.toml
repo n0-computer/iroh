@@ -47,6 +47,8 @@ futures = { version = "0.3", optional = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["sync", "macros"] }
 tempfile = "3.4"
+proptest = "1.2.0"
+test-strategy = "0.3.1"
 
 [features]
 default = ["net", "fs-store", "metrics"]
