@@ -562,7 +562,7 @@ impl ReplState {
                 println!("> exporting {key_prefix} to {root:?}");
                 let entries = self.store.get(
                     self.doc.namespace(),
-                    GetFilter::Prefix(&key_prefix.as_bytes().to_vec()),
+                    GetFilter::Prefix(key_prefix.as_bytes().to_vec()),
                 )?;
                 let mut checked_dirs = HashSet::new();
                 for entry in entries {
