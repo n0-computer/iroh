@@ -342,7 +342,7 @@ mod tests {
             .get(namespace, GetFilter::all())
             .unwrap()
             .map(|entry| {
-                entry.map(|entry| (entry.author(), entry.key().to_vec(), *entry.content_hash()))
+                entry.map(|entry| (entry.author(), entry.key().to_vec(), entry.content_hash()))
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();

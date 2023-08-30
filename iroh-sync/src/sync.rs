@@ -488,15 +488,7 @@ impl AsFingerprint for RecordIdentifier {
     }
 }
 
-<<<<<<< HEAD
 impl RangeKey for RecordIdentifier {}
-=======
-impl RangeKey for RecordIdentifier {
-    fn contains(&self, range: &crate::ranger::Range<Self>) -> bool {
-        crate::ranger::contains(self, &range)
-    }
-}
->>>>>>> 762205c9 (try to fix sync reconciliation bug)
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
