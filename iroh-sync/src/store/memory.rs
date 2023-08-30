@@ -58,7 +58,7 @@ impl super::Store for Store {
     }
 
     fn import_author(&self, author: Author) -> Result<()> {
-        self.authors.write().insert(author.id(), author.clone());
+        self.authors.write().insert(author.id(), author);
         Ok(())
     }
 

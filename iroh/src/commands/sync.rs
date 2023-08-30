@@ -310,7 +310,7 @@ pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
 }
 
 async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<()> {
-    println!("{}", fmt_entry(&entry));
+    println!("{}", fmt_entry(entry));
     if content {
         if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
             match doc.get_content_bytes(entry.content_hash()).await {

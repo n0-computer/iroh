@@ -1206,8 +1206,7 @@ mod tests {
         #[strategy(test_set())] contents: BTreeMap<String, ()>,
         #[strategy(test_range())] range: Range<String>,
     ) {
-        let (expected, actual) =
-            store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents.clone(), range.clone());
+        let (expected, actual) = store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents, range);
         prop_assert_eq!(expected, actual);
     }
 }

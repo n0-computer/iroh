@@ -212,7 +212,7 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let entry = self
             .store
-            .get_by_key_and_author(replica.namespace(), author, &key)?;
+            .get_by_key_and_author(replica.namespace(), author, key)?;
         Ok(DocGetOneResponse { entry })
     }
 }
