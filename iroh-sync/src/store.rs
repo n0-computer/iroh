@@ -48,7 +48,14 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
     /// Create a new author key and persist it in the store.
-    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author>;
+    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
+        let author = Author::new(rng);
+        self.import_author(author.clone())?;
+        Ok(author)
+    }
+
+    /// Import an author key pair.
+    fn import_author(&self, author: Author) -> Result<()>;
 
     /// List all author keys in this store.
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>>;

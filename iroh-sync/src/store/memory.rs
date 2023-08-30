@@ -8,7 +8,6 @@ use std::{
 
 use anyhow::{bail, Result};
 use parking_lot::{RwLock, RwLockReadGuard};
-use rand_core::CryptoRngCore;
 
 use crate::{
     ranger::{AsFingerprint, Fingerprint, Range},
@@ -55,10 +54,9 @@ impl super::Store for Store {
         Ok(authors.get(author).cloned())
     }
 
-    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
-        let author = Author::new(rng);
+    fn import_author(&self, author: Author) -> Result<()> {
         self.authors.write().insert(author.id(), author.clone());
-        Ok(author)
+        Ok(())
     }
 
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {

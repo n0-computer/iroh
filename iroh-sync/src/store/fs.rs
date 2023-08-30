@@ -5,7 +5,6 @@ use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 use anyhow::{bail, Result};
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
-use rand_core::CryptoRngCore;
 use redb::{
     AccessGuard, Database, MultimapRange, MultimapTableDefinition, MultimapValue,
     ReadOnlyMultimapTable, ReadTransaction, ReadableMultimapTable, ReadableTable, StorageError,
@@ -180,10 +179,9 @@ impl super::Store for Store {
         Ok(Some(author))
     }
 
-    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
-        let author = Author::new(rng);
-        self.insert_author(author.clone())?;
-        Ok(author)
+    fn import_author(&self, author: Author) -> Result<()> {
+        self.insert_author(author)?;
+        Ok(())
     }
 
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {
