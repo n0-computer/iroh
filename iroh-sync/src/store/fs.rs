@@ -3,11 +3,12 @@
 use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::Result;
+use derive_more::From;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
-    AccessGuard, Database, Range as TableRange, ReadOnlyTable, ReadTransaction, ReadableTable,
-    StorageError, TableDefinition,
+    Database, Range as TableRange, ReadOnlyTable, ReadTransaction, ReadableTable, StorageError,
+    TableDefinition,
 };
 
 use crate::{
@@ -18,8 +19,6 @@ use crate::{
         Replica, SignedEntry,
     },
 };
-
-use self::ouroboros_impl_range_iterator::BorrowedMutFields;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -104,33 +103,19 @@ impl Store {
     }
 }
 
-/// Iterator for entries in [`Store`]
-// We use a struct with an inner enum to exclude the enum variants from the public API.
-#[derive(Debug)]
-pub struct GetIter<'s> {
-    inner: GetIterInner<'s>,
-}
-
-#[derive(Debug)]
-enum GetIterInner<'s> {
-    All(RangeIterator<'s>),
-    Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
-}
-
-impl<'s> Iterator for GetIter<'s> {
-    type Item = anyhow::Result<SignedEntry>;
-
+#[derive(From, Debug)]
+/// Iterator over signed entries
+pub struct EntryIterator<'a>(RangeIterator<'a>);
+impl<'a> Iterator for EntryIterator<'a> {
+    type Item = Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.inner {
-            GetIterInner::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIterInner::Single(iter) => iter.next(),
-        }
+        self.0.next().map(|res| res.map(|(_id, entry)| entry))
     }
 }
 
 impl super::Store for Store {
     type Instance = StoreInstance;
-    type GetIter<'a> = GetIter<'a>;
+    type GetIter<'a> = EntryIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -207,20 +192,15 @@ impl super::Store for Store {
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
         use super::KeyFilter;
-        let inner = match filter {
+        let iter = match filter {
             super::GetFilter::Key(key_filter) => match key_filter {
-                KeyFilter::All => GetIterInner::All(self.get_all(namespace)?),
-                KeyFilter::Prefix(prefix) => {
-                    GetIterInner::All(self.get_by_prefix(namespace, &prefix)?)
-                }
-                KeyFilter::Key(key) => GetIterInner::All(self.get_by_key(namespace, key)?),
+                KeyFilter::All => self.get_all(namespace),
+                KeyFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
+                KeyFilter::Key(key) => self.get_by_key(namespace, key),
             },
-            super::GetFilter::Author(author) => {
-                GetIterInner::All(self.get_by_author(namespace, author)?)
-            }
-        };
-
-        Ok(GetIter { inner })
+            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+        }?;
+        Ok(iter.into())
     }
 
     fn get_by_key_and_author(
@@ -262,6 +242,18 @@ impl Store {
         )
     }
     fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
+        let author = author.as_bytes();
+        let start = (namespace.as_bytes(), author, &[][..]);
+        let mut author2 = *author;
+        // move to next possible author, which marks the end of the range
+        for i in 0..32 {
+            if author2[32 - i] != 255 {
+                author2[32 - i] += 1;
+                break;
+            }
+        }
+        let end = (namespace.as_bytes(), &author2, &[][..]);
+        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)?;
         todo!()
     }
 
@@ -540,32 +532,30 @@ impl Iterator for RangeIterator<'_> {
     type Item = Result<(RecordIdentifier, SignedEntry)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.with_mut(|mut fields| {
-            loop {
-                if fields.records.1.is_none() {
-                    if let Err(err) = next_iter(&mut fields) {
-                        return Some(Err(err));
-                    }
-                }
-                // If this is None, nothing is available anymore
-                let (_id_guard, values_guard, id) = fields.records.1.as_mut()?;
+        self.with_mut(|fields| {
+            for next in fields.records.by_ref() {
+                let next = match next {
+                    Ok(next) => next,
+                    Err(err) => return Some(Err(err.into())),
+                };
 
-                match values_guard.next() {
-                    Some(Ok(value)) => {
-                        let (timestamp, namespace_sig, author_sig, len, hash) = value.value();
-                        let record = Record::new(timestamp, len, hash.into());
-                        let entry = Entry::new(id.clone(), record);
-                        let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-                        let signed_entry = SignedEntry::new(entry_signature, entry);
-                        return Some(Ok((id.clone(), signed_entry)));
-                    }
-                    Some(Err(err)) => return Some(Err(err.into())),
-                    None => {
-                        // clear the current
-                        fields.records.1 = None;
-                    }
+                let (namespace, author, key) = next.0.value();
+                let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
+                let id = match RecordIdentifier::from_parts(key, namespace, author, timestamp) {
+                    Ok(id) => id,
+                    Err(err) => return Some(Err(err)),
+                };
+                if fields.filter.matches(&id) {
+                    // TODO: remove timestamp
+                    let record = Record::new(timestamp, len, hash.into());
+                    let entry = Entry::new(id.clone(), record);
+                    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+                    let signed_entry = SignedEntry::new(entry_signature, entry);
+
+                    return Some(Ok((id, signed_entry)));
                 }
             }
+            None
         })
     }
 }
@@ -621,7 +611,7 @@ mod tests {
                 Record::from_data(id.timestamp(), format!("world-{i}-2"), namespace.id()),
             );
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.put(id, entry)?;
+            wrapper.put(id.clone(), entry)?;
             ids.push(id);
         }
 
@@ -631,19 +621,17 @@ mod tests {
 
         // get all prefix
         let entries = store
-            .get_all_by_prefix(namespace.id(), "hello-")?
+            .get_by_prefix(namespace.id(), "hello-")?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 10);
 
         // get latest
-        let entries = store
-            .get_latest(namespace.id())?
-            .collect::<Result<Vec<_>>>()?;
+        let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
 
         // get latest by prefix
         let entries = store
-            .get_latest_by_prefix(namespace.id(), "hello-")?
+            .get_by_prefix(namespace.id(), "hello-")?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
 
@@ -658,9 +646,7 @@ mod tests {
         }
 
         // get latest
-        let entries = store
-            .get_latest(namespace.id())?
-            .collect::<Result<Vec<_>>>()?;
+        let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 0);
 
         Ok(())

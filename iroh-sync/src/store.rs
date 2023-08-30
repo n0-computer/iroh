@@ -68,6 +68,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The [`GetFilter`] has several methods of filtering the returned entries.
     fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
+    /// Get an entry by key and author.
     fn get_by_key_and_author(
         &self,
         namespace: NamespaceId,
@@ -79,7 +80,9 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 /// Filter a get query onto a namespace
 #[derive(Debug, Serialize, Deserialize)]
 pub enum GetFilter {
+    /// Filter by author
     Author(AuthorId),
+    /// Filter by key
     Key(KeyFilter),
 }
 
@@ -101,25 +104,23 @@ impl GetFilter {
     }
 
     /// Set the key filter.
-    pub fn with_key_filter(mut self, key_filter: KeyFilter) -> Self {
-        self = Self::Key(key_filter);
-        self
+    pub fn with_key_filter(self, key_filter: KeyFilter) -> Self {
+        Self::Key(key_filter)
     }
 
     /// Filter by exact key match.
-    pub fn with_key(mut self, key: impl AsRef<[u8]>) -> Self {
+    pub fn with_key(self, key: impl AsRef<[u8]>) -> Self {
         self.with_key_filter(KeyFilter::Key(key.as_ref().to_vec()))
     }
 
     /// Filter by prefix key match.
-    pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
+    pub fn with_prefix(self, prefix: impl AsRef<[u8]>) -> Self {
         self.with_key_filter(KeyFilter::Prefix(prefix.as_ref().to_vec()))
     }
 
     /// Filter by author.
-    pub fn with_author(mut self, author: AuthorId) -> Self {
-        self = GetFilter::Author(author);
-        self
+    pub fn with_author(self, author: AuthorId) -> Self {
+        GetFilter::Author(author)
     }
 }
 

@@ -696,7 +696,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
+                .get_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -708,14 +708,14 @@ mod tests {
             .hash_and_insert("/cool/path", &alice, "round 1")
             .map_err(Into::into)?;
         let _entry = store
-            .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
         my_replica
             .hash_and_insert("/cool/path", &alice, "round 2")
             .map_err(Into::into)?;
         let _entry = store
-            .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
 
         // Get All by author
@@ -738,23 +738,23 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
-        // Get latest by key
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_key(b"/cool/path"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 1);
-
-        // Get latest by prefix
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_prefix(b"/cool"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 1);
+        // // Get latest by key
+        // let entries: Vec<_> = store
+        //     .get(
+        //         my_replica.namespace(),
+        //         GetFilter::latest().with_key(b"/cool/path"),
+        //     )?
+        //     .collect::<Result<_>>()?;
+        // assert_eq!(entries.len(), 1);
+        //
+        // // Get latest by prefix
+        // let entries: Vec<_> = store
+        //     .get(
+        //         my_replica.namespace(),
+        //         GetFilter::latest().with_prefix(b"/cool"),
+        //     )?
+        //     .collect::<Result<_>>()?;
+        // assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
@@ -762,11 +762,11 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
-        // Get All latest
-        let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::latest())?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 11);
+        // // Get All latest
+        // let entries: Vec<_> = store
+        //     .get(my_replica.namespace(), GetFilter::latest())?
+        //     .collect::<Result<_>>()?;
+        // assert_eq!(entries.len(), 11);
 
         // insert record from different author
         let _entry = my_replica
@@ -803,23 +803,23 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 3);
 
-        // Get latest by key
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_key(b"/cool/path"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
+        // // Get latest by key
+        // let entries: Vec<_> = store
+        //     .get(
+        //         my_replica.namespace(),
+        //         GetFilter::latest().with_key(b"/cool/path"),
+        //     )?
+        //     .collect::<Result<_>>()?;
+        // assert_eq!(entries.len(), 2);
 
-        // Get latest by prefix
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_prefix(b"/cool"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
+        // // Get latest by prefix
+        // let entries: Vec<_> = store
+        //     .get(
+        //         my_replica.namespace(),
+        //         GetFilter::latest().with_prefix(b"/cool"),
+        //     )?
+        //     .collect::<Result<_>>()?;
+        // assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
@@ -836,11 +836,11 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 13);
 
-        // Get All latest
-        let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::latest())?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 12);
+        // // Get All latest
+        // let entries: Vec<_> = store
+        //     .get(my_replica.namespace(), GetFilter::latest())?
+        //     .collect::<Result<_>>()?;
+        // assert_eq!(entries.len(), 12);
 
         let replica = store.open_replica(&my_replica.namespace())?.unwrap();
         // Get Range of all should return all latest
@@ -952,10 +952,10 @@ mod tests {
             let k0 = k[0];
             let k1 = k[1];
 
-            assert!(RecordIdentifier::new(k0, n0, a0) < RecordIdentifier::new(k1, n1, a1));
-            assert!(RecordIdentifier::new(k1, n0, a0) < RecordIdentifier::new(k0, n1, a0));
-            assert!(RecordIdentifier::new(k0, n0, a1) < RecordIdentifier::new(k1, n0, a1));
-            assert!(RecordIdentifier::new(k0, n1, a1) < RecordIdentifier::new(k1, n1, a1));
+            assert!(RecordIdentifier::new_current(k0, n0, a0) < RecordIdentifier::new_current(k1, n1, a1));
+            assert!(RecordIdentifier::new_current(k1, n0, a0) < RecordIdentifier::new_current(k0, n1, a0));
+            assert!(RecordIdentifier::new_current(k0, n0, a1) < RecordIdentifier::new_current(k1, n0, a1));
+            assert!(RecordIdentifier::new_current(k0, n1, a1) < RecordIdentifier::new_current(k1, n1, a1));
         }
     }
 
@@ -1042,13 +1042,13 @@ mod tests {
 
         // Check result
         for el in alice_set {
-            alice_store.get_latest_by_key_and_author(alice.namespace(), author.id(), el)?;
-            bob_store.get_latest_by_key_and_author(bob.namespace(), author.id(), el)?;
+            alice_store.get_by_key_and_author(alice.namespace(), author.id(), el)?;
+            bob_store.get_by_key_and_author(bob.namespace(), author.id(), el)?;
         }
 
         for el in bob_set {
-            alice_store.get_latest_by_key_and_author(alice.namespace(), author.id(), el)?;
-            bob_store.get_latest_by_key_and_author(bob.namespace(), author.id(), el)?;
+            alice_store.get_by_key_and_author(alice.namespace(), author.id(), el)?;
+            bob_store.get_by_key_and_author(bob.namespace(), author.id(), el)?;
         }
         Ok(())
     }
