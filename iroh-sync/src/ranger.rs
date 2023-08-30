@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::ops::{RangeFrom, RangeFull, RangeTo};
 use std::{cmp::Ordering, convert::Infallible};
 
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,28 @@ impl<K> Range<K> {
     }
 }
 
+impl<K: Ord> PartialOrd for Range<K> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.x() < self.y() && other.x() < other.y() {
+            if self.y() < other.x() {
+                Some(Ordering::Less)
+            } else if other.y() < self.x() {
+                Some(Ordering::Greater)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<K: Default> Range<K> {
+    pub fn all() -> Self {
+        Range::new(Default::default(), Default::default())
+    }
+}
+
 impl<K: Ord> Range<K> {
     pub fn is_all(&self) -> bool {
         self.x() == self.y()
@@ -53,12 +76,29 @@ impl<K: Ord> Range<K> {
             Ordering::Greater => self.x() <= t || t < self.y(),
         }
     }
+
+    pub fn as_std_ranges(
+        &self,
+    ) -> RangeParts<RangeFull, std::ops::Range<&K>, (RangeFrom<&K>, RangeTo<&K>)> {
+        match self.x().cmp(self.y()) {
+            Ordering::Equal => RangeParts::All(..),
+            Ordering::Less => RangeParts::Normal(self.x()..self.y()),
+            Ordering::Greater => RangeParts::WrapAround((self.x().., ..self.y())),
+        }
+    }
 }
 
 impl<K> From<(K, K)> for Range<K> {
     fn from((x, y): (K, K)) -> Self {
         Range { x, y }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum RangeParts<A, N, W> {
+    All(A),
+    Normal(N),
+    WrapAround(W),
 }
 
 pub trait RangeKey: Sized + Ord + Debug {}
@@ -163,6 +203,13 @@ impl<K, V> MessagePart<K, V> {
         match self {
             MessagePart::RangeFingerprint(_) => None,
             MessagePart::RangeItem(RangeItem { values, .. }) => Some(values),
+        }
+    }
+
+    pub fn range(&self) -> &Range<K> {
+        match self {
+            MessagePart::RangeFingerprint(RangeFingerprint { range, .. }) => range,
+            MessagePart::RangeItem(RangeItem { range, .. }) => range,
         }
     }
 }
@@ -410,179 +457,165 @@ where
     {
         let mut out = Vec::new();
 
-        // TODO: can these allocs be avoided?
-        let mut items = Vec::new();
-        let mut fingerprints = Vec::new();
         for part in message.parts {
             match part {
-                MessagePart::RangeItem(item) => {
-                    items.push(item);
-                }
-                MessagePart::RangeFingerprint(fp) => {
-                    fingerprints.push(fp);
-                }
-            }
-        }
-
-        // Process item messages
-        for RangeItem {
-            range,
-            values,
-            have_local,
-        } in items
-        {
-            let diff: Option<Vec<_>> = if have_local {
-                None
-            } else {
-                Some(
-                    self.store
-                        .get_range(range.clone())?
-                        .filter_map(|el| match el {
-                            Ok((k, v)) => {
-                                if !values.iter().any(|(vk, _)| vk == &k) {
-                                    Some(Ok((k, v)))
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(err) => Some(Err(err)),
-                        })
-                        .collect::<Result<_, _>>()?,
-                )
-            };
-
-            // Store incoming values
-            for (k, v) in values {
-                cb(k.clone(), v.clone());
-                self.store.put(k, v)?;
-            }
-
-            if let Some(diff) = diff {
-                if !diff.is_empty() {
-                    out.push(MessagePart::RangeItem(RangeItem {
-                        range,
-                        values: diff,
-                        have_local: true,
-                    }));
-                }
-            }
-        }
-
-        // Process fingerprint messages
-        for RangeFingerprint { range, fingerprint } in fingerprints {
-            let local_fingerprint = self.store.get_fingerprint(&range)?;
-            // Case1 Match, nothing to do
-            if local_fingerprint == fingerprint {
-                continue;
-            }
-
-            // Case2 Recursion Anchor
-            // TODO: This is hugely inefficient and needs to be optimized
-            // For an identity range that includes everything we allocate a vec with all entries of
-            // the replica here.
-            let local_values: Vec<_> = self
-                .store
-                .get_range(range.clone())?
-                .collect::<Result<_, _>>()?;
-            if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
-                let values = local_values.into_iter().map(|(k, v)| (k, v)).collect();
-                out.push(MessagePart::RangeItem(RangeItem {
+                MessagePart::RangeItem(RangeItem {
                     range,
                     values,
-                    have_local: false,
-                }));
-            } else {
-                // Case3 Recurse
-                // Create partition
-                // m0 = x < m1 < .. < mk = y, with k>= 2
-                // such that [ml, ml+1) is nonempty
-                let mut ranges = Vec::with_capacity(self.split_factor);
-
-                // Select the first index, for which the key is larger or equal than the x of the range.
-                let start_index = local_values
-                    .iter()
-                    .position(|(k, _)| k >= range.x())
-                    .unwrap_or(0);
-                // select a pivot value. pivots repeat every split_factor, so pivot(i) == pivot(i + self.split_factor * x)
-                // it is guaranteed that pivot(0) != x if local_values.len() >= 2
-                let pivot = |i: usize| {
-                    // ensure that pivots wrap around
-                    let i = i % self.split_factor;
-                    // choose an offset. this will be
-                    // 1/2, 1 in case of split_factor == 2
-                    // 1/3, 2/3, 1 in case of split_factor == 3
-                    // etc.
-                    let offset = (local_values.len() * (i + 1)) / self.split_factor;
-                    let offset = (start_index + offset) % local_values.len();
-                    &local_values[offset].0
-                };
-                if range.is_all() {
-                    // the range is the whole set, so range.x and range.y should not matter
-                    // just add all ranges as normal ranges. Exactly one of the ranges will
-                    // wrap around, so we cover the entire set.
-                    for i in 0..self.split_factor {
-                        let (x, y) = (pivot(i), pivot(i + 1));
-                        // don't push empty ranges
-                        if x != y {
-                            ranges.push(Range {
-                                x: x.clone(),
-                                y: y.clone(),
-                            })
-                        }
-                    }
-                } else {
-                    // guaranteed to be non-empty because
-                    // - pivot(0) is guaranteed to be != x for local_values.len() >= 2
-                    // - local_values.len() < 2 gets handled by the recursion anchor
-                    // - x != y (regular range)
-                    ranges.push(Range {
-                        x: range.x().clone(),
-                        y: pivot(0).clone(),
-                    });
-                    // this will only be executed for split_factor > 2
-                    for i in 0..self.split_factor - 2 {
-                        // don't push empty ranges
-                        let (x, y) = (pivot(i), pivot(i + 1));
-                        if x != y {
-                            ranges.push(Range {
-                                x: x.clone(),
-                                y: y.clone(),
-                            })
-                        }
-                    }
-                    // guaranteed to be non-empty because
-                    // - pivot is a value in the range
-                    // - y is the exclusive end of the range
-                    // - x != y (regular range)
-                    ranges.push(Range {
-                        x: pivot(self.split_factor - 2).clone(),
-                        y: range.y().clone(),
-                    });
-                }
-
-                let mut non_empty = 0;
-                for range in ranges {
-                    let chunk: Vec<_> = self.store.get_range(range.clone())?.collect();
-                    if !chunk.is_empty() {
-                        non_empty += 1;
-                    }
-                    // Add either the fingerprint or the item set
-                    let fingerprint = self.store.get_fingerprint(&range)?;
-                    if chunk.len() > self.max_set_size {
-                        out.push(MessagePart::RangeFingerprint(RangeFingerprint {
-                            range: range.clone(),
-                            fingerprint,
-                        }));
+                    have_local,
+                }) => {
+                    let diff: Option<Vec<_>> = if have_local {
+                        None
                     } else {
-                        let values = chunk.into_iter().collect::<Result<_, _>>()?;
+                        Some(
+                            self.store
+                                .get_range(range.clone())?
+                                .filter_map(|el| match el {
+                                    Ok((k, v)) => {
+                                        if !values.iter().any(|(vk, _)| vk == &k) {
+                                            Some(Ok((k, v)))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    Err(err) => Some(Err(err)),
+                                })
+                                .collect::<Result<_, _>>()?,
+                        )
+                    };
+
+                    // Store incoming values
+                    for (k, v) in values {
+                        cb(k.clone(), v.clone());
+                        self.store.put(k, v)?;
+                    }
+
+                    if let Some(diff) = diff {
+                        if !diff.is_empty() {
+                            out.push(MessagePart::RangeItem(RangeItem {
+                                range,
+                                values: diff,
+                                have_local: true,
+                            }));
+                        }
+                    }
+                }
+                MessagePart::RangeFingerprint(RangeFingerprint { range, fingerprint }) => {
+                    let local_fingerprint = self.store.get_fingerprint(&range)?;
+                    // Case1 Match, nothing to do
+                    if local_fingerprint == fingerprint {
+                        continue;
+                    }
+
+                    // Case2 Recursion Anchor
+                    // TODO: This is hugely inefficient and needs to be optimized
+                    // For an identity range that includes everything we allocate a vec with all entries of
+                    // the replica here.
+                    let local_values: Vec<_> = self
+                        .store
+                        .get_range(range.clone())?
+                        .collect::<Result<_, _>>()?;
+                    if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
+                        let values = local_values.into_iter().map(|(k, v)| (k, v)).collect();
                         out.push(MessagePart::RangeItem(RangeItem {
                             range,
                             values,
                             have_local: false,
                         }));
+                    } else {
+                        // Case3 Recurse
+                        // Create partition
+                        // m0 = x < m1 < .. < mk = y, with k>= 2
+                        // such that [ml, ml+1) is nonempty
+                        let mut ranges = Vec::with_capacity(self.split_factor);
+
+                        // Select the first index, for which the key is larger or equal than the x of the range.
+                        let start_index = local_values
+                            .iter()
+                            .position(|(k, _)| k >= range.x())
+                            .unwrap_or(0);
+                        // select a pivot value. pivots repeat every split_factor, so pivot(i) == pivot(i + self.split_factor * x)
+                        // it is guaranteed that pivot(0) != x if local_values.len() >= 2
+                        let pivot = |i: usize| {
+                            // ensure that pivots wrap around
+                            let i = i % self.split_factor;
+                            // choose an offset. this will be
+                            // 1/2, 1 in case of split_factor == 2
+                            // 1/3, 2/3, 1 in case of split_factor == 3
+                            // etc.
+                            let offset = (local_values.len() * (i + 1)) / self.split_factor;
+                            let offset = (start_index + offset) % local_values.len();
+                            &local_values[offset].0
+                        };
+                        if range.is_all() {
+                            // the range is the whole set, so range.x and range.y should not matter
+                            // just add all ranges as normal ranges. Exactly one of the ranges will
+                            // wrap around, so we cover the entire set.
+                            for i in 0..self.split_factor {
+                                let (x, y) = (pivot(i), pivot(i + 1));
+                                // don't push empty ranges
+                                if x != y {
+                                    ranges.push(Range {
+                                        x: x.clone(),
+                                        y: y.clone(),
+                                    })
+                                }
+                            }
+                        } else {
+                            // guaranteed to be non-empty because
+                            // - pivot(0) is guaranteed to be != x for local_values.len() >= 2
+                            // - local_values.len() < 2 gets handled by the recursion anchor
+                            // - x != y (regular range)
+                            ranges.push(Range {
+                                x: range.x().clone(),
+                                y: pivot(0).clone(),
+                            });
+                            // this will only be executed for split_factor > 2
+                            for i in 0..self.split_factor - 2 {
+                                // don't push empty ranges
+                                let (x, y) = (pivot(i), pivot(i + 1));
+                                if x != y {
+                                    ranges.push(Range {
+                                        x: x.clone(),
+                                        y: y.clone(),
+                                    })
+                                }
+                            }
+                            // guaranteed to be non-empty because
+                            // - pivot is a value in the range
+                            // - y is the exclusive end of the range
+                            // - x != y (regular range)
+                            ranges.push(Range {
+                                x: pivot(self.split_factor - 2).clone(),
+                                y: range.y().clone(),
+                            });
+                        }
+
+                        let mut non_empty = 0;
+                        for range in ranges {
+                            let chunk: Vec<_> = self.store.get_range(range.clone())?.collect();
+                            if !chunk.is_empty() {
+                                non_empty += 1;
+                            }
+                            // Add either the fingerprint or the item set
+                            let fingerprint = self.store.get_fingerprint(&range)?;
+                            if chunk.len() > self.max_set_size {
+                                out.push(MessagePart::RangeFingerprint(RangeFingerprint {
+                                    range: range.clone(),
+                                    fingerprint,
+                                }));
+                            } else {
+                                let values = chunk.into_iter().collect::<Result<_, _>>()?;
+                                out.push(MessagePart::RangeItem(RangeItem {
+                                    range,
+                                    values,
+                                    have_local: false,
+                                }));
+                            }
+                        }
+                        debug_assert!(non_empty > 1);
                     }
                 }
-                debug_assert!(non_empty > 1);
             }
         }
 
