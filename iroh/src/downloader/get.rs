@@ -1,4 +1,5 @@
 //! Get requests in the context of the [`super::Downloader`].
+// TODO(@divma): error management here is a nightmare
 
 use super::Download;
 
@@ -30,7 +31,8 @@ use tracing::trace;
 use crate::util::progress::ProgressSliceWriter2;
 
 /// Signals what should be done with the request when it fails.
-enum FailureAction {
+#[derive(Debug)]
+pub enum FailureAction {
     /// An error ocurred that prevents the request from being retried at all.
     AbortRequest(anyhow::Error),
     /// An error occurred that suggests the peer should not be used in general.
@@ -169,6 +171,31 @@ impl From<iroh_bytes::get::fsm::AtBlobHeaderNextError> for FailureAction {
     }
 }
 
+impl From<iroh_bytes::get::fsm::DecodeError> for FailureAction {
+    fn from(value: iroh_bytes::get::fsm::DecodeError) -> Self {
+        use get::fsm::DecodeError::*;
+
+        match value {
+            e @ NotFound => FailureAction::RetryLater(e.into()),
+            e @ ParentNotFound(_) => FailureAction::RetryLater(e.into()),
+            e @ LeafNotFound(_) => FailureAction::RetryLater(e.into()),
+            e @ ParentHashMismatch(_) => {
+                // TODO(@divma): did the peer sent wrong data? is it corrupted? did we sent a wrong
+                // request?
+                FailureAction::AbortRequest(e.into())
+            }
+            e @ LeafHashMismatch(_) => {
+                // TODO(@divma): did the peer sent wrong data? is it corrupted? did we sent a wrong
+                // request?
+                FailureAction::AbortRequest(e.into())
+            }
+            e @ InvalidQueryRange => FailureAction::AbortRequest(e.into()),
+            Read(e) => e.into(),
+            Io(e) => e.into(),
+        }
+    }
+}
+
 impl From<std::io::Error> for FailureAction {
     fn from(value: std::io::Error) -> Self {
         // generally consider io errors recoverable
@@ -184,14 +211,14 @@ pub async fn get<D: Store, C: CollectionParser>(
     conn: quinn::Connection,
     hash: Hash,
     recursive: bool,
-) -> anyhow::Result<Stats> {
+) -> Result<Stats, FailureAction> {
     let res = if recursive {
         get_collection(db, collection_parser, conn, &hash).await
     } else {
         get_blob(db, conn, &hash).await
     };
     if let Err(e) = res.as_ref() {
-        tracing::error!("get failed: {}", e);
+        tracing::error!("get failed: {e:?}");
     }
     res
 }
@@ -204,7 +231,7 @@ pub async fn get_blob<D: Store>(
     db: &D,
     conn: quinn::Connection,
     hash: &Hash,
-) -> anyhow::Result<Stats> {
+) -> Result<Stats, FailureAction> {
     let end = if let Some(entry) = db.get_partial(hash) {
         trace!("got partial data for {}", hash,);
 
@@ -219,7 +246,9 @@ pub async fn get_blob<D: Store>(
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
+            return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                "expected `StartRoot` in single blob request"
+            )));
         };
         // move to the header
         let header = start.next();
@@ -236,7 +265,9 @@ pub async fn get_blob<D: Store>(
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
+            return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                "expected `StartRoot` in single blob request"
+            )));
         };
         // move to the header
         let header = start.next();
@@ -246,11 +277,14 @@ pub async fn get_blob<D: Store>(
 
     // we have requested a single hash, so we must be at closing
     let EndBlobNext::Closing(end) = end.next() else {
-        anyhow::bail!("expected Closing");
+        // TODO(@divma): I think this is a codign error and not a peer error
+        return Err(FailureAction::DropPeer(anyhow::anyhow!(
+            "peer sent extra data in single blob request"
+        )));
     };
     // this closes the bidi stream. Do something with the stats?
     let stats = end.next().await?;
-    anyhow::Ok(stats)
+    Ok(stats)
 }
 
 async fn get_missing_ranges_blob<D: PartialMap>(
@@ -283,7 +317,10 @@ async fn get_missing_ranges_blob<D: PartialMap>(
 ///
 /// We need to create our own files and handle the case where an outboard
 /// is not needed.
-async fn get_blob_inner<D: Store>(db: &D, header: AtBlobHeader) -> anyhow::Result<AtEndBlob> {
+async fn get_blob_inner<D: Store>(
+    db: &D,
+    header: AtBlobHeader,
+) -> Result<AtEndBlob, FailureAction> {
     use iroh_io::AsyncSliceWriter;
 
     let hash = header.hash();
@@ -304,6 +341,7 @@ async fn get_blob_inner<D: Store>(db: &D, header: AtBlobHeader) -> anyhow::Resul
     let end = content
         .write_all_with_outboard(of.as_mut(), &mut pw)
         .await?;
+    // TODO(@divma): what does this failure mean
     // sync the data file
     pw.sync().await?;
     // sync the outboard file, if we wrote one
@@ -326,7 +364,7 @@ async fn get_blob_inner_partial<D: Store>(
     db: &D,
     header: AtBlobHeader,
     entry: D::PartialEntry,
-) -> anyhow::Result<AtEndBlob> {
+) -> Result<AtEndBlob, FailureAction> {
     // TODO: the data we get is validated at this point, but we need to check
     // that it actually contains the requested ranges. Or DO WE?
     use iroh_io::AsyncSliceWriter;
@@ -347,6 +385,8 @@ async fn get_blob_inner_partial<D: Store>(
     let end = content
         .write_all_with_outboard(of.as_mut(), &mut pw)
         .await?;
+
+    // TODO(@divma): what does this failure mean
     // sync the data file
     pw.sync().await?;
     // sync the outboard file
@@ -397,15 +437,23 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
     collection_parser: &C,
     conn: quinn::Connection,
     root_hash: &Hash,
-) -> anyhow::Result<Stats> {
+) -> Result<Stats, FailureAction> {
     use tracing::info as log;
     let finishing = if let Some(entry) = db.get(root_hash) {
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(0, reader).await?;
+        let (mut collection, stats) = collection_parser.parse(0, reader).await.map_err(|e| {
+            FailureAction::DropPeer(anyhow::anyhow!(
+                "peer sent data that can't be parsed as collection : {e}"
+            ))
+        })?;
         let mut children: Vec<Hash> = vec![];
-        while let Some(hash) = collection.next().await? {
+        while let Some(hash) = collection.next().await.map_err(|e| {
+            FailureAction::DropPeer(anyhow::anyhow!(
+                "received collection data can't be iterated: {e}"
+            ))
+        })? {
             children.push(hash);
         }
         let missing_info = get_missing_ranges_collection(db, &children).await?;
@@ -424,7 +472,9 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
         log!("connected");
         // we have not requested the root, so this must be StartChild
         let ConnectedNext::StartChild(start) = connected.next().await? else {
-            anyhow::bail!("expected StartChild");
+            return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                "peer sent data that does not match requested info"
+            )));
         };
         let mut next = EndBlobNext::MoreChildren(start);
         // read all the children
@@ -433,8 +483,13 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
                 EndBlobNext::MoreChildren(start) => start,
                 EndBlobNext::Closing(finish) => break finish,
             };
-            let child_offset =
-                usize::try_from(start.child_offset()).context("child offset too large")?;
+            let child_offset = usize::try_from(start.child_offset())
+                .context("child offset too large")
+                .map_err(|e| {
+                    FailureAction::AbortRequest(anyhow::anyhow!(
+                        "requested offsets surpasses platform's usize"
+                    ))
+                })?;
             let (child_hash, info) =
                 match (children.get(child_offset), missing_info.get(child_offset)) {
                     (Some(blob), Some(info)) => (*blob, info),
@@ -451,7 +506,11 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
                 BlobInfo::Partial { entry, .. } => {
                     get_blob_inner_partial(db, header, entry.clone()).await?
                 }
-                BlobInfo::Complete => anyhow::bail!("got data we have not requested"),
+                BlobInfo::Complete => {
+                    return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                        "peer sent data we did't request"
+                    )))
+                }
             };
             next = end_blob.next();
         }
@@ -466,18 +525,30 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
+            return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                "expected StartRoot"
+            )));
         };
         // move to the header
         let header = start.next();
         // read the blob and add it to the database
         let end_root = get_blob_inner(db, header).await?;
         // read the collection fully for now
-        let entry = db.get(root_hash).context("just downloaded")?;
+        let entry = db.get(root_hash).context("just downloaded").map_err(|e| {
+            FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
+        })?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(0, reader).await?;
+        let (mut collection, stats) = collection_parser.parse(0, reader).await.map_err(|e| {
+            FailureAction::DropPeer(anyhow::anyhow!(
+                "peer sent data that can't be parsed as collection"
+            ))
+        })?;
         let mut children = vec![];
-        while let Some(hash) = collection.next().await? {
+        while let Some(hash) = collection.next().await.map_err(|e| {
+            FailureAction::DropPeer(anyhow::anyhow!(
+                "received collection data can't be iterated: {e}"
+            ))
+        })? {
             children.push(hash);
         }
         let mut next = end_root.next();
@@ -487,8 +558,13 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
                 EndBlobNext::MoreChildren(start) => start,
                 EndBlobNext::Closing(finish) => break finish,
             };
-            let child_offset =
-                usize::try_from(start.child_offset()).context("child offset too large")?;
+            let child_offset = usize::try_from(start.child_offset())
+                .context("child offset too large")
+                .map_err(|e| {
+                    FailureAction::AbortRequest(anyhow::anyhow!(
+                        "requested offsets surpasses platform's usize"
+                    ))
+                })?;
             let child_hash = match children.get(child_offset) {
                 Some(blob) => *blob,
                 None => break start.finish(),
@@ -500,7 +576,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
     };
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
-    anyhow::Ok(stats)
+    Ok(stats)
 }
 
 #[derive(Debug, Clone)]
