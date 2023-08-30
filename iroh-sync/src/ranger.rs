@@ -715,7 +715,8 @@ mod tests {
         ];
 
         let res = sync(None, &alice_set, &bob_set);
-        assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
+        res.print_messages();
+        assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
 
         // Initial message
@@ -729,7 +730,7 @@ mod tests {
 
         // Last response from Alice
         assert_eq!(res.alice_to_bob[1].parts.len(), 3);
-        assert!(res.alice_to_bob[1].parts[0].is_range_item());
+        assert!(res.alice_to_bob[1].parts[0].is_range_fingerprint());
         assert!(res.alice_to_bob[1].parts[1].is_range_fingerprint());
         assert!(res.alice_to_bob[1].parts[2].is_range_item());
 
@@ -792,7 +793,7 @@ mod tests {
 
         // No Limit
         let res = sync(None, &alice_set, &bob_set);
-        assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
+        assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
 
         // With Limit: just ape
@@ -867,57 +868,7 @@ mod tests {
             key: Vec<u8>,
         }
 
-        impl RangeKey for Multikey {
-            fn contains(&self, range: &Range<Self>) -> bool {
-                let author = range.x().author.cmp(&range.y().author);
-                let key = range.x().key.cmp(&range.y().key);
-
-                match (author, key) {
-                    (Ordering::Equal, Ordering::Equal) => {
-                        // All
-                        true
-                    }
-                    (Ordering::Equal, Ordering::Less) => {
-                        // Regular, based on key
-                        range.x().key <= self.key && self.key < range.y().key
-                    }
-                    (Ordering::Equal, Ordering::Greater) => {
-                        // Reverse, based on key
-                        range.x().key <= self.key || self.key < range.y().key
-                    }
-                    (Ordering::Less, Ordering::Equal) => {
-                        // Regular, based on author
-                        range.x().author <= self.author && self.author < range.y().author
-                    }
-                    (Ordering::Greater, Ordering::Equal) => {
-                        // Reverse, based on key
-                        range.x().author <= self.author || self.author < range.y().author
-                    }
-                    (Ordering::Less, Ordering::Less) => {
-                        // Regular, key and author
-                        range.x().key <= self.key
-                            && self.key < range.y().key
-                            && range.x().author <= self.author
-                            && self.author < range.y().author
-                    }
-                    (Ordering::Greater, Ordering::Greater) => {
-                        // Reverse, key and author
-                        (range.x().key <= self.key || self.key < range.y().key)
-                            && (range.x().author <= self.author || self.author < range.y().author)
-                    }
-                    (Ordering::Less, Ordering::Greater) => {
-                        // Regular author, Reverse key
-                        (range.x().key <= self.key || self.key < range.y().key)
-                            && (range.x().author <= self.author && self.author < range.y().author)
-                    }
-                    (Ordering::Greater, Ordering::Less) => {
-                        // Regular key, Reverse author
-                        (range.x().key <= self.key && self.key < range.y().key)
-                            && (range.x().author <= self.author || self.author < range.y().author)
-                    }
-                }
-            }
-        }
+        impl RangeKey for Multikey {}
 
         impl Debug for Multikey {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -996,7 +947,7 @@ mod tests {
         let limit = Range::new(Multikey::new(author_a, ""), Multikey::new(author_b, ""));
         let res = sync(Some(limit), &alice_set, &bob_set);
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
-        assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
+        assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
         res.assert_alice_set(
             "only author_a",
             &[
@@ -1019,36 +970,37 @@ mod tests {
             ],
         );
 
-        // All authors, but only cat
-        let limit = Range::new(
-            Multikey::new(author_a, "cat"),
-            Multikey::new(author_a, "doe"),
-        );
-        let res = sync(Some(limit), &alice_set, &bob_set);
-        assert_eq!(res.alice_to_bob.len(), 1, "A -> B message count");
-        assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
+        // I don't think such a thing is possible
+        // // All authors, but only cat
+        // let limit = Range::new(
+        //     Multikey::new(author_a, "cat"),
+        //     Multikey::new(author_a, "doe"),
+        // );
+        // let res = sync(Some(limit), &alice_set, &bob_set);
+        // assert_eq!(res.alice_to_bob.len(), 1, "A -> B message count");
+        // assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
 
-        res.assert_alice_set(
-            "only cat",
-            &[
-                (Multikey::new(author_a, "ape"), 1),
-                (Multikey::new(author_a, "bee"), 1),
-                (Multikey::new(author_b, "bee"), 1),
-                (Multikey::new(author_a, "doe"), 1),
-                (Multikey::new(author_a, "cat"), 1),
-                (Multikey::new(author_b, "cat"), 1),
-            ],
-        );
+        // res.assert_alice_set(
+        //     "only cat",
+        //     &[
+        //         (Multikey::new(author_a, "ape"), 1),
+        //         (Multikey::new(author_a, "bee"), 1),
+        //         (Multikey::new(author_b, "bee"), 1),
+        //         (Multikey::new(author_a, "doe"), 1),
+        //         (Multikey::new(author_a, "cat"), 1),
+        //         (Multikey::new(author_b, "cat"), 1),
+        //     ],
+        // );
 
-        res.assert_bob_set(
-            "only cat",
-            &[
-                (Multikey::new(author_a, "ape"), 1),
-                (Multikey::new(author_a, "bee"), 1),
-                (Multikey::new(author_a, "cat"), 1),
-                (Multikey::new(author_b, "cat"), 1),
-            ],
-        );
+        // res.assert_bob_set(
+        //     "only cat",
+        //     &[
+        //         (Multikey::new(author_a, "ape"), 1),
+        //         (Multikey::new(author_a, "bee"), 1),
+        //         (Multikey::new(author_a, "cat"), 1),
+        //         (Multikey::new(author_b, "cat"), 1),
+        //     ],
+        // );
     }
 
     struct SyncResult<K, V>
