@@ -284,7 +284,6 @@ impl Store {
                     .map_err(anyhow::Error::from)
             },
             |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
-            None,
             RangeFilter::Key(key.as_ref().to_vec()),
         )?;
 
@@ -306,7 +305,6 @@ impl Store {
                     .map_err(anyhow::Error::from)
             },
             |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
-            None,
             RangeFilter::Prefix(prefix.as_ref().to_vec()),
         )?;
 
@@ -324,7 +322,6 @@ impl Store {
                     .map_err(anyhow::Error::from)
             },
             |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
-            None,
             RangeFilter::None,
         )?;
 
@@ -489,14 +486,10 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         Ok(self.len()? == 0)
     }
 
-    fn get_fingerprint(
-        &self,
-        range: &Range<RecordIdentifier>,
-        limit: Option<&Range<RecordIdentifier>>,
-    ) -> Result<Fingerprint> {
+    fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
         // TODO: optimize?
 
-        let elements = self.get_range(range.clone(), limit.cloned())?;
+        let elements = self.get_range(range.clone())?;
         let mut fp = Fingerprint::empty();
         for el in elements {
             let el = el?;
@@ -533,11 +526,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     }
 
     type RangeIterator<'a> = RangeLatestIterator<'a>;
-    fn get_range(
-        &self,
-        range: Range<RecordIdentifier>,
-        limit: Option<Range<RecordIdentifier>>,
-    ) -> Result<Self::RangeIterator<'_>> {
+    fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
         // TODO: implement inverted range
         let range_start = range.x();
         let range_end = range.y();
@@ -560,7 +549,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                     .map_err(anyhow::Error::from)
             },
             |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
-            limit,
             RangeFilter::None,
         )?;
 
@@ -602,16 +590,11 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                     .map_err(anyhow::Error::from)
             },
             |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
-            None,
             RangeFilter::None,
         )?;
 
         Ok(iter)
     }
-}
-
-fn matches(limit: &Option<Range<RecordIdentifier>>, x: &RecordIdentifier) -> bool {
-    limit.as_ref().map(|r| r.contains(x)).unwrap_or(true)
 }
 
 #[self_referencing]
@@ -623,7 +606,6 @@ pub struct RangeLatestIterator<'a> {
     #[covariant]
     #[borrows(record_table)]
     records: MultimapRange<'this, RecordsId<'static>, RecordsValue<'static>>,
-    limit: Option<Range<RecordIdentifier>>,
     filter: RangeFilter,
 }
 
@@ -650,7 +632,7 @@ impl Iterator for RangeLatestIterator<'_> {
                     Ok(id) => id,
                     Err(err) => return Some(Err(err)),
                 };
-                if fields.filter.matches(&id) && matches(fields.limit, &id) {
+                if fields.filter.matches(&id) {
                     let last = next.1.last();
                     let value = match last? {
                         Ok(value) => value,
