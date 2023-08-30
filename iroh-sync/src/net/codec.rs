@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{store, NamespaceId, Replica};
 
@@ -102,6 +102,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
         namespace: alice.namespace(),
         message: alice.sync_initial_message().map_err(Into::into)?,
     };
+    trace!("alice -> bob: {:#?}", init_message);
     writer.send(init_message).await?;
 
     // Sync message loop
@@ -116,6 +117,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
                     .sync_process_message(msg, other_peer_id)
                     .map_err(Into::into)?
                 {
+                    trace!("alice -> bob: {:#?}", msg);
                     writer.send(Message::Sync(msg)).await?;
                 } else {
                     break;
@@ -147,11 +149,12 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
 
                 match replica_store.open_replica(&namespace)? {
                     Some(r) => {
-                        debug!("starting sync for {}", namespace);
+                        debug!("run_bob: process initial message for {}", namespace);
                         if let Some(msg) = r
                             .sync_process_message(message, other_peer_id)
                             .map_err(Into::into)?
                         {
+                            trace!("bob -> alice: {:#?}", msg);
                             writer.send(Message::Sync(msg)).await?;
                         } else {
                             break;
@@ -169,6 +172,7 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
                         .sync_process_message(msg, other_peer_id)
                         .map_err(Into::into)?
                     {
+                        trace!("bob -> alice: {:#?}", msg);
                         writer.send(Message::Sync(msg)).await?;
                     } else {
                         break;
@@ -187,10 +191,13 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
 #[cfg(test)]
 mod tests {
     use crate::{
-        store::{GetFilter, Store as _},
+        store::{GetFilter, Store},
         sync::Namespace,
+        AuthorId,
     };
+    use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
+    use rand_core::{CryptoRngCore, SeedableRng};
 
     use super::*;
 
@@ -284,6 +291,161 @@ mod tests {
             2
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sync_many_authors_memory() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+        test_sync_many_authors(alice_store, bob_store).await
+    }
+
+    #[tokio::test]
+    async fn test_sync_many_authors_fs() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let tmpdir = tempfile::tempdir()?;
+        let alice_store = store::fs::Store::new(tmpdir.path().join("a.db"))?;
+        let bob_store = store::fs::Store::new(tmpdir.path().join("b.db"))?;
+        test_sync_many_authors(alice_store, bob_store).await
+    }
+
+    type Message = (AuthorId, Vec<u8>, Hash);
+
+    fn insert_messages<S: Store>(
+        mut rng: impl CryptoRngCore,
+        store: &S,
+        replica: &Replica<S::Instance>,
+        num_authors: usize,
+        msgs_per_author: usize,
+        key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
+    ) -> Vec<Message> {
+        let mut res = vec![];
+        let authors: Vec<_> = (0..num_authors)
+            .map(|_| store.new_author(&mut rng).unwrap())
+            .collect();
+
+        for i in 0..msgs_per_author {
+            for author in authors.iter() {
+                let (key, value) = key_value_fn(&author.id(), i);
+                let hash = replica.hash_and_insert(key.clone(), author, value).unwrap();
+                res.push((author.id(), key.as_bytes().to_vec(), hash));
+            }
+        }
+        res.sort();
+        res
+    }
+
+    fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
+        let mut msgs = store
+            .get(namespace, GetFilter::all())
+            .unwrap()
+            .map(|entry| {
+                entry.map(|entry| (entry.author(), entry.key().to_vec(), entry.content_hash()))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        msgs.sort();
+        msgs
+    }
+
+    async fn test_sync_many_authors<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
+        let num_messages = &[1, 2, 5, 10, 20];
+        let num_authors = &[2, 3, 4, 5, 10, 20];
+
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
+        for num_messages in num_messages {
+            for num_authors in num_authors {
+                println!(
+                    "bob & alice each using {num_authors} authors and inserting {num_messages} messages per author"
+                );
+
+                let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
+                let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
+                let namespace = Namespace::new(&mut rng);
+
+                let mut all_messages = vec![];
+
+                let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+
+                let alice_messages = insert_messages(
+                    &mut rng,
+                    &alice_store,
+                    &alice_replica,
+                    *num_authors,
+                    *num_messages,
+                    |author, i| {
+                        (
+                            format!("hello bob {i}"),
+                            format!("from alice by {author}: {i}"),
+                        )
+                    },
+                );
+                all_messages.extend_from_slice(&alice_messages);
+
+                let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+                let bob_messages = insert_messages(
+                    &mut rng,
+                    &bob_store,
+                    &bob_replica,
+                    *num_authors,
+                    *num_messages,
+                    |author, i| {
+                        (
+                            format!("hello bob {i}"),
+                            format!("from bob by {author}: {i}"),
+                        )
+                    },
+                );
+                all_messages.extend_from_slice(&bob_messages);
+
+                all_messages.sort();
+
+                let res = get_messages(&alice_store, alice_replica.namespace());
+                assert_eq!(res, alice_messages);
+
+                let res = get_messages(&bob_store, bob_replica.namespace());
+                assert_eq!(res, bob_messages);
+
+                let (alice, bob) = tokio::io::duplex(64 + num_messages);
+
+                let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
+                let replica = alice_replica.clone();
+                let alice_task = tokio::task::spawn(async move {
+                    run_alice::<S, _, _>(
+                        &mut alice_writer,
+                        &mut alice_reader,
+                        &replica,
+                        bob_node_pubkey,
+                    )
+                    .await
+                });
+
+                let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
+                let bob_replica_store_task = bob_store.clone();
+                let bob_task = tokio::task::spawn(async move {
+                    run_bob::<S, _, _>(
+                        &mut bob_writer,
+                        &mut bob_reader,
+                        bob_replica_store_task,
+                        alice_node_pubkey,
+                    )
+                    .await
+                });
+
+                alice_task.await??;
+                bob_task.await??;
+
+                let res = get_messages(&bob_store, bob_replica.namespace());
+                assert_eq!(res.len(), all_messages.len());
+                assert_eq!(res, all_messages);
+
+                let res = get_messages(&bob_store, bob_replica.namespace());
+                assert_eq!(res.len(), all_messages.len());
+                assert_eq!(res, all_messages);
+            }
+        }
         Ok(())
     }
 }

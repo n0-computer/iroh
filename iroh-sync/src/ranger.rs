@@ -471,13 +471,15 @@ where
         // Process fingerprint messages
         for RangeFingerprint { range, fingerprint } in fingerprints {
             let local_fingerprint = self.store.get_fingerprint(&range)?;
-
             // Case1 Match, nothing to do
             if local_fingerprint == fingerprint {
                 continue;
             }
 
             // Case2 Recursion Anchor
+            // TODO: This is hugely inefficient and needs to be optimized
+            // For an identity range that includes everything we allocate a vec with all entries of
+            // the replica here.
             let local_values: Vec<_> = self
                 .store
                 .get_range(range.clone())?
@@ -612,11 +614,12 @@ where
     // pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
     //     self.store.remove(k)
     // }
-    //
-    // /// Returns a refernce to the underlying store.
-    // pub fn store(&self) -> &S {
-    //     &self.store
-    // }
+
+    /// Returns a refernce to the underlying store.
+    #[cfg(test)]
+    pub fn store(&self) -> &S {
+        &self.store
+    }
 }
 
 #[cfg(test)]

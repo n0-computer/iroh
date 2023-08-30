@@ -14,7 +14,7 @@ use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
@@ -46,9 +46,8 @@ pub enum InsertOrigin {
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
     inner: Arc<RwLock<InnerReplica<S>>>,
-    on_insert_sender: flume::Sender<(InsertOrigin, SignedEntry)>,
     #[allow(clippy::type_complexity)]
-    on_insert_receiver: Arc<Mutex<Option<flume::Receiver<(InsertOrigin, SignedEntry)>>>>,
+    on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -67,14 +66,12 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
-        let (s, r) = flume::bounded(16); // TODO: should this be configurable?
         Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
                 namespace,
                 peer: Peer::from_store(store),
             })),
-            on_insert_sender: s,
-            on_insert_receiver: Arc::new(Mutex::new(Some(r))),
+            on_insert_sender: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -82,9 +79,20 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     ///
     /// Only one subscription can be active at a time. If a previous subscription was created, this
     /// will return `None`.
+    ///
+    /// When subscribing to a replica, you must ensure that the returned [`flume::Receiver`] is
+    /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
+    /// the receiver to be received from.
     // TODO: Allow to clear a previous subscription?
     pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
-        self.on_insert_receiver.lock().take()
+        let mut on_insert_sender = self.on_insert_sender.write();
+        if let Some(_sender) = on_insert_sender.as_ref() {
+            None
+        } else {
+            let (s, r) = flume::bounded(16); // TODO: should this be configurable?
+            *on_insert_sender = Some(s);
+            Some(r)
+        }
     }
 
     /// Insert a new record at the given key.
@@ -109,9 +117,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         inner.peer.put(id, signed_entry.clone())?;
         drop(inner);
 
-        self.on_insert_sender
-            .send((InsertOrigin::Local, signed_entry))
-            .ok();
+        if let Some(sender) = self.on_insert_sender.read().as_ref() {
+            sender.send((InsertOrigin::Local, signed_entry)).ok();
+        }
 
         #[cfg(feature = "metrics")]
         {
@@ -158,9 +166,12 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         let id = entry.entry.id.clone();
         inner.peer.put(id, entry.clone()).map_err(Into::into)?;
         drop(inner);
-        self.on_insert_sender
-            .send((InsertOrigin::Sync(received_from), entry.clone()))
-            .ok();
+
+        if let Some(sender) = self.on_insert_sender.read().as_ref() {
+            sender
+                .send((InsertOrigin::Sync(received_from), entry.clone()))
+                .ok();
+        }
 
         #[cfg(feature = "metrics")]
         {
@@ -191,9 +202,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
             .write()
             .peer
             .process_message(message, |_key, entry| {
-                self.on_insert_sender
-                    .send((InsertOrigin::Sync(from_peer), entry))
-                    .ok();
+                if let Some(sender) = self.on_insert_sender.read().as_ref() {
+                    sender.send((InsertOrigin::Sync(from_peer), entry)).ok();
+                }
             })?;
 
         Ok(reply)
@@ -212,7 +223,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
 }
 
 /// A signed entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedEntry {
     signature: EntrySignature,
     entry: Entry,
@@ -221,6 +232,18 @@ pub struct SignedEntry {
 impl From<SignedEntry> for Entry {
     fn from(value: SignedEntry) -> Self {
         value.entry
+    }
+}
+
+impl PartialOrd for SignedEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.entry.id.partial_cmp(&other.entry.id)
+    }
+}
+
+impl Ord for SignedEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entry.id.cmp(&other.entry.id)
     }
 }
 
@@ -273,10 +296,25 @@ impl SignedEntry {
 }
 
 /// Signature over an entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntrySignature {
     author_signature: Signature,
     namespace_signature: Signature,
+}
+
+impl Debug for EntrySignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EntrySignature")
+            .field(
+                "namespace_signature",
+                &base32::fmt(self.namespace_signature.to_bytes()),
+            )
+            .field(
+                "author_signature",
+                &base32::fmt(self.author_signature.to_bytes()),
+            )
+            .finish()
+    }
 }
 
 impl EntrySignature {
@@ -333,7 +371,7 @@ impl EntrySignature {
 /// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
 /// [`Namespace`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
     id: RecordIdentifier,
     record: Record,
@@ -380,7 +418,7 @@ impl Entry {
 }
 
 /// The indentifier of a record.
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RecordIdentifier {
     /// The key of the record.
     key: Vec<u8>,
@@ -388,6 +426,42 @@ pub struct RecordIdentifier {
     namespace: NamespaceId,
     /// The [`AuthorId`] of the author that wrote this record.
     author: AuthorId,
+}
+
+impl Debug for RecordIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecordIdentifier")
+            .field("namespace", &self.namespace)
+            .field("author", &self.author)
+            .field("key", &std::string::String::from_utf8_lossy(&self.key))
+            .finish()
+    }
+}
+
+impl PartialEq for RecordIdentifier {
+    fn eq(&self, other: &Self) -> bool {
+        self.namespace.eq(&other.namespace)
+            && self.author.eq(&other.author)
+            && self.key.eq(&other.key)
+    }
+}
+
+impl Eq for RecordIdentifier {}
+
+impl PartialOrd for RecordIdentifier {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RecordIdentifier {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.namespace, &self.author, &self.key).cmp(&(
+            &other.namespace,
+            &other.author,
+            &other.key,
+        ))
+    }
 }
 
 impl AsFingerprint for RecordIdentifier {
@@ -431,6 +505,11 @@ impl RecordIdentifier {
         out.extend_from_slice(&self.key);
     }
 
+    /// Get this [`RecordIdentifier`] as a tuple of byte slices.
+    pub(crate) fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
+        (self.namespace.as_bytes(), self.author.as_bytes(), &self.key)
+    }
+
     /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
         &self.key
@@ -463,7 +542,7 @@ impl Deref for Entry {
 }
 
 /// The data part of an entry in a [`Replica`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Record {
     /// Record creation timestamp. Counted as micros since the Unix epoch.
     timestamp: u64,
@@ -533,7 +612,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        ranger::Range,
+        ranger::{Range, Store as _},
         store::{self, GetFilter},
     };
 
@@ -723,6 +802,30 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
+        let replica = store.open_replica(&my_replica.namespace())?.unwrap();
+        // Get Range of all should return all latest
+        let entries_second: Vec<_> = replica
+            .inner
+            .read()
+            .peer
+            .store()
+            .get_range(Range::new(
+                RecordIdentifier::default(),
+                RecordIdentifier::default(),
+            ))
+            .map_err(Into::into)?
+            .collect::<Result<_, _>>()
+            .map_err(Into::into)?;
+
+        assert_eq!(entries_second.len(), 12);
+        assert_eq!(
+            entries,
+            entries_second
+                .into_iter()
+                .map(|(_, x)| x)
+                .collect::<Vec<_>>()
+        );
+
         Ok(())
     }
 
@@ -748,6 +851,9 @@ mod tests {
             assert!(range.contains(&ri0), "start");
             assert!(range.contains(&ri1), "inside");
             assert!(!range.contains(&ri2), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
         }
 
         // Just namespace
@@ -760,6 +866,9 @@ mod tests {
             assert!(range.contains(&ri0), "start");
             assert!(range.contains(&ri1), "inside");
             assert!(!range.contains(&ri2), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
         }
 
         // Just author
@@ -772,6 +881,9 @@ mod tests {
             assert!(range.contains(&ri0), "start");
             assert!(range.contains(&ri1), "inside");
             assert!(!range.contains(&ri2), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
         }
 
         // Just key and namespace
@@ -784,6 +896,26 @@ mod tests {
             assert!(range.contains(&ri0), "start");
             assert!(range.contains(&ri1), "inside");
             assert!(!range.contains(&ri2), "end");
+
+            assert!(ri0 < ri1);
+            assert!(ri1 < ri2);
+        }
+
+        // Mixed
+        {
+            // Ord should prioritize namespace - author - key
+
+            let a0 = a[0].id();
+            let a1 = a[1].id();
+            let n0 = n[0].id();
+            let n1 = n[1].id();
+            let k0 = k[0];
+            let k1 = k[1];
+
+            assert!(RecordIdentifier::new(k0, n0, a0) < RecordIdentifier::new(k1, n1, a1));
+            assert!(RecordIdentifier::new(k1, n0, a0) < RecordIdentifier::new(k0, n1, a0));
+            assert!(RecordIdentifier::new(k0, n0, a1) < RecordIdentifier::new(k1, n0, a1));
+            assert!(RecordIdentifier::new(k0, n1, a1) < RecordIdentifier::new(k1, n1, a1));
         }
     }
 
