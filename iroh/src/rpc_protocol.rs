@@ -545,6 +545,28 @@ pub struct DocGetResponse {
     pub entry: SignedEntry,
 }
 
+/// Get entries from a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetOneRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Key
+    pub key: Vec<u8>,
+    /// Author
+    pub author: AuthorId,
+}
+
+impl RpcMsg<ProviderService> for DocGetOneRequest {
+    type Response = RpcResult<DocGetOneResponse>;
+}
+
+/// Response to [`DocGetRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetOneResponse {
+    /// The document entry
+    pub entry: Option<SignedEntry>,
+}
+
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BytesGetRequest {
@@ -618,6 +640,7 @@ pub enum ProviderRequest {
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
     DocGet(DocGetRequest),
+    DocGetOne(DocGetOneRequest),
     DocStartSync(DocStartSyncRequest),
     DocStopSync(DocStopSyncRequest),
     DocShare(DocShareRequest),
@@ -653,6 +676,7 @@ pub enum ProviderResponse {
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetResponse>),
+    DocGetOne(RpcResult<DocGetOneResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),

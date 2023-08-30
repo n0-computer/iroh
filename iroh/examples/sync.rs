@@ -359,11 +359,15 @@ impl ReplState {
                 prefix,
             } => {
                 let entries = if prefix {
-                    self.store
-                        .get(self.doc.namespace(), GetFilter::all().with_prefix(key))?
+                    self.store.get(
+                        self.doc.namespace(),
+                        GetFilter::Prefix(key.as_bytes().to_vec()),
+                    )?
                 } else {
-                    self.store
-                        .get(self.doc.namespace(), GetFilter::all().with_key(key))?
+                    self.store.get(
+                        self.doc.namespace(),
+                        GetFilter::Prefix(key.as_bytes().to_vec()),
+                    )?
                 };
                 for entry in entries {
                     let entry = entry?;
@@ -387,10 +391,11 @@ impl ReplState {
             },
             Cmd::Ls { prefix } => {
                 let entries = match prefix {
-                    None => self.store.get(self.doc.namespace(), GetFilter::all())?,
-                    Some(prefix) => self
-                        .store
-                        .get(self.doc.namespace(), GetFilter::all().with_prefix(prefix))?,
+                    None => self.store.get(self.doc.namespace(), GetFilter::All)?,
+                    Some(prefix) => self.store.get(
+                        self.doc.namespace(),
+                        GetFilter::Prefix(prefix.as_bytes().to_vec()),
+                    )?,
                 };
                 let mut count = 0;
                 for entry in entries {
@@ -457,8 +462,10 @@ impl ReplState {
                                 let mut read = 0;
                                 for i in 0..count {
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let entries = store
-                                        .get(doc.namespace(), GetFilter::all().with_key(key))?;
+                                    let entries = store.get(
+                                        doc.namespace(),
+                                        GetFilter::Key(key.as_bytes().to_vec()),
+                                    )?;
                                     for entry in entries {
                                         let entry = entry?;
                                         let _content = fmt_content_simple(&doc, &entry);
@@ -555,7 +562,7 @@ impl ReplState {
                 println!("> exporting {key_prefix} to {root:?}");
                 let entries = self.store.get(
                     self.doc.namespace(),
-                    GetFilter::latest().with_prefix(&key_prefix),
+                    GetFilter::Prefix(&key_prefix.as_bytes().to_vec()),
                 )?;
                 let mut checked_dirs = HashSet::new();
                 for entry in entries {
@@ -587,7 +594,10 @@ impl ReplState {
                 // TODO: Fix
                 let entry = self
                     .store
-                    .get(self.doc.namespace(), GetFilter::latest().with_key(&key))?
+                    .get(
+                        self.doc.namespace(),
+                        GetFilter::Key(key.as_bytes().to_vec()),
+                    )?
                     .next();
                 if let Some(entry) = entry {
                     let entry = entry?;

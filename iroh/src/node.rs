@@ -1261,6 +1261,12 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, |handler, req| handler.inner.sync.doc_get(req))
                     .await
             }
+            DocGetOne(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_get_one(req).await
+                })
+                .await
+            }
             DocStartSync(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_start_sync(req).await
