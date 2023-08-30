@@ -447,10 +447,10 @@ impl StoreInstance {
     }
 
     fn range_start(&self) -> RecordsId {
-        (self.namespace.as_bytes(), &[0u8; 32], &[][..])
+        (self.namespace.as_bytes(), &[u8::MIN; 32], &[][..])
     }
     fn range_end(&self) -> RecordsId {
-        (self.namespace.as_bytes(), &[255u8; 32], &[][..])
+        (self.namespace.as_bytes(), &[u8::MAX; 32], &[][..])
     }
 }
 

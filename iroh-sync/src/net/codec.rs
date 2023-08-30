@@ -168,7 +168,6 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
             }
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
-                    debug!("run_bob: process message");
                     if let Some(msg) = replica
                         .sync_process_message(msg, other_peer_id)
                         .map_err(Into::into)?
