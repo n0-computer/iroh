@@ -13,7 +13,7 @@ use redb::{
 };
 
 use crate::{
-    ranger::{AsFingerprint, Fingerprint, Range, RangeKey},
+    ranger::{AsFingerprint, Fingerprint, Range},
     store::Store as _,
     sync::{
         Author, AuthorId, Entry, EntrySignature, Namespace, NamespaceId, Record, RecordIdentifier,
@@ -281,7 +281,6 @@ impl Store {
         RangeLatestIterator::namespace(
             &self.db,
             &namespace,
-            None,
             RangeFilter::Key(key.as_ref().to_vec()),
         )
     }
@@ -294,13 +293,12 @@ impl Store {
         RangeLatestIterator::namespace(
             &self.db,
             &namespace,
-            None,
             RangeFilter::Prefix(prefix.as_ref().to_vec()),
         )
     }
 
     fn get_latest(&self, namespace: NamespaceId) -> Result<RangeLatestIterator<'_>> {
-        RangeLatestIterator::namespace(&self.db, &namespace, None, RangeFilter::None)
+        RangeLatestIterator::namespace(&self.db, &namespace, RangeFilter::None)
     }
 
     fn get_all_by_key_and_author<'a, 'b: 'a>(
@@ -410,13 +408,9 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         Ok(self.len()? == 0)
     }
 
-    fn get_fingerprint(
-        &self,
-        range: &Range<RecordIdentifier>,
-        limit: Option<&Range<RecordIdentifier>>,
-    ) -> Result<Fingerprint> {
+    fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
         // TODO: optimize
-        let elements = self.get_range(range.clone(), limit.cloned())?;
+        let elements = self.get_range(range.clone())?;
 
         let mut fp = Fingerprint::empty();
         for el in elements {
@@ -454,11 +448,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     }
 
     type RangeIterator<'a> = std::iter::Chain<RangeLatestIterator<'a>, RangeLatestIterator<'a>>;
-    fn get_range(
-        &self,
-        range: Range<RecordIdentifier>,
-        limit: Option<Range<RecordIdentifier>>,
-    ) -> Result<Self::RangeIterator<'_>> {
+    fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
             Ordering::Equal => {
@@ -468,7 +458,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let iter = RangeLatestIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
-                    limit.clone(),
                     RangeFilter::None,
                 )?;
                 // empty iterator, returns nothing
@@ -483,7 +472,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let iter = RangeLatestIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
-                    limit.clone(),
                     RangeFilter::None,
                 )?;
                 // empty iterator
@@ -498,7 +486,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let iter = RangeLatestIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
-                    limit.clone(),
                     RangeFilter::None,
                 )?;
                 let start = range.x().as_byte_tuple();
@@ -507,7 +494,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let iter2 = RangeLatestIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
-                    limit.clone(),
                     RangeFilter::None,
                 )?;
                 iter.chain(iter2)
@@ -541,19 +527,11 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     type AllIterator<'a> = RangeLatestIterator<'a>;
 
     fn all(&self) -> Result<Self::AllIterator<'_>> {
-        let iter = RangeLatestIterator::namespace(
-            &self.store.db,
-            &self.namespace,
-            None,
-            RangeFilter::None,
-        )?;
+        let iter =
+            RangeLatestIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)?;
 
         Ok(iter)
     }
-}
-
-fn matches(limit: &Option<Range<RecordIdentifier>>, x: &RecordIdentifier) -> bool {
-    limit.as_ref().map(|r| x.contains(r)).unwrap_or(true)
 }
 
 #[self_referencing]
@@ -565,7 +543,6 @@ pub struct RangeLatestIterator<'a> {
     #[covariant]
     #[borrows(record_table)]
     records: RecordsRange<'this>,
-    limit: Option<Range<RecordIdentifier>>,
     filter: RangeFilter,
 }
 
@@ -573,7 +550,6 @@ impl<'a> RangeLatestIterator<'a> {
     fn with_range(
         db: &'a Arc<Database>,
         range: impl for<'this> FnOnce(&'this RecordsTable<'this>) -> DbResult<RecordsRange<'this>>,
-        limit: Option<Range<RecordIdentifier>>,
         filter: RangeFilter,
     ) -> anyhow::Result<Self> {
         let iter = RangeLatestIterator::try_new(
@@ -584,7 +560,6 @@ impl<'a> RangeLatestIterator<'a> {
                     .map_err(anyhow::Error::from)
             },
             |record_table| range(record_table).map_err(anyhow::Error::from),
-            limit,
             filter,
         )?;
         Ok(iter)
@@ -593,17 +568,16 @@ impl<'a> RangeLatestIterator<'a> {
     fn namespace(
         db: &'a Arc<Database>,
         namespace: &NamespaceId,
-        limit: Option<Range<RecordIdentifier>>,
         filter: RangeFilter,
     ) -> anyhow::Result<Self> {
         let start = range_start(namespace);
         let end = range_end(namespace);
-        Self::with_range(db, |table| table.range(start..=end), limit, filter)
+        Self::with_range(db, |table| table.range(start..=end), filter)
     }
     fn empty(db: &'a Arc<Database>) -> anyhow::Result<Self> {
         let start = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
         let end = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
-        Self::with_range(db, |table| table.range(start..end), None, RangeFilter::None)
+        Self::with_range(db, |table| table.range(start..end), RangeFilter::None)
     }
 }
 
@@ -630,7 +604,7 @@ impl Iterator for RangeLatestIterator<'_> {
                     Ok(id) => id,
                     Err(err) => return Some(Err(err)),
                 };
-                if fields.filter.matches(&id) && matches(fields.limit, &id) {
+                if fields.filter.matches(&id) {
                     let last = next.1.last();
                     let value = match last? {
                         Ok(value) => value,

@@ -11,7 +11,7 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use rand_core::CryptoRngCore;
 
 use crate::{
-    ranger::{AsFingerprint, Fingerprint, Range, RangeKey},
+    ranger::{AsFingerprint, Fingerprint, Range},
     sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
 };
 
@@ -498,12 +498,8 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
         Ok(self.len()? == 0)
     }
 
-    fn get_fingerprint(
-        &self,
-        range: &Range<RecordIdentifier>,
-        limit: Option<&Range<RecordIdentifier>>,
-    ) -> Result<Fingerprint, Self::Error> {
-        let elements = self.get_range(range.clone(), limit.cloned())?;
+    fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint, Self::Error> {
+        let elements = self.get_range(range.clone())?;
         let mut fp = Fingerprint::empty();
         for el in elements {
             let el = el?;
@@ -530,12 +526,10 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     fn get_range(
         &self,
         range: Range<RecordIdentifier>,
-        limit: Option<Range<RecordIdentifier>>,
     ) -> Result<Self::RangeIterator<'_>, Self::Error> {
         Ok(RangeIterator {
             iter: self.records_iter(),
             range: Some(range),
-            limit,
         })
     }
 
@@ -554,7 +548,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
         Ok(RangeIterator {
             iter: self.records_iter(),
             range: None,
-            limit: None,
         })
     }
 }
@@ -564,14 +557,11 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
 pub struct RangeIterator<'a> {
     iter: RecordsIter<'a>,
     range: Option<Range<RecordIdentifier>>,
-    limit: Option<Range<RecordIdentifier>>,
 }
 
 impl RangeIterator<'_> {
     fn matches(&self, x: &RecordIdentifier) -> bool {
-        let range = self.range.as_ref().map(|r| x.contains(r)).unwrap_or(true);
-        let limit = self.limit.as_ref().map(|r| x.contains(r)).unwrap_or(true);
-        range && limit
+        self.range.as_ref().map(|r| r.contains(x)).unwrap_or(true)
     }
 }
 

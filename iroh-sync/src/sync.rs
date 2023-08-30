@@ -809,10 +809,10 @@ mod tests {
             .read()
             .peer
             .store()
-            .get_range(
-                Range::new(RecordIdentifier::default(), RecordIdentifier::default()),
-                None,
-            )
+            .get_range(Range::new(
+                RecordIdentifier::default(),
+                RecordIdentifier::default(),
+            ))
             .map_err(Into::into)?
             .collect::<Result<_, _>>()
             .map_err(Into::into)?;
@@ -848,9 +848,9 @@ mod tests {
             let ri2 = RecordIdentifier::new(k[2], n[0].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
-            assert!(ri0.contains(&range), "start");
-            assert!(ri1.contains(&range), "inside");
-            assert!(!ri2.contains(&range), "end");
+            assert!(range.contains(&ri0), "start");
+            assert!(range.contains(&ri1), "inside");
+            assert!(!range.contains(&ri2), "end");
 
             assert!(ri0 < ri1);
             assert!(ri1 < ri2);
@@ -863,9 +863,9 @@ mod tests {
             let ri2 = RecordIdentifier::new(k[0], n[2].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
-            assert!(ri0.contains(&range), "start");
-            assert!(ri1.contains(&range), "inside");
-            assert!(!ri2.contains(&range), "end");
+            assert!(range.contains(&ri0), "start");
+            assert!(range.contains(&ri1), "inside");
+            assert!(!range.contains(&ri2), "end");
 
             assert!(ri0 < ri1);
             assert!(ri1 < ri2);
@@ -878,9 +878,9 @@ mod tests {
             let ri2 = RecordIdentifier::new(k[0], n[0].id(), a[2].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
-            assert!(ri0.contains(&range), "start");
-            assert!(ri1.contains(&range), "inside");
-            assert!(!ri2.contains(&range), "end");
+            assert!(range.contains(&ri0), "start");
+            assert!(range.contains(&ri1), "inside");
+            assert!(!range.contains(&ri2), "end");
 
             assert!(ri0 < ri1);
             assert!(ri1 < ri2);
@@ -893,9 +893,9 @@ mod tests {
             let ri2 = RecordIdentifier::new(k[2], n[2].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
-            assert!(ri0.contains(&range), "start");
-            assert!(ri1.contains(&range), "inside");
-            assert!(!ri2.contains(&range), "end");
+            assert!(range.contains(&ri0), "start");
+            assert!(range.contains(&ri1), "inside");
+            assert!(!range.contains(&ri2), "end");
 
             assert!(ri0 < ri1);
             assert!(ri1 < ri2);
