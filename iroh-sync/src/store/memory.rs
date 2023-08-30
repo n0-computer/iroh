@@ -509,7 +509,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
             let el = el?;
             fp ^= el.0.as_fingerprint();
         }
-
         Ok(fp)
     }
 
