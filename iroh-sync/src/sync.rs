@@ -720,53 +720,30 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::all()
-                    .with_author(alice.id())
-                    .with_key("/cool/path"),
-            )?
+            .get(my_replica.namespace(), GetFilter::Author(alice.id()))?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 11);
+
+        // Get All by author
+        let entries: Vec<_> = store
+            .get(my_replica.namespace(), GetFilter::Author(bob.id()))?
+            .collect::<Result<_>>()?;
+        assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
             .get(
                 my_replica.namespace(),
-                GetFilter::all().with_key(b"/cool/path"),
+                GetFilter::Key(b"/cool/path".to_vec()),
             )?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
-
-        // // Get latest by key
-        // let entries: Vec<_> = store
-        //     .get(
-        //         my_replica.namespace(),
-        //         GetFilter::latest().with_key(b"/cool/path"),
-        //     )?
-        //     .collect::<Result<_>>()?;
-        // assert_eq!(entries.len(), 1);
-        //
-        // // Get latest by prefix
-        // let entries: Vec<_> = store
-        //     .get(
-        //         my_replica.namespace(),
-        //         GetFilter::latest().with_prefix(b"/cool"),
-        //     )?
-        //     .collect::<Result<_>>()?;
-        // assert_eq!(entries.len(), 1);
+        assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::all())?
+            .get(my_replica.namespace(), GetFilter::All)?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 12);
-
-        // // Get All latest
-        // let entries: Vec<_> = store
-        //     .get(my_replica.namespace(), GetFilter::latest())?
-        //     .collect::<Result<_>>()?;
-        // assert_eq!(entries.len(), 11);
+        assert_eq!(entries.len(), 11);
 
         // insert record from different author
         let _entry = my_replica
@@ -775,22 +752,12 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::all()
-                    .with_author(alice.id())
-                    .with_key("/cool/path"),
-            )?
+            .get(my_replica.namespace(), GetFilter::Author(alice.id()))?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::all()
-                    .with_author(bob.id())
-                    .with_key("/cool/path"),
-            )?
+            .get(my_replica.namespace(), GetFilter::Author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
@@ -798,49 +765,39 @@ mod tests {
         let entries: Vec<_> = store
             .get(
                 my_replica.namespace(),
-                GetFilter::all().with_key(b"/cool/path"),
+                GetFilter::Key(b"/cool/path".to_vec()),
             )?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 3);
-
-        // // Get latest by key
-        // let entries: Vec<_> = store
-        //     .get(
-        //         my_replica.namespace(),
-        //         GetFilter::latest().with_key(b"/cool/path"),
-        //     )?
-        //     .collect::<Result<_>>()?;
-        // assert_eq!(entries.len(), 2);
-
-        // // Get latest by prefix
-        // let entries: Vec<_> = store
-        //     .get(
-        //         my_replica.namespace(),
-        //         GetFilter::latest().with_prefix(b"/cool"),
-        //     )?
-        //     .collect::<Result<_>>()?;
-        // assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
+            .get(my_replica.namespace(), GetFilter::Prefix(b"/cool".to_vec()))?
+            .collect::<Result<_>>()?;
+        assert_eq!(entries.len(), 2);
+
+        // Get All by author and prefix
+        let entries: Vec<_> = store
             .get(
                 my_replica.namespace(),
-                GetFilter::all().with_prefix(b"/cool"),
+                GetFilter::AuthorAndPrefix(alice.id(), b"/cool".to_vec()),
             )?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 1);
+
+        let entries: Vec<_> = store
+            .get(
+                my_replica.namespace(),
+                GetFilter::AuthorAndPrefix(bob.id(), b"/cool".to_vec()),
+            )?
+            .collect::<Result<_>>()?;
+        assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::all())?
+            .get(my_replica.namespace(), GetFilter::All)?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 13);
-
-        // // Get All latest
-        // let entries: Vec<_> = store
-        //     .get(my_replica.namespace(), GetFilter::latest())?
-        //     .collect::<Result<_>>()?;
-        // assert_eq!(entries.len(), 12);
+        assert_eq!(entries.len(), 12);
 
         let replica = store.open_replica(&my_replica.namespace())?.unwrap();
         // Get Range of all should return all latest
@@ -952,10 +909,22 @@ mod tests {
             let k0 = k[0];
             let k1 = k[1];
 
-            assert!(RecordIdentifier::new_current(k0, n0, a0) < RecordIdentifier::new_current(k1, n1, a1));
-            assert!(RecordIdentifier::new_current(k1, n0, a0) < RecordIdentifier::new_current(k0, n1, a0));
-            assert!(RecordIdentifier::new_current(k0, n0, a1) < RecordIdentifier::new_current(k1, n0, a1));
-            assert!(RecordIdentifier::new_current(k0, n1, a1) < RecordIdentifier::new_current(k1, n1, a1));
+            assert!(
+                RecordIdentifier::new_current(k0, n0, a0)
+                    < RecordIdentifier::new_current(k1, n1, a1)
+            );
+            assert!(
+                RecordIdentifier::new_current(k1, n0, a0)
+                    < RecordIdentifier::new_current(k0, n1, a0)
+            );
+            assert!(
+                RecordIdentifier::new_current(k0, n0, a1)
+                    < RecordIdentifier::new_current(k1, n0, a1)
+            );
+            assert!(
+                RecordIdentifier::new_current(k0, n1, a1)
+                    < RecordIdentifier::new_current(k1, n1, a1)
+            );
         }
     }
 

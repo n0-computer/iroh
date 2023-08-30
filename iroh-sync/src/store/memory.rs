@@ -84,15 +84,15 @@ impl super::Store for Store {
     }
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
-        use super::KeyFilter;
         let iter = match filter {
-            super::GetFilter::Key(key_filter) => match key_filter {
-                KeyFilter::All => self.get_all(namespace)?,
-                KeyFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix)?,
-                KeyFilter::Key(key) => self.get_by_key(namespace, key)?,
-            },
-            super::GetFilter::Author(author) => self.get_by_author(namespace, author)?,
-        };
+            super::GetFilter::All => self.get_all(namespace),
+            super::GetFilter::Key(key) => self.get_by_key(namespace, key),
+            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
+            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+            super::GetFilter::AuthorAndPrefix(author, prefix) => {
+                self.get_by_author_and_prefix(namespace, author, prefix)
+            }
+        }?;
         Ok(iter.into())
     }
 
@@ -173,6 +173,26 @@ impl Store {
         })
     }
 
+    fn get_by_author_and_prefix(
+        &self,
+        namespace: NamespaceId,
+        author: AuthorId,
+        prefix: Vec<u8>,
+    ) -> Result<StoreRangeIterator<'_>> {
+        let records = self.replica_records.read();
+        let filter = GetFilter::AuthorAndPrefix {
+            namespace,
+            author,
+            prefix,
+        };
+
+        Ok(StoreRangeIterator {
+            records,
+            filter,
+            index: 0,
+        })
+    }
+
     fn get_all(&self, namespace: NamespaceId) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
@@ -204,6 +224,12 @@ enum GetFilter {
         namespace: NamespaceId,
         prefix: Vec<u8>,
     },
+    /// Filter by author and prefix.
+    AuthorAndPrefix {
+        namespace: NamespaceId,
+        prefix: Vec<u8>,
+        author: AuthorId,
+    },
 }
 
 impl GetFilter {
@@ -213,6 +239,7 @@ impl GetFilter {
             GetFilter::Key { namespace, .. } => *namespace,
             GetFilter::Prefix { namespace, .. } => *namespace,
             GetFilter::Author { namespace, .. } => *namespace,
+            GetFilter::AuthorAndPrefix { namespace, .. } => *namespace,
         }
     }
 }
@@ -272,9 +299,29 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                     (record_id, value.clone())
                 })
                 .nth(self.index)?,
-            GetFilter::Author { namespace, author } => records
+            GetFilter::Author {
+                namespace,
+                ref author,
+            } => records
                 .iter()
-                .filter(|((a, _), _)| a == &author)
+                .filter(|((a, _), _)| a == author)
+                .map(|(key_author, value)| {
+                    let record_id = RecordIdentifier::new(
+                        &key_author.1,
+                        namespace,
+                        key_author.0,
+                        value.timestamp(),
+                    );
+                    (record_id, value.clone())
+                })
+                .nth(self.index)?,
+            GetFilter::AuthorAndPrefix {
+                namespace,
+                ref prefix,
+                ref author,
+            } => records
+                .iter()
+                .filter(|((a, k), _)| a == author && k.starts_with(prefix))
                 .map(|(key_author, value)| {
                     let record_id = RecordIdentifier::new(
                         &key_author.1,

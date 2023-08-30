@@ -80,57 +80,20 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 /// Filter a get query onto a namespace
 #[derive(Debug, Serialize, Deserialize)]
 pub enum GetFilter {
+    /// No filter, list all entries
+    All,
+    /// Filter for exact key match
+    Key(Vec<u8>),
+    /// Filter for key prefix
+    Prefix(Vec<u8>),
     /// Filter by author
     Author(AuthorId),
-    /// Filter by key
-    Key(KeyFilter),
+    /// Filter by key prefix and author
+    AuthorAndPrefix(AuthorId, Vec<u8>),
 }
 
 impl Default for GetFilter {
     fn default() -> Self {
-        Self::all()
+        Self::All
     }
-}
-
-impl GetFilter {
-    /// Create a new get filter.
-    pub fn new() -> Self {
-        GetFilter::Key(KeyFilter::All)
-    }
-
-    /// No filter, iterate over all entries.
-    pub fn all() -> Self {
-        Self::new()
-    }
-
-    /// Set the key filter.
-    pub fn with_key_filter(self, key_filter: KeyFilter) -> Self {
-        Self::Key(key_filter)
-    }
-
-    /// Filter by exact key match.
-    pub fn with_key(self, key: impl AsRef<[u8]>) -> Self {
-        self.with_key_filter(KeyFilter::Key(key.as_ref().to_vec()))
-    }
-
-    /// Filter by prefix key match.
-    pub fn with_prefix(self, prefix: impl AsRef<[u8]>) -> Self {
-        self.with_key_filter(KeyFilter::Prefix(prefix.as_ref().to_vec()))
-    }
-
-    /// Filter by author.
-    pub fn with_author(self, author: AuthorId) -> Self {
-        GetFilter::Author(author)
-    }
-}
-
-/// Filter the keys in a namespace
-#[derive(Debug, Serialize, Deserialize)]
-pub enum KeyFilter {
-    /// No filter, list all entries
-    All,
-    /// Filter for entries starting with a prefix
-    Prefix(Vec<u8>),
-    /// Filter for exact key match
-    Key(Vec<u8>),
 }

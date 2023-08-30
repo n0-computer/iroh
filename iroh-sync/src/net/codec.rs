@@ -226,7 +226,7 @@ mod tests {
 
         assert_eq!(
             bob_replica_store
-                .get(bob_replica.namespace(), GetFilter::all())
+                .get(bob_replica.namespace(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -235,7 +235,7 @@ mod tests {
         );
         assert_eq!(
             alice_replica_store
-                .get(alice_replica.namespace(), GetFilter::all())
+                .get(alice_replica.namespace(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -274,7 +274,7 @@ mod tests {
 
         assert_eq!(
             bob_replica_store
-                .get(bob_replica.namespace(), GetFilter::all())
+                .get(bob_replica.namespace(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -283,7 +283,7 @@ mod tests {
         );
         assert_eq!(
             alice_replica_store
-                .get(alice_replica.namespace(), GetFilter::all())
+                .get(alice_replica.namespace(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -339,7 +339,7 @@ mod tests {
 
     fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
-            .get(namespace, GetFilter::all())
+            .get(namespace, GetFilter::All)
             .unwrap()
             .map(|entry| {
                 entry.map(|entry| (entry.author(), entry.key().to_vec(), entry.content_hash()))

@@ -191,14 +191,14 @@ impl super::Store for Store {
     }
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
-        use super::KeyFilter;
         let iter = match filter {
-            super::GetFilter::Key(key_filter) => match key_filter {
-                KeyFilter::All => self.get_all(namespace),
-                KeyFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
-                KeyFilter::Key(key) => self.get_by_key(namespace, key),
-            },
+            super::GetFilter::All => self.get_all(namespace),
+            super::GetFilter::Key(key) => self.get_by_key(namespace, key),
+            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
             super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+            super::GetFilter::AuthorAndPrefix(author, prefix) => {
+                self.get_by_author_and_prefix(namespace, author, prefix)
+            }
         }?;
         Ok(iter.into())
     }
@@ -246,6 +246,7 @@ impl Store {
         let start = (namespace.as_bytes(), author, &[][..]);
         let mut author2 = *author;
         // move to next possible author, which marks the end of the range
+        // TODO: is there a better way to define the range end?
         for i in 0..32 {
             if author2[32 - i] != 255 {
                 author2[32 - i] += 1;
@@ -253,6 +254,28 @@ impl Store {
             }
         }
         let end = (namespace.as_bytes(), &author2, &[][..]);
+        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)?;
+        todo!()
+    }
+
+    fn get_by_author_and_prefix(
+        &self,
+        namespace: NamespaceId,
+        author: AuthorId,
+        prefix: impl AsRef<[u8]>,
+    ) -> Result<RangeIterator<'_>> {
+        let author = author.as_bytes();
+        let start = (namespace.as_bytes(), author, prefix.as_ref());
+        let mut end_prefix = prefix.as_ref().to_vec();
+        // move to next possible key after the prefix, which marks the end of the range
+        // TODO: is there a better way to define the range end?
+        for char in end_prefix.iter_mut().rev() {
+            if *char != 255 {
+                *char += 1;
+                break;
+            }
+        }
+        let end = (namespace.as_bytes(), author, &end_prefix[..]);
         RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)?;
         todo!()
     }
@@ -617,19 +640,9 @@ mod tests {
 
         // get all
         let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
-        assert_eq!(entries.len(), 10);
-
-        // get all prefix
-        let entries = store
-            .get_by_prefix(namespace.id(), "hello-")?
-            .collect::<Result<Vec<_>>>()?;
-        assert_eq!(entries.len(), 10);
-
-        // get latest
-        let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
 
-        // get latest by prefix
+        // get all prefix
         let entries = store
             .get_by_prefix(namespace.id(), "hello-")?
             .collect::<Result<Vec<_>>>()?;
