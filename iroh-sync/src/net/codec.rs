@@ -192,11 +192,13 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
 #[cfg(test)]
 mod tests {
     use crate::{
-        store::{GetFilter, Store as _},
+        store::{GetFilter, Store},
         sync::Namespace,
+        AuthorId,
     };
+    use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
-    use rand_core::SeedableRng;
+    use rand_core::{CryptoRngCore, SeedableRng};
 
     use super::*;
 
@@ -310,9 +312,48 @@ mod tests {
         test_sync_many_authors(alice_store, bob_store).await
     }
 
-    async fn test_sync_many_authors<S: store::Store>(
-        alice_replica_store: S,
-        bob_replica_store: S,
+    type Message = (AuthorId, Vec<u8>, Hash);
+
+    fn insert_messages<S: Store>(
+        mut rng: impl CryptoRngCore,
+        store: &S,
+        replica: &Replica<S::Instance>,
+        num_authors: usize,
+        msgs_per_author: usize,
+        key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
+    ) -> Vec<Message> {
+        let mut res = vec![];
+        let authors: Vec<_> = (0..num_authors)
+            .map(|_| store.new_author(&mut rng).unwrap())
+            .collect();
+
+        for i in 0..msgs_per_author {
+            for author in authors.iter() {
+                let (key, value) = key_value_fn(&author.id(), i);
+                let hash = replica.hash_and_insert(key.clone(), author, value).unwrap();
+                res.push((author.id(), key.as_bytes().to_vec(), hash));
+            }
+        }
+        res.sort();
+        res
+    }
+
+    fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
+        let mut msgs = store
+            .get(namespace, GetFilter::all())
+            .unwrap()
+            .map(|entry| {
+                entry.map(|entry| (entry.author(), entry.key().to_vec(), *entry.content_hash()))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        msgs.sort();
+        msgs
+    }
+
+    async fn test_sync_many_authors<S: Store>(
+        alice_store: S,
+        bob_store: S,
     ) -> Result<()> {
         let num_messages = &[1, 2, 5, 10, 20];
         let num_authors = &[2, 3, 4, 5, 10, 20];
@@ -321,68 +362,48 @@ mod tests {
         for num_messages in num_messages {
             for num_authors in num_authors {
                 println!(
-                    "Using {num_authors} authors and {num_messages} messages per side and author"
+                    "bob & alice each using {num_authors} authors and inserting {num_messages} messages per author"
                 );
 
-                let alice_peer_id = SecretKey::generate_with_rng(&mut rng).public();
-                let bob_peer_id = SecretKey::generate_with_rng(&mut rng).public();
+                let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
+                let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
                 let namespace = Namespace::new(&mut rng);
 
-                let authors_alice: Vec<_> = (0..*num_authors)
-                    .map(|_| alice_replica_store.new_author(&mut rng).unwrap())
-                    .collect();
+                let mut all_messages = vec![];
 
-                let alice_replica = alice_replica_store.new_replica(namespace.clone()).unwrap();
-                for i in 0..*num_messages {
-                    for (author_num, author) in authors_alice.iter().enumerate() {
-                        alice_replica
-                            .hash_and_insert(
-                                format!("hello bob {i}"),
-                                author,
-                                format!("from alice: {author_num}"),
-                            )
-                            .unwrap();
-                    }
-                }
+                let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
 
-                let authors_bob: Vec<_> = (0..*num_authors)
-                    .map(|_| bob_replica_store.new_author(&mut rng).unwrap())
-                    .collect();
-                let bob_replica = bob_replica_store.new_replica(namespace.clone()).unwrap();
-                for i in 0..*num_messages {
-                    for (author_num, author) in authors_bob.iter().enumerate() {
-                        bob_replica
-                            .hash_and_insert(
-                                format!("hello alice {i}"),
-                                author,
-                                format!("from bob: {author_num}"),
-                            )
-                            .unwrap();
-                    }
-                }
-
-                assert_eq!(
-                    bob_replica_store
-                        .get(bob_replica.namespace(), GetFilter::all())
-                        .unwrap()
-                        .collect::<Result<Vec<_>>>()
-                        .unwrap()
-                        .len(),
-                    num_messages * num_authors
+                let alice_messages = insert_messages(
+                    &mut rng,
+                    &alice_store,
+                    &alice_replica,
+                    *num_authors,
+                    *num_messages,
+                    |author, i| (format!("hello bob {i}"), format!("from alice by {author}: {i}")),
                 );
-                assert_eq!(
-                    alice_replica_store
-                        .get(alice_replica.namespace(), GetFilter::all())
-                        .unwrap()
-                        .collect::<Result<Vec<_>>>()
-                        .unwrap()
-                        .len(),
-                    num_messages * num_authors
+                all_messages.extend_from_slice(&alice_messages);
+
+                let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+                let bob_messages = insert_messages(
+                    &mut rng,
+                    &bob_store,
+                    &bob_replica,
+                    *num_authors,
+                    *num_messages,
+                    |author, i| (format!("hello bob {i}"), format!("from bob by {author}: {i}")),
                 );
+                all_messages.extend_from_slice(&bob_messages);
+
+                all_messages.sort();
+
+                let res = get_messages(&alice_store, alice_replica.namespace());
+                assert_eq!(res, alice_messages);
+
+                let res = get_messages(&bob_store, bob_replica.namespace());
+                assert_eq!(res, bob_messages);
 
                 let (alice, bob) = tokio::io::duplex(64 + num_messages);
 
-                println!("syncing");
                 let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
                 let replica = alice_replica.clone();
                 let alice_task = tokio::task::spawn(async move {
@@ -390,19 +411,19 @@ mod tests {
                         &mut alice_writer,
                         &mut alice_reader,
                         &replica,
-                        bob_peer_id,
+                        bob_node_pubkey,
                     )
                     .await
                 });
 
                 let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-                let bob_replica_store_task = bob_replica_store.clone();
+                let bob_replica_store_task = bob_store.clone();
                 let bob_task = tokio::task::spawn(async move {
                     run_bob::<S, _, _>(
                         &mut bob_writer,
                         &mut bob_reader,
                         bob_replica_store_task,
-                        alice_peer_id,
+                        alice_node_pubkey,
                     )
                     .await
                 });
@@ -410,43 +431,13 @@ mod tests {
                 alice_task.await??;
                 bob_task.await??;
 
-                let alice_messages = alice_replica_store
-                    .get(alice_replica.namespace(), GetFilter::all())
-                    .unwrap()
-                    .collect::<Result<Vec<_>>>()
-                    .unwrap();
-                // println!(
-                //     "alice has {} messages: {:#?}",
-                //     alice_messages.len(),
-                //     alice_messages
-                //         .iter()
-                //         .map(|e| (e.author(), std::str::from_utf8(&e.key()).unwrap()))
-                //         .collect::<Vec<_>>()
-                // );
-                let bob_messages = bob_replica_store
-                    .get(bob_replica.namespace(), GetFilter::all())
-                    .unwrap()
-                    .collect::<Result<Vec<_>>>()
-                    .unwrap();
-                // println!(
-                //     "bob has {} messages: {:#?}",
-                //     bob_messages.len(),
-                //     bob_messages
-                //         .iter()
-                //         .map(|e| (e.author(), std::str::from_utf8(&e.key()).unwrap()))
-                //         .collect::<Vec<_>>()
-                // );
+                let res = get_messages(&bob_store, bob_replica.namespace());
+                assert_eq!(res.len(), all_messages.len());
+                assert_eq!(res, all_messages);
 
-                assert_eq!(
-                    alice_messages.len(),
-                    2 * num_messages * num_authors,
-                    "alice is missing messages"
-                );
-                assert_eq!(
-                    bob_messages.len(),
-                    2 * num_messages * num_authors,
-                    "bob is missing messages"
-                );
+                let res = get_messages(&bob_store, bob_replica.namespace());
+                assert_eq!(res.len(), all_messages.len());
+                assert_eq!(res, all_messages);
             }
         }
         Ok(())
