@@ -350,10 +350,7 @@ mod tests {
         msgs
     }
 
-    async fn test_sync_many_authors<S: Store>(
-        alice_store: S,
-        bob_store: S,
-    ) -> Result<()> {
+    async fn test_sync_many_authors<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
         let num_messages = &[1, 2, 5, 10, 20];
         let num_authors = &[2, 3, 4, 5, 10, 20];
 
@@ -378,7 +375,12 @@ mod tests {
                     &alice_replica,
                     *num_authors,
                     *num_messages,
-                    |author, i| (format!("hello bob {i}"), format!("from alice by {author}: {i}")),
+                    |author, i| {
+                        (
+                            format!("hello bob {i}"),
+                            format!("from alice by {author}: {i}"),
+                        )
+                    },
                 );
                 all_messages.extend_from_slice(&alice_messages);
 
@@ -389,7 +391,12 @@ mod tests {
                     &bob_replica,
                     *num_authors,
                     *num_messages,
-                    |author, i| (format!("hello bob {i}"), format!("from bob by {author}: {i}")),
+                    |author, i| {
+                        (
+                            format!("hello bob {i}"),
+                            format!("from bob by {author}: {i}"),
+                        )
+                    },
                 );
                 all_messages.extend_from_slice(&bob_messages);
 
