@@ -678,7 +678,6 @@ impl<'a> RangeLatestIterator<'a> {
                     .open_multimap_table(RECORDS_TABLE)
                     .map_err(anyhow::Error::from)
             },
-            // |record_table| record_table.range(range).map_err(anyhow::Error::from),
             |record_table| range(record_table).map_err(anyhow::Error::from),
             limit,
             filter,
