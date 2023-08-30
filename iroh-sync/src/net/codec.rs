@@ -408,34 +408,14 @@ mod tests {
                 let res = get_messages(&bob_store, bob_replica.namespace());
                 assert_eq!(res, bob_messages);
 
-                let (alice, bob) = tokio::io::duplex(64 + num_messages);
-
-                let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-                let replica = alice_replica.clone();
-                let alice_task = tokio::task::spawn(async move {
-                    run_alice::<S, _, _>(
-                        &mut alice_writer,
-                        &mut alice_reader,
-                        &replica,
-                        bob_node_pubkey,
-                    )
-                    .await
-                });
-
-                let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-                let bob_replica_store_task = bob_store.clone();
-                let bob_task = tokio::task::spawn(async move {
-                    run_bob::<S, _, _>(
-                        &mut bob_writer,
-                        &mut bob_reader,
-                        bob_replica_store_task,
-                        alice_node_pubkey,
-                    )
-                    .await
-                });
-
-                alice_task.await??;
-                bob_task.await??;
+                run_sync(
+                    &alice_store,
+                    alice_node_pubkey,
+                    &bob_store,
+                    bob_node_pubkey,
+                    namespace.id(),
+                )
+                .await?;
 
                 let res = get_messages(&bob_store, bob_replica.namespace());
                 assert_eq!(res.len(), all_messages.len());
@@ -446,6 +426,116 @@ mod tests {
                 assert_eq!(res, all_messages);
             }
         }
+        Ok(())
+    }
+
+    async fn run_sync<S: Store>(
+        alice_store: &S,
+        alice_node_pubkey: PublicKey,
+        bob_store: &S,
+        bob_node_pubkey: PublicKey,
+        namespace: NamespaceId,
+    ) -> Result<()> {
+        let (alice, bob) = tokio::io::duplex(1024);
+
+        let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
+        let alice_replica = alice_store.open_replica(&namespace)?.unwrap();
+        let alice_task = tokio::task::spawn(async move {
+            run_alice::<S, _, _>(
+                &mut alice_writer,
+                &mut alice_reader,
+                &alice_replica,
+                bob_node_pubkey,
+            )
+            .await
+        });
+
+        let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
+        let bob_store = bob_store.clone();
+        let bob_task = tokio::task::spawn(async move {
+            run_bob::<S, _, _>(
+                &mut bob_writer,
+                &mut bob_reader,
+                bob_store,
+                alice_node_pubkey,
+            )
+            .await
+        });
+
+        alice_task.await??;
+        bob_task.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sync_timestamps_memory() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+        test_sync_timestamps(alice_store, bob_store).await
+    }
+
+    #[tokio::test]
+    async fn test_sync_timestamps_fs() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let tmpdir = tempfile::tempdir()?;
+        let alice_store = store::fs::Store::new(tmpdir.path().join("a.db"))?;
+        let bob_store = store::fs::Store::new(tmpdir.path().join("b.db"))?;
+        test_sync_timestamps(alice_store, bob_store).await
+    }
+
+    async fn test_sync_timestamps<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
+        let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
+        let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
+        let namespace = Namespace::new(&mut rng);
+        let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+
+        let author = alice_store.new_author(&mut rng)?;
+        bob_store.import_author(author.clone())?;
+
+        let key = vec![1u8];
+        let value_alice = vec![2u8];
+        let value_bob = vec![3u8];
+        // Insert into alice
+        let hash_alice = alice_replica
+            .hash_and_insert(&key, &author, &value_alice)
+            .unwrap();
+        // Insert into bob
+        let hash_bob = bob_replica
+            .hash_and_insert(&key, &author, &value_bob)
+            .unwrap();
+
+        assert_eq!(
+            get_messages(&alice_store, alice_replica.namespace()),
+            vec![(author.id(), key.clone(), hash_alice)]
+        );
+
+        assert_eq!(
+            get_messages(&bob_store, bob_replica.namespace()),
+            vec![(author.id(), key.clone(), hash_bob)]
+        );
+
+        run_sync(
+            &alice_store,
+            alice_node_pubkey,
+            &bob_store,
+            bob_node_pubkey,
+            namespace.id(),
+        )
+        .await?;
+
+        assert_eq!(
+            get_messages(&alice_store, alice_replica.namespace()),
+            vec![(author.id(), key.clone(), hash_bob)]
+        );
+
+        assert_eq!(
+            get_messages(&bob_store, bob_replica.namespace()),
+            vec![(author.id(), key.clone(), hash_bob)]
+        );
+
         Ok(())
     }
 }
