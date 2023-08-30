@@ -1,5 +1,5 @@
 //! Get requests in the context of the [`super::Downloader`].
-// TODO(@divma): error management here is a nightmare
+// error management here is a nightmare
 
 use super::Download;
 

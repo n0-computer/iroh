@@ -49,6 +49,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error, info, trace, warn};
 
+mod get;
+
 /// Download identifier.
 // Mainly for readability.
 pub type Id = u64;
@@ -86,13 +88,16 @@ impl ConcurrencyLimits {
 }
 
 /// Download requests the [`Downloader`] handles.
-#[derive(Debug)]
-pub enum Download {
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub enum DownloadKind {
     /// Download a single blob entirely.
     Blob {
         /// Blob to be downloaded.
         hash: Hash,
     },
+    /*
+     * TODO(@divma): removed for now while I get a better understanding of how to perform this
+     * download
     /// Download ranges of a blob.
     BlobRanges {
         /// Blob to be downloaded.
@@ -100,11 +105,14 @@ pub enum Download {
         /// Ranges to be downloaded from this blob.
         range_set: RangeSpec,
     },
+    */
     /// Download a collection entirely.
     Collection {
         /// Blob to be downloaded.
         hash: Hash,
     },
+    /*
+     * TODO(@divma): unsure if we want this or not. Removing it for now
     /// Download ranges of a collection.
     CollectionRanges {
         /// Blob to be downloaded.
@@ -112,31 +120,32 @@ pub enum Download {
         /// Sequence of ranges to be downloaded from this collection.
         range_set_seq: RangeSpecSeq,
     },
+    */
 }
 
-impl Download {
+impl DownloadKind {
     /// Get the requested hash.
     const fn hash(&self) -> &Hash {
         match self {
-            Download::Blob { hash }
-            | Download::BlobRanges { hash, .. }
-            | Download::Collection { hash }
-            | Download::CollectionRanges { hash, .. } => hash,
+            DownloadKind::Blob { hash }
+            // | Download::BlobRanges { hash, .. }
+            | DownloadKind::Collection { hash }
+            /*| Download::CollectionRanges { hash, .. }*/ => hash,
         }
     }
 
     /// Get the ranges this download is requesting.
     fn ranges(&self) -> RangeSpecSeq {
         match self {
-            Download::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
-            Download::BlobRanges { range_set, .. } => {
-                RangeSpecSeq::from_ranges([range_set.to_chunk_ranges()])
-            }
-            Download::Collection { hash } => RangeSpecSeq::all(),
-            Download::CollectionRanges {
-                hash,
-                range_set_seq,
-            } => range_set_seq.clone(),
+            DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
+            // Download::BlobRanges { range_set, .. } => {
+            //     RangeSpecSeq::from_ranges([range_set.to_chunk_ranges()])
+            // }
+            DownloadKind::Collection { hash } => RangeSpecSeq::all(),
+            // Download::CollectionRanges {
+            //     hash,
+            //     range_set_seq,
+            // } => range_set_seq.clone(),
         }
     }
 }
@@ -178,31 +187,20 @@ impl std::future::Future for DownloadHandle {
 #[derive(Debug)]
 pub struct Downloader;
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct DownloadInfo {
-    /// Kind of download we are performing. This maintains the intent as registerd with the
-    /// downloader.
-    // NOTE: this is useful and necessary because the wire request associated to a download will be
-    // different in different instants depending on what local data we already have
-    kind: Download,
+    /// Kind of download.
+    kind: DownloadKind,
     /// How many times can this request be attempted again before declearing it failed.
-    // TODO(@divma): we likely want to distinguish between io/transport errors and unexpected
-    // conditions/miss-behaviours such as the source not having the requested data, decoding
-    // errors, etc. Transport errors could allow for more attempts than serious errors such as the
-    // source sending that that can't be decoded, or not having the requested data.
     remaining_retries: u8,
     /// oneshot to return the download result back to the requester.
-    // TODO(@divma): download futures return the id of the intent they belong to so that it can be
-    // removed afterwards.
-    // problem with this is that a download future could relate to multiple intents. And in the
-    // future one intent can have multiple download futures if we paralelize large collection
-    // downloads.
+    #[debug(skip)]
     sender: oneshot::Sender<DownloadResult>,
 }
 
 enum Message {
     Start {
-        kind: Download,
+        kind: DownloadKind,
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
     },
@@ -211,34 +209,29 @@ enum Message {
     },
 }
 
-/// Information about a request.
-#[derive(Debug)]
-struct RequestInfo {
-    /// Ids of intents ([`Download`]) associated with this request.
+/// Information about a request being processed.
+#[derive(derive_more::Debug)]
+struct ActiveRequestInfo {
+    /// Ids of intents associated with this request.
     intents: Vec<Id>,
-    /// State of the request.
-    state: RequestState,
+    /// Token used to cancel the future doing the request.
+    #[debug(skip)]
+    cancellation: CancellationToken,
+    /// Peer doing this request attempt.
+    peer: PublicKey,
 }
 
+/// Information about a request that has not started.
 #[derive(derive_more::Debug)]
-enum RequestState {
-    /// Request has not yet started.
-    Scheduled {
-        /// Key to manage the delay associated with this scheduled request.
-        #[debug(skip)]
-        delay_key: delay_queue::Key,
-        /// If this attempt was scheduled with a known potential peer, this is stored here to
-        /// prevent another query to the [`AvailabilityRegistry`].
-        next_peer: Option<PublicKey>,
-    },
-    /// Request is underway.
-    Active {
-        /// Token used to cancel the future doing the request.
-        #[debug(skip)]
-        cancellation: CancellationToken,
-        /// Peer doing this request attempt.
-        peer: PublicKey,
-    },
+struct PendingRequestInfo {
+    /// Ids of intents associated with this request.
+    intents: Vec<Id>,
+    /// Key to manage the delay associated with this scheduled request.
+    #[debug(skip)]
+    delay_key: delay_queue::Key,
+    /// If this attempt was scheduled with a known potential peer, this is stored here to
+    /// prevent another query to the [`AvailabilityRegistry`].
+    next_peer: Option<PublicKey>,
 }
 
 /// State of the connection to this peer.
@@ -254,45 +247,27 @@ enum ConnectionState {
     },
 }
 
-/// Information about a connected peer.
-#[derive(derive_more::Debug)]
-struct PeerInfo {
-    state: ConnectionState,
-    /// Number of requests scheduled for this peer.
-    scheduled_requests: usize,
-}
-impl PeerInfo {
-    fn new_dialing() -> PeerInfo {
-        PeerInfo {
-            state: ConnectionState::Dialing,
-            scheduled_requests: 0,
+impl ConnectionState {
+    fn new_connected(connection: quinn::Connection) -> ConnectionState {
+        ConnectionState::Connected {
+            connection,
+            active_requests: 0,
         }
     }
 
-    fn new_connected(connection: quinn::Connection) -> PeerInfo {
-        PeerInfo {
-            state: ConnectionState::Connected {
+    fn active_requests(&self) -> Option<usize> {
+        match self {
+            ConnectionState::Dialing => None,
+            ConnectionState::Connected {
                 connection,
-                active_requests: 0,
-            },
-            scheduled_requests: 0,
+                active_requests,
+            } => Some(*active_requests),
         }
-    }
-
-    fn assigned_requests(&self) -> usize {
-        self.scheduled_requests
-            + match &self.state {
-                ConnectionState::Dialing => 0,
-                ConnectionState::Connected {
-                    connection,
-                    active_requests,
-                } => *active_requests,
-            }
     }
 }
 
 /// Type of future that performs a download request.
-type DownloadFut = BoxFuture<'static, (Hash, RangeSpecSeq, DownloadResult)>;
+type DownloadFut = BoxFuture<'static, (DownloadKind, DownloadResult)>;
 
 #[derive(Debug)]
 struct Service<S, C, R> {
@@ -308,17 +283,19 @@ struct Service<S, C, R> {
     concurrency_limits: ConcurrencyLimits,
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
-    /// Available peers to use and their relevant information.
-    peers: HashMap<PublicKey, PeerInfo>,
+    /// Peers available to use and their relevant information.
+    peers: HashMap<PublicKey, ConnectionState>,
     /// Download requests as received by the [`Downloader`]. These requests might be underway or
     /// pending.
     registered_intents: HashMap<Id, DownloadInfo>,
     /// Requests performed for download intents. Two download requests can produce the same
     /// request. This map allows deduplication of efforts. These requests might be underway or
     /// pending.
-    current_requests: HashMap<(Hash, RangeSpecSeq), RequestInfo>,
+    current_requests: HashMap<DownloadKind, ActiveRequestInfo>,
+    /// Requests scheduled to be downloaded at a later time.
+    scheduled_requests: HashMap<DownloadKind, PendingRequestInfo>,
     /// Queue of scheduled requests.
-    scheduled_requests: delay_queue::DelayQueue<(Hash, RangeSpecSeq)>,
+    scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
     /// Downloads underway.
     in_progress_downloads: FuturesUnordered<DownloadFut>,
 }
@@ -343,11 +320,13 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             peers: HashMap::default(),
             registered_intents: HashMap::default(),
             current_requests: HashMap::default(),
-            scheduled_requests: delay_queue::DelayQueue::default(),
+            scheduled_requests: HashMap::default(),
+            scheduled_request_queue: delay_queue::DelayQueue::default(),
             in_progress_downloads: FuturesUnordered::default(),
         }
     }
 
+    /// Main loop for the service.
     async fn run(mut self) {
         loop {
             // check if we have capacity to dequeue another scheduled request
@@ -365,12 +344,11 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                         None => return self.shutdown().await,
                     }
                 }
-                Some((hash, ranges, result)) = self.in_progress_downloads.next() => {
-                    self.on_download_completed(hash, ranges, result);
+                Some((kind, result)) = self.in_progress_downloads.next() => {
+                    self.on_download_completed(kind, result);
                 }
-                Some(expired) = self.scheduled_requests.next(), if !at_capacity => {
-                    let (hash, ranges) = expired.into_inner();
-                    self.on_scheduled_request_ready(hash, ranges);
+                Some(expired) = self.scheduled_request_queue.next(), if !at_capacity => {
+                    self.on_scheduled_request_ready(expired.into_inner());
                 }
             }
         }
@@ -390,52 +368,48 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// already exists, it will be registered with it. If the request is new it will be scheduled.
     fn handle_start_download(
         &mut self,
-        kind: Download,
+        kind: DownloadKind,
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
     ) {
-        // map this intent to a download request.
-        let download_key = (*kind.hash(), kind.ranges());
-
         // register the intent
         let remaining_retries = 3; // TODO(@divma): we can receive a number of retries if we want or even a strategy
         let intent_info = DownloadInfo {
-            kind,
+            kind: kind.clone(),
             remaining_retries,
             sender,
         };
+
         self.registered_intents.insert(id, intent_info);
 
-        match self.current_requests.get_mut(&download_key) {
+        if let Some(info) = self.current_requests.get_mut(&kind) {
+            // this intent maps to a download that already exists, simply register it
+            info.intents.push(id);
+            return trace!(?kind, ?info, "intent registered with active request");
+        }
+
+        // if we are here this request is not active, check if it needs to be scheduled
+        match self.scheduled_requests.get_mut(&kind) {
             Some(info) => {
-                // this intent maps to a download that already exists, simply register it
                 info.intents.push(id);
-                let (hash, ranges) = download_key;
-                trace!(%hash, ?ranges, ?info, "intent registered with existing request");
+                trace!(?kind, ?info, "intent registered with scheduled request");
             }
             None => {
+                // prepare the peer that will be sent this request
+                let next_peer = self.get_best_candidate(kind.hash());
+
                 // since this request is new, schedule it
                 let timeout = std::time::Duration::from_millis(300);
-                let delay_key = self
-                    .scheduled_requests
-                    .insert(download_key.clone(), timeout);
+                let delay_key = self.scheduled_request_queue.insert(kind, timeout);
 
-                // prepare the peer that will be sent this request
-                let (hash, ranges) = download_key;
-                let next_peer = self.get_best_candidate(&hash);
-                if let Some(peer) = next_peer.as_ref() {
-                    // will dial if necessary and posible
-                    self.register_scheduled_request_for_peer(peer);
-                }
-                let info = RequestInfo {
-                    intents: vec![id],
-                    state: RequestState::Scheduled {
-                        delay_key,
-                        next_peer,
-                    },
+                let intents = vec![id];
+                let info = PendingRequestInfo {
+                    intents,
+                    delay_key,
+                    next_peer,
                 };
-                debug!(%hash, ?ranges, ?info, "new request scheduled");
-                self.current_requests.insert((hash, ranges), info);
+                debug!(?kind, ?info, "new request scheduled");
+                self.scheduled_requests.insert(kind, info);
             }
         }
     }
@@ -445,22 +419,25 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// Peers are selected priorizing those with an open connection and with capacity for another
     /// request, followed by peers we are currently dialing with capacity for another request.
     /// Lastly, peers not connected and not dialing are considered.
+    ///
+    /// If the selected candidate is not connected and we have capacity for another connection, a
+    /// dial is queued.
     fn get_best_candidate(&self, hash: &Hash) -> Option<PublicKey> {
         // first collect suitable candidates
         let mut candidates = self
             .availabiliy_registry
             .get_candidates(hash)
             .filter_map(|peer| {
-                match self.peers.get(peer).map(PeerInfo::assigned_requests) {
-                    Some(assigned_requests)
+                match self.peers.get(peer).map(ConnectionState::active_requests) {
+                    Some(Some(active_requests))
                         if self
                             .concurrency_limits
-                            .peer_at_request_capacity(assigned_requests) =>
+                            .peer_at_request_capacity(active_requests) =>
                     {
                         // filter out peers that at are at request capacity
                         None
                     }
-                    Some(assigned_requests) => Some((peer, Some(assigned_requests))),
+                    Some(maybe_active_requests) => Some((peer, maybe_active_requests)),
                     None => Some((peer, None)),
                 }
             })
@@ -489,30 +466,26 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         });
 
         // this is our best peer
-        candidates.pop().map(|(peer, _)| *peer)
-    }
+        let peer = candidates.pop().map(|(peer, _)| *peer)?;
 
-    /// Registers a scheduled request with the given peer.
-    ///
-    /// If the peer is not connected, a dial attempt is started if our concurrency limits allow it.
-    fn register_scheduled_request_for_peer(&mut self, peer: &PublicKey) {
-        match self.peers.get_mut(peer) {
-            Some(info) => info.scheduled_requests += 1,
-            None => {
-                if !self
-                    .concurrency_limits
-                    .at_connections_capacity(self.peers.len())
-                {
-                    debug!(%peer, "dialing peer");
-                    self.dialer.queue_dial(*peer, &iroh_bytes::protocol::ALPN);
-                    let info = PeerInfo {
-                        state: ConnectionState::Dialing,
-                        scheduled_requests: 1,
-                    };
-                } else {
-                    trace!(%peer, "required peer not dialed to maintain concurrency limits")
-                }
+        // check if the peer needs and can be dialed
+        let is_connected_or_dialing = self.peers.contains_key(&peer);
+        if !is_connected_or_dialing
+            && !self
+                .concurrency_limits
+                .at_connections_capacity(self.peers.len())
+        {
+            debug!(%peer, "dialing peer");
+            self.dialer.queue_dial(peer, &iroh_bytes::protocol::ALPN);
+            self.peers.insert(peer, ConnectionState::Dialing);
+
+            Some(peer)
+        } else {
+            if !is_connected_or_dialing {
+                trace!(%peer, "required peer not dialed to maintain concurrency limits")
             }
+
+            None
         }
     }
 
@@ -529,61 +502,43 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             return;
         };
 
-        // get the hash and ranges this intent maps to
-        let download_key = (*kind.hash(), kind.ranges());
-        let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(download_key) else {
-            unreachable!("registered intents have an associated request")
+        let remove_intent = |intents: &mut Vec<Id>, id: Id| {
+            let intent_position = intents
+                .iter()
+                .position(|&intent_id| intent_id == id)
+                .expect("associated request contains intent id");
+            intents.remove(intent_position);
         };
 
-        // remove the intent from the associated request
-        let intents = &mut occupied_entry.get_mut().intents;
-        let intent_position = intents
-            .iter()
-            .position(|&intent_id| intent_id == id)
-            .expect("associated request contains intent id");
-        intents.remove(intent_position);
-
-        // if this was the last intent associated with the request, cancel it or remove it from the
-        // schedule queue accordingly
-        if intents.is_empty() {
-            let ((hash, ranges), info) = occupied_entry.remove_entry();
-            debug!(%hash, ?ranges, ?info, "request cancelled");
-            match info.state {
-                RequestState::Scheduled { delay_key, .. } => {
-                    self.scheduled_requests.remove(&delay_key);
-                }
-                RequestState::Active { cancellation, peer } => {
-                    cancellation.cancel();
-                    if let Some(PeerInfo {
-                        state:
-                            ConnectionState::Connected {
-                                connection,
-                                active_requests,
-                            },
-                        scheduled_requests,
-                    }) = self.peers.get_mut(&peer)
-                    {
-                    } else {
-                    }
-                }
+        if let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(kind) {
+            // remove the intent from the associated request
+            let intents = &mut occupied_entry.get_mut().intents;
+            remove_intent(intents, id);
+            // if this was the last intent associated with the request cancel it
+            if intents.is_empty() {
+                occupied_entry.remove().cancellation.cancel();
             }
+        } else if let Entry::Occupied(mut occupied_entry) = self.scheduled_requests.entry(kind) {
+            // remove the intent from the associated request
+            let intents = &mut occupied_entry.get_mut().intents;
+            remove_intent(intents, id);
+            // if this was the last intent associated with the request remove it from the schedule
+            // queue
+            if intents.is_empty() {
+                let delay_key = occupied_entry.remove().delay_key;
+                self.scheduled_request_queue.remove(&delay_key);
+            }
+        } else {
+            unreachable!("registered intents have an associated request")
         }
-    }
-
-    async fn poll_schedulled(&mut self) {
-
-        // TODO(@divma): needs
-        // - connection
-        // - sender whatever that it
-        // crate::get::get(db, collection_parser, conn, hash, recursive, sender)
     }
 
     fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<quinn::Connection>) {
         match result {
             Ok(connection) => {
                 trace!(%peer, "connected to peer");
-                let peer_info = PeerInfo::new_connected(connection);
-                self.peers.insert(peer, peer_info);
+                self.peers
+                    .insert(peer, ConnectionState::new_connected(connection));
             }
             Err(err) => {
                 debug!(%peer, %err, "connection to peer failed")
@@ -591,61 +546,24 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
-    fn on_download_completed(&mut self, hash: Hash, ranges: RangeSpecSeq, result: DownloadResult) {
-        match result {
-            DownloadResult::Success => {
-                let RequestInfo { state, .. } = self
-                    .current_requests
-                    .remove(&(hash, ranges))
-                    .expect("ready request was registered");
-                if let RequestState::Active { cancellation, peer } = state {
-                } else {
-                }
-            }
-            DownloadResult::Failed => todo!(),
-        }
-        // TODO(@divma): either send the result or handle the retries
-    }
+    fn on_download_completed(&mut self, kind: DownloadKind, result: DownloadResult) {}
 
-    fn on_scheduled_request_ready(&mut self, hash: Hash, ranges: RangeSpecSeq) {
-        // TODO(@divma): coded happy paths for now
-        let request_info = self
-            .current_requests
-            .get_mut(&(hash, ranges))
-            .expect("scheduled request is registered");
-        // get the assigned peer
-        let RequestState::Scheduled {
-            delay_key,
-            next_peer,
-        } = &request_info.state
-        else {
-            unreachable!("request was scheduled")
-        };
+    fn on_scheduled_request_ready(&mut self, kind: DownloadKind) {
+        let maybe_peer = self
+            .scheduled_requests
+            .remove(&kind)
+            .expect("scheduled request is present")
+            .next_peer;
 
-        if let Some(peer) = next_peer {
-            let peer_info = self.peers.get_mut(peer).expect("assigned peer is present");
-            // TODO(@divma): assume the peer is connected for now
-            if let ConnectionState::Connected {
-                connection,
-                active_requests,
-            } = &mut peer_info.state
-            {
-                *active_requests += 1;
-                let recursive = false;
-                let sender = IgnoreProgressSender::default();
-                crate::get::get(
-                    &self.store,
-                    &self.collection_parser,
-                    connection.clone(),
-                    hash,
-                    recursive,
-                    sender,
-                );
-            } else {
-                todo!("schedulued request needs a peer that is dialing")
+        // check if we had a peer, and if their connection is ready
+        match maybe_peer.map(|peer| self.peers.get_key_value(&peer)) {
+            Some((peer, &ConnectionState::Dialing)) => {
+                // peer is not ready, check if there is a better candidate
+                let maybe_new_peer = self.get_best_candidate(kind.hash());
+                // if the peer is connected use it, if the peer is dialing consider this failed.
             }
+            None => todo!(),
         }
-        // TODO(@divma): get the request's next peer, get the connection, add the download future
     }
 
     /// Returns whether the service is at capcity to perform another concurrent request.
