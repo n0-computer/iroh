@@ -366,7 +366,7 @@ impl ReplState {
                 } else {
                     self.store.get(
                         self.doc.namespace(),
-                        GetFilter::Prefix(key.as_bytes().to_vec()),
+                        GetFilter::Key(key.as_bytes().to_vec()),
                     )?
                 };
                 for entry in entries {
