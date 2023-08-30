@@ -219,7 +219,7 @@ impl super::Store for Store {
         };
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
 
-        let record = Record::new(timestamp, len, hash.into());
+        let record = Record::new(len, hash.into());
         let id = RecordIdentifier::new(key, namespace, author, timestamp);
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
@@ -460,8 +460,8 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
             let key = (k.namespace_bytes(), k.author_bytes(), k.key());
             let record = records_table.remove(key)?;
             record.map(|record| {
-                let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
-                let record = Record::new(timestamp, len, hash.into());
+                let (_timestamp, namespace_sig, author_sig, len, hash) = record.value();
+                let record = Record::new(len, hash.into());
                 let entry = Entry::new(k.clone(), record);
                 let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
                 SignedEntry::new(entry_signature, entry)
@@ -568,7 +568,7 @@ impl Iterator for RangeIterator<'_> {
                 };
                 if fields.filter.matches(&id) {
                     // TODO: remove timestamp
-                    let record = Record::new(timestamp, len, hash.into());
+                    let record = Record::new(len, hash.into());
                     let entry = Entry::new(id.clone(), record);
                     let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
                     let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -612,7 +612,7 @@ mod tests {
                 RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
             let entry = Entry::new(
                 id.clone(),
-                Record::from_data(id.timestamp(), format!("world-{i}"), namespace.id()),
+                Record::from_data(format!("world-{i}"), namespace.id()),
             );
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(id, entry)?;
@@ -629,7 +629,7 @@ mod tests {
                 RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
             let entry = Entry::new(
                 id.clone(),
-                Record::from_data(id.timestamp(), format!("world-{i}-2"), namespace.id()),
+                Record::from_data(format!("world-{i}-2"), namespace.id()),
             );
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(id.clone(), entry)?;

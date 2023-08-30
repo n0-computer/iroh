@@ -109,7 +109,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         let mut inner = self.inner.write();
 
         let id = RecordIdentifier::new_current(key, inner.namespace.id(), author.id());
-        let record = Record::from_hash(id.timestamp(), hash, len);
+        let record = Record::from_hash(hash, len);
 
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
@@ -292,6 +292,11 @@ impl SignedEntry {
     /// Get the key of the entry.
     pub fn key(&self) -> &[u8] {
         self.entry().id().key()
+    }
+
+    /// Get the timestamp of the entry.
+    pub fn timestamp(&self) -> u64 {
+        self.entry().id().timestamp()
     }
 }
 
@@ -583,8 +588,6 @@ impl Deref for Entry {
 /// The data part of an entry in a [`Replica`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Record {
-    /// Record creation timestamp. Counted as micros since the Unix epoch.
-    timestamp: u64,
     /// Length of the data referenced by `hash`.
     len: u64,
     /// Hash of the content data.
@@ -593,12 +596,8 @@ pub struct Record {
 
 impl Record {
     /// Create a new record.
-    pub fn new(timestamp: u64, len: u64, hash: Hash) -> Self {
-        Record {
-            timestamp,
-            len,
-            hash,
-        }
+    pub fn new(len: u64, hash: Hash) -> Self {
+        Record { len, hash }
     }
 
     /// Get the length of the data addressed by this record's content hash.
@@ -611,23 +610,14 @@ impl Record {
         self.hash
     }
 
-    /// Get the timestamp of this record.
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
-    }
-
     /// Create a new record.
-    pub fn from_hash(timestamp: u64, hash: Hash, len: u64) -> Self {
-        Self::new(timestamp, len, hash)
+    pub fn from_hash(hash: Hash, len: u64) -> Self {
+        Self::new(len, hash)
     }
 
     // TODO: remove
     #[cfg(test)]
-    pub(crate) fn from_data(
-        timestamp: u64,
-        data: impl AsRef<[u8]>,
-        namespace: NamespaceId,
-    ) -> Self {
+    pub(crate) fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
         // Salted hash
         // TODO: do we actually want this?
         // TODO: this should probably use a namespace prefix if used
@@ -635,7 +625,7 @@ impl Record {
         hasher.update(namespace.as_bytes());
         hasher.update(data.as_ref());
         let hash = hasher.finalize();
-        Self::from_hash(timestamp, hash.into(), data.as_ref().len() as u64)
+        Self::from_hash(hash.into(), data.as_ref().len() as u64)
     }
 
     /// Serialize this record into a mutable byte array.
@@ -681,8 +671,7 @@ mod tests {
         let myspace = Namespace::new(&mut rng);
 
         let record_id = RecordIdentifier::new_current("/my/key", myspace.id(), alice.id());
-        let record =
-            Record::from_data(record_id.timestamp(), b"this is my cool data", myspace.id());
+        let record = Record::from_data(b"this is my cool data", myspace.id());
         let entry = Entry::new(record_id, record);
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
