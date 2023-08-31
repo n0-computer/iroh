@@ -389,6 +389,13 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
             {
                 let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
                 let key = (k.namespace_bytes(), k.author_bytes(), k.key());
+                if let Some(existing) = record_table.get(key)? {
+                    let (existing_timestamp, _n, _a, _l, _h) = existing.value();
+                    // If the existing entry is newer then the to-be inserted entry, abort now.
+                    if existing_timestamp > timestamp {
+                        return Ok(());
+                    }
+                }
                 let record = v.entry();
                 let hash = record.content_hash();
                 let value = (
@@ -646,10 +653,7 @@ mod tests {
         for i in 0..5 {
             let id =
                 RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(
-                id.clone(),
-                Record::from_data(format!("world-{i}"), namespace.id()),
-            );
+            let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(id, entry)?;
         }
@@ -663,10 +667,7 @@ mod tests {
         for i in 0..5 {
             let id =
                 RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(
-                id.clone(),
-                Record::from_data(format!("world-{i}-2"), namespace.id()),
-            );
+            let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}-2")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(id.clone(), entry)?;
             ids.push(id);

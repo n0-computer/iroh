@@ -106,25 +106,50 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         hash: Hash,
         len: u64,
     ) -> Result<(), S::Error> {
-        let mut inner = self.inner.write();
-
-        let id = RecordIdentifier::new_current(key, inner.namespace.id(), author.id());
+        let id = RecordIdentifier::new_current(key, self.namespace(), author.id());
         let record = Record::from_hash(hash, len);
 
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
-        let signed_entry = entry.sign(&inner.namespace, author);
-        inner.peer.put(id, signed_entry.clone())?;
+        let signed_entry = entry.sign(&self.inner.read().namespace, author);
+        self.insert_entry(signed_entry, InsertOrigin::Local)
+    }
+
+    /// Insert an entry into this replica which was received from a remote peer.
+    ///
+    /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
+    /// event, and insert the entry into the replica store.
+    pub fn insert_remote_entry(
+        &self,
+        entry: SignedEntry,
+        received_from: PeerIdBytes,
+    ) -> Result<(), S::Error> {
+        self.insert_entry(entry, InsertOrigin::Sync(received_from))
+    }
+
+    /// Insert a signed entry into the database.
+    fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), S::Error> {
+        let len = entry.content_len();
+        let mut inner = self.inner.write();
+        inner.peer.put(entry.id().clone(), entry.clone())?;
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
-            sender.send((InsertOrigin::Local, signed_entry)).ok();
+            sender.send((InsertOrigin::Local, entry)).ok();
         }
 
         #[cfg(feature = "metrics")]
         {
-            inc!(Metrics, new_entries_local);
-            inc_by!(Metrics, new_entries_local_size, len);
+            match origin {
+                InsertOrigin::Local => {
+                    inc!(Metrics, new_entries_local);
+                    inc_by!(Metrics, new_entries_local_size, len);
+                }
+                InsertOrigin::Sync(_) => {
+                    inc!(Metrics, new_entries_remote);
+                    inc_by!(Metrics, new_entries_remote_size, len);
+                }
+            }
         }
 
         Ok(())
@@ -150,36 +175,6 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author, timestamp: u64) -> RecordIdentifier {
         let inner = self.inner.read();
         RecordIdentifier::new(key, inner.namespace.id(), author.id(), timestamp)
-    }
-
-    /// Insert an entry into this replica which was received from a remote peer.
-    ///
-    /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
-    /// event, and insert the entry into the replica store.
-    pub fn insert_remote_entry(
-        &self,
-        entry: SignedEntry,
-        received_from: PeerIdBytes,
-    ) -> anyhow::Result<()> {
-        entry.verify()?;
-        let mut inner = self.inner.write();
-        let id = entry.entry.id.clone();
-        inner.peer.put(id, entry.clone()).map_err(Into::into)?;
-        drop(inner);
-
-        if let Some(sender) = self.on_insert_sender.read().as_ref() {
-            sender
-                .send((InsertOrigin::Sync(received_from), entry.clone()))
-                .ok();
-        }
-
-        #[cfg(feature = "metrics")]
-        {
-            inc!(Metrics, new_entries_remote);
-            inc_by!(Metrics, new_entries_remote_size, entry.content_len());
-        }
-
-        Ok(())
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
@@ -615,17 +610,11 @@ impl Record {
         Self::new(len, hash)
     }
 
-    // TODO: remove
     #[cfg(test)]
-    pub(crate) fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
-        // Salted hash
-        // TODO: do we actually want this?
-        // TODO: this should probably use a namespace prefix if used
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(namespace.as_bytes());
-        hasher.update(data.as_ref());
-        let hash = hasher.finalize();
-        Self::from_hash(hash.into(), data.as_ref().len() as u64)
+    pub(crate) fn from_data(data: impl AsRef<[u8]>) -> Self {
+        let len = data.as_ref().len() as u64;
+        let hash = Hash::new(data);
+        Self::from_hash(hash, len)
     }
 
     /// Serialize this record into a mutable byte array.
@@ -638,6 +627,7 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use rand_core::SeedableRng;
 
     use crate::{
         ranger::{Range, Store as _},
@@ -670,7 +660,7 @@ mod tests {
         let myspace = Namespace::new(&mut rng);
 
         let record_id = RecordIdentifier::new_current("/my/key", myspace.id(), alice.id());
-        let record = Record::from_data(b"this is my cool data", myspace.id());
+        let record = Record::from_data(b"this is my cool data");
         let entry = Entry::new(record_id, record);
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
@@ -914,6 +904,64 @@ mod tests {
                     < RecordIdentifier::new_current(k1, n1, a1)
             );
         }
+    }
+
+    #[test]
+    fn test_timestamps_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_timestamps(store)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_timestamps_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_timestamps(store)?;
+        Ok(())
+    }
+
+    fn test_timestamps<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+        let author = store.new_author(&mut rng)?;
+
+        let key = b"hello";
+        let value = b"world";
+        let entry = {
+            let timestamp = 2;
+            let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
+            let record = Record::from_data(&value);
+            Entry::new(id, record).sign(&namespace, &author)
+        };
+
+        replica
+            .insert_entry(entry.clone(), InsertOrigin::Local)
+            .unwrap();
+        let res = store
+            .get_by_key_and_author(namespace.id(), author.id(), key)?
+            .unwrap();
+        assert_eq!(res, entry);
+
+        let entry2 = {
+            let timestamp = 1;
+            let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
+            let record = Record::from_data(&value);
+            Entry::new(id, record).sign(&namespace, &author)
+        };
+
+        replica
+            .insert_entry(entry2.clone(), InsertOrigin::Local)
+            .unwrap();
+        let res = store
+            .get_by_key_and_author(namespace.id(), author.id(), key)?
+            .unwrap();
+        assert_eq!(res, entry);
+
+        Ok(())
     }
 
     #[test]
