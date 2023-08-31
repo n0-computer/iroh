@@ -2,7 +2,7 @@
 
 use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use derive_more::From;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
@@ -244,13 +244,15 @@ impl Store {
     fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, &[][..]);
-        let mut end_author = *author;
-        if !increment_by_one(&mut end_author) {
-            bail!("Invalid AuthorId")
-        }
-
-        let end = (namespace.as_bytes(), &end_author, &[][..]);
-        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
+        let end = increment_by_one_if_possible(&start);
+        RangeIterator::with_range(
+            &self.db,
+            |table| match end {
+                Some(end) => table.range(start..(&end.0, &end.1, &end.2)),
+                None => table.range(start..),
+            },
+            RangeFilter::None,
+        )
     }
 
     fn get_by_author_and_prefix(
@@ -261,13 +263,15 @@ impl Store {
     ) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, prefix.as_ref());
-        let mut end_prefix = prefix.as_ref().to_vec();
-        let mut end_author = *author;
-        if !increment_by_one(&mut end_prefix) && !increment_by_one(&mut end_author) {
-            bail!("Invalid AuthorId")
-        }
-        let end = (namespace.as_bytes(), &end_author, &end_prefix[..]);
-        RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
+        let end = increment_by_one_if_possible(&start);
+        RangeIterator::with_range(
+            &self.db,
+            |table| match end {
+                Some(end) => table.range(start..(&end.0, &end.1, &end.2)),
+                None => table.range(start..),
+            },
+            RangeFilter::None,
+        )
     }
 
     fn get_by_prefix(
@@ -298,6 +302,23 @@ fn increment_by_one(value: &mut [u8]) -> bool {
         }
     }
     false
+}
+
+fn increment_by_one_if_possible<'a>(
+    value: &'a RecordsId<'a>,
+) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
+    let mut namespace = *value.0;
+    let mut author = *value.1;
+    let mut prefix = value.2.to_vec();
+    if !increment_by_one(&mut prefix)
+        && !increment_by_one(&mut author)
+        && !increment_by_one(&mut namespace)
+    {
+        // we have all-255 keys, so open-ended range
+        None
+    } else {
+        Some((namespace, author, prefix))
+    }
 }
 
 /// [`Namespace`] specific wrapper around the [`Store`].
