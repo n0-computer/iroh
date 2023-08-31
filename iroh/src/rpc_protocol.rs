@@ -196,9 +196,8 @@ impl RpcMsg<ProviderService> for VersionRequest {
 
 /// List connection information about all the nodes we know about
 ///
-/// These can be nodes that have been explicitly connected to, nodes we
-/// have passed in as part of the [`iroh_net::PeerMap`], or nodes that
-/// have connected to us.
+/// These can be nodes that we have explicitly connected to or nodes
+/// that have initiated connections to us.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectionsRequest;
 

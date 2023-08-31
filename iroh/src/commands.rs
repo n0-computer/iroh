@@ -556,7 +556,7 @@ fn fmt_connection(info: iroh_net::magic_endpoint::NodeInfo) {
         }
     }
     println!("\tOther available address and their latencies:");
-    if info.addrs.len() == 0 {
+    if info.addrs.is_empty() {
         println!("\t\tNone");
     } else {
         for (addr, latency) in info.addrs.iter() {
