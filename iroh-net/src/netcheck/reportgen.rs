@@ -750,7 +750,7 @@ async fn run_probe(
         ));
     }
 
-    let derp_addr = get_derp_addr(&derp_node, probe.proto())
+    let derp_region = get_derp_addr(&derp_node, probe.proto())
         .await
         .context("no derp node addr")
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
@@ -778,9 +778,9 @@ async fn run_probe(
     match probe {
         Probe::StunIpv4 { .. } => {
             if let Some(ref sock) = stun_sock4 {
-                let n = sock.send_to(&req, derp_addr).await;
+                let n = sock.send_to(&req, derp_region).await;
                 inc!(NetcheckMetrics, stun_packets_sent_ipv4);
-                debug!(%derp_addr, send_res=?n, %txid, "sending probe StunIpv4");
+                debug!(%derp_region, send_res=?n, %txid, "sending probe StunIpv4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;
@@ -795,9 +795,9 @@ async fn run_probe(
         }
         Probe::StunIpv6 { .. } => {
             if let Some(ref pc6) = stun_sock6 {
-                let n = pc6.send_to(&req, derp_addr).await;
+                let n = pc6.send_to(&req, derp_region).await;
                 inc!(NetcheckMetrics, stun_packets_sent_ipv6);
-                debug!(%derp_addr, snd_res=?n, %txid, "sending probe StunIpv6");
+                debug!(%derp_region, snd_res=?n, %txid, "sending probe StunIpv6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv6_can_send = true;
@@ -814,7 +814,7 @@ async fn run_probe(
             if let Some(ref pinger) = pinger {
                 match time::timeout(
                     ICMP_PROBE_TIMEOUT,
-                    measure_icmp_latency(pinger, derp_node, derp_addr),
+                    measure_icmp_latency(pinger, derp_node, derp_region),
                 )
                 .await
                 {

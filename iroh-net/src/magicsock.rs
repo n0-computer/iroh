@@ -840,7 +840,7 @@ enum ActorMessage {
     CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     EnqueueCallMeMaybe {
-        derp_addr: u16,
+        derp_region: u16,
         endpoint_id: usize,
     },
     SendDiscoMessage {
@@ -1029,10 +1029,10 @@ impl Actor {
                 self.re_stun(reason).await;
             }
             ActorMessage::EnqueueCallMeMaybe {
-                derp_addr,
+                derp_region,
                 endpoint_id,
             } => {
-                self.enqueue_call_me_maybe(derp_addr, endpoint_id).await;
+                self.enqueue_call_me_maybe(derp_region, endpoint_id).await;
             }
             ActorMessage::RebindAll(s) => {
                 self.rebind_all().await;
@@ -1136,8 +1136,8 @@ impl Actor {
 
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key_mut(&dm.src) {
             Some(ep) => {
-                if ep.derp_addr().is_none() {
-                    ep.add_derp_addr(region_id);
+                if ep.derp_region().is_none() {
+                    ep.add_derp_region(region_id);
                 }
                 ep.quic_mapped_addr
             }
@@ -1147,7 +1147,7 @@ impl Actor {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key(),
                     public_key: dm.src,
-                    derp_addr: Some(region_id),
+                    derp_region: Some(region_id),
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
@@ -1253,16 +1253,16 @@ impl Actor {
                 );
 
                 match ep.get_send_addrs().await {
-                    Ok((Some(udp_addr), Some(derp_addr))) => {
+                    Ok((Some(udp_addr), Some(derp_region))) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
-                        self.send_derp(derp_addr, public_key, Self::split_packets(transmits));
+                        self.send_derp(derp_region, public_key, Self::split_packets(transmits));
 
                         if let Err(err) = res {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
-                    Ok((None, Some(derp_addr))) => {
-                        self.send_derp(derp_addr, public_key, Self::split_packets(transmits));
+                    Ok((None, Some(derp_region))) => {
+                        self.send_derp(derp_region, public_key, Self::split_packets(transmits));
                     }
                     Ok((Some(udp_addr), None)) => {
                         if let Err(err) = self.send_raw(udp_addr, transmits).await {
@@ -1711,12 +1711,12 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
-    async fn enqueue_call_me_maybe(&mut self, derp_addr: u16, endpoint_id: usize) {
+    async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
         let endpoint = self.peer_map.by_id(&endpoint_id);
         if endpoint.is_none() {
             warn!(
                 "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
-                derp_addr, endpoint_id
+                derp_region, endpoint_id
             );
             return;
         }
@@ -1739,7 +1739,7 @@ impl Actor {
                         info!("STUN done; sending call-me-maybe",);
                         msg_sender
                             .send(ActorMessage::EnqueueCallMeMaybe {
-                                derp_addr,
+                                derp_region,
                                 endpoint_id,
                             })
                             .await
@@ -1762,13 +1762,13 @@ impl Actor {
                 warn!("sending call me maybe to {public_key:?}");
                 if let Err(err) = msg_sender
                     .send(ActorMessage::SendDiscoMessage {
-                        dst: SendAddr::Derp(derp_addr),
+                        dst: SendAddr::Derp(derp_region),
                         dst_key: public_key,
                         msg,
                     })
                     .await
                 {
-                    warn!("failed to send disco message to {}: {:?}", derp_addr, err);
+                    warn!("failed to send disco message to {}: {:?}", derp_region, err);
                 }
             });
         }
@@ -2050,7 +2050,7 @@ impl Actor {
                         msock_sender: self.inner.actor_sender.clone(),
                         msock_public_key: self.inner.public_key(),
                         public_key: sender,
-                        derp_addr: src.derp_region(),
+                        derp_region: src.derp_region(),
                     });
                 }
                 self.handle_ping(ping, &sender, src, derp_node_src).await;
@@ -2216,7 +2216,7 @@ impl Actor {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key(),
                     public_key: n.key,
-                    derp_addr: n.derp,
+                    derp_region: n.derp,
                 });
             }
 

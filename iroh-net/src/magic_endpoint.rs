@@ -296,7 +296,7 @@ impl MagicEndpoint {
     /// with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
-    /// to the internal [`iroh_net::netmap::NetworkMap`] in [`MagicEndpoint::add_known_addrs`]), so
+    /// to the internal [`crate::netmap::NetworkMap`] in [`MagicEndpoint::add_known_addrs`]), so
     /// these connections are not necessarily active connections.
     pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
         self.msock.tracked_endpoints().await
