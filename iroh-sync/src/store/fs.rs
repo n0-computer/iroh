@@ -304,9 +304,7 @@ fn increment_by_one(value: &mut [u8]) -> bool {
     false
 }
 
-fn prefix_range_end<'a>(
-    value: &'a RecordsId<'a>,
-) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
+fn prefix_range_end<'a>(value: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
     let mut namespace = *value.0;
     let mut author = *value.1;
     let mut prefix = value.2.to_vec();
