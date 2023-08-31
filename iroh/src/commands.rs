@@ -323,9 +323,9 @@ impl NodeCommands {
             Self::Connections => {
                 let mut connections = client.server_streaming(ConnectionsRequest).await?;
                 println!("node id\t\tderp region\tconn type\tlatency");
-                while let Some(Ok(Ok(ConnectionsResponse { node_info }))) = connections.next().await
+                while let Some(Ok(Ok(ConnectionsResponse { conn_info }))) = connections.next().await
                 {
-                    fmt_connection(node_info);
+                    fmt_connection(conn_info);
                 }
             }
             Self::Shutdown { force } => {
@@ -533,7 +533,7 @@ impl FromStr for RequestTokenOptions {
     }
 }
 
-fn fmt_connection(info: iroh_net::magic_endpoint::NodeInfo) {
+fn fmt_connection(info: iroh_net::magic_endpoint::ConnectionInfo) {
     let node_id = fmt_short(info.public_key);
     let region = info
         .derp_region

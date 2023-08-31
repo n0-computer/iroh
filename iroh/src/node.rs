@@ -1171,19 +1171,18 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
-        let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
-            match self.inner.endpoint.node_infos().await {
-                Ok(mut node_infos) => {
-                    node_infos.sort_by_key(|n| n.public_key.to_string());
-                    for node_info in node_infos {
-                        tx2.send_async(Ok(ConnectionsResponse { node_info }))
+            match self.inner.endpoint.connection_infos().await {
+                Ok(mut conn_infos) => {
+                    conn_infos.sort_by_key(|n| n.public_key.to_string());
+                    for conn_info in conn_infos {
+                        tx.send_async(Ok(ConnectionsResponse { conn_info }))
                             .await
                             .ok();
                     }
                 }
                 Err(e) => {
-                    tx2.send_async(Err(e.into())).await.ok();
+                    tx.send_async(Err(e.into())).await.ok();
                 }
             }
         });

@@ -204,8 +204,8 @@ pub struct ConnectionsRequest;
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectionsResponse {
-    /// Hash of the collection
-    pub node_info: iroh_net::magic_endpoint::NodeInfo,
+    /// Information about a connection
+    pub conn_info: iroh_net::magic_endpoint::ConnectionInfo,
 }
 
 impl Msg<ProviderService> for ConnectionsRequest {
