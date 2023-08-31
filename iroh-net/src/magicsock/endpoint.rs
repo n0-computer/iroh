@@ -1169,13 +1169,16 @@ struct EndpointState {
 }
 
 /// The type of connection we have to the endpoint.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
+    #[display("direct")]
     Direct(SocketAddr),
     /// Relay connection over DERP
+    #[display("relay")]
     Relay(u16),
     /// We have no verified connection to this PublicKey
+    #[display("none")]
     None,
 }
 

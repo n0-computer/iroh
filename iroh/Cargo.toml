@@ -61,13 +61,17 @@ toml = { version = "0.7.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 url = { version = "2.4", features = ["serde"] }
 colored = { version = "2.0.4", optional = true }
+duration-string = { version = "0.3.0", optional = true }
 
 # Examples
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional = true }
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection", "shell-words", "shellexpand", "rustyline", "colored", "toml"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase",
+"quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread",
+"tracing-subscriber", "flat-db", "mem-db", "iroh-collection", "shell-words",
+"shellexpand", "rustyline", "colored", "toml", "duration-string"]
 metrics = ["iroh-metrics"]
 mem-db = []
 flat-db = []

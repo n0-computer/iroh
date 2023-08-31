@@ -9,12 +9,11 @@ use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::key::{PublicKey, SecretKey};
-use iroh_net::magicsock::ConnectionType;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
-use self::sync::{AuthorCommands, DocCommands};
+use self::sync::{fmt_short, AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -323,11 +322,10 @@ impl NodeCommands {
         match self {
             Self::Connections => {
                 let mut connections = client.server_streaming(ConnectionsRequest).await?;
-                println!("Connections:");
+                println!("node id\t\tderp region\tconn type\tlatency");
                 while let Some(Ok(Ok(ConnectionsResponse { node_info }))) = connections.next().await
                 {
                     fmt_connection(node_info);
-                    println!();
                 }
             }
             Self::Shutdown { force } => {
@@ -536,23 +534,15 @@ impl FromStr for RequestTokenOptions {
 }
 
 fn fmt_connection(info: iroh_net::magic_endpoint::NodeInfo) {
-    println!("\tNodeId: {}", info.public_key);
-    println!(
-        "\tDERP region: {}",
-        info.derp_region
-            .map_or(String::from("None"), |region| region.to_string())
-    );
-    match info.conn_type {
-        ConnectionType::None => println!("\tNo connection"),
-        ConnectionType::Relay(_) => println!(
-            "\tConnected via DERP relay, with a latency of {:?}",
-            info.latency
-        ),
-        ConnectionType::Direct(_) => {
-            println!(
-                "\tDirect connection via UDP, with a latency of {:?}",
-                info.latency
-            )
-        }
-    }
+    let node_id = fmt_short(info.public_key);
+    let region = info
+        .derp_region
+        .map_or(String::new(), |region| region.to_string());
+    let conn_type = info.conn_type.to_string();
+    let latency = match info.latency {
+        Some(latency) => duration_string::DurationString::new(latency).into(),
+        None => String::from("unknown"),
+    };
+
+    println!("{node_id}\t{region}\t\t{conn_type}\t\t{latency}");
 }
