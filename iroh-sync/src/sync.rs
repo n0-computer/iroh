@@ -953,9 +953,7 @@ mod tests {
             Entry::new(id, record).sign(&namespace, &author)
         };
 
-        replica
-            .insert_entry(entry2, InsertOrigin::Local)
-            .unwrap();
+        replica.insert_entry(entry2, InsertOrigin::Local).unwrap();
         let res = store
             .get_by_key_and_author(namespace.id(), author.id(), key)?
             .unwrap();
