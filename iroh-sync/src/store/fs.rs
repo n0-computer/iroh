@@ -2,7 +2,7 @@
 
 use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use derive_more::From;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
@@ -244,16 +244,12 @@ impl Store {
     fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, &[][..]);
-        let mut author2 = *author;
-        // move to next possible author, which marks the end of the range
-        // TODO: is there a better way to define the range end?
-        for char in author2.iter_mut().rev() {
-            if *char != 255 {
-                *char += 1;
-                break;
-            }
+        let mut end_author = *author;
+        if !increment_by_one(&mut end_author) {
+            bail!("Invalid AuthorId")
         }
-        let end = (namespace.as_bytes(), &author2, &[][..]);
+
+        let end = (namespace.as_bytes(), &end_author, &[][..]);
         RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
     }
 
@@ -266,15 +262,13 @@ impl Store {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, prefix.as_ref());
         let mut end_prefix = prefix.as_ref().to_vec();
-        // move to next possible key after the prefix, which marks the end of the range
-        // TODO: is there a better way to define the range end?
-        for char in end_prefix.iter_mut().rev() {
-            if *char != 255 {
-                *char += 1;
-                break;
+        let mut end_author = *author;
+        if !increment_by_one(&mut end_prefix) {
+            if !increment_by_one(&mut end_author) {
+                bail!("Invalid AuthorId")
             }
         }
-        let end = (namespace.as_bytes(), author, &end_prefix[..]);
+        let end = (namespace.as_bytes(), &end_author, &end_prefix[..]);
         RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
     }
 
@@ -293,6 +287,19 @@ impl Store {
     fn get_all(&self, namespace: NamespaceId) -> Result<RangeIterator<'_>> {
         RangeIterator::namespace(&self.db, &namespace, RangeFilter::None)
     }
+}
+
+/// Increment a byte string by one, by incrementing the last byte that is not 255 by one.
+///
+/// Returns false if all bytes are 255.
+fn increment_by_one(value: &mut [u8]) -> bool {
+    for char in value.iter_mut().rev() {
+        if *char != 255 {
+            *char += 1;
+            return true;
+        }
+    }
+    false
 }
 
 /// [`Namespace`] specific wrapper around the [`Store`].
