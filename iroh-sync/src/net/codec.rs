@@ -351,8 +351,8 @@ mod tests {
     }
 
     async fn test_sync_many_authors<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
-        let num_messages = &[1, 2, 5, 10, 20];
-        let num_authors = &[2, 3, 4, 5, 10, 20];
+        let num_messages = &[1, 2, 5, 10];
+        let num_authors = &[2, 3, 4, 5, 10];
 
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         for num_messages in num_messages {

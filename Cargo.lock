@@ -2140,6 +2140,7 @@ dependencies = [
  "serde",
  "tempfile",
  "test-strategy",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tokio-util",

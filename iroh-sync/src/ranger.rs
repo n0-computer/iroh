@@ -400,13 +400,17 @@ where
 
     /// Processes an incoming message and produces a response.
     /// If terminated, returns `None`
+    ///
+    /// `validate_cb` is called before an entry received from the remote is inserted into the store.
+    /// It must return true if the entry is valid and should be stored, and false otherwise
+    /// (which means the entry will be dropped and not stored).
     pub fn process_message<F>(
         &mut self,
         message: Message<K, V>,
-        cb: F,
+        validate_cb: F,
     ) -> Result<Option<Message<K, V>>, S::Error>
     where
-        F: Fn(K, V),
+        F: Fn(&S, K, V) -> bool,
     {
         let mut out = Vec::new();
 
@@ -453,8 +457,9 @@ where
 
             // Store incoming values
             for (k, v) in values {
-                cb(k.clone(), v.clone());
-                self.store.put(k, v)?;
+                if validate_cb(&self.store, k.clone(), v.clone()) {
+                    self.store.put(k, v)?;
+                }
             }
 
             if let Some(diff) = diff {
@@ -616,8 +621,7 @@ where
     // }
 
     /// Returns a refernce to the underlying store.
-    #[cfg(test)]
-    pub fn store(&self) -> &S {
+    pub(crate) fn store(&self) -> &S {
         &self.store
     }
 }
@@ -979,9 +983,9 @@ mod tests {
             rounds += 1;
             alice_to_bob.push(msg.clone());
 
-            if let Some(msg) = bob.process_message(msg, |_, _| {}).unwrap() {
+            if let Some(msg) = bob.process_message(msg, |_, _, _| true).unwrap() {
                 bob_to_alice.push(msg.clone());
-                next_to_bob = alice.process_message(msg, |_, _| {}).unwrap();
+                next_to_bob = alice.process_message(msg, |_, _, _| true).unwrap();
             }
         }
         let res = SyncResult {

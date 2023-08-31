@@ -179,7 +179,7 @@ impl<S: Store> SyncEngine<S> {
         let hash = bao_store.import_bytes(value.into()).await?;
         replica
             .insert(&key, &author, hash, len as u64)
-            .map_err(Into::into)?;
+            .map_err(anyhow::Error::from)?;
         let entry = self
             .store
             .get_by_key_and_author(replica.namespace(), author.id(), &key)?
