@@ -1,9 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
-    client::quic::Iroh,
+    client::quic::{Doc, Iroh},
     rpc_protocol::{DocTicket, ShareMode},
     sync_engine::LiveEvent,
 };
@@ -79,11 +79,6 @@ pub enum DocCommands {
         /// Filter by author.
         #[clap(short, long)]
         author: Option<AuthorId>,
-        /// If true, old entries will be included. By default only the latest value for each key is
-        /// shown.
-        #[clap(short, long)]
-        old: bool,
-
         /// Also print the content for each entry (but only if smaller than 1MB and valid UTf-8)
         #[clap(short, long)]
         content: bool,
@@ -100,10 +95,6 @@ pub enum DocCommands {
         /// Filter by author.
         #[clap(short, long)]
         author: Option<AuthorId>,
-        /// If true, old entries will be included. By default only the latest value for each key is
-        /// shown.
-        #[clap(short, long)]
-        old: bool,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
     },
@@ -195,62 +186,38 @@ impl DocCommands {
                 key,
                 prefix,
                 author,
-                old,
                 content,
             } => {
                 let doc = iroh.get_doc(env.doc(doc)?).await?;
-                let mut filter = match old {
-                    true => GetFilter::all(),
-                    false => GetFilter::latest(),
-                };
-                if let Some(author) = author {
-                    filter = filter.with_author(author);
-                };
-                let filter = match prefix {
-                    true => filter.with_prefix(key),
-                    false => filter.with_key(key),
+                let key = key.as_bytes().to_vec();
+                let filter = match (author, prefix) {
+                    (None, false) => GetFilter::Key(key),
+                    (None, true) => GetFilter::Prefix(key),
+                    (Some(author), true) => GetFilter::AuthorAndPrefix(author, key),
+                    (Some(author), false) => {
+                        // Special case: Author and key, this means single entry.
+                        let entry = doc
+                            .get_one(author, key)
+                            .await?
+                            .ok_or_else(|| anyhow!("Entry not found"))?;
+                        print_entry(&doc, &entry, content).await?;
+                        return Ok(());
+                    }
                 };
 
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(&entry));
-                    if content {
-                        if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
-                            match doc.get_content_bytes(entry.content_hash()).await {
-                                Ok(content) => match String::from_utf8(content.into()) {
-                                    Ok(s) => println!("{s}"),
-                                    Err(_err) => println!("<invalid UTF-8>"),
-                                },
-                                Err(err) => println!("<failed to get content: {err}>"),
-                            }
-                        } else {
-                            println!(
-                                "<skipping content with len {}: too large to print>",
-                                HumanBytes(entry.content_len())
-                            )
-                        }
-                    }
-                    println!();
+                    print_entry(&doc, &entry, content).await?;
                 }
             }
             Self::Keys {
                 doc,
-                old,
                 prefix,
                 author,
             } => {
                 let doc = iroh.get_doc(env.doc(doc)?).await?;
-                let filter = match old {
-                    true => GetFilter::all(),
-                    false => GetFilter::latest(),
-                };
-                let mut filter = match prefix {
-                    Some(prefix) => filter.with_prefix(prefix),
-                    None => filter,
-                };
-                if let Some(author) = author {
-                    filter = filter.with_author(author);
-                };
+                let filter = GetFilter::author_prefix(author, prefix);
+
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
@@ -334,4 +301,25 @@ pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
     text.make_ascii_lowercase();
     format!("{}…", &text)
+}
+
+async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<()> {
+    println!("{}", fmt_entry(entry));
+    if content {
+        if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
+            match doc.get_content_bytes(entry.content_hash()).await {
+                Ok(content) => match String::from_utf8(content.into()) {
+                    Ok(s) => println!("{s}"),
+                    Err(_err) => println!("<invalid UTF-8>"),
+                },
+                Err(err) => println!("<failed to get content: {err}>"),
+            }
+        } else {
+            println!(
+                "<skipping content with len {}: too large to print>",
+                HumanBytes(entry.content_len())
+            )
+        }
+    }
+    Ok(())
 }

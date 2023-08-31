@@ -219,7 +219,9 @@ where
 
     /// Returns all items in the given range
     fn get_range(&self, range: Range<K>) -> Result<Self::RangeIterator<'_>, Self::Error>;
-    fn remove(&mut self, key: &K) -> Result<Vec<V>, Self::Error>;
+
+    /// Remove an entry from the store.
+    fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error>;
 
     type AllIterator<'a>: Iterator<Item = Result<(K, V), Self::Error>>
     where
@@ -300,10 +302,8 @@ where
         })
     }
 
-    fn remove(&mut self, key: &K) -> Result<Vec<V>, Self::Error> {
-        // No versions stored
-
-        let res = self.data.remove(key).into_iter().collect();
+    fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error> {
+        let res = self.data.remove(key);
         Ok(res)
     }
 
@@ -1206,8 +1206,7 @@ mod tests {
         #[strategy(test_set())] contents: BTreeMap<String, ()>,
         #[strategy(test_range())] range: Range<String>,
     ) {
-        let (expected, actual) =
-            store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents.clone(), range.clone());
+        let (expected, actual) = store_get_ranges_test::<SimpleStore<_, _>, _, _>(contents, range);
         prop_assert_eq!(expected, actual);
     }
 }

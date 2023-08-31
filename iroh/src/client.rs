@@ -16,9 +16,9 @@ use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocCreateRequest,
-    DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
-    ProviderService, ShareMode, StatsGetRequest,
+    DocGetOneRequest, DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest,
+    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
+    DocTicket, ProviderService, ShareMode, StatsGetRequest,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
@@ -158,14 +158,16 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_latest(&self, author_id: AuthorId, key: Vec<u8>) -> Result<Entry> {
-        let filter = GetFilter::latest().with_key(key).with_author(author_id);
-        let mut stream = self.get(filter).await?;
-        let entry = stream
-            .next()
-            .await
-            .unwrap_or_else(|| Err(anyhow!("not found")))?;
-        Ok(entry)
+    pub async fn get_one(&self, author: AuthorId, key: Vec<u8>) -> Result<Option<Entry>> {
+        let res = self
+            .rpc
+            .rpc(DocGetOneRequest {
+                author,
+                key,
+                doc_id: self.id,
+            })
+            .await??;
+        Ok(res.entry.map(|entry| entry.into()))
     }
 
     /// Get entries.

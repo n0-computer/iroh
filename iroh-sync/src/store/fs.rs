@@ -2,13 +2,12 @@
 
 use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+use derive_more::From;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
-use rand_core::CryptoRngCore;
 use redb::{
-    AccessGuard, Database, MultimapRange, MultimapTableDefinition, MultimapValue,
-    ReadOnlyMultimapTable, ReadTransaction, ReadableMultimapTable, ReadableTable, StorageError,
+    Database, Range as TableRange, ReadOnlyTable, ReadTransaction, ReadableTable, StorageError,
     TableDefinition,
 };
 
@@ -20,8 +19,6 @@ use crate::{
         Replica, SignedEntry,
     },
 };
-
-use self::ouroboros_impl_range_all_iterator::BorrowedMutFields;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -46,20 +43,19 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("namespaces-1");
 
 // Records
-// Multimap
+// Table
 // Key: ([u8; 32], [u8; 32], Vec<u8>) # (NamespaceId, AuthorId, Key)
-// Values:
-//    (u64,  [u8; 32], [u8; 32], u64, [u8; 32])
+// Value:
+//    (u64, [u8; 32], [u8; 32], u64, [u8; 32])
 //  # (timestamp, signature_namespace, signature_author, len, hash)
 
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
-type RecordsRange<'a> = MultimapRange<'a, RecordsId<'static>, RecordsValue<'static>>;
-type RecordsTable<'a> = ReadOnlyMultimapTable<'a, RecordsId<'static>, RecordsValue<'static>>;
+type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
+type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 type DbResult<T> = Result<T, StorageError>;
 
-const RECORDS_TABLE: MultimapTableDefinition<RecordsId, RecordsValue> =
-    MultimapTableDefinition::new("records-1");
+const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
 impl Store {
     /// Create or open a store from a `path` to a database file.
@@ -71,7 +67,7 @@ impl Store {
         // Setup all tables
         let write_tx = db.begin_write()?;
         {
-            let _table = write_tx.open_multimap_table(RECORDS_TABLE)?;
+            let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
         }
@@ -107,35 +103,19 @@ impl Store {
     }
 }
 
-/// Iterator for entries in [`Store`]
-// We use a struct with an inner enum to exclude the enum variants from the public API.
-#[derive(Debug)]
-pub struct GetIter<'s> {
-    inner: GetIterInner<'s>,
-}
-
-#[derive(Debug)]
-enum GetIterInner<'s> {
-    All(RangeAllIterator<'s>),
-    Latest(RangeLatestIterator<'s>),
-    Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
-}
-
-impl<'s> Iterator for GetIter<'s> {
-    type Item = anyhow::Result<SignedEntry>;
-
+#[derive(From, Debug)]
+/// Iterator over signed entries
+pub struct EntryIterator<'a>(RangeIterator<'a>);
+impl<'a> Iterator for EntryIterator<'a> {
+    type Item = Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.inner {
-            GetIterInner::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIterInner::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIterInner::Single(iter) => iter.next(),
-        }
+        self.0.next().map(|res| res.map(|(_id, entry)| entry))
     }
 }
 
 impl super::Store for Store {
     type Instance = StoreInstance;
-    type GetIter<'a> = GetIter<'a>;
+    type GetIter<'a> = EntryIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -180,10 +160,9 @@ impl super::Store for Store {
         Ok(Some(author))
     }
 
-    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
-        let author = Author::new(rng);
-        self.insert_author(author.clone())?;
-        Ok(author)
+    fn import_author(&self, author: Author) -> Result<()> {
+        self.insert_author(author)?;
+        Ok(())
     }
 
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {
@@ -212,58 +191,36 @@ impl super::Store for Store {
     }
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
-        use super::KeyFilter::*;
-        let inner = match filter.latest {
-            false => match (filter.key, filter.author) {
-                (All, None) => GetIterInner::All(self.get_all(namespace)?),
-                (Prefix(prefix), None) => {
-                    GetIterInner::All(self.get_all_by_prefix(namespace, &prefix)?)
-                }
-                (Key(key), None) => GetIterInner::All(self.get_all_by_key(namespace, key)?),
-                (Key(key), Some(author)) => {
-                    GetIterInner::All(self.get_all_by_key_and_author(namespace, author, key)?)
-                }
-                (All, Some(_)) | (Prefix(_), Some(_)) => {
-                    bail!("This filter combination is not yet supported")
-                }
-            },
-            true => match (filter.key, filter.author) {
-                (All, None) => GetIterInner::Latest(self.get_latest(namespace)?),
-                (Prefix(prefix), None) => {
-                    GetIterInner::Latest(self.get_latest_by_prefix(namespace, &prefix)?)
-                }
-                (Key(key), None) => GetIterInner::Latest(self.get_latest_by_key(namespace, key)?),
-                (Key(key), Some(author)) => GetIterInner::Single(
-                    self.get_latest_by_key_and_author(namespace, author, key)?
-                        .map(Ok)
-                        .into_iter(),
-                ),
-                (All, Some(_)) | (Prefix(_), Some(_)) => {
-                    bail!("This filter combination is not yet supported")
-                }
-            },
-        };
-        Ok(GetIter { inner })
+        let iter = match filter {
+            super::GetFilter::All => self.get_all(namespace),
+            super::GetFilter::Key(key) => self.get_by_key(namespace, key),
+            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
+            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+            super::GetFilter::AuthorAndPrefix(author, prefix) => {
+                self.get_by_author_and_prefix(namespace, author, prefix)
+            }
+        }?;
+        Ok(iter.into())
     }
 
-    fn get_latest_by_key_and_author(
+    fn get_by_key_and_author(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
-        let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
+        let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
         let db_key = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
-        let records = record_table.get(db_key)?;
-        let Some(record) = records.last() else {
+        let record = record_table.get(db_key)?;
+        let Some(record) = record else {
             return Ok(None);
         };
-        let record = record?;
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
-        let record = Record::new(timestamp, len, hash.into());
-        let id = RecordIdentifier::new(key, namespace, author);
+
+        let record = Record::new(len, hash.into());
+        let id = RecordIdentifier::new(key, namespace, author, timestamp);
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
         let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -273,75 +230,92 @@ impl super::Store for Store {
 }
 
 impl Store {
-    fn get_latest_by_key(
+    fn get_by_key(
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
-    ) -> Result<RangeLatestIterator<'_>> {
-        RangeLatestIterator::namespace(
+    ) -> Result<RangeIterator<'_>> {
+        RangeIterator::namespace(
             &self.db,
             &namespace,
             RangeFilter::Key(key.as_ref().to_vec()),
         )
     }
-
-    fn get_latest_by_prefix(
-        &self,
-        namespace: NamespaceId,
-        prefix: impl AsRef<[u8]>,
-    ) -> Result<RangeLatestIterator<'_>> {
-        RangeLatestIterator::namespace(
+    fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
+        let author = author.as_bytes();
+        let start = (namespace.as_bytes(), author, &[][..]);
+        let end = prefix_range_end(&start);
+        RangeIterator::with_range(
             &self.db,
-            &namespace,
-            RangeFilter::Prefix(prefix.as_ref().to_vec()),
-        )
-    }
-
-    fn get_latest(&self, namespace: NamespaceId) -> Result<RangeLatestIterator<'_>> {
-        RangeLatestIterator::namespace(&self.db, &namespace, RangeFilter::None)
-    }
-
-    fn get_all_by_key_and_author<'a, 'b: 'a>(
-        &'a self,
-        namespace: NamespaceId,
-        author: AuthorId,
-        key: impl AsRef<[u8]> + 'b,
-    ) -> Result<RangeAllIterator<'a>> {
-        let start = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
-        let end = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
-        RangeAllIterator::with_range(
-            &self.db,
-            |table| table.range(start..=end),
+            |table| match end {
+                Some(end) => table.range(start..(&end.0, &end.1, &end.2)),
+                None => table.range(start..),
+            },
             RangeFilter::None,
         )
     }
 
-    fn get_all_by_key(
+    fn get_by_author_and_prefix(
         &self,
         namespace: NamespaceId,
-        key: impl AsRef<[u8]>,
-    ) -> Result<RangeAllIterator<'_>> {
-        RangeAllIterator::namespace(
+        author: AuthorId,
+        prefix: impl AsRef<[u8]>,
+    ) -> Result<RangeIterator<'_>> {
+        let author = author.as_bytes();
+        let start = (namespace.as_bytes(), author, prefix.as_ref());
+        let end = prefix_range_end(&start);
+        RangeIterator::with_range(
             &self.db,
-            &namespace,
-            RangeFilter::Key(key.as_ref().to_vec()),
+            |table| match end {
+                Some(end) => table.range(start..(&end.0, &end.1, &end.2)),
+                None => table.range(start..),
+            },
+            RangeFilter::None,
         )
     }
 
-    fn get_all_by_prefix(
+    fn get_by_prefix(
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> Result<RangeAllIterator<'_>> {
-        RangeAllIterator::namespace(
+    ) -> Result<RangeIterator<'_>> {
+        RangeIterator::namespace(
             &self.db,
             &namespace,
             RangeFilter::Prefix(prefix.as_ref().to_vec()),
         )
     }
 
-    fn get_all(&self, namespace: NamespaceId) -> Result<RangeAllIterator<'_>> {
-        RangeAllIterator::namespace(&self.db, &namespace, RangeFilter::None)
+    fn get_all(&self, namespace: NamespaceId) -> Result<RangeIterator<'_>> {
+        RangeIterator::namespace(&self.db, &namespace, RangeFilter::None)
+    }
+}
+
+/// Increment a byte string by one, by incrementing the last byte that is not 255 by one.
+///
+/// Returns false if all bytes are 255.
+fn increment_by_one(value: &mut [u8]) -> bool {
+    for char in value.iter_mut().rev() {
+        if *char != 255 {
+            *char += 1;
+            return true;
+        }
+    }
+    false
+}
+
+fn prefix_range_end<'a>(value: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
+    let mut namespace = *value.0;
+    let mut author = *value.1;
+    let mut prefix = value.2.to_vec();
+    if !increment_by_one(&mut prefix)
+        && !increment_by_one(&mut author)
+        && !increment_by_one(&mut namespace)
+    {
+        // we have all-255 keys, so open-ended range
+        None
+    } else {
+        Some((namespace, author, prefix))
     }
 }
 
@@ -371,7 +345,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
         let read_tx = self.store.db.begin_read()?;
-        let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
+        let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
         // TODO: verify this fetches all keys with this namespace
         let start = range_start(&self.namespace);
@@ -381,21 +355,22 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         let Some(record) = records.next() else {
             return Ok(RecordIdentifier::default());
         };
-        let (compound_key, _) = record?;
+        let (compound_key, record) = record?;
         let (namespace_id, author_id, key) = compound_key.value();
+        let (timestamp, _, _, _, _) = record.value();
 
-        let id = RecordIdentifier::from_parts(key, namespace_id, author_id)?;
+        let id = RecordIdentifier::from_parts(key, namespace_id, author_id, timestamp)?;
         Ok(id)
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store
-            .get_latest_by_key_and_author(id.namespace(), id.author(), id.key())
+            .get_by_key_and_author(id.namespace(), id.author(), id.key())
     }
 
     fn len(&self) -> Result<usize> {
         let read_tx = self.store.db.begin_read()?;
-        let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
+        let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
         // TODO: verify this fetches all keys with this namespace
         let start = range_start(&self.namespace);
@@ -424,13 +399,20 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     fn put(&mut self, k: RecordIdentifier, v: SignedEntry) -> Result<()> {
         // TODO: propagate error/not insertion?
         if v.verify().is_ok() {
-            let timestamp = v.entry().record().timestamp();
+            let timestamp = k.timestamp();
             // TODO: verify timestamp is "reasonable"
 
             let write_tx = self.store.db.begin_write()?;
             {
-                let mut record_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
+                let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
                 let key = (k.namespace_bytes(), k.author_bytes(), k.key());
+                if let Some(existing) = record_table.get(key)? {
+                    let (existing_timestamp, _n, _a, _l, _h) = existing.value();
+                    // If the existing entry is newer then the to-be inserted entry, abort now.
+                    if existing_timestamp > timestamp {
+                        return Ok(());
+                    }
+                }
                 let record = v.entry();
                 let hash = record.content_hash();
                 let value = (
@@ -447,7 +429,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         Ok(())
     }
 
-    type RangeIterator<'a> = std::iter::Chain<RangeLatestIterator<'a>, RangeLatestIterator<'a>>;
+    type RangeIterator<'a> = std::iter::Chain<RangeIterator<'a>, RangeIterator<'a>>;
     fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
@@ -455,13 +437,13 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let start = range_start(&self.namespace);
                 let end = range_end(&self.namespace);
                 // iterator for all entries in replica
-                let iter = RangeLatestIterator::with_range(
+                let iter = RangeIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
                     RangeFilter::None,
                 )?;
                 // empty iterator, returns nothing
-                let iter2 = RangeLatestIterator::empty(&self.store.db)?;
+                let iter2 = RangeIterator::empty(&self.store.db)?;
                 iter.chain(iter2)
             }
             // regular range: iter1 = x <= t < y, iter2 = none
@@ -469,13 +451,13 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let start = range.x().as_byte_tuple();
                 let end = range.y().as_byte_tuple();
                 // iterator for entries from range.x to range.y
-                let iter = RangeLatestIterator::with_range(
+                let iter = RangeIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
                     RangeFilter::None,
                 )?;
                 // empty iterator
-                let iter2 = RangeLatestIterator::empty(&self.store.db)?;
+                let iter2 = RangeIterator::empty(&self.store.db)?;
                 iter.chain(iter2)
                 // wrap-around range: iter1 = y <= t, iter2 = x >= t
             }
@@ -483,7 +465,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let start = range_start(&self.namespace);
                 let end = range.y().as_byte_tuple();
                 // iterator for entries start to from range.y
-                let iter = RangeLatestIterator::with_range(
+                let iter = RangeIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
                     RangeFilter::None,
@@ -491,7 +473,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let start = range.x().as_byte_tuple();
                 let end = range_end(&self.namespace);
                 // iterator for entries from range.x to end
-                let iter2 = RangeLatestIterator::with_range(
+                let iter2 = RangeIterator::with_range(
                     &self.store.db,
                     |table| table.range(start..end),
                     RangeFilter::None,
@@ -502,40 +484,33 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         Ok(iter)
     }
 
-    fn remove(&mut self, k: &RecordIdentifier) -> Result<Vec<SignedEntry>> {
+    fn remove(&mut self, k: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         let write_tx = self.store.db.begin_write()?;
         let res = {
-            let mut records_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
+            let mut records_table = write_tx.open_table(RECORDS_TABLE)?;
             let key = (k.namespace_bytes(), k.author_bytes(), k.key());
-            let records = records_table.remove_all(key)?;
-            let mut res = Vec::new();
-            for record in records.into_iter() {
-                let record = record?;
-                let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
-                let record = Record::new(timestamp, len, hash.into());
+            let record = records_table.remove(key)?;
+            record.map(|record| {
+                let (_timestamp, namespace_sig, author_sig, len, hash) = record.value();
+                let record = Record::new(len, hash.into());
                 let entry = Entry::new(k.clone(), record);
                 let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-                let signed_entry = SignedEntry::new(entry_signature, entry);
-                res.push(signed_entry);
-            }
-            res
+                SignedEntry::new(entry_signature, entry)
+            })
         };
         write_tx.commit()?;
         Ok(res)
     }
 
-    type AllIterator<'a> = RangeLatestIterator<'a>;
+    type AllIterator<'a> = RangeIterator<'a>;
 
     fn all(&self) -> Result<Self::AllIterator<'_>> {
-        let iter =
-            RangeLatestIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)?;
-
-        Ok(iter)
+        RangeIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)
     }
 }
 
 #[self_referencing]
-pub struct RangeLatestIterator<'a> {
+pub struct RangeIterator<'a> {
     read_tx: ReadTransaction<'a>,
     #[borrows(read_tx)]
     #[covariant]
@@ -546,17 +521,17 @@ pub struct RangeLatestIterator<'a> {
     filter: RangeFilter,
 }
 
-impl<'a> RangeLatestIterator<'a> {
+impl<'a> RangeIterator<'a> {
     fn with_range(
         db: &'a Arc<Database>,
         range: impl for<'this> FnOnce(&'this RecordsTable<'this>) -> DbResult<RecordsRange<'this>>,
         filter: RangeFilter,
     ) -> anyhow::Result<Self> {
-        let iter = RangeLatestIterator::try_new(
+        let iter = RangeIterator::try_new(
             db.begin_read()?,
             |read_tx| {
                 read_tx
-                    .open_multimap_table(RECORDS_TABLE)
+                    .open_table(RECORDS_TABLE)
                     .map_err(anyhow::Error::from)
             },
             |record_table| range(record_table).map_err(anyhow::Error::from),
@@ -574,106 +549,11 @@ impl<'a> RangeLatestIterator<'a> {
         let end = range_end(namespace);
         Self::with_range(db, |table| table.range(start..=end), filter)
     }
+
     fn empty(db: &'a Arc<Database>) -> anyhow::Result<Self> {
         let start = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
         let end = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
         Self::with_range(db, |table| table.range(start..end), RangeFilter::None)
-    }
-}
-
-impl std::fmt::Debug for RangeLatestIterator<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RangeLatestIterator")
-            .finish_non_exhaustive()
-    }
-}
-
-impl Iterator for RangeLatestIterator<'_> {
-    type Item = Result<(RecordIdentifier, SignedEntry)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.with_mut(|fields| {
-            for next in fields.records.by_ref() {
-                let next = match next {
-                    Ok(next) => next,
-                    Err(err) => return Some(Err(err.into())),
-                };
-
-                let (namespace, author, key) = next.0.value();
-                let id = match RecordIdentifier::from_parts(key, namespace, author) {
-                    Ok(id) => id,
-                    Err(err) => return Some(Err(err)),
-                };
-                if fields.filter.matches(&id) {
-                    let last = next.1.last();
-                    let value = match last? {
-                        Ok(value) => value,
-                        Err(err) => return Some(Err(err.into())),
-                    };
-                    let (timestamp, namespace_sig, author_sig, len, hash) = value.value();
-                    let record = Record::new(timestamp, len, hash.into());
-                    let entry = Entry::new(id.clone(), record);
-                    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-                    let signed_entry = SignedEntry::new(entry_signature, entry);
-
-                    return Some(Ok((id, signed_entry)));
-                }
-            }
-            None
-        })
-    }
-}
-
-#[self_referencing]
-pub struct RangeAllIterator<'a> {
-    read_tx: ReadTransaction<'a>,
-    #[borrows(read_tx)]
-    #[covariant]
-    record_table: RecordsTable<'this>,
-    #[covariant]
-    #[borrows(record_table)]
-    records: (
-        RecordsRange<'this>,
-        Option<(
-            AccessGuard<'this, RecordsId<'static>>,
-            MultimapValue<'this, RecordsValue<'static>>,
-            RecordIdentifier,
-        )>,
-    ),
-    filter: RangeFilter,
-}
-
-impl<'a> RangeAllIterator<'a> {
-    fn with_range(
-        db: &'a Arc<Database>,
-        range: impl for<'this> FnOnce(&'this RecordsTable<'this>) -> DbResult<RecordsRange<'this>>,
-        filter: RangeFilter,
-    ) -> anyhow::Result<Self> {
-        let iter = RangeAllIterator::try_new(
-            db.begin_read()?,
-            |read_tx| {
-                read_tx
-                    .open_multimap_table(RECORDS_TABLE)
-                    .map_err(anyhow::Error::from)
-            },
-            |record_table| {
-                range(record_table)
-                    .map_err(anyhow::Error::from)
-                    .map(|v| (v, None))
-            },
-            filter,
-        )?;
-        Ok(iter)
-    }
-
-    fn namespace(
-        db: &'a Arc<Database>,
-        namespace: &NamespaceId,
-        filter: RangeFilter,
-    ) -> anyhow::Result<Self> {
-        let start = range_start(namespace);
-        let end = range_end(namespace);
-        Self::with_range(db, |table| table.range(start..=end), filter)
     }
 }
 
@@ -694,56 +574,39 @@ impl RangeFilter {
     }
 }
 
-impl std::fmt::Debug for RangeAllIterator<'_> {
+impl std::fmt::Debug for RangeIterator<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RangeAllIterator").finish_non_exhaustive()
+        f.debug_struct("RangeIterator").finish_non_exhaustive()
     }
 }
 
-/// Advance the internal iterator to the next set of multimap values
-fn next_iter(fields: &mut BorrowedMutFields) -> Result<()> {
-    for next_iter in fields.records.0.by_ref() {
-        let (id_guard, values_guard) = next_iter?;
-        let (namespace, author, key) = id_guard.value();
-        let id = RecordIdentifier::from_parts(key, namespace, author)?;
-        if fields.filter.matches(&id) {
-            fields.records.1 = Some((id_guard, values_guard, id));
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
-impl Iterator for RangeAllIterator<'_> {
+impl Iterator for RangeIterator<'_> {
     type Item = Result<(RecordIdentifier, SignedEntry)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.with_mut(|mut fields| {
-            loop {
-                if fields.records.1.is_none() {
-                    if let Err(err) = next_iter(&mut fields) {
-                        return Some(Err(err));
-                    }
-                }
-                // If this is None, nothing is available anymore
-                let (_id_guard, values_guard, id) = fields.records.1.as_mut()?;
+        self.with_mut(|fields| {
+            for next in fields.records.by_ref() {
+                let next = match next {
+                    Ok(next) => next,
+                    Err(err) => return Some(Err(err.into())),
+                };
 
-                match values_guard.next() {
-                    Some(Ok(value)) => {
-                        let (timestamp, namespace_sig, author_sig, len, hash) = value.value();
-                        let record = Record::new(timestamp, len, hash.into());
-                        let entry = Entry::new(id.clone(), record);
-                        let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-                        let signed_entry = SignedEntry::new(entry_signature, entry);
-                        return Some(Ok((id.clone(), signed_entry)));
-                    }
-                    Some(Err(err)) => return Some(Err(err.into())),
-                    None => {
-                        // clear the current
-                        fields.records.1 = None;
-                    }
+                let (namespace, author, key) = next.0.value();
+                let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
+                let id = match RecordIdentifier::from_parts(key, namespace, author, timestamp) {
+                    Ok(id) => id,
+                    Err(err) => return Some(Err(err)),
+                };
+                if fields.filter.matches(&id) {
+                    let record = Record::new(len, hash.into());
+                    let entry = Entry::new(id.clone(), record);
+                    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+                    let signed_entry = SignedEntry::new(entry_signature, entry);
+
+                    return Some(Ok((id, signed_entry)));
                 }
             }
+            None
         })
     }
 }
@@ -751,9 +614,39 @@ impl Iterator for RangeAllIterator<'_> {
 #[cfg(test)]
 mod tests {
     use crate::ranger::Store as _;
-    use crate::store::Store as _;
+    use crate::store::{GetFilter, Store as _};
 
     use super::*;
+
+    #[test]
+    fn test_ranges() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = Store::new(dbfile.path())?;
+
+        let author = store.new_author(&mut rand::thread_rng())?;
+        let namespace = Namespace::new(&mut rand::thread_rng());
+        let replica = store.new_replica(namespace)?;
+
+        // test author prefix relation for all-255 keys
+        let key1 = vec![255, 255];
+        let key2 = vec![255, 255, 255];
+        replica.hash_and_insert(&key1, &author, b"v1")?;
+        replica.hash_and_insert(&key2, &author, b"v2")?;
+        let res = store
+            .get(
+                replica.namespace(),
+                GetFilter::AuthorAndPrefix(author.id(), vec![255]),
+            )?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(res.len(), 2);
+        assert_eq!(
+            res.into_iter()
+                .map(|entry| entry.key().to_vec())
+                .collect::<Vec<_>>(),
+            vec![key1, key2]
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_basics() -> Result<()> {
@@ -775,11 +668,9 @@ mod tests {
 
         let mut wrapper = StoreInstance::new(namespace.id(), store.clone());
         for i in 0..5 {
-            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(
-                id.clone(),
-                Record::from_data(format!("world-{i}"), namespace.id()),
-            );
+            let id =
+                RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
+            let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(id, entry)?;
         }
@@ -789,56 +680,38 @@ mod tests {
         assert_eq!(all.len(), 5);
 
         // add a second version
+        let mut ids = Vec::new();
         for i in 0..5 {
-            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(
-                id.clone(),
-                Record::from_data(format!("world-{i}-2"), namespace.id()),
-            );
+            let id =
+                RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
+            let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}-2")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.put(id, entry)?;
+            wrapper.put(id.clone(), entry)?;
+            ids.push(id);
         }
 
         // get all
         let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
-        assert_eq!(entries.len(), 10);
+        assert_eq!(entries.len(), 5);
 
         // get all prefix
         let entries = store
-            .get_all_by_prefix(namespace.id(), "hello-")?
-            .collect::<Result<Vec<_>>>()?;
-        assert_eq!(entries.len(), 10);
-
-        // get latest
-        let entries = store
-            .get_latest(namespace.id())?
-            .collect::<Result<Vec<_>>>()?;
-        assert_eq!(entries.len(), 5);
-
-        // get latest by prefix
-        let entries = store
-            .get_latest_by_prefix(namespace.id(), "hello-")?
+            .get_by_prefix(namespace.id(), "hello-")?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
 
         // delete and get
-        for i in 0..5 {
-            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+        for id in ids {
             let res = wrapper.get(&id)?;
             assert!(res.is_some());
-            let out = wrapper.remove(&id)?;
-            assert_eq!(out.len(), 2);
-            for val in out {
-                assert_eq!(val.entry().id(), &id);
-            }
+            let out = wrapper.remove(&id)?.unwrap();
+            assert_eq!(out.entry().id(), &id);
             let res = wrapper.get(&id)?;
             assert!(res.is_none());
         }
 
         // get latest
-        let entries = store
-            .get_latest(namespace.id())?
-            .collect::<Result<Vec<_>>>()?;
+        let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 0);
 
         Ok(())

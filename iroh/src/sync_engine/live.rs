@@ -623,7 +623,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 match op {
                     Op::Put(entry) => {
                         debug!(peer = ?prev_peer, topic = ?topic, "received entry via gossip");
-                        replica.insert_remote_entry(entry, *prev_peer.as_bytes())?
+                        replica
+                            .insert_remote_entry(entry, *prev_peer.as_bytes())
+                            .map_err(Into::into)?
                     }
                 }
             }

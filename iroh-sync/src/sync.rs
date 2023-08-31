@@ -106,25 +106,50 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         hash: Hash,
         len: u64,
     ) -> Result<(), S::Error> {
-        let mut inner = self.inner.write();
-
-        let id = RecordIdentifier::new(key, inner.namespace.id(), author.id());
+        let id = RecordIdentifier::new_current(key, self.namespace(), author.id());
         let record = Record::from_hash(hash, len);
 
         // Store signed entries
-        let entry = Entry::new(id.clone(), record);
-        let signed_entry = entry.sign(&inner.namespace, author);
-        inner.peer.put(id, signed_entry.clone())?;
+        let entry = Entry::new(id, record);
+        let signed_entry = entry.sign(&self.inner.read().namespace, author);
+        self.insert_entry(signed_entry, InsertOrigin::Local)
+    }
+
+    /// Insert an entry into this replica which was received from a remote peer.
+    ///
+    /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
+    /// event, and insert the entry into the replica store.
+    pub fn insert_remote_entry(
+        &self,
+        entry: SignedEntry,
+        received_from: PeerIdBytes,
+    ) -> Result<(), S::Error> {
+        self.insert_entry(entry, InsertOrigin::Sync(received_from))
+    }
+
+    /// Insert a signed entry into the database.
+    fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), S::Error> {
+        let len = entry.content_len();
+        let mut inner = self.inner.write();
+        inner.peer.put(entry.id().clone(), entry.clone())?;
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
-            sender.send((InsertOrigin::Local, signed_entry)).ok();
+            sender.send((origin.clone(), entry)).ok();
         }
 
         #[cfg(feature = "metrics")]
         {
-            inc!(Metrics, new_entries_local);
-            inc_by!(Metrics, new_entries_local_size, len);
+            match origin {
+                InsertOrigin::Local => {
+                    inc!(Metrics, new_entries_local);
+                    inc_by!(Metrics, new_entries_local_size, len);
+                }
+                InsertOrigin::Sync(_) => {
+                    inc!(Metrics, new_entries_remote);
+                    inc_by!(Metrics, new_entries_remote_size, len);
+                }
+            }
         }
 
         Ok(())
@@ -147,39 +172,9 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     }
 
     /// Get the identifier for an entry in this replica.
-    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
+    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author, timestamp: u64) -> RecordIdentifier {
         let inner = self.inner.read();
-        RecordIdentifier::new(key, inner.namespace.id(), author.id())
-    }
-
-    /// Insert an entry into this replica which was received from a remote peer.
-    ///
-    /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
-    /// event, and insert the entry into the replica store.
-    pub fn insert_remote_entry(
-        &self,
-        entry: SignedEntry,
-        received_from: PeerIdBytes,
-    ) -> anyhow::Result<()> {
-        entry.verify()?;
-        let mut inner = self.inner.write();
-        let id = entry.entry.id.clone();
-        inner.peer.put(id, entry.clone()).map_err(Into::into)?;
-        drop(inner);
-
-        if let Some(sender) = self.on_insert_sender.read().as_ref() {
-            sender
-                .send((InsertOrigin::Sync(received_from), entry.clone()))
-                .ok();
-        }
-
-        #[cfg(feature = "metrics")]
-        {
-            inc!(Metrics, new_entries_remote);
-            inc_by!(Metrics, new_entries_remote_size, entry.content_len());
-        }
-
-        Ok(())
+        RecordIdentifier::new(key, inner.namespace.id(), author.id(), timestamp)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
@@ -292,6 +287,11 @@ impl SignedEntry {
     /// Get the key of the entry.
     pub fn key(&self) -> &[u8] {
         self.entry().id().key()
+    }
+
+    /// Get the timestamp of the entry.
+    pub fn timestamp(&self) -> u64 {
+        self.entry().id().timestamp()
     }
 }
 
@@ -426,6 +426,8 @@ pub struct RecordIdentifier {
     namespace: NamespaceId,
     /// The [`AuthorId`] of the author that wrote this record.
     author: AuthorId,
+    /// Record creation timestamp. Counted as micros since the Unix epoch.
+    timestamp: u64,
 }
 
 impl Debug for RecordIdentifier {
@@ -470,6 +472,7 @@ impl AsFingerprint for RecordIdentifier {
         hasher.update(self.namespace.as_bytes());
         hasher.update(self.author.as_bytes());
         hasher.update(&self.key);
+        hasher.update(&self.timestamp.to_be_bytes());
         Fingerprint(hasher.finalize().into())
     }
 }
@@ -478,11 +481,32 @@ impl RangeKey for RecordIdentifier {}
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
-    pub fn new(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
+    pub fn new(
+        key: impl AsRef<[u8]>,
+        namespace: NamespaceId,
+        author: AuthorId,
+        timestamp: u64,
+    ) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
             namespace,
             author,
+            timestamp,
+        }
+    }
+
+    /// Create a new [`RecordIdentifier`] with the timestamp set to now.
+    pub fn new_current(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time drift")
+            .as_micros() as u64;
+
+        RecordIdentifier {
+            key: key.as_ref().to_vec(),
+            namespace,
+            author,
+            timestamp,
         }
     }
 
@@ -490,11 +514,13 @@ impl RecordIdentifier {
         key: &[u8],
         namespace: &[u8; 32],
         author: &[u8; 32],
+        timestamp: u64,
     ) -> anyhow::Result<Self> {
         Ok(RecordIdentifier {
             key: key.to_vec(),
             namespace: NamespaceId::from_bytes(namespace)?,
             author: AuthorId::from_bytes(author)?,
+            timestamp,
         })
     }
 
@@ -503,6 +529,7 @@ impl RecordIdentifier {
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(self.author.as_bytes());
         out.extend_from_slice(&self.key);
+        out.extend_from_slice(&self.timestamp.to_be_bytes())
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
@@ -520,6 +547,11 @@ impl RecordIdentifier {
         self.namespace
     }
 
+    /// Get the timestamp of this record.
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
     pub(crate) fn namespace_bytes(&self) -> &[u8; 32] {
         self.namespace.as_bytes()
     }
@@ -534,6 +566,13 @@ impl RecordIdentifier {
     }
 }
 
+impl Deref for SignedEntry {
+    type Target = Entry;
+    fn deref(&self) -> &Self::Target {
+        &self.entry
+    }
+}
+
 impl Deref for Entry {
     type Target = Record;
     fn deref(&self) -> &Self::Target {
@@ -544,8 +583,6 @@ impl Deref for Entry {
 /// The data part of an entry in a [`Replica`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Record {
-    /// Record creation timestamp. Counted as micros since the Unix epoch.
-    timestamp: u64,
     /// Length of the data referenced by `hash`.
     len: u64,
     /// Hash of the content data.
@@ -554,17 +591,8 @@ pub struct Record {
 
 impl Record {
     /// Create a new record.
-    pub fn new(timestamp: u64, len: u64, hash: Hash) -> Self {
-        Record {
-            timestamp,
-            len,
-            hash,
-        }
-    }
-
-    /// Get the timestamp of this record.
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
+    pub fn new(len: u64, hash: Hash) -> Self {
+        Record { len, hash }
     }
 
     /// Get the length of the data addressed by this record's content hash.
@@ -577,31 +605,20 @@ impl Record {
         self.hash
     }
 
-    /// Create a new record with a timestamp of the current system date.
+    /// Create a new record.
     pub fn from_hash(hash: Hash, len: u64) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("time drift")
-            .as_micros() as u64;
-        Self::new(timestamp, len, hash)
+        Self::new(len, hash)
     }
 
-    // TODO: remove
     #[cfg(test)]
-    pub(crate) fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
-        // Salted hash
-        // TODO: do we actually want this?
-        // TODO: this should probably use a namespace prefix if used
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(namespace.as_bytes());
-        hasher.update(data.as_ref());
-        let hash = hasher.finalize();
-        Self::from_hash(hash.into(), data.as_ref().len() as u64)
+    pub(crate) fn from_data(data: impl AsRef<[u8]>) -> Self {
+        let len = data.as_ref().len() as u64;
+        let hash = Hash::new(data);
+        Self::from_hash(hash, len)
     }
 
     /// Serialize this record into a mutable byte array.
     pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.timestamp.to_be_bytes());
         out.extend_from_slice(&self.len.to_be_bytes());
         out.extend_from_slice(self.hash.as_ref());
     }
@@ -610,6 +627,7 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use rand_core::SeedableRng;
 
     use crate::{
         ranger::{Range, Store as _},
@@ -641,8 +659,8 @@ mod tests {
         let bob = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
 
-        let record_id = RecordIdentifier::new("/my/key", myspace.id(), alice.id());
-        let record = Record::from_data(b"this is my cool data", myspace.id());
+        let record_id = RecordIdentifier::new_current("/my/key", myspace.id(), alice.id());
+        let record = Record::from_data(b"this is my cool data");
         let entry = Entry::new(record_id, record);
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
@@ -656,7 +674,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
+                .get_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -668,63 +686,40 @@ mod tests {
             .hash_and_insert("/cool/path", &alice, "round 1")
             .map_err(Into::into)?;
         let _entry = store
-            .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
         my_replica
             .hash_and_insert("/cool/path", &alice, "round 2")
             .map_err(Into::into)?;
         let _entry = store
-            .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::all()
-                    .with_author(alice.id())
-                    .with_key("/cool/path"),
-            )?
+            .get(my_replica.namespace(), GetFilter::Author(alice.id()))?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 11);
+
+        // Get All by author
+        let entries: Vec<_> = store
+            .get(my_replica.namespace(), GetFilter::Author(bob.id()))?
+            .collect::<Result<_>>()?;
+        assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
             .get(
                 my_replica.namespace(),
-                GetFilter::all().with_key(b"/cool/path"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
-
-        // Get latest by key
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_key(b"/cool/path"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 1);
-
-        // Get latest by prefix
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_prefix(b"/cool"),
+                GetFilter::Key(b"/cool/path".to_vec()),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::all())?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 12);
-
-        // Get All latest
-        let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::latest())?
+            .get(my_replica.namespace(), GetFilter::All)?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
@@ -735,22 +730,12 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::all()
-                    .with_author(alice.id())
-                    .with_key("/cool/path"),
-            )?
+            .get(my_replica.namespace(), GetFilter::Author(alice.id()))?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::all()
-                    .with_author(bob.id())
-                    .with_key("/cool/path"),
-            )?
+            .get(my_replica.namespace(), GetFilter::Author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
@@ -758,47 +743,37 @@ mod tests {
         let entries: Vec<_> = store
             .get(
                 my_replica.namespace(),
-                GetFilter::all().with_key(b"/cool/path"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 3);
-
-        // Get latest by key
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_key(b"/cool/path"),
-            )?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 2);
-
-        // Get latest by prefix
-        let entries: Vec<_> = store
-            .get(
-                my_replica.namespace(),
-                GetFilter::latest().with_prefix(b"/cool"),
+                GetFilter::Key(b"/cool/path".to_vec()),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
+            .get(my_replica.namespace(), GetFilter::Prefix(b"/cool".to_vec()))?
+            .collect::<Result<_>>()?;
+        assert_eq!(entries.len(), 2);
+
+        // Get All by author and prefix
+        let entries: Vec<_> = store
             .get(
                 my_replica.namespace(),
-                GetFilter::all().with_prefix(b"/cool"),
+                GetFilter::AuthorAndPrefix(alice.id(), b"/cool".to_vec()),
             )?
             .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 1);
+
+        let entries: Vec<_> = store
+            .get(
+                my_replica.namespace(),
+                GetFilter::AuthorAndPrefix(bob.id(), b"/cool".to_vec()),
+            )?
+            .collect::<Result<_>>()?;
+        assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::all())?
-            .collect::<Result<_>>()?;
-        assert_eq!(entries.len(), 13);
-
-        // Get All latest
-        let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::latest())?
+            .get(my_replica.namespace(), GetFilter::All)?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
@@ -843,9 +818,9 @@ mod tests {
 
         // Just key
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[1], n[0].id(), a[0].id());
-            let ri2 = RecordIdentifier::new(k[2], n[0].id(), a[0].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[1], n[0].id(), a[0].id());
+            let ri2 = RecordIdentifier::new_current(k[2], n[0].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -858,9 +833,9 @@ mod tests {
 
         // Just namespace
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[0], n[1].id(), a[0].id());
-            let ri2 = RecordIdentifier::new(k[0], n[2].id(), a[0].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[0], n[1].id(), a[0].id());
+            let ri2 = RecordIdentifier::new_current(k[0], n[2].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -873,9 +848,9 @@ mod tests {
 
         // Just author
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[0], n[0].id(), a[1].id());
-            let ri2 = RecordIdentifier::new(k[0], n[0].id(), a[2].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[0], n[0].id(), a[1].id());
+            let ri2 = RecordIdentifier::new_current(k[0], n[0].id(), a[2].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -888,9 +863,9 @@ mod tests {
 
         // Just key and namespace
         {
-            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new(k[1], n[1].id(), a[0].id());
-            let ri2 = RecordIdentifier::new(k[2], n[2].id(), a[0].id());
+            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new_current(k[1], n[1].id(), a[0].id());
+            let ri2 = RecordIdentifier::new_current(k[2], n[2].id(), a[0].id());
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -912,11 +887,79 @@ mod tests {
             let k0 = k[0];
             let k1 = k[1];
 
-            assert!(RecordIdentifier::new(k0, n0, a0) < RecordIdentifier::new(k1, n1, a1));
-            assert!(RecordIdentifier::new(k1, n0, a0) < RecordIdentifier::new(k0, n1, a0));
-            assert!(RecordIdentifier::new(k0, n0, a1) < RecordIdentifier::new(k1, n0, a1));
-            assert!(RecordIdentifier::new(k0, n1, a1) < RecordIdentifier::new(k1, n1, a1));
+            assert!(
+                RecordIdentifier::new_current(k0, n0, a0)
+                    < RecordIdentifier::new_current(k1, n1, a1)
+            );
+            assert!(
+                RecordIdentifier::new_current(k1, n0, a0)
+                    < RecordIdentifier::new_current(k0, n1, a0)
+            );
+            assert!(
+                RecordIdentifier::new_current(k0, n0, a1)
+                    < RecordIdentifier::new_current(k1, n0, a1)
+            );
+            assert!(
+                RecordIdentifier::new_current(k0, n1, a1)
+                    < RecordIdentifier::new_current(k1, n1, a1)
+            );
         }
+    }
+
+    #[test]
+    fn test_timestamps_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_timestamps(store)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_timestamps_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_timestamps(store)?;
+        Ok(())
+    }
+
+    fn test_timestamps<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+        let author = store.new_author(&mut rng)?;
+
+        let key = b"hello";
+        let value = b"world";
+        let entry = {
+            let timestamp = 2;
+            let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
+            let record = Record::from_data(value);
+            Entry::new(id, record).sign(&namespace, &author)
+        };
+
+        replica
+            .insert_entry(entry.clone(), InsertOrigin::Local)
+            .unwrap();
+        let res = store
+            .get_by_key_and_author(namespace.id(), author.id(), key)?
+            .unwrap();
+        assert_eq!(res, entry);
+
+        let entry2 = {
+            let timestamp = 1;
+            let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
+            let record = Record::from_data(value);
+            Entry::new(id, record).sign(&namespace, &author)
+        };
+
+        replica.insert_entry(entry2, InsertOrigin::Local).unwrap();
+        let res = store
+            .get_by_key_and_author(namespace.id(), author.id(), key)?
+            .unwrap();
+        assert_eq!(res, entry);
+
+        Ok(())
     }
 
     #[test]
@@ -1002,13 +1045,13 @@ mod tests {
 
         // Check result
         for el in alice_set {
-            alice_store.get_latest_by_key_and_author(alice.namespace(), author.id(), el)?;
-            bob_store.get_latest_by_key_and_author(bob.namespace(), author.id(), el)?;
+            alice_store.get_by_key_and_author(alice.namespace(), author.id(), el)?;
+            bob_store.get_by_key_and_author(bob.namespace(), author.id(), el)?;
         }
 
         for el in bob_set {
-            alice_store.get_latest_by_key_and_author(alice.namespace(), author.id(), el)?;
-            bob_store.get_latest_by_key_and_author(bob.namespace(), author.id(), el)?;
+            alice_store.get_by_key_and_author(alice.namespace(), author.id(), el)?;
+            bob_store.get_by_key_and_author(bob.namespace(), author.id(), el)?;
         }
         Ok(())
     }

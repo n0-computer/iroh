@@ -6,9 +6,9 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+use derive_more::From;
 use parking_lot::{RwLock, RwLockReadGuard};
-use rand_core::CryptoRngCore;
 
 use crate::{
     ranger::{AsFingerprint, Fingerprint, Range},
@@ -24,12 +24,14 @@ pub struct Store {
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
 }
 
-type ReplicaRecordsOwned =
-    HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>;
+type Rid = (AuthorId, Vec<u8>);
+type Rvalue = SignedEntry;
+type RecordMap = BTreeMap<Rid, Rvalue>;
+type ReplicaRecordsOwned = HashMap<NamespaceId, RecordMap>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
-    type GetIter<'a> = GetIter<'a>;
+    type GetIter<'a> = EntryIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -55,10 +57,9 @@ impl super::Store for Store {
         Ok(authors.get(author).cloned())
     }
 
-    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
-        let author = Author::new(rng);
-        self.authors.write().insert(author.id(), author.clone());
-        Ok(author)
+    fn import_author(&self, author: Author) -> Result<()> {
+        self.authors.write().insert(author.id(), author);
+        Ok(())
     }
 
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {
@@ -83,41 +84,19 @@ impl super::Store for Store {
     }
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
-        use super::KeyFilter::*;
-        let inner = match filter.latest {
-            false => match (filter.key, filter.author) {
-                (All, None) => GetIterInner::All(self.get_all(namespace)?),
-                (Prefix(prefix), None) => {
-                    GetIterInner::All(self.get_all_by_prefix(namespace, &prefix)?)
-                }
-                (Key(key), None) => GetIterInner::All(self.get_all_by_key(namespace, key)?),
-                (Key(key), Some(author)) => {
-                    GetIterInner::All(self.get_all_by_key_and_author(namespace, author, key)?)
-                }
-                (All, Some(_)) | (Prefix(_), Some(_)) => {
-                    bail!("This filter combination is not yet supported")
-                }
-            },
-            true => match (filter.key, filter.author) {
-                (All, None) => GetIterInner::Latest(self.get_latest(namespace)?),
-                (Prefix(prefix), None) => {
-                    GetIterInner::Latest(self.get_latest_by_prefix(namespace, &prefix)?)
-                }
-                (Key(key), None) => GetIterInner::Latest(self.get_latest_by_key(namespace, key)?),
-                (Key(key), Some(author)) => GetIterInner::Single(
-                    self.get_latest_by_key_and_author(namespace, author, key)?
-                        .map(Ok)
-                        .into_iter(),
-                ),
-                (All, Some(_)) | (Prefix(_), Some(_)) => {
-                    bail!("This filter combination is not yet supported")
-                }
-            },
-        };
-        Ok(GetIter { inner })
+        let iter = match filter {
+            super::GetFilter::All => self.get_all(namespace),
+            super::GetFilter::Key(key) => self.get_by_key(namespace, key),
+            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
+            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+            super::GetFilter::AuthorAndPrefix(author, prefix) => {
+                self.get_by_author_and_prefix(namespace, author, prefix)
+            }
+        }?;
+        Ok(iter.into())
     }
 
-    fn get_latest_by_key_and_author(
+    fn get_by_key_and_author(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
@@ -127,137 +106,97 @@ impl super::Store for Store {
 
         let value = inner
             .get(&namespace)
-            .and_then(|records| records.get(&RecordIdentifier::new(key, namespace, author)))
-            .and_then(|values| values.last_key_value());
+            .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
 
-        Ok(value.map(|(_, v)| v.clone()))
+        Ok(value.cloned())
     }
 }
 
-/// Iterator for entries in [`Store`]
-// We use a struct with an inner enum to exclude the enum variants from the public API.
-#[derive(Debug)]
-pub struct GetIter<'s> {
-    inner: GetIterInner<'s>,
-}
-
-#[derive(Debug)]
-enum GetIterInner<'s> {
-    All(GetAllIter<'s>),
-    Latest(GetLatestIter<'s>),
-    Single(std::option::IntoIter<anyhow::Result<SignedEntry>>),
-}
-
-impl<'s> Iterator for GetIter<'s> {
-    type Item = anyhow::Result<SignedEntry>;
-
+/// Iterator over signed entries
+#[derive(From, Debug)]
+pub struct EntryIterator<'a>(StoreRangeIterator<'a>);
+impl<'a> Iterator for EntryIterator<'a> {
+    type Item = Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.inner {
-            GetIterInner::All(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIterInner::Latest(iter) => iter.next().map(|x| x.map(|(_id, entry)| entry)),
-            GetIterInner::Single(iter) => iter.next(),
-        }
+        self.0
+            .next()
+            .map(|res| Ok(res.map(|(_id, entry)| entry).expect("never errors")))
     }
 }
 
 impl Store {
-    fn get_latest_by_key(
+    fn get_by_key(
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
-    ) -> Result<GetLatestIter<'_>> {
+    ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let key = key.as_ref().to_vec();
         let filter = GetFilter::Key { namespace, key };
 
-        Ok(GetLatestIter {
+        Ok(StoreRangeIterator {
             records,
             filter,
             index: 0,
         })
     }
 
-    fn get_latest_by_prefix(
+    fn get_by_prefix(
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> Result<GetLatestIter<'_>> {
+    ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let prefix = prefix.as_ref().to_vec();
         let filter = GetFilter::Prefix { namespace, prefix };
 
-        Ok(GetLatestIter {
+        Ok(StoreRangeIterator {
             records,
             filter,
             index: 0,
         })
     }
 
-    fn get_latest(&self, namespace: NamespaceId) -> Result<GetLatestIter<'_>> {
-        let records = self.replica_records.read();
-        let filter = GetFilter::All { namespace };
-
-        Ok(GetLatestIter {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-
-    fn get_all_by_key_and_author<'a, 'b: 'a>(
-        &'a self,
+    fn get_by_author(
+        &self,
         namespace: NamespaceId,
         author: AuthorId,
-        key: impl AsRef<[u8]> + 'b,
-    ) -> Result<GetAllIter<'a>> {
+    ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
-        let record_id = RecordIdentifier::new(key, namespace, author);
-        let filter = GetFilter::KeyAuthor(record_id);
+        let filter = GetFilter::Author { namespace, author };
 
-        Ok(GetAllIter {
+        Ok(StoreRangeIterator {
             records,
             filter,
             index: 0,
         })
     }
 
-    fn get_all_by_key(
+    fn get_by_author_and_prefix(
         &self,
         namespace: NamespaceId,
-        key: impl AsRef<[u8]>,
-    ) -> Result<GetAllIter<'_>> {
+        author: AuthorId,
+        prefix: Vec<u8>,
+    ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
-        let key = key.as_ref().to_vec();
-        let filter = GetFilter::Key { namespace, key };
+        let filter = GetFilter::AuthorAndPrefix {
+            namespace,
+            author,
+            prefix,
+        };
 
-        Ok(GetAllIter {
+        Ok(StoreRangeIterator {
             records,
             filter,
             index: 0,
         })
     }
 
-    fn get_all_by_prefix(
-        &self,
-        namespace: NamespaceId,
-        prefix: impl AsRef<[u8]>,
-    ) -> Result<GetAllIter<'_>> {
-        let records = self.replica_records.read();
-        let prefix = prefix.as_ref().to_vec();
-        let filter = GetFilter::Prefix { namespace, prefix };
-
-        Ok(GetAllIter {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-
-    fn get_all(&self, namespace: NamespaceId) -> Result<GetAllIter<'_>> {
+    fn get_all(&self, namespace: NamespaceId) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
 
-        Ok(GetAllIter {
+        Ok(StoreRangeIterator {
             records,
             filter,
             index: 0,
@@ -269,8 +208,11 @@ impl Store {
 enum GetFilter {
     /// All entries.
     All { namespace: NamespaceId },
-    /// Filter by key and author.
-    KeyAuthor(RecordIdentifier),
+    /// Filter by author.
+    Author {
+        namespace: NamespaceId,
+        author: AuthorId,
+    },
     /// Filter by key only.
     Key {
         namespace: NamespaceId,
@@ -281,28 +223,35 @@ enum GetFilter {
         namespace: NamespaceId,
         prefix: Vec<u8>,
     },
+    /// Filter by author and prefix.
+    AuthorAndPrefix {
+        namespace: NamespaceId,
+        prefix: Vec<u8>,
+        author: AuthorId,
+    },
 }
 
 impl GetFilter {
     fn namespace(&self) -> NamespaceId {
         match self {
             GetFilter::All { namespace } => *namespace,
-            GetFilter::KeyAuthor(ref r) => r.namespace(),
             GetFilter::Key { namespace, .. } => *namespace,
             GetFilter::Prefix { namespace, .. } => *namespace,
+            GetFilter::Author { namespace, .. } => *namespace,
+            GetFilter::AuthorAndPrefix { namespace, .. } => *namespace,
         }
     }
 }
 
 #[derive(Debug)]
-struct GetLatestIter<'a> {
+struct StoreRangeIterator<'a> {
     records: ReplicaRecords<'a>,
     filter: GetFilter,
     /// Current iteration index.
     index: usize,
 }
 
-impl<'a> Iterator for GetLatestIter<'a> {
+impl<'a> Iterator for StoreRangeIterator<'a> {
     type Item = Result<(RecordIdentifier, SignedEntry)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -310,25 +259,27 @@ impl<'a> Iterator for GetLatestIter<'a> {
         let res = match self.filter {
             GetFilter::All { namespace } => records
                 .iter()
-                .filter(|(k, _)| k.namespace() == namespace)
-                .filter_map(|(key, value)| {
-                    value
-                        .last_key_value()
-                        .map(|(_, v)| (key.clone(), v.clone()))
+                .map(|(key_author, value)| {
+                    let record_id = RecordIdentifier::new(
+                        &key_author.1,
+                        namespace,
+                        key_author.0,
+                        value.timestamp(),
+                    );
+                    (record_id, value.clone())
                 })
                 .nth(self.index)?,
-            GetFilter::KeyAuthor(ref record_id) => {
-                let values = records.get(record_id)?;
-                let (_, res) = values.iter().nth(self.index)?;
-                (record_id.clone(), res.clone())
-            }
             GetFilter::Key { namespace, ref key } => records
                 .iter()
-                .filter(|(k, _)| k.key() == key && k.namespace() == namespace)
-                .filter_map(|(key, value)| {
-                    value
-                        .last_key_value()
-                        .map(|(_, v)| (key.clone(), v.clone()))
+                .filter(|((_, k), _)| k == key)
+                .map(|(key_author, value)| {
+                    let record_id = RecordIdentifier::new(
+                        &key_author.1,
+                        namespace,
+                        key_author.0,
+                        value.timestamp(),
+                    );
+                    (record_id, value.clone())
                 })
                 .nth(self.index)?,
             GetFilter::Prefix {
@@ -336,60 +287,48 @@ impl<'a> Iterator for GetLatestIter<'a> {
                 ref prefix,
             } => records
                 .iter()
-                .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == namespace)
-                .filter_map(|(key, value)| {
-                    value
-                        .last_key_value()
-                        .map(|(_, v)| (key.clone(), v.clone()))
+                .filter(|((_, k), _)| k.starts_with(prefix))
+                .map(|(key_author, value)| {
+                    let record_id = RecordIdentifier::new(
+                        &key_author.1,
+                        namespace,
+                        key_author.0,
+                        value.timestamp(),
+                    );
+                    (record_id, value.clone())
                 })
                 .nth(self.index)?,
-        };
-        self.index += 1;
-        Some(Ok(res))
-    }
-}
-
-#[derive(Debug)]
-struct GetAllIter<'a> {
-    records: ReplicaRecords<'a>,
-    filter: GetFilter,
-    /// Current iteration index.
-    index: usize,
-}
-
-impl<'a> Iterator for GetAllIter<'a> {
-    type Item = Result<(RecordIdentifier, SignedEntry)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let records = self.records.get(&self.filter.namespace())?;
-        let res = match self.filter {
-            GetFilter::All { namespace } => records
-                .iter()
-                .filter(|(k, _)| k.namespace() == namespace)
-                .flat_map(|(key, value)| {
-                    value.iter().map(|(_, value)| (key.clone(), value.clone()))
-                })
-                .nth(self.index)?,
-            GetFilter::KeyAuthor(ref record_id) => {
-                let values = records.get(record_id)?;
-                let (_, value) = values.iter().nth(self.index)?;
-                (record_id.clone(), value.clone())
-            }
-            GetFilter::Key { namespace, ref key } => records
-                .iter()
-                .filter(|(k, _)| k.key() == key && k.namespace() == namespace)
-                .flat_map(|(key, value)| {
-                    value.iter().map(|(_, value)| (key.clone(), value.clone()))
-                })
-                .nth(self.index)?,
-            GetFilter::Prefix {
+            GetFilter::Author {
                 namespace,
-                ref prefix,
+                ref author,
             } => records
                 .iter()
-                .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == namespace)
-                .flat_map(|(key, value)| {
-                    value.iter().map(|(_, value)| (key.clone(), value.clone()))
+                .filter(|((a, _), _)| a == author)
+                .map(|(key_author, value)| {
+                    let record_id = RecordIdentifier::new(
+                        &key_author.1,
+                        namespace,
+                        key_author.0,
+                        value.timestamp(),
+                    );
+                    (record_id, value.clone())
+                })
+                .nth(self.index)?,
+            GetFilter::AuthorAndPrefix {
+                namespace,
+                ref prefix,
+                ref author,
+            } => records
+                .iter()
+                .filter(|((a, k), _)| a == author && k.starts_with(prefix))
+                .map(|(key_author, value)| {
+                    let record_id = RecordIdentifier::new(
+                        &key_author.1,
+                        namespace,
+                        key_author.0,
+                        value.timestamp(),
+                    );
+                    (record_id, value.clone())
                 })
                 .nth(self.index)?,
         };
@@ -412,7 +351,7 @@ impl ReplicaStoreInstance {
 
     fn with_records<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(Option<&BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>) -> T,
+        F: FnOnce(Option<&RecordMap>) -> T,
     {
         let guard = self.store.replica_records.read();
         let value = guard.get(&self.namespace);
@@ -421,7 +360,7 @@ impl ReplicaStoreInstance {
 
     fn with_records_mut<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(Option<&mut BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>) -> T,
+        F: FnOnce(Option<&mut RecordMap>) -> T,
     {
         let mut guard = self.store.replica_records.write();
         let value = guard.get_mut(&self.namespace);
@@ -430,7 +369,7 @@ impl ReplicaStoreInstance {
 
     fn with_records_mut_with_default<F, T>(&self, f: F) -> T
     where
-        F: FnOnce(&mut BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>) -> T,
+        F: FnOnce(&mut RecordMap) -> T,
     {
         let mut guard = self.store.replica_records.write();
         let value = guard.entry(self.namespace).or_default();
@@ -446,10 +385,7 @@ impl ReplicaStoreInstance {
     }
 }
 
-type ReplicaRecords<'a> = RwLockReadGuard<
-    'a,
-    HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
->;
+type ReplicaRecords<'a> = RwLockReadGuard<'a, ReplicaRecordsOwned>;
 
 #[derive(Debug)]
 struct RecordsIter<'a> {
@@ -459,13 +395,14 @@ struct RecordsIter<'a> {
 }
 
 impl Iterator for RecordsIter<'_> {
-    type Item = (RecordIdentifier, BTreeMap<u64, SignedEntry>);
+    type Item = (RecordIdentifier, SignedEntry);
 
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
-        let (key, value) = records.iter().nth(self.i)?;
+        let ((author, key), value) = records.iter().nth(self.i)?;
+        let id = RecordIdentifier::new(key, self.namespace, *author, value.timestamp());
         self.i += 1;
-        Some((key.clone(), value.clone()))
+        Some((id, value.clone()))
     }
 }
 
@@ -476,17 +413,24 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     fn get_first(&self) -> Result<RecordIdentifier, Self::Error> {
         Ok(self.with_records(|records| {
             records
-                .and_then(|r| r.first_key_value().map(|(k, _)| k.clone()))
+                .and_then(|r| {
+                    r.first_key_value().map(|((author, key), value)| {
+                        RecordIdentifier::new(key, self.namespace, *author, value.timestamp())
+                    })
+                })
                 .unwrap_or_default()
         }))
     }
 
     fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         Ok(self.with_records(|records| {
-            records
-                .and_then(|r| r.get(key))
-                .and_then(|values| values.last_key_value())
-                .map(|(_, v)| v.clone())
+            records.and_then(|r| {
+                let v = r.get(&(key.author(), key.key().to_vec()))?;
+                if v.timestamp() == key.timestamp() {
+                    return Some(v.clone());
+                }
+                None
+            })
         }))
     }
 
@@ -509,43 +453,51 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     }
 
     fn put(&mut self, k: RecordIdentifier, v: SignedEntry) -> Result<(), Self::Error> {
-        // TODO: propagate error/not insertion?
+        assert_eq!(k.timestamp(), v.timestamp(), "inconsistent timestamp"); // TODO: error
+                                                                            // TODO: propagate error/not insertion?
         if v.verify().is_ok() {
-            let timestamp = v.entry().record().timestamp();
             // TODO: verify timestamp is "reasonable"
-
             self.with_records_mut_with_default(|records| {
-                records.entry(k).or_default().insert(timestamp, v);
+                match records.entry((k.author(), k.key().to_vec())) {
+                    std::collections::btree_map::Entry::Vacant(e) => {
+                        e.insert(v);
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut e) => {
+                        // Ignore older timestamp
+                        if e.get().timestamp() < v.timestamp() {
+                            e.insert(v);
+                        }
+                    }
+                }
             });
         }
         Ok(())
     }
 
-    type RangeIterator<'a> = RangeIterator<'a>;
+    type RangeIterator<'a> = InstanceRangeIterator<'a>;
 
     fn get_range(
         &self,
         range: Range<RecordIdentifier>,
     ) -> Result<Self::RangeIterator<'_>, Self::Error> {
-        Ok(RangeIterator {
+        Ok(InstanceRangeIterator {
             iter: self.records_iter(),
             range: Some(range),
         })
     }
 
-    fn remove(&mut self, key: &RecordIdentifier) -> Result<Vec<SignedEntry>, Self::Error> {
+    fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
+        // TODO: what if we are trying to remove with the wrong timestamp?
         let res = self.with_records_mut(|records| {
-            records
-                .and_then(|records| records.remove(key).map(|v| v.into_values().collect()))
-                .unwrap_or_default()
+            records.and_then(|records| records.remove(&(key.author(), key.key().to_vec())))
         });
         Ok(res)
     }
 
-    type AllIterator<'a> = RangeIterator<'a>;
+    type AllIterator<'a> = InstanceRangeIterator<'a>;
 
     fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error> {
-        Ok(RangeIterator {
+        Ok(InstanceRangeIterator {
             iter: self.records_iter(),
             range: None,
         })
@@ -554,27 +506,26 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
 
 /// Range iterator for a [`ReplicaStoreInstance`]
 #[derive(Debug)]
-pub struct RangeIterator<'a> {
+pub struct InstanceRangeIterator<'a> {
     iter: RecordsIter<'a>,
     range: Option<Range<RecordIdentifier>>,
 }
 
-impl RangeIterator<'_> {
+impl InstanceRangeIterator<'_> {
     fn matches(&self, x: &RecordIdentifier) -> bool {
         self.range.as_ref().map(|r| r.contains(x)).unwrap_or(true)
     }
 }
 
-impl Iterator for RangeIterator<'_> {
+impl Iterator for InstanceRangeIterator<'_> {
     type Item = Result<(RecordIdentifier, SignedEntry), Infallible>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.iter.next()?;
         loop {
-            if self.matches(&next.0) {
-                let (k, mut values) = next;
-                let (_, v) = values.pop_last()?;
-                return Some(Ok((k, v)));
+            let (record_id, v) = next;
+            if self.matches(&record_id) {
+                return Some(Ok((record_id, v)));
             }
 
             next = self.iter.next()?;

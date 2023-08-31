@@ -10,11 +10,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocGetRequest, DocGetResponse, DocImportRequest,
-        DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
-        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
-        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocGetOneRequest, DocGetOneResponse, DocGetRequest,
+        DocGetResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
+        DocListRequest, DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStopSyncRequest,
+        DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
+        ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, PeerSource, SyncEngine},
 };
@@ -181,7 +182,7 @@ impl<S: Store> SyncEngine<S> {
             .map_err(Into::into)?;
         let entry = self
             .store
-            .get_latest_by_key_and_author(replica.namespace(), author.id(), &key)?
+            .get_by_key_and_author(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
     }
@@ -200,6 +201,19 @@ impl<S: Store> SyncEngine<S> {
             }
         });
         rx.into_stream()
+    }
+
+    pub async fn doc_get_one(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
+        let DocGetOneRequest {
+            doc_id,
+            author,
+            key,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let entry = self
+            .store
+            .get_by_key_and_author(replica.namespace(), author, key)?;
+        Ok(DocGetOneResponse { entry })
     }
 }
 
