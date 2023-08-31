@@ -9,6 +9,7 @@ use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::key::{PublicKey, SecretKey};
+use iroh_net::magicsock::ConnectionType;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
@@ -321,7 +322,13 @@ impl NodeCommands {
     pub async fn run(self, client: RpcClient) -> Result<()> {
         match self {
             Self::Connections => {
-                client.server_streaming(ConnectionsRequest).await?;
+                let mut connections = client.server_streaming(ConnectionsRequest).await?;
+                println!("Connections:");
+                while let Some(Ok(Ok(ConnectionsResponse { node_info }))) = connections.next().await
+                {
+                    fmt_connection(node_info);
+                    println!();
+                }
             }
             Self::Shutdown { force } => {
                 client.rpc(ShutdownRequest { force }).await?;
@@ -525,5 +532,35 @@ impl FromStr for RequestTokenOptions {
         }
         let token = RequestToken::from_str(s)?;
         Ok(Self::Token(token))
+    }
+}
+
+fn fmt_connection(info: iroh_net::magic_endpoint::NodeInfo) {
+    println!("\tPublicKey: {}", info.public_key);
+    println!(
+        "\tDERP region: {}",
+        info.derp_region
+            .map_or(String::from("None"), |region| region.to_string())
+    );
+    match info.conn_type {
+        ConnectionType::None => println!("\tNo connection"),
+        ConnectionType::Relay(_) => println!(
+            "\tConnected via DERP relay, with a latency of {:?}",
+            info.latency
+        ),
+        ConnectionType::Direct(addr) => {
+            println!(
+                "\tDirect connection via address {addr}, with a latency of {:?}",
+                info.latency
+            )
+        }
+    }
+    println!("\tOther available address and their latencies:");
+    if info.addrs.len() == 0 {
+        println!("\t\tNone");
+    } else {
+        for (addr, latency) in info.addrs.iter() {
+            println!("\t\t({}, {:?})", addr, latency);
+        }
     }
 }
