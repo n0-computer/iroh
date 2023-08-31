@@ -9,7 +9,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.67"
+rust-version = "1.70"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
