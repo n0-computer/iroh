@@ -1174,7 +1174,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
             match self.inner.endpoint.node_infos().await {
-                Ok(node_infos) => {
+                Ok(mut node_infos) => {
+                    node_infos.sort_by_key(|n| n.public_key.to_string());
                     for node_info in node_infos {
                         tx2.send_async(Ok(ConnectionsResponse { node_info }))
                             .await

@@ -536,7 +536,7 @@ impl FromStr for RequestTokenOptions {
 }
 
 fn fmt_connection(info: iroh_net::magic_endpoint::NodeInfo) {
-    println!("\tPublicKey: {}", info.public_key);
+    println!("\tNodeId: {}", info.public_key);
     println!(
         "\tDERP region: {}",
         info.derp_region
@@ -548,19 +548,11 @@ fn fmt_connection(info: iroh_net::magic_endpoint::NodeInfo) {
             "\tConnected via DERP relay, with a latency of {:?}",
             info.latency
         ),
-        ConnectionType::Direct(addr) => {
+        ConnectionType::Direct(_) => {
             println!(
-                "\tDirect connection via address {addr}, with a latency of {:?}",
+                "\tDirect connection via UDP, with a latency of {:?}",
                 info.latency
             )
-        }
-    }
-    println!("\tOther available address and their latencies:");
-    if info.addrs.is_empty() {
-        println!("\t\tNone");
-    } else {
-        for (addr, latency) in info.addrs.iter() {
-            println!("\t\t({}, {:?})", addr, latency);
         }
     }
 }
