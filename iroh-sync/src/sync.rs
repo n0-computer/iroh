@@ -269,10 +269,8 @@ fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
     }
 
     // Verify signature for non-local entries.
-    if !matches!(origin, InsertOrigin::Local) {
-        if entry.verify().is_err() {
-            return Err(ValidationFailure::BadSignature);
-        }
+    if !matches!(origin, InsertOrigin::Local) && entry.verify().is_err() {
+        return Err(ValidationFailure::BadSignature);
     }
 
     // Verify that the timestamp of the entry is not too far in the future.
