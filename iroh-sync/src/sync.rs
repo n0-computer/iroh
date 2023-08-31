@@ -135,7 +135,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
-            sender.send((InsertOrigin::Local, entry)).ok();
+            sender.send(origin).ok();
         }
 
         #[cfg(feature = "metrics")]
