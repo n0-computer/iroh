@@ -263,10 +263,8 @@ impl Store {
         let start = (namespace.as_bytes(), author, prefix.as_ref());
         let mut end_prefix = prefix.as_ref().to_vec();
         let mut end_author = *author;
-        if !increment_by_one(&mut end_prefix) {
-            if !increment_by_one(&mut end_author) {
-                bail!("Invalid AuthorId")
-            }
+        if !increment_by_one(&mut end_prefix) && !increment_by_one(&mut end_author) {
+            bail!("Invalid AuthorId")
         }
         let end = (namespace.as_bytes(), &end_author, &end_prefix[..]);
         RangeIterator::with_range(&self.db, |table| table.range(start..end), RangeFilter::None)
@@ -608,7 +606,7 @@ mod tests {
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = Namespace::new(&mut rand::thread_rng());
-        let replica = store.new_replica(namespace.clone())?;
+        let replica = store.new_replica(namespace)?;
 
         // test author prefix relation for all-255 keys
         let key1 = vec![255, 255];

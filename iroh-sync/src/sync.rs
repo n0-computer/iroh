@@ -110,7 +110,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         let record = Record::from_hash(hash, len);
 
         // Store signed entries
-        let entry = Entry::new(id.clone(), record);
+        let entry = Entry::new(id, record);
         let signed_entry = entry.sign(&self.inner.read().namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
@@ -934,7 +934,7 @@ mod tests {
         let entry = {
             let timestamp = 2;
             let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
-            let record = Record::from_data(&value);
+            let record = Record::from_data(value);
             Entry::new(id, record).sign(&namespace, &author)
         };
 
@@ -949,12 +949,12 @@ mod tests {
         let entry2 = {
             let timestamp = 1;
             let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
-            let record = Record::from_data(&value);
+            let record = Record::from_data(value);
             Entry::new(id, record).sign(&namespace, &author)
         };
 
         replica
-            .insert_entry(entry2.clone(), InsertOrigin::Local)
+            .insert_entry(entry2, InsertOrigin::Local)
             .unwrap();
         let res = store
             .get_by_key_and_author(namespace.id(), author.id(), key)?
