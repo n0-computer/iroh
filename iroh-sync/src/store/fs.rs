@@ -583,9 +583,39 @@ impl Iterator for RangeIterator<'_> {
 #[cfg(test)]
 mod tests {
     use crate::ranger::Store as _;
-    use crate::store::Store as _;
+    use crate::store::{GetFilter, Store as _};
 
     use super::*;
+
+    #[test]
+    fn test_ranges() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = Store::new(dbfile.path())?;
+
+        let author = store.new_author(&mut rand::thread_rng())?;
+        let namespace = Namespace::new(&mut rand::thread_rng());
+        let replica = store.new_replica(namespace.clone())?;
+
+        // test author prefix relation for all-255 keys
+        let key1 = vec![255, 255];
+        let key2 = vec![255, 255, 255];
+        replica.hash_and_insert(&key1, &author, b"v1")?;
+        replica.hash_and_insert(&key2, &author, b"v2")?;
+        let res = store
+            .get(
+                replica.namespace(),
+                GetFilter::AuthorAndPrefix(author.id(), vec![255]),
+            )?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(res.len(), 2);
+        assert_eq!(
+            res.into_iter()
+                .map(|entry| entry.key().to_vec())
+                .collect::<Vec<_>>(),
+            vec![key1, key2]
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_basics() -> Result<()> {
