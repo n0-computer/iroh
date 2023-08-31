@@ -1206,7 +1206,7 @@ mod tests {
 
         assert_eq!(get_entry(&store, &namespace, &author, key)?, entry0);
 
-        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 1000;
+        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
         let record = Record::from_data(b"2");
         let entry1 = SignedEntry::from_parts(&namespace, &author, key, t, record);
         replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
@@ -1218,7 +1218,7 @@ mod tests {
         replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
         assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
 
-        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 1000;
+        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
         let record = Record::from_data(b"2");
         let entry3 = SignedEntry::from_parts(&namespace, &author, key, t, record);
         let res = replica.insert_entry(entry3, InsertOrigin::Local);
