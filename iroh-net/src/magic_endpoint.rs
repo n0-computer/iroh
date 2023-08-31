@@ -20,7 +20,7 @@ use crate::{
     tls,
 };
 
-type NodeInfo = super::magicsock::EndpointInfo;
+pub use super::magicsock::EndpointInfo as NodeInfo;
 
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]

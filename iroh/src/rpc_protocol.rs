@@ -194,6 +194,29 @@ impl RpcMsg<ProviderService> for VersionRequest {
     type Response = VersionResponse;
 }
 
+/// List connection information about all the nodes we know about
+///
+/// These can be nodes that have been explicitly connected to, nodes we
+/// have passed in as part of the [`iroh_net::PeerMap`], or nodes that
+/// have connected to us.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionsRequest;
+
+/// A response to a connections request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionsResponse {
+    /// Hash of the collection
+    pub node_info: iroh_net::magic_endpoint::NodeInfo,
+}
+
+impl Msg<ProviderService> for ConnectionsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ConnectionsRequest {
+    type Response = RpcResult<ConnectionsResponse>;
+}
+
 /// A request to shutdown the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ShutdownRequest {
@@ -648,6 +671,8 @@ pub enum ProviderRequest {
 
     BytesGet(BytesGetRequest),
 
+    Connections(ConnectionsRequest),
+
     Stats(StatsGetRequest),
 }
 
@@ -681,6 +706,8 @@ pub enum ProviderResponse {
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),
     DocSubscribe(RpcResult<DocSubscribeResponse>),
+
+    Connections(RpcResult<ConnectionsResponse>),
 
     BytesGet(RpcResult<BytesGetResponse>),
 

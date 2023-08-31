@@ -9,6 +9,7 @@ use std::{
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
+use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
@@ -1168,7 +1169,7 @@ struct EndpointState {
 }
 
 /// The type of connection we have to the endpoint.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
     Direct(SocketAddr),
@@ -1179,7 +1180,7 @@ pub enum ConnectionType {
 }
 
 /// Details about an Endpoint
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointInfo {
     /// The id in the peer_map
     pub id: usize,

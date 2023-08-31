@@ -300,6 +300,8 @@ pub enum RpcCommands {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum NodeCommands {
+    /// Get information about the different connections we have made
+    Connections,
     /// Get status of the running node.
     Status,
     /// Get statistics and metrics from the running node.
@@ -318,6 +320,9 @@ pub enum NodeCommands {
 impl NodeCommands {
     pub async fn run(self, client: RpcClient) -> Result<()> {
         match self {
+            Self::Connections => {
+                client.server_streaming(ConnectionsRequest).await?;
+            }
             Self::Shutdown { force } => {
                 client.rpc(ShutdownRequest { force }).await?;
             }
