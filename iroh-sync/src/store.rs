@@ -97,3 +97,15 @@ impl Default for GetFilter {
         Self::All
     }
 }
+
+impl GetFilter {
+    /// Create a [`GetFilter`] from author and prefix options.
+    pub fn author_prefix(author: Option<AuthorId>, prefix: Option<impl AsRef<[u8]>>) -> Self {
+        match (author, prefix) {
+            (None, None) => Self::All,
+            (Some(author), None) => Self::Author(author),
+            (None, Some(prefix)) => Self::Prefix(prefix.as_ref().to_vec()),
+            (Some(author), Some(prefix)) => Self::AuthorAndPrefix(author, prefix.as_ref().to_vec()),
+        }
+    }
+}

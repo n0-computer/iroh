@@ -534,7 +534,7 @@ impl RecordIdentifier {
         out.extend_from_slice(self.namespace.as_bytes());
         out.extend_from_slice(self.author.as_bytes());
         out.extend_from_slice(&self.key);
-        out.extend(&self.timestamp.to_be_bytes())
+        out.extend_from_slice(&self.timestamp.to_be_bytes())
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
@@ -630,7 +630,6 @@ impl Record {
 
     /// Serialize this record into a mutable byte array.
     pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
-        // Note: the timestamp is not serialized as it is transmitted through the key
         out.extend_from_slice(&self.len.to_be_bytes());
         out.extend_from_slice(self.hash.as_ref());
     }

@@ -118,10 +118,9 @@ pub struct EntryIterator<'a>(StoreRangeIterator<'a>);
 impl<'a> Iterator for EntryIterator<'a> {
     type Item = Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|res| {
-            res.map(|(_id, entry)| entry)
-                .map_err(|_| unreachable!("never errors"))
-        })
+        self.0
+            .next()
+            .map(|res| Ok(res.map(|(_id, entry)| entry).expect("never errors")))
     }
 }
 

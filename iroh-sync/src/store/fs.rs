@@ -567,7 +567,6 @@ impl Iterator for RangeIterator<'_> {
                     Err(err) => return Some(Err(err)),
                 };
                 if fields.filter.matches(&id) {
-                    // TODO: remove timestamp
                     let record = Record::new(len, hash.into());
                     let entry = Entry::new(id.clone(), record);
                     let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);

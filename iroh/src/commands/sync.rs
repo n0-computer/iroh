@@ -193,7 +193,9 @@ impl DocCommands {
                 let filter = match (author, prefix) {
                     (None, false) => GetFilter::Key(key),
                     (None, true) => GetFilter::Prefix(key),
+                    (Some(author), true) => GetFilter::AuthorAndPrefix(author, key),
                     (Some(author), false) => {
+                        // Special case: Author and key, this means single entry.
                         let entry = doc
                             .get_one(author, key)
                             .await?
@@ -201,7 +203,6 @@ impl DocCommands {
                         print_entry(&doc, &entry, content).await?;
                         return Ok(());
                     }
-                    (Some(author), true) => GetFilter::AuthorAndPrefix(author, key),
                 };
 
                 let mut stream = doc.get(filter).await?;
@@ -215,14 +216,7 @@ impl DocCommands {
                 author,
             } => {
                 let doc = iroh.get_doc(env.doc(doc)?).await?;
-                let filter = match (author, prefix) {
-                    (None, None) => GetFilter::All,
-                    (None, Some(prefix)) => GetFilter::Prefix(prefix.as_bytes().to_vec()),
-                    (Some(author), None) => GetFilter::Author(author),
-                    (Some(author), Some(prefix)) => {
-                        GetFilter::AuthorAndPrefix(author, prefix.as_bytes().to_vec())
-                    }
-                };
+                let filter = GetFilter::author_prefix(author, prefix);
 
                 let mut stream = doc.get(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
