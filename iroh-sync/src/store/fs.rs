@@ -244,7 +244,7 @@ impl Store {
     fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, &[][..]);
-        let end = increment_by_one_if_possible(&start);
+        let end = prefix_range_end(&start);
         RangeIterator::with_range(
             &self.db,
             |table| match end {
@@ -263,7 +263,7 @@ impl Store {
     ) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, prefix.as_ref());
-        let end = increment_by_one_if_possible(&start);
+        let end = prefix_range_end(&start);
         RangeIterator::with_range(
             &self.db,
             |table| match end {
@@ -304,7 +304,7 @@ fn increment_by_one(value: &mut [u8]) -> bool {
     false
 }
 
-fn increment_by_one_if_possible<'a>(
+fn prefix_range_end<'a>(
     value: &'a RecordsId<'a>,
 ) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
     let mut namespace = *value.0;
