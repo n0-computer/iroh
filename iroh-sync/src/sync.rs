@@ -270,7 +270,7 @@ fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
 
     // Verify signature for non-local entries.
     if !matches!(origin, InsertOrigin::Local) {
-        if let Err(_) = entry.verify() {
+        if entry.verify().is_err() {
             return Err(ValidationFailure::BadSignature);
         }
     }
