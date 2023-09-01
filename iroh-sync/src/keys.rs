@@ -70,7 +70,7 @@ impl AuthorId {
     /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
     /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
-    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(AuthorId(VerifyingKey::from_bytes(bytes)?))
     }
 }
@@ -142,7 +142,7 @@ impl NamespaceId {
     /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
     /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
-    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(NamespaceId(VerifyingKey::from_bytes(bytes)?))
     }
 }
@@ -215,7 +215,7 @@ impl FromStr for AuthorId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_array(s)?)
+        Self::from_bytes(&base32::parse_array(s)?).map_err(Into::into)
     }
 }
 
@@ -223,7 +223,7 @@ impl FromStr for NamespaceId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_array(s)?)
+        Self::from_bytes(&base32::parse_array(s)?).map_err(Into::into)
     }
 }
 

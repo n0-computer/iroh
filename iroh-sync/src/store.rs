@@ -1,22 +1,46 @@
 //! Storage trait and implementation for iroh-sync documents
 
 use anyhow::Result;
+use ed25519_dalek::SignatureError;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
     sync::{Author, AuthorId, Namespace, NamespaceId, Replica, SignedEntry},
+    AuthorIdBytes, NamespaceIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
 pub mod fs;
 pub mod memory;
+mod pubkeys;
+pub use pubkeys::MemPubkeyStore;
+
+/// Store trait for expanded public keys for authors and namespaces.
+///
+/// Used to cache crypto keys. This trait is also implemented for the unit type [`()`], where no
+/// caching is used.
+pub trait PubkeyStore {
+    /// todo
+    fn namespace_id(
+        &self,
+        bytes: &NamespaceIdBytes,
+    ) -> std::result::Result<NamespaceId, SignatureError> {
+        NamespaceId::from_bytes(bytes)
+    }
+    /// todo
+    fn author_id(&self, bytes: &AuthorIdBytes) -> std::result::Result<AuthorId, SignatureError> {
+        AuthorId::from_bytes(bytes)
+    }
+}
+
+impl PubkeyStore for () {}
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
-    type Instance: ranger::Store<SignedEntry> + Send + Sync + 'static + Clone;
+    type Instance: ranger::Store<SignedEntry> + PubkeyStore + Send + Sync + 'static + Clone;
 
     /// Iterator over entries in the store, returned from [`Self::get`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
@@ -71,8 +95,8 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Get an entry by key and author.
     fn get_by_key_and_author(
         &self,
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: &NamespaceIdBytes,
+        author: &AuthorIdBytes,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>>;
 }

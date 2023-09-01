@@ -18,13 +18,17 @@ use crate::{
         Author, AuthorId, Entry, EntrySignature, Namespace, NamespaceId, Record, RecordIdentifier,
         Replica, SignedEntry,
     },
+    AuthorIdBytes, NamespaceIdBytes,
 };
+
+use super::{pubkeys::MemPubkeyStore, PubkeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<Database>,
     replicas: Arc<RwLock<HashMap<NamespaceId, Replica<StoreInstance>>>>,
+    pubkeys: MemPubkeyStore,
 }
 
 // Table Definitions
@@ -76,6 +80,7 @@ impl Store {
         Ok(Store {
             db: Arc::new(db),
             replicas: Default::default(),
+            pubkeys: Default::default(),
         })
     }
 
@@ -205,14 +210,14 @@ impl super::Store for Store {
 
     fn get_by_key_and_author(
         &self,
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: &NamespaceIdBytes,
+        author: &AuthorIdBytes,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
-        let db_key = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
+        let db_key = (namespace, author, key.as_ref());
         let record = record_table.get(db_key)?;
         let Some(record) = record else {
             return Ok(None);
@@ -220,7 +225,7 @@ impl super::Store for Store {
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
 
         let record = Record::new(hash.into(), len, timestamp);
-        let id = RecordIdentifier::new(key, namespace, author);
+        let id = RecordIdentifier::from_parts(namespace, author, key.as_ref());
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
         let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -339,6 +344,22 @@ fn range_end(namespace: &NamespaceId) -> RecordsId {
     (namespace.as_bytes(), &[u8::MAX; 32], &[][..])
 }
 
+impl PubkeyStore for StoreInstance {
+    fn namespace_id(
+        &self,
+        bytes: &NamespaceIdBytes,
+    ) -> std::result::Result<NamespaceId, ed25519_dalek::SignatureError> {
+        self.store.pubkeys.namespace_id(bytes)
+    }
+
+    fn author_id(
+        &self,
+        bytes: &AuthorIdBytes,
+    ) -> std::result::Result<AuthorId, ed25519_dalek::SignatureError> {
+        self.store.pubkeys.author_id(bytes)
+    }
+}
+
 impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
 
@@ -357,13 +378,13 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         };
         let (compound_key, _value) = record?;
         let (namespace_id, author_id, key) = compound_key.value();
-        let id = RecordIdentifier::from_parts(key, namespace_id, author_id)?;
+        let id = RecordIdentifier::from_parts(namespace_id, author_id, key);
         Ok(id)
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store
-            .get_by_key_and_author(id.namespace(), id.author(), id.key())
+            .get_by_key_and_author(id.namespace_bytes(), id.author_bytes(), id.key())
     }
 
     fn len(&self) -> Result<usize> {
@@ -583,13 +604,10 @@ impl Iterator for RangeIterator<'_> {
 
                 let (namespace, author, key) = next.0.value();
                 let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
-                let id = match RecordIdentifier::from_parts(key, namespace, author) {
-                    Ok(id) => id,
-                    Err(err) => return Some(Err(err)),
-                };
+                let id = RecordIdentifier::from_parts(namespace, author, key);
                 if fields.filter.matches(&id) {
                     let record = Record::new(hash.into(), len, timestamp);
-                    let entry = Entry::new(id.clone(), record);
+                    let entry = Entry::new(id, record);
                     let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
                     let signed_entry = SignedEntry::new(entry_signature, entry);
 
@@ -658,7 +676,7 @@ mod tests {
 
         let mut wrapper = StoreInstance::new(namespace.id(), store.clone());
         for i in 0..5 {
-            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let id = RecordIdentifier::new(namespace.id(), author.id(), format!("hello-{i}"));
             let entry = Entry::new(id, Record::current_from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(entry)?;
@@ -671,7 +689,7 @@ mod tests {
         // add a second version
         let mut ids = Vec::new();
         for i in 0..5 {
-            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let id = RecordIdentifier::new(namespace.id(), author.id(), format!("hello-{i}"));
             let entry = Entry::new(
                 id.clone(),
                 Record::current_from_data(format!("world-{i}-2")),

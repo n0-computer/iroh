@@ -13,7 +13,10 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
+    AuthorIdBytes, NamespaceIdBytes,
 };
+
+use super::{pubkeys::MemPubkeyStore, PubkeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
@@ -22,12 +25,13 @@ pub struct Store {
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
+    pubkeys: MemPubkeyStore,
 }
 
-type Rid = (AuthorId, Vec<u8>);
+type Rid = (AuthorIdBytes, Vec<u8>);
 type Rvalue = SignedEntry;
 type RecordMap = BTreeMap<Rid, Rvalue>;
-type ReplicaRecordsOwned = HashMap<NamespaceId, RecordMap>;
+type ReplicaRecordsOwned = HashMap<NamespaceIdBytes, RecordMap>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
@@ -98,15 +102,15 @@ impl super::Store for Store {
 
     fn get_by_key_and_author(
         &self,
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: &NamespaceIdBytes,
+        author: &AuthorIdBytes,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
 
         let value = inner
-            .get(&namespace)
-            .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
+            .get(namespace)
+            .and_then(|records| records.get(&(*author, key.as_ref().to_vec())));
 
         Ok(value.cloned())
     }
@@ -253,7 +257,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let records = self.records.get(&self.filter.namespace())?;
+        let records = self.records.get(self.filter.namespace().as_bytes())?;
         let entry = match self.filter {
             GetFilter::All { .. } => records.iter().nth(self.index)?,
             GetFilter::Key { ref key, .. } => records
@@ -266,7 +270,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 .nth(self.index)?,
             GetFilter::Author { ref author, .. } => records
                 .iter()
-                .filter(|((a, _), _)| a == author)
+                .filter(|((a, _), _)| a == author.as_bytes())
                 .nth(self.index)?,
             GetFilter::AuthorAndPrefix {
                 ref prefix,
@@ -274,7 +278,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 ..
             } => records
                 .iter()
-                .filter(|((a, k), _)| a == author && k.starts_with(prefix))
+                .filter(|((a, k), _)| a == author.as_bytes() && k.starts_with(prefix))
                 .nth(self.index)?,
         };
         self.index += 1;
@@ -285,13 +289,32 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
 /// Instance of a [`Store`]
 #[derive(Debug, Clone)]
 pub struct ReplicaStoreInstance {
-    namespace: NamespaceId,
+    namespace: NamespaceIdBytes,
     store: Store,
+}
+
+impl PubkeyStore for ReplicaStoreInstance {
+    fn namespace_id(
+        &self,
+        bytes: &NamespaceIdBytes,
+    ) -> std::result::Result<NamespaceId, ed25519_dalek::SignatureError> {
+        self.store.pubkeys.namespace_id(bytes)
+    }
+
+    fn author_id(
+        &self,
+        bytes: &AuthorIdBytes,
+    ) -> std::result::Result<AuthorId, ed25519_dalek::SignatureError> {
+        self.store.pubkeys.author_id(bytes)
+    }
 }
 
 impl ReplicaStoreInstance {
     fn new(namespace: NamespaceId, store: Store) -> Self {
-        ReplicaStoreInstance { namespace, store }
+        ReplicaStoreInstance {
+            namespace: *namespace.as_bytes(),
+            store,
+        }
     }
 
     fn with_records<F, T>(&self, f: F) -> T
@@ -334,7 +357,7 @@ type ReplicaRecords<'a> = RwLockReadGuard<'a, ReplicaRecordsOwned>;
 
 #[derive(Debug)]
 struct RecordsIter<'a> {
-    namespace: NamespaceId,
+    namespace: NamespaceIdBytes,
     replica_records: ReplicaRecords<'a>,
     i: usize,
 }
@@ -345,7 +368,7 @@ impl Iterator for RecordsIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
         let ((author, key), value) = records.iter().nth(self.i)?;
-        let id = RecordIdentifier::new(key, self.namespace, *author);
+        let id = RecordIdentifier::from_parts(&self.namespace, author, key);
         self.i += 1;
         Some((id, value.clone()))
     }
@@ -360,7 +383,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
             records
                 .and_then(|r| {
                     r.first_key_value().map(|((author, key), _value)| {
-                        RecordIdentifier::new(key, self.namespace, *author)
+                        RecordIdentifier::from_parts(&self.namespace, author, key)
                     })
                 })
                 .unwrap_or_default()
@@ -370,7 +393,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         Ok(self.with_records(|records| {
             records.and_then(|r| {
-                let v = r.get(&(key.author(), key.key().to_vec()))?;
+                let v = r.get(&(*key.author_bytes(), key.key().to_vec()))?;
                 Some(v.clone())
             })
         }))
@@ -396,7 +419,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
 
     fn put(&mut self, e: SignedEntry) -> Result<(), Self::Error> {
         self.with_records_mut_with_default(|records| {
-            records.insert((e.author(), e.key().to_vec()), e);
+            records.insert((*e.author_bytes(), e.key().to_vec()), e);
         });
         Ok(())
     }
@@ -416,7 +439,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         // TODO: what if we are trying to remove with the wrong timestamp?
         let res = self.with_records_mut(|records| {
-            records.and_then(|records| records.remove(&(key.author(), key.key().to_vec())))
+            records.and_then(|records| records.remove(&(*key.author_bytes(), key.key().to_vec())))
         });
         Ok(res)
     }

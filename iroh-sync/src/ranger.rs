@@ -850,14 +850,14 @@ mod tests {
         let validate_alice: ValidateCb<&str, i32> = Box::new({
             let alice_validate_set = alice_validate_set.clone();
             move |_, e| {
-                alice_validate_set.borrow_mut().push(e.clone());
+                alice_validate_set.borrow_mut().push(*e);
                 false
             }
         });
         let validate_bob: ValidateCb<&str, i32> = Box::new({
             let bob_validate_set = bob_validate_set.clone();
             move |_, e| {
-                bob_validate_set.borrow_mut().push(e.clone());
+                bob_validate_set.borrow_mut().push(*e);
                 false
             }
         });

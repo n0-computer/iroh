@@ -193,7 +193,7 @@ mod tests {
     use crate::{
         store::{GetFilter, Store},
         sync::Namespace,
-        AuthorId,
+        AuthorId, AuthorIdBytes,
     };
     use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
@@ -311,7 +311,7 @@ mod tests {
         test_sync_many_authors(alice_store, bob_store).await
     }
 
-    type Message = (AuthorId, Vec<u8>, Hash);
+    type Message = (AuthorIdBytes, Vec<u8>, Hash);
 
     fn insert_messages<S: Store>(
         mut rng: impl CryptoRngCore,
@@ -330,7 +330,7 @@ mod tests {
             for author in authors.iter() {
                 let (key, value) = key_value_fn(&author.id(), i);
                 let hash = replica.hash_and_insert(key.clone(), author, value).unwrap();
-                res.push((author.id(), key.as_bytes().to_vec(), hash));
+                res.push((*author.id().as_bytes(), key.as_bytes().to_vec(), hash));
             }
         }
         res.sort();
@@ -342,7 +342,13 @@ mod tests {
             .get(namespace, GetFilter::All)
             .unwrap()
             .map(|entry| {
-                entry.map(|entry| (entry.author(), entry.key().to_vec(), entry.content_hash()))
+                entry.map(|entry| {
+                    (
+                        *entry.author_bytes(),
+                        entry.key().to_vec(),
+                        entry.content_hash(),
+                    )
+                })
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();
@@ -509,12 +515,12 @@ mod tests {
 
         assert_eq!(
             get_messages(&alice_store, alice_replica.namespace()),
-            vec![(author.id(), key.clone(), hash_alice)]
+            vec![(*author.id().as_bytes(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
             get_messages(&bob_store, bob_replica.namespace()),
-            vec![(author.id(), key.clone(), hash_bob)]
+            vec![(*author.id().as_bytes(), key.clone(), hash_bob)]
         );
 
         run_sync(
@@ -528,12 +534,12 @@ mod tests {
 
         assert_eq!(
             get_messages(&alice_store, alice_replica.namespace()),
-            vec![(author.id(), key.clone(), hash_bob)]
+            vec![(*author.id().as_bytes(), key.clone(), hash_bob)]
         );
 
         assert_eq!(
             get_messages(&bob_store, bob_replica.namespace()),
-            vec![(author.id(), key.clone(), hash_bob)]
+            vec![(*author.id().as_bytes(), key.clone(), hash_bob)]
         );
 
         Ok(())
