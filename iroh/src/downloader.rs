@@ -30,10 +30,7 @@
 
 #![allow(clippy::all, unused, missing_docs)]
 
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    task::Poll::{Pending, Ready},
-};
+use std::collections::{hash_map::Entry, HashMap};
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt};
 use iroh_bytes::{
