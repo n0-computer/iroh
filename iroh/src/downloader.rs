@@ -131,6 +131,8 @@ pub enum DownloadResult {
 pub struct DownloadHandle {
     /// Id used to identify the request in the [`Downloader`].
     id: u64,
+    /// Kind of download.
+    kind: DownloadKind,
     /// Receiver to retrieve the return value of this download.
     receiver: oneshot::Receiver<DownloadResult>,
 }
@@ -175,6 +177,7 @@ enum Message {
     },
     Cancel {
         id: Id,
+        kind: DownloadKind,
     },
 }
 
@@ -321,7 +324,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     fn handle_message(&mut self, msg: Message) {
         match msg {
             Message::Start { kind, id, sender } => self.handle_start_download(kind, id, sender),
-            Message::Cancel { id } => self.handle_cancel_download(id),
+            Message::Cancel { id, kind } => self.handle_cancel_download(id, kind),
         }
     }
 
@@ -473,27 +476,11 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     ///
     /// This removes the registerd download intent and, depending on its state, it will either
     /// remove it from the scheduled requests, or cancel the future.
-    fn handle_cancel_download(&mut self, id: Id) {
-        // remove the intent first
-        let Some(DownloadInfo { kind, .. }) = self.registered_intents.remove(&id) else {
-            // unlikely scenario to occur but this is reachable in a race between a download being
-            // finished and the requester cancelling it before polling the result
-            debug!(%id, "intent to cancel no longer present");
-            return;
-        };
-
-        let remove_intent = |intents: &mut Vec<Id>, id: Id| {
-            let intent_position = intents
-                .iter()
-                .position(|&intent_id| intent_id == id)
-                .expect("associated request contains intent id");
-            intents.remove(intent_position);
-        };
-
+    fn handle_cancel_download(&mut self, id: Id, kind: DownloadKind) {
         if let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(kind) {
             // remove the intent from the associated request
             let intents = &mut occupied_entry.get_mut().intents;
-            remove_intent(intents, id);
+            intents.remove(&id);
             // if this was the last intent associated with the request cancel it
             if intents.is_empty() {
                 occupied_entry.remove().cancellation.cancel();
@@ -501,15 +488,13 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         } else if let Entry::Occupied(mut occupied_entry) = self.scheduled_requests.entry(kind) {
             // remove the intent from the associated request
             let intents = &mut occupied_entry.get_mut().intents;
-            remove_intent(intents, id);
+            intents.remove(&id);
             // if this was the last intent associated with the request remove it from the schedule
             // queue
             if intents.is_empty() {
                 let delay_key = occupied_entry.remove().delay_key;
                 self.scheduled_request_queue.remove(&delay_key);
             }
-        } else {
-            unreachable!("registered intents have an associated request")
         }
     }
 
