@@ -219,8 +219,8 @@ impl super::Store for Store {
         };
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
 
-        let record = Record::new(len, hash.into());
-        let id = RecordIdentifier::new(key, namespace, author, timestamp);
+        let record = Record::new(hash.into(), len, timestamp);
+        let id = RecordIdentifier::new(key, namespace, author);
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
         let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -355,11 +355,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let Some(record) = records.next() else {
             return Ok(RecordIdentifier::default());
         };
-        let (compound_key, record) = record?;
+        let (compound_key, _value) = record?;
         let (namespace_id, author_id, key) = compound_key.value();
-        let (timestamp, _, _, _, _) = record.value();
-
-        let id = RecordIdentifier::from_parts(key, namespace_id, author_id, timestamp)?;
+        let id = RecordIdentifier::from_parts(key, namespace_id, author_id)?;
         Ok(id)
     }
 
@@ -409,7 +407,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             );
             let hash = e.content_hash();
             let value = (
-                e.id().timestamp(),
+                e.timestamp(),
                 &e.signature().namespace_signature().to_bytes(),
                 &e.signature().author_signature().to_bytes(),
                 e.content_len(),
@@ -483,8 +481,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             let key = (k.namespace_bytes(), k.author_bytes(), k.key());
             let record = records_table.remove(key)?;
             record.map(|record| {
-                let (_timestamp, namespace_sig, author_sig, len, hash) = record.value();
-                let record = Record::new(len, hash.into());
+                let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
+                let record = Record::new(hash.into(), len, timestamp);
                 let entry = Entry::new(k.clone(), record);
                 let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
                 SignedEntry::new(entry_signature, entry)
@@ -585,12 +583,12 @@ impl Iterator for RangeIterator<'_> {
 
                 let (namespace, author, key) = next.0.value();
                 let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
-                let id = match RecordIdentifier::from_parts(key, namespace, author, timestamp) {
+                let id = match RecordIdentifier::from_parts(key, namespace, author) {
                     Ok(id) => id,
                     Err(err) => return Some(Err(err)),
                 };
                 if fields.filter.matches(&id) {
-                    let record = Record::new(len, hash.into());
+                    let record = Record::new(hash.into(), len, timestamp);
                     let entry = Entry::new(id.clone(), record);
                     let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
                     let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -660,9 +658,8 @@ mod tests {
 
         let mut wrapper = StoreInstance::new(namespace.id(), store.clone());
         for i in 0..5 {
-            let id =
-                RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(id, Record::from_data(format!("world-{i}")));
+            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let entry = Entry::new(id, Record::current_from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(entry)?;
         }
@@ -674,9 +671,11 @@ mod tests {
         // add a second version
         let mut ids = Vec::new();
         for i in 0..5 {
-            let id =
-                RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}-2")));
+            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let entry = Entry::new(
+                id.clone(),
+                Record::current_from_data(format!("world-{i}-2")),
+            );
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(entry)?;
             ids.push(id);

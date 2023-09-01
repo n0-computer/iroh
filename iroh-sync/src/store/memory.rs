@@ -254,84 +254,31 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.records.get(&self.filter.namespace())?;
-        let res = match self.filter {
-            GetFilter::All { namespace } => records
-                .iter()
-                .map(|(key_author, value)| {
-                    let record_id = RecordIdentifier::new(
-                        &key_author.1,
-                        namespace,
-                        key_author.0,
-                        value.timestamp(),
-                    );
-                    (record_id, value.clone())
-                })
-                .nth(self.index)?,
-            GetFilter::Key { namespace, ref key } => records
+        let entry = match self.filter {
+            GetFilter::All { .. } => records.iter().nth(self.index)?,
+            GetFilter::Key { ref key, .. } => records
                 .iter()
                 .filter(|((_, k), _)| k == key)
-                .map(|(key_author, value)| {
-                    let record_id = RecordIdentifier::new(
-                        &key_author.1,
-                        namespace,
-                        key_author.0,
-                        value.timestamp(),
-                    );
-                    (record_id, value.clone())
-                })
                 .nth(self.index)?,
-            GetFilter::Prefix {
-                namespace,
-                ref prefix,
-            } => records
+            GetFilter::Prefix { ref prefix, .. } => records
                 .iter()
                 .filter(|((_, k), _)| k.starts_with(prefix))
-                .map(|(key_author, value)| {
-                    let record_id = RecordIdentifier::new(
-                        &key_author.1,
-                        namespace,
-                        key_author.0,
-                        value.timestamp(),
-                    );
-                    (record_id, value.clone())
-                })
                 .nth(self.index)?,
-            GetFilter::Author {
-                namespace,
-                ref author,
-            } => records
+            GetFilter::Author { ref author, .. } => records
                 .iter()
                 .filter(|((a, _), _)| a == author)
-                .map(|(key_author, value)| {
-                    let record_id = RecordIdentifier::new(
-                        &key_author.1,
-                        namespace,
-                        key_author.0,
-                        value.timestamp(),
-                    );
-                    (record_id, value.clone())
-                })
                 .nth(self.index)?,
             GetFilter::AuthorAndPrefix {
-                namespace,
                 ref prefix,
                 ref author,
+                ..
             } => records
                 .iter()
                 .filter(|((a, k), _)| a == author && k.starts_with(prefix))
-                .map(|(key_author, value)| {
-                    let record_id = RecordIdentifier::new(
-                        &key_author.1,
-                        namespace,
-                        key_author.0,
-                        value.timestamp(),
-                    );
-                    (record_id, value.clone())
-                })
                 .nth(self.index)?,
         };
         self.index += 1;
-        Some(Ok(res.1))
+        Some(Ok(entry.1.clone()))
     }
 }
 
@@ -398,7 +345,7 @@ impl Iterator for RecordsIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
         let ((author, key), value) = records.iter().nth(self.i)?;
-        let id = RecordIdentifier::new(key, self.namespace, *author, value.timestamp());
+        let id = RecordIdentifier::new(key, self.namespace, *author);
         self.i += 1;
         Some((id, value.clone()))
     }
@@ -412,8 +359,8 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         Ok(self.with_records(|records| {
             records
                 .and_then(|r| {
-                    r.first_key_value().map(|((author, key), value)| {
-                        RecordIdentifier::new(key, self.namespace, *author, value.timestamp())
+                    r.first_key_value().map(|((author, key), _value)| {
+                        RecordIdentifier::new(key, self.namespace, *author)
                     })
                 })
                 .unwrap_or_default()
