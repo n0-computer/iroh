@@ -549,19 +549,16 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// Gets the [`quinn::Connection`] for a peer if it's connected an has capacity for another
     /// request. In this case, the count of active requests for the peer is incremented.
     fn get_peer_connection_for_download(&mut self, peer: &PublicKey) -> Option<quinn::Connection> {
-        match self.peers.get_mut(peer)? {
-            // check if the peer is connected and can be sent another request
-            ConnectionInfo::Connected {
-                connection,
-                active_requests,
-            } if !self
-                .concurrency_limits
-                .peer_at_request_capacity(*active_requests) =>
-            {
-                *active_requests += 1;
-                Some(connection.clone())
-            }
-            _ => None,
+        let info = self.peers.get_mut(peer)?;
+        // check if the peer can be sent another request
+        if !self
+            .concurrency_limits
+            .peer_at_request_capacity(info.active_requests)
+        {
+            info.active_requests += 1;
+            Some(info.connection.clone())
+        } else {
+            None
         }
     }
 
