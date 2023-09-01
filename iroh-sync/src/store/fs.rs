@@ -397,35 +397,21 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     }
 
     fn put(&mut self, k: RecordIdentifier, v: SignedEntry) -> Result<()> {
-        // TODO: propagate error/not insertion?
-        if v.verify().is_ok() {
-            let timestamp = k.timestamp();
-            // TODO: verify timestamp is "reasonable"
-
-            let write_tx = self.store.db.begin_write()?;
-            {
-                let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
-                let key = (k.namespace_bytes(), k.author_bytes(), k.key());
-                if let Some(existing) = record_table.get(key)? {
-                    let (existing_timestamp, _n, _a, _l, _h) = existing.value();
-                    // If the existing entry is newer then the to-be inserted entry, abort now.
-                    if existing_timestamp > timestamp {
-                        return Ok(());
-                    }
-                }
-                let record = v.entry();
-                let hash = record.content_hash();
-                let value = (
-                    timestamp,
-                    &v.signature().namespace_signature().to_bytes(),
-                    &v.signature().author_signature().to_bytes(),
-                    record.content_len(),
-                    hash.as_bytes(),
-                );
-                record_table.insert(key, value)?;
-            }
-            write_tx.commit()?;
+        let write_tx = self.store.db.begin_write()?;
+        {
+            let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
+            let key = (k.namespace_bytes(), k.author_bytes(), k.key());
+            let hash = v.content_hash();
+            let value = (
+                k.timestamp(),
+                &v.signature().namespace_signature().to_bytes(),
+                &v.signature().author_signature().to_bytes(),
+                v.content_len(),
+                hash.as_bytes(),
+            );
+            record_table.insert(key, value)?;
         }
+        write_tx.commit()?;
         Ok(())
     }
 

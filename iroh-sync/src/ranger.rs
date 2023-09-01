@@ -400,13 +400,17 @@ where
 
     /// Processes an incoming message and produces a response.
     /// If terminated, returns `None`
+    ///
+    /// `validate_cb` is called before an entry received from the remote is inserted into the store.
+    /// It must return true if the entry is valid and should be stored, and false otherwise
+    /// (which means the entry will be dropped and not stored).
     pub fn process_message<F>(
         &mut self,
         message: Message<K, V>,
-        cb: F,
+        validate_cb: F,
     ) -> Result<Option<Message<K, V>>, S::Error>
     where
-        F: Fn(K, V),
+        F: Fn(&S, &K, &V) -> bool,
     {
         let mut out = Vec::new();
 
@@ -453,8 +457,9 @@ where
 
             // Store incoming values
             for (k, v) in values {
-                cb(k.clone(), v.clone());
-                self.store.put(k, v)?;
+                if validate_cb(&self.store, &k, &v) {
+                    self.store.put(k, v)?;
+                }
             }
 
             if let Some(diff) = diff {
@@ -616,8 +621,7 @@ where
     // }
 
     /// Returns a refernce to the underlying store.
-    #[cfg(test)]
-    pub fn store(&self) -> &S {
+    pub(crate) fn store(&self) -> &S {
         &self.store
     }
 }
@@ -625,7 +629,7 @@ where
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use std::fmt::Debug;
+    use std::{cell::RefCell, fmt::Debug, rc::Rc};
     use test_strategy::proptest;
 
     use super::*;
@@ -838,6 +842,51 @@ mod tests {
         );
     }
 
+    // This tests two things:
+    // 1) validate cb returning false leads to no changes on both sides after sync
+    // 2) validate cb receives expected entries
+    #[test]
+    fn test_validate_cb() {
+        let alice_set = [("alice1", 1), ("alice2", 2)];
+        let bob_set = [("bob1", 3), ("bob2", 4), ("bob3", 5)];
+        let alice_validate_set = Rc::new(RefCell::new(vec![]));
+        let bob_validate_set = Rc::new(RefCell::new(vec![]));
+
+        let validate_alice: ValidateCb<&str, i32> = Box::new({
+            let alice_validate_set = alice_validate_set.clone();
+            move |_, k, v| {
+                alice_validate_set.borrow_mut().push((*k, *v));
+                false
+            }
+        });
+        let validate_bob: ValidateCb<&str, i32> = Box::new({
+            let bob_validate_set = bob_validate_set.clone();
+            move |_, k, v| {
+                bob_validate_set.borrow_mut().push((*k, *v));
+                false
+            }
+        });
+
+        let mut alice = Peer::default();
+        for (k, v) in alice_set {
+            alice.put(k, v).unwrap();
+        }
+
+        let mut bob = Peer::default();
+        for (k, v) in bob_set {
+            bob.put(k, v).unwrap();
+        }
+
+        // run sync with a validate callback returning false, so no new entries are stored on either side
+        let res = sync_exchange_messages(alice, bob, &validate_alice, &validate_bob, 100);
+        res.assert_alice_set("unchanged", &alice_set);
+        res.assert_bob_set("unchanged", &bob_set);
+
+        // assert that the validate callbacks received all expected entries
+        assert_eq!(alice_validate_set.take(), bob_set);
+        assert_eq!(bob_validate_set.take(), alice_set);
+    }
+
     struct SyncResult<K, V>
     where
         K: RangeKey + Clone + Default + AsFingerprint,
@@ -946,10 +995,29 @@ mod tests {
         }
     }
 
+    type ValidateCb<K, V> = Box<dyn Fn(&SimpleStore<K, V>, &K, &V) -> bool>;
+
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
         K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
         V: Ord + Clone + Debug + PartialEq,
+    {
+        let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
+        let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
+        sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
+    }
+
+    fn sync_with_validate_cb_and_assert<K, V, F1, F2>(
+        alice_set: &[(K, V)],
+        bob_set: &[(K, V)],
+        alice_validate_cb: F1,
+        bob_validate_cb: F2,
+    ) -> SyncResult<K, V>
+    where
+        K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
+        V: Ord + Clone + Debug + PartialEq,
+        F1: Fn(&SimpleStore<K, V>, &K, &V) -> bool,
+        F2: Fn(&SimpleStore<K, V>, &K, &V) -> bool,
     {
         let mut expected_set_alice = BTreeMap::new();
         let mut expected_set_bob = BTreeMap::new();
@@ -968,28 +1036,8 @@ mod tests {
             expected_set_bob.insert(k.clone(), v.clone());
         }
 
-        let mut alice_to_bob = Vec::new();
-        let mut bob_to_alice = Vec::new();
-        let initial_message = alice.initial_message().unwrap();
+        let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
 
-        let mut next_to_bob = Some(initial_message);
-        let mut rounds = 0;
-        while let Some(msg) = next_to_bob.take() {
-            assert!(rounds < 100, "too many rounds");
-            rounds += 1;
-            alice_to_bob.push(msg.clone());
-
-            if let Some(msg) = bob.process_message(msg, |_, _| {}).unwrap() {
-                bob_to_alice.push(msg.clone());
-                next_to_bob = alice.process_message(msg, |_, _| {}).unwrap();
-            }
-        }
-        let res = SyncResult {
-            alice,
-            bob,
-            alice_to_bob,
-            bob_to_alice,
-        };
         res.print_messages();
 
         let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
@@ -1040,6 +1088,43 @@ mod tests {
         }
 
         res
+    }
+
+    fn sync_exchange_messages<K, V, F1, F2>(
+        mut alice: Peer<K, V>,
+        mut bob: Peer<K, V>,
+        alice_validate_cb: F1,
+        bob_validate_cb: F2,
+        max_rounds: usize,
+    ) -> SyncResult<K, V>
+    where
+        K: PartialEq + RangeKey + Clone + Default + Debug + AsFingerprint,
+        V: Ord + Clone + Debug + PartialEq,
+        F1: Fn(&SimpleStore<K, V>, &K, &V) -> bool,
+        F2: Fn(&SimpleStore<K, V>, &K, &V) -> bool,
+    {
+        let mut alice_to_bob = Vec::new();
+        let mut bob_to_alice = Vec::new();
+        let initial_message = alice.initial_message().unwrap();
+
+        let mut next_to_bob = Some(initial_message);
+        let mut rounds = 0;
+        while let Some(msg) = next_to_bob.take() {
+            assert!(rounds < max_rounds, "too many rounds");
+            rounds += 1;
+            alice_to_bob.push(msg.clone());
+
+            if let Some(msg) = bob.process_message(msg, &bob_validate_cb).unwrap() {
+                bob_to_alice.push(msg.clone());
+                next_to_bob = alice.process_message(msg, &alice_validate_cb).unwrap();
+            }
+        }
+        SyncResult {
+            alice,
+            bob,
+            alice_to_bob,
+            bob_to_alice,
+        }
     }
 
     #[test]

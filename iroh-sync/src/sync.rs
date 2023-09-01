@@ -6,7 +6,11 @@
 //
 // This is going to change!
 
-use std::{fmt::Debug, sync::Arc, time::SystemTime};
+use std::{
+    fmt::Debug,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
@@ -32,6 +36,10 @@ pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>
 /// Byte represenation of a `PeerId` from `iroh-net`.
 // TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
+
+/// Max time in the future from our wall clock time that we accept entries for.
+/// Value is 10 minutes.
+pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
 /// Whether an entry was inserted locally or by a remote peer.
 #[derive(Debug, Clone)]
@@ -62,7 +70,7 @@ struct ReplicaData {
     namespace: Namespace,
 }
 
-impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
+impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
@@ -99,17 +107,17 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     ///
     /// The entry will by signed by the provided `author`.
     /// The `len` must be the byte length of the data identified by `hash`.
+    ///
+    /// Returns an error either if the entry failed to validate or if a store operation failed.
     pub fn insert(
         &self,
         key: impl AsRef<[u8]>,
         author: &Author,
         hash: Hash,
         len: u64,
-    ) -> Result<(), S::Error> {
+    ) -> Result<(), InsertError<S>> {
         let id = RecordIdentifier::new_current(key, self.namespace(), author.id());
         let record = Record::from_hash(hash, len);
-
-        // Store signed entries
         let entry = Entry::new(id, record);
         let signed_entry = entry.sign(&self.inner.read().namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
@@ -119,19 +127,35 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     ///
     /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
     /// event, and insert the entry into the replica store.
+    ///
+    /// Returns an error if the entry failed to validate or if a store operation failed.
     pub fn insert_remote_entry(
         &self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
-    ) -> Result<(), S::Error> {
-        self.insert_entry(entry, InsertOrigin::Sync(received_from))
+    ) -> Result<(), InsertError<S>> {
+        let origin = InsertOrigin::Sync(received_from);
+        self.insert_entry(entry, origin)
     }
 
     /// Insert a signed entry into the database.
-    fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), S::Error> {
+    fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), InsertError<S>> {
+        let expected_namespace = self.namespace();
+
         let len = entry.content_len();
         let mut inner = self.inner.write();
-        inner.peer.put(entry.id().clone(), entry.clone())?;
+        let store = inner.peer.store();
+        validate_entry(
+            system_time_now(),
+            store,
+            expected_namespace,
+            &entry,
+            &origin,
+        )?;
+        inner
+            .peer
+            .put(entry.id().clone(), entry.clone())
+            .map_err(InsertError::Store)?;
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
@@ -164,7 +188,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> Result<Hash, S::Error> {
+    ) -> anyhow::Result<Hash> {
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
         self.insert(key, author, hash, len)?;
@@ -192,13 +216,21 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
         from_peer: PeerIdBytes,
     ) -> Result<Option<crate::ranger::Message<RecordIdentifier, SignedEntry>>, S::Error> {
+        let expected_namespace = self.namespace();
+        let now = system_time_now();
         let reply = self
             .inner
             .write()
             .peer
-            .process_message(message, |_key, entry| {
-                if let Some(sender) = self.on_insert_sender.read().as_ref() {
-                    sender.send((InsertOrigin::Sync(from_peer), entry)).ok();
+            .process_message(message, |store, _key, entry| {
+                let origin = InsertOrigin::Sync(from_peer);
+                if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
+                    if let Some(sender) = self.on_insert_sender.read().as_ref() {
+                        sender.send((origin, entry.clone())).ok();
+                    }
+                    true
+                } else {
+                    false
                 }
             })?;
 
@@ -215,6 +247,73 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     pub fn secret_key(&self) -> [u8; 32] {
         self.inner.read().namespace.to_bytes()
     }
+}
+
+/// Validate a [`SignedEntry`] if it's fit to be inserted.
+///
+/// This validates that
+/// * the entry's author and namespace signatures are correct
+/// * the entry's namespace matches the current replica
+/// * the entry's timestamp is not more than 10 minutes in the future of our system time
+/// * the entry is newer than an existing entry for the same key and author, if such exists.
+fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
+    now: u64,
+    store: &S,
+    expected_namespace: NamespaceId,
+    entry: &SignedEntry,
+    origin: &InsertOrigin,
+) -> Result<(), ValidationFailure> {
+    // Verify the namespace
+    if entry.namespace() != expected_namespace {
+        return Err(ValidationFailure::InvalidNamespace);
+    }
+
+    // Verify signature for non-local entries.
+    if !matches!(origin, InsertOrigin::Local) && entry.verify().is_err() {
+        return Err(ValidationFailure::BadSignature);
+    }
+
+    // Verify that the timestamp of the entry is not too far in the future.
+    if entry.timestamp() > now + MAX_TIMESTAMP_FUTURE_SHIFT {
+        return Err(ValidationFailure::TooFarInTheFuture);
+    }
+
+    // If an existing entry exists, make sure it's older than the new entry.
+    let existing = store.get(entry.id());
+    if let Ok(Some(existing)) = existing {
+        if existing.timestamp() > entry.timestamp() {
+            return Err(ValidationFailure::OlderThanExisting);
+        }
+    }
+    Ok(())
+}
+
+/// Error emitted when inserting entries into a [`Replica`] failed
+#[derive(thiserror::Error, derive_more::Debug)]
+pub enum InsertError<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+    /// Storage error
+    #[error("storage error")]
+    Store(S::Error),
+    /// Validation failure
+    #[error("validation failure")]
+    Validation(#[from] ValidationFailure),
+}
+
+/// Reason why entry validation failed
+#[derive(thiserror::Error, Debug)]
+pub enum ValidationFailure {
+    /// Entry namespace does not match the current replica.
+    #[error("Entry namespace does not match the current replica")]
+    InvalidNamespace,
+    /// Entry signature is invalid.
+    #[error("Entry signature is invalid")]
+    BadSignature,
+    /// Entry timestamp is older than existing entry for the same author and key.
+    #[error("Entry timestamp is older than existing entry for the same author and key.")]
+    OlderThanExisting,
+    /// Entry timestamp is too far in the future.
+    #[error("Entry timestamp is too far in the future.")]
+    TooFarInTheFuture,
 }
 
 /// A signed entry.
@@ -251,6 +350,19 @@ impl SignedEntry {
     pub fn from_entry(entry: Entry, namespace: &Namespace, author: &Author) -> Self {
         let signature = EntrySignature::from_entry(&entry, namespace, author);
         SignedEntry { signature, entry }
+    }
+
+    /// Create a new signed entries from its parts.
+    pub fn from_parts(
+        namespace: &Namespace,
+        author: &Author,
+        key: impl AsRef<[u8]>,
+        timestamp: u64,
+        record: Record,
+    ) -> Self {
+        let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
+        let entry = Entry::new(id, record);
+        Self::from_entry(entry, namespace, author)
     }
 
     /// Verify the signatures on this entry.
@@ -436,6 +548,7 @@ impl Debug for RecordIdentifier {
             .field("namespace", &self.namespace)
             .field("author", &self.author)
             .field("key", &std::string::String::from_utf8_lossy(&self.key))
+            .field("timestamp", &self.timestamp)
             .finish()
     }
 }
@@ -479,6 +592,13 @@ impl AsFingerprint for RecordIdentifier {
 
 impl RangeKey for RecordIdentifier {}
 
+fn system_time_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("time drift")
+        .as_micros() as u64
+}
+
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
     pub fn new(
@@ -497,10 +617,7 @@ impl RecordIdentifier {
 
     /// Create a new [`RecordIdentifier`] with the timestamp set to now.
     pub fn new_current(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("time drift")
-            .as_micros() as u64;
+        let timestamp = system_time_now();
 
         RecordIdentifier {
             key: key.as_ref().to_vec(),
@@ -631,7 +748,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        store::{self, GetFilter},
+        store::{self, GetFilter, Store},
     };
 
     use super::*;
@@ -667,9 +784,11 @@ mod tests {
 
         let my_replica = store.new_replica(myspace)?;
         for i in 0..10 {
-            my_replica
-                .hash_and_insert(format!("/{i}"), &alice, format!("{i}: hello from alice"))
-                .map_err(Into::into)?;
+            my_replica.hash_and_insert(
+                format!("/{i}"),
+                &alice,
+                format!("{i}: hello from alice"),
+            )?;
         }
 
         for i in 0..10 {
@@ -682,16 +801,12 @@ mod tests {
         }
 
         // Test multiple records for the same key
-        my_replica
-            .hash_and_insert("/cool/path", &alice, "round 1")
-            .map_err(Into::into)?;
+        my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
             .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
-        my_replica
-            .hash_and_insert("/cool/path", &alice, "round 2")
-            .map_err(Into::into)?;
+        my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
             .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
@@ -724,9 +839,7 @@ mod tests {
         assert_eq!(entries.len(), 11);
 
         // insert record from different author
-        let _entry = my_replica
-            .hash_and_insert("/cool/path", &bob, "bob round 1")
-            .map_err(Into::into)?;
+        let _entry = my_replica.hash_and_insert("/cool/path", &bob, "bob round 1")?;
 
         // Get All by author
         let entries: Vec<_> = store
@@ -953,7 +1066,13 @@ mod tests {
             Entry::new(id, record).sign(&namespace, &author)
         };
 
-        replica.insert_entry(entry2, InsertOrigin::Local).unwrap();
+        let res = replica.insert_entry(entry2, InsertOrigin::Local);
+        assert!(matches!(
+            res,
+            Err(InsertError::Validation(
+                ValidationFailure::OlderThanExisting
+            ))
+        ));
         let res = store
             .get_by_key_and_author(namespace.id(), author.id(), key)?
             .unwrap();
@@ -992,37 +1111,156 @@ mod tests {
         let myspace = Namespace::new(&mut rng);
         let alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
-            alice
-                .hash_and_insert(el, &author, el.as_bytes())
-                .map_err(Into::into)?;
+            alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let bob = bob_store.new_replica(myspace)?;
+        let bob = bob_store.new_replica(myspace.clone())?;
         for el in &bob_set {
-            bob.hash_and_insert(el, &author, el.as_bytes())
-                .map_err(Into::into)?;
+            bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync(
-            &author,
-            &alice,
-            &alice_store,
-            &bob,
-            &bob_store,
-            &alice_set,
-            &bob_set,
-        )?;
+        sync::<S>(&alice, &bob)?;
+
+        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+
         Ok(())
     }
 
+    #[test]
+    fn test_replica_timestamp_sync_memory() -> Result<()> {
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+
+        test_replica_timestamp_sync(alice_store, bob_store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_timestamp_sync_fs() -> Result<()> {
+        let alice_dbfile = tempfile::NamedTempFile::new()?;
+        let alice_store = store::fs::Store::new(alice_dbfile.path())?;
+        let bob_dbfile = tempfile::NamedTempFile::new()?;
+        let bob_store = store::fs::Store::new(bob_dbfile.path())?;
+        test_replica_timestamp_sync(alice_store, bob_store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_timestamp_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let alice = alice_store.new_replica(namespace.clone())?;
+        let bob = bob_store.new_replica(namespace.clone())?;
+
+        let key = b"key";
+        let alice_value = b"alice";
+        let bob_value = b"bob";
+        let _alice_hash = alice.hash_and_insert(key, &author, alice_value)?;
+        // system time increased - sync should overwrite
+        let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
+        sync::<S>(&alice, &bob)?;
+        assert_eq!(
+            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            bob_hash
+        );
+        assert_eq!(
+            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            bob_hash
+        );
+
+        let alice_value_2 = b"alice2";
+        // system time increased - sync should overwrite
+        let _bob_hash_2 = bob.hash_and_insert(key, &author, bob_value)?;
+        let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
+        sync::<S>(&alice, &bob)?;
+        assert_eq!(
+            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            alice_hash_2
+        );
+        assert_eq!(
+            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            alice_hash_2
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_future_timestamp() -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let store = store::memory::Store::default();
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        let key = b"hi";
+        let t = system_time_now();
+        let record = Record::from_data(b"1");
+        let entry0 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        replica.insert_entry(entry0.clone(), InsertOrigin::Local)?;
+
+        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry0);
+
+        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
+        let record = Record::from_data(b"2");
+        let entry1 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
+        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry1);
+
+        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT;
+        let record = Record::from_data(b"2");
+        let entry2 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
+        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
+
+        let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
+        let record = Record::from_data(b"2");
+        let entry3 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        let res = replica.insert_entry(entry3, InsertOrigin::Local);
+        assert!(matches!(
+            res,
+            Err(InsertError::Validation(
+                ValidationFailure::TooFarInTheFuture
+            ))
+        ));
+        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
+
+        Ok(())
+    }
+
+    fn get_entry<S: store::Store>(
+        store: &S,
+        namespace: impl Into<NamespaceId>,
+        author: impl Into<AuthorId>,
+        key: &[u8],
+    ) -> anyhow::Result<SignedEntry> {
+        let entry = store
+            .get_by_key_and_author(namespace.into(), author.into(), key)?
+            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        Ok(entry)
+    }
+
+    fn get_content_hash<S: store::Store>(
+        store: &S,
+        namespace: NamespaceId,
+        author: AuthorId,
+        key: &[u8],
+    ) -> anyhow::Result<Hash> {
+        let hash = store
+            .get_by_key_and_author(namespace, author, key)?
+            .unwrap()
+            .content_hash();
+        Ok(hash)
+    }
+
     fn sync<S: store::Store>(
-        author: &Author,
         alice: &Replica<S::Instance>,
-        alice_store: &S,
         bob: &Replica<S::Instance>,
-        bob_store: &S,
-        alice_set: &[&str],
-        bob_set: &[&str],
     ) -> Result<()> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
@@ -1042,16 +1280,18 @@ mod tests {
                     .map_err(Into::into)?;
             }
         }
+        Ok(())
+    }
 
-        // Check result
-        for el in alice_set {
-            alice_store.get_by_key_and_author(alice.namespace(), author.id(), el)?;
-            bob_store.get_by_key_and_author(bob.namespace(), author.id(), el)?;
-        }
-
-        for el in bob_set {
-            alice_store.get_by_key_and_author(alice.namespace(), author.id(), el)?;
-            bob_store.get_by_key_and_author(bob.namespace(), author.id(), el)?;
+    fn check_entries<S: store::Store>(
+        store: &S,
+        namespace: &NamespaceId,
+        author: &Author,
+        set: &[&str],
+    ) -> Result<()> {
+        let replica = store.open_replica(namespace)?.unwrap();
+        for el in set {
+            store.get_by_key_and_author(replica.namespace(), author.id(), el)?;
         }
         Ok(())
     }

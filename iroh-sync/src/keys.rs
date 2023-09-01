@@ -263,6 +263,30 @@ impl Ord for AuthorId {
     }
 }
 
+impl From<Namespace> for NamespaceId {
+    fn from(value: Namespace) -> Self {
+        value.id()
+    }
+}
+
+impl From<Author> for AuthorId {
+    fn from(value: Author) -> Self {
+        value.id()
+    }
+}
+
+impl From<&Namespace> for NamespaceId {
+    fn from(value: &Namespace) -> Self {
+        value.id()
+    }
+}
+
+impl From<&Author> for AuthorId {
+    fn from(value: &Author) -> Self {
+        value.id()
+    }
+}
+
 /// Utilities for working with byte array identifiers
 // TODO: copy-pasted from iroh-gossip/src/proto/util.rs
 // Unify into iroh-common crate or similar

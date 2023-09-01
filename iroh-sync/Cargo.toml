@@ -30,6 +30,7 @@ url = "2.4"
 bytes = "1"
 parking_lot = "0.12.1"
 hex = "0.4"
+thiserror = "1"
 tracing = "0.1"
 
 # fs-store

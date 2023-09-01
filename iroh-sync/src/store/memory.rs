@@ -426,10 +426,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
         Ok(self.with_records(|records| {
             records.and_then(|r| {
                 let v = r.get(&(key.author(), key.key().to_vec()))?;
-                if v.timestamp() == key.timestamp() {
-                    return Some(v.clone());
-                }
-                None
+                Some(v.clone())
             })
         }))
     }
@@ -453,24 +450,9 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
     }
 
     fn put(&mut self, k: RecordIdentifier, v: SignedEntry) -> Result<(), Self::Error> {
-        assert_eq!(k.timestamp(), v.timestamp(), "inconsistent timestamp"); // TODO: error
-                                                                            // TODO: propagate error/not insertion?
-        if v.verify().is_ok() {
-            // TODO: verify timestamp is "reasonable"
-            self.with_records_mut_with_default(|records| {
-                match records.entry((k.author(), k.key().to_vec())) {
-                    std::collections::btree_map::Entry::Vacant(e) => {
-                        e.insert(v);
-                    }
-                    std::collections::btree_map::Entry::Occupied(mut e) => {
-                        // Ignore older timestamp
-                        if e.get().timestamp() < v.timestamp() {
-                            e.insert(v);
-                        }
-                    }
-                }
-            });
-        }
+        self.with_records_mut_with_default(|records| {
+            records.insert((k.author(), k.key().to_vec()), v);
+        });
         Ok(())
     }
 
