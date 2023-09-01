@@ -48,6 +48,11 @@ use tracing::{debug, error, info, trace, warn};
 
 mod get;
 
+/// Delay added to a request when it's first received.
+const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+/// Number of retries initially assigned to a request.
+const INITIAL_RETRY_COUNT: u8 = 4;
+
 /// Download identifier.
 // Mainly for readability.
 pub type Id = u64;
