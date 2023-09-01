@@ -31,13 +31,13 @@ impl Author {
     }
 
     /// Get the [`AuthorId`] for this author.
-    pub fn id(&self) -> AuthorId {
-        AuthorId(self.signing_key.verifying_key())
+    pub fn id(&self) -> AuthorPublicKey {
+        AuthorPublicKey(self.signing_key.verifying_key())
     }
 
     /// Get the [`AuthorIdBytes`] for this author.
-    pub fn id_bytes(&self) -> AuthorIdBytes {
-        AuthorIdBytes::from(self.id())
+    pub fn id_bytes(&self) -> AuthorId {
+        AuthorId::from(self.id())
     }
 
     /// Sign a message with this [`Author`] key.
@@ -55,10 +55,10 @@ impl Author {
 ///
 /// This is the corresponding [`VerifyingKey`] for an author. It is used as an identifier, and can
 /// be used to verify [`Signature`]s.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct AuthorId(VerifyingKey);
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
+pub struct AuthorPublicKey(VerifyingKey);
 
-impl AuthorId {
+impl AuthorPublicKey {
     /// Verify that a signature matches the `msg` bytes and was created with the [`Author`]
     /// that corresponds to this [`AuthorId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
@@ -76,7 +76,7 @@ impl AuthorId {
     /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
-        Ok(AuthorId(VerifyingKey::from_bytes(bytes)?))
+        Ok(AuthorPublicKey(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
@@ -108,13 +108,13 @@ impl Namespace {
     }
 
     /// Get the [`NamespaceId`] for this namespace.
-    pub fn id(&self) -> NamespaceId {
-        NamespaceId(self.signing_key.verifying_key())
+    pub fn id(&self) -> NamespacePublicKey {
+        NamespacePublicKey(self.signing_key.verifying_key())
     }
 
     /// Get the [`NamespaceIdBytes`] for this namespace.
-    pub fn id_bytes(&self) -> NamespaceIdBytes {
-        NamespaceIdBytes::from(self.id())
+    pub fn id_bytes(&self) -> NamespaceId {
+        NamespaceId::from(self.id())
     }
 
     /// Sign a message with this [`Namespace`] key.
@@ -132,10 +132,10 @@ impl Namespace {
 ///
 /// This is the corresponding [`VerifyingKey`] for a [`Namespace`]. It is used as an identifier, and can
 /// be used to verify [`Signature`]s.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct NamespaceId(VerifyingKey);
+#[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
+pub struct NamespacePublicKey(VerifyingKey);
 
-impl NamespaceId {
+impl NamespacePublicKey {
     /// Verify that a signature matches the `msg` bytes and was created with the [`Namespace`]
     /// that corresponds to this [`NamespaceId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
@@ -153,7 +153,7 @@ impl NamespaceId {
     /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
-        Ok(NamespaceId(VerifyingKey::from_bytes(bytes)?))
+        Ok(NamespacePublicKey(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
@@ -169,13 +169,13 @@ impl fmt::Display for Namespace {
     }
 }
 
-impl fmt::Display for AuthorId {
+impl fmt::Display for AuthorPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", base32::fmt(self.as_bytes()))
     }
 }
 
-impl fmt::Display for NamespaceId {
+impl fmt::Display for NamespacePublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", base32::fmt(self.as_bytes()))
     }
@@ -193,13 +193,13 @@ impl fmt::Debug for Author {
     }
 }
 
-impl fmt::Debug for NamespaceId {
+impl fmt::Debug for NamespacePublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "NamespaceId({})", self)
     }
 }
 
-impl fmt::Debug for AuthorId {
+impl fmt::Debug for AuthorPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "AuthorId({})", self)
     }
@@ -221,7 +221,7 @@ impl FromStr for Namespace {
     }
 }
 
-impl FromStr for AuthorId {
+impl FromStr for AuthorPublicKey {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -229,7 +229,7 @@ impl FromStr for AuthorId {
     }
 }
 
-impl FromStr for NamespaceId {
+impl FromStr for NamespacePublicKey {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -249,49 +249,49 @@ impl From<SigningKey> for Namespace {
     }
 }
 
-impl PartialOrd for NamespaceId {
+impl PartialOrd for NamespacePublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for NamespaceId {
+impl Ord for NamespacePublicKey {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
-impl PartialOrd for AuthorId {
+impl PartialOrd for AuthorPublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for AuthorId {
+impl Ord for AuthorPublicKey {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
-impl From<Namespace> for NamespaceId {
+impl From<Namespace> for NamespacePublicKey {
     fn from(value: Namespace) -> Self {
         value.id()
     }
 }
 
-impl From<Author> for AuthorId {
+impl From<Author> for AuthorPublicKey {
     fn from(value: Author) -> Self {
         value.id()
     }
 }
 
-impl From<&Namespace> for NamespaceId {
+impl From<&Namespace> for NamespacePublicKey {
     fn from(value: &Namespace) -> Self {
         value.id()
     }
 }
 
-impl From<&Author> for AuthorId {
+impl From<&Author> for AuthorPublicKey {
     fn from(value: &Author) -> Self {
         value.id()
     }
@@ -316,7 +316,7 @@ pub(super) mod base32 {
     }
 }
 
-/// [`NamespaceId`] in bytes
+/// [`NamespacePublicKey`] in bytes
 #[derive(
     Debug,
     Default,
@@ -333,9 +333,9 @@ pub(super) mod base32 {
     Serialize,
     Deserialize,
 )]
-pub struct NamespaceIdBytes([u8; 32]);
+pub struct NamespaceId([u8; 32]);
 
-/// [`AuthorId`] in bytes
+/// [`AuthorPublicKey`] in bytes
 #[derive(
     Debug,
     Default,
@@ -352,9 +352,9 @@ pub struct NamespaceIdBytes([u8; 32]);
     Serialize,
     Deserialize,
 )]
-pub struct AuthorIdBytes([u8; 32]);
+pub struct AuthorId([u8; 32]);
 
-impl AuthorIdBytes {
+impl AuthorId {
     /// Convert to byte array.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
@@ -364,9 +364,17 @@ impl AuthorIdBytes {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// Convert into crypto public key.
+    pub fn public_key<S: crate::store::PublicKeyStore>(
+        &self,
+        store: &S,
+    ) -> Result<AuthorPublicKey, SignatureError> {
+        store.author_key(&self)
+    }
 }
 
-impl NamespaceIdBytes {
+impl NamespaceId {
     /// Convert to byte array.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
@@ -376,75 +384,83 @@ impl NamespaceIdBytes {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// Convert into crypto public key.
+    pub fn public_key<S: crate::store::PublicKeyStore>(
+        &self,
+        store: &S,
+    ) -> Result<NamespacePublicKey, SignatureError> {
+        store.namespace_key(&self)
+    }
 }
 
-impl From<&[u8; 32]> for NamespaceIdBytes {
+impl From<&[u8; 32]> for NamespaceId {
     fn from(value: &[u8; 32]) -> Self {
         Self(*value)
     }
 }
 
-impl From<&[u8; 32]> for AuthorIdBytes {
+impl From<&[u8; 32]> for AuthorId {
     fn from(value: &[u8; 32]) -> Self {
         Self(*value)
     }
 }
 
-impl AsRef<[u8]> for NamespaceIdBytes {
+impl AsRef<[u8]> for NamespaceId {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
-impl AsRef<[u8]> for AuthorIdBytes {
+impl AsRef<[u8]> for AuthorId {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
-impl From<AuthorId> for AuthorIdBytes {
-    fn from(value: AuthorId) -> Self {
+impl From<AuthorPublicKey> for AuthorId {
+    fn from(value: AuthorPublicKey) -> Self {
         Self(*value.as_bytes())
     }
 }
-impl From<NamespaceId> for NamespaceIdBytes {
-    fn from(value: NamespaceId) -> Self {
-        Self(*value.as_bytes())
-    }
-}
-
-impl From<&AuthorId> for AuthorIdBytes {
-    fn from(value: &AuthorId) -> Self {
-        Self(*value.as_bytes())
-    }
-}
-impl From<&NamespaceId> for NamespaceIdBytes {
-    fn from(value: &NamespaceId) -> Self {
+impl From<NamespacePublicKey> for NamespaceId {
+    fn from(value: NamespacePublicKey) -> Self {
         Self(*value.as_bytes())
     }
 }
 
-impl From<Author> for AuthorIdBytes {
+impl From<&AuthorPublicKey> for AuthorId {
+    fn from(value: &AuthorPublicKey) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+impl From<&NamespacePublicKey> for NamespaceId {
+    fn from(value: &NamespacePublicKey) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+
+impl From<Author> for AuthorId {
     fn from(value: Author) -> Self {
         Self::from(value.id())
     }
 }
-impl From<Namespace> for NamespaceIdBytes {
+impl From<Namespace> for NamespaceId {
     fn from(value: Namespace) -> Self {
         Self::from(value.id())
     }
 }
 
-impl TryFrom<NamespaceIdBytes> for NamespaceId {
+impl TryFrom<NamespaceId> for NamespacePublicKey {
     type Error = SignatureError;
-    fn try_from(value: NamespaceIdBytes) -> Result<Self, Self::Error> {
+    fn try_from(value: NamespaceId) -> Result<Self, Self::Error> {
         Self::from_bytes(&value.0)
     }
 }
 
-impl TryFrom<AuthorIdBytes> for AuthorId {
+impl TryFrom<AuthorId> for AuthorPublicKey {
     type Error = SignatureError;
-    fn try_from(value: AuthorIdBytes) -> Result<Self, Self::Error> {
+    fn try_from(value: AuthorId) -> Result<Self, Self::Error> {
         Self::from_bytes(&value.0)
     }
 }

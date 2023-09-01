@@ -17,7 +17,7 @@ use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 
 use iroh_sync::{
     store::GetFilter,
-    sync::{AuthorId, NamespaceId, SignedEntry},
+    sync::{AuthorPublicKey, NamespacePublicKey, SignedEntry},
 };
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -310,7 +310,7 @@ impl ServerStreamingMsg<ProviderService> for AuthorListRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorListResponse {
     /// The author id
-    pub author_id: AuthorId,
+    pub author_id: AuthorPublicKey,
 }
 
 /// Create a new document author.
@@ -325,7 +325,7 @@ impl RpcMsg<ProviderService> for AuthorCreateRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorCreateResponse {
     /// The id of the created author
-    pub author_id: AuthorId,
+    pub author_id: AuthorPublicKey,
 }
 
 /// Import author from secret key
@@ -343,7 +343,7 @@ impl RpcMsg<ProviderService> for AuthorImportRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorImportResponse {
     /// The author id of the imported author
-    pub author_id: AuthorId,
+    pub author_id: AuthorPublicKey,
 }
 
 /// Intended capability for document share tickets
@@ -360,7 +360,7 @@ pub enum ShareMode {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
 }
 
 impl Msg<ProviderService> for DocSubscribeRequest {
@@ -394,7 +394,7 @@ impl ServerStreamingMsg<ProviderService> for DocListRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocListResponse {
     /// The document id
-    pub id: NamespaceId,
+    pub id: NamespacePublicKey,
 }
 
 /// Create a new document
@@ -409,7 +409,7 @@ impl RpcMsg<ProviderService> for DocCreateRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocCreateResponse {
     /// The document id
-    pub id: NamespaceId,
+    pub id: NamespacePublicKey,
 }
 
 /// Contains both a key (either secret or public) to a document, and a list of peers to join.
@@ -464,14 +464,14 @@ impl RpcMsg<ProviderService> for DocImportRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocImportResponse {
     /// the document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
 }
 
 /// Share a document with peers over a ticket.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
     /// Whether to share read or write access to the document
     pub mode: ShareMode,
 }
@@ -488,7 +488,7 @@ pub struct DocShareResponse(pub DocTicket);
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocInfoRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
 }
 
 impl RpcMsg<ProviderService> for DocInfoRequest {
@@ -507,7 +507,7 @@ pub struct DocInfoResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStartSyncRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
     /// List of peers to join
     pub peers: Vec<PeerSource>,
 }
@@ -524,7 +524,7 @@ pub struct DocStartSyncResponse {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStopSyncRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
 }
 
 impl RpcMsg<ProviderService> for DocStopSyncRequest {
@@ -539,9 +539,9 @@ pub struct DocStopSyncResponse {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
     /// Author of this entry.
-    pub author_id: AuthorId,
+    pub author_id: AuthorPublicKey,
     /// Key of this entry.
     pub key: Vec<u8>,
     /// Value of this entry.
@@ -565,7 +565,7 @@ pub struct DocSetResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
     /// Filter entries by this [`GetFilter`]
     pub filter: GetFilter,
 }
@@ -589,11 +589,11 @@ pub struct DocGetResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetOneRequest {
     /// The document id
-    pub doc_id: NamespaceId,
+    pub doc_id: NamespacePublicKey,
     /// Key
     pub key: Vec<u8>,
     /// Author
-    pub author: AuthorId,
+    pub author: AuthorPublicKey,
 }
 
 impl RpcMsg<ProviderService> for DocGetOneRequest {

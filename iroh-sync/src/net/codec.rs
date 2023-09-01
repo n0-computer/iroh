@@ -8,7 +8,7 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::{debug, trace};
 
-use crate::{store, NamespaceId, Replica};
+use crate::{store, NamespacePublicKey, Replica};
 
 #[derive(Debug, Default)]
 struct SyncCodec;
@@ -78,7 +78,7 @@ impl Encoder<Message> for SyncCodec {
 enum Message {
     Init {
         /// Namespace to sync
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         /// Initial message
         message: crate::sync::ProtocolMessage,
     },
@@ -193,7 +193,7 @@ mod tests {
     use crate::{
         store::{GetFilter, Store},
         sync::Namespace,
-        AuthorId, AuthorIdBytes,
+        AuthorId, AuthorPublicKey,
     };
     use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
@@ -311,7 +311,7 @@ mod tests {
         test_sync_many_authors(alice_store, bob_store).await
     }
 
-    type Message = (AuthorIdBytes, Vec<u8>, Hash);
+    type Message = (AuthorId, Vec<u8>, Hash);
 
     fn insert_messages<S: Store>(
         mut rng: impl CryptoRngCore,
@@ -319,7 +319,7 @@ mod tests {
         replica: &Replica<S::Instance>,
         num_authors: usize,
         msgs_per_author: usize,
-        key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
+        key_value_fn: impl Fn(&AuthorPublicKey, usize) -> (String, String),
     ) -> Vec<Message> {
         let mut res = vec![];
         let authors: Vec<_> = (0..num_authors)
@@ -337,7 +337,7 @@ mod tests {
         res
     }
 
-    fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
+    fn get_messages<S: Store>(store: &S, namespace: NamespacePublicKey) -> Vec<Message> {
         let mut msgs = store
             .get(namespace, GetFilter::All)
             .unwrap()
@@ -440,7 +440,7 @@ mod tests {
         alice_node_pubkey: PublicKey,
         bob_store: &S,
         bob_node_pubkey: PublicKey,
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
     ) -> Result<()> {
         let (alice, bob) = tokio::io::duplex(1024);
 

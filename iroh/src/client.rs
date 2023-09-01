@@ -11,7 +11,7 @@ use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 use iroh_sync::store::GetFilter;
-use iroh_sync::sync::{AuthorId, NamespaceId};
+use iroh_sync::sync::{AuthorPublicKey, NamespacePublicKey};
 use iroh_sync::Entry;
 use quic_rpc::{RpcClient, ServiceConnection};
 
@@ -44,13 +44,13 @@ where
     }
 
     /// Create a new document author.
-    pub async fn create_author(&self) -> Result<AuthorId> {
+    pub async fn create_author(&self) -> Result<AuthorPublicKey> {
         let res = self.rpc.rpc(AuthorCreateRequest).await??;
         Ok(res.author_id)
     }
 
     /// List document authors for which we have a secret key.
-    pub async fn list_authors(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
+    pub async fn list_authors(&self) -> Result<impl Stream<Item = Result<AuthorPublicKey>>> {
         let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.author_id))
     }
@@ -76,13 +76,13 @@ where
     }
 
     /// List all documents.
-    pub async fn list_docs(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
+    pub async fn list_docs(&self) -> Result<impl Stream<Item = Result<NamespacePublicKey>>> {
         let stream = self.rpc.server_streaming(DocListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.id))
     }
 
     /// Get a [`Doc`] client for a single document. Return an error if the document cannot be found.
-    pub async fn get_doc(&self, id: NamespaceId) -> Result<Doc<C>> {
+    pub async fn get_doc(&self, id: NamespacePublicKey) -> Result<Doc<C>> {
         match self.try_get_doc(id).await? {
             Some(doc) => Ok(doc),
             None => Err(anyhow!("Document not found")),
@@ -90,7 +90,7 @@ where
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
-    pub async fn try_get_doc(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+    pub async fn try_get_doc(&self, id: NamespacePublicKey) -> Result<Option<Doc<C>>> {
         if let Err(_err) = self.rpc.rpc(DocInfoRequest { doc_id: id }).await? {
             return Ok(None);
         }
@@ -133,7 +133,7 @@ where
 /// Document handle
 #[derive(Debug, Clone)]
 pub struct Doc<C> {
-    id: NamespaceId,
+    id: NamespacePublicKey,
     rpc: RpcClient<ProviderService, C>,
 }
 
@@ -142,14 +142,14 @@ where
     C: ServiceConnection<ProviderService>,
 {
     /// Get the document id of this doc.
-    pub fn id(&self) -> NamespaceId {
+    pub fn id(&self) -> NamespacePublicKey {
         self.id
     }
 
     /// Set the content of a key to a byte array.
     pub async fn set_bytes(
         &self,
-        author_id: AuthorId,
+        author_id: AuthorPublicKey,
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> Result<Hash> {
@@ -173,7 +173,7 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_one(&self, author: AuthorId, key: Vec<u8>) -> Result<Option<Entry>> {
+    pub async fn get_one(&self, author: AuthorPublicKey, key: Vec<u8>) -> Result<Option<Entry>> {
         let res = self
             .rpc
             .rpc(DocGetOneRequest {

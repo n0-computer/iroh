@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::store;
 use crate::{
     ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
-    store::PubkeyStore,
+    store::PublicKeyStore,
 };
 
 pub use crate::keys::*;
@@ -56,14 +56,14 @@ pub enum InsertOrigin {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PubkeyStore> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     inner: Arc<RwLock<InnerReplica<S>>>,
     #[allow(clippy::type_complexity)]
     on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct InnerReplica<S: ranger::Store<SignedEntry> + PubkeyStore> {
+struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
     peer: Peer<SignedEntry, S>,
 }
@@ -74,7 +74,7 @@ struct ReplicaData {
     namespace: Namespace,
 }
 
-impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
@@ -237,12 +237,12 @@ impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
     }
 
     /// Get the namespace identifier for this [`Replica`].
-    pub fn namespace(&self) -> NamespaceId {
+    pub fn namespace(&self) -> NamespacePublicKey {
         self.inner.read().namespace.id()
     }
 
     /// Get the namespace identifier for this [`Replica`] in byte represenation.
-    pub fn namespace_bytes(&self) -> NamespaceIdBytes {
+    pub fn namespace_bytes(&self) -> NamespaceId {
         self.inner.read().namespace.id().into()
     }
 
@@ -260,15 +260,15 @@ impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
 /// * the entry's namespace matches the current replica
 /// * the entry's timestamp is not more than 10 minutes in the future of our system time
 /// * the entry is newer than an existing entry for the same key and author, if such exists.
-fn validate_entry<S: ranger::Store<SignedEntry> + PubkeyStore>(
+fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
     now: u64,
     store: &S,
-    expected_namespace: NamespaceIdBytes,
+    expected_namespace: NamespaceId,
     entry: &SignedEntry,
     origin: &InsertOrigin,
 ) -> Result<(), ValidationFailure> {
     // Verify the namespace
-    if entry.namespace_bytes() != expected_namespace {
+    if entry.namespace() != expected_namespace {
         return Err(ValidationFailure::InvalidNamespace);
     }
 
@@ -369,11 +369,11 @@ impl SignedEntry {
     }
 
     /// Verify the signatures on this entry.
-    pub fn verify<S: store::PubkeyStore>(&self, store: &S) -> Result<(), SignatureError> {
+    pub fn verify<S: store::PublicKeyStore>(&self, store: &S) -> Result<(), SignatureError> {
         self.signature.verify(
             &self.entry,
-            &self.entry.id.namespace(store)?,
-            &self.entry.id.author(store)?,
+            &self.entry.id.namespace().public_key(store)?,
+            &self.entry.id.author().public_key(store)?,
         )
     }
 
@@ -397,14 +397,9 @@ impl SignedEntry {
         self.entry().content_len()
     }
 
-    /// Get the [`AuthorId`] of the entry.
-    pub fn author<S: store::PubkeyStore>(&self, store: S) -> Result<AuthorId, SignatureError> {
-        self.entry().id().author(&store)
-    }
-
     /// Get the author bytes of this entry.
-    pub fn author_bytes(&self) -> AuthorIdBytes {
-        self.entry().id().author_bytes()
+    pub fn author_bytes(&self) -> AuthorId {
+        self.entry().id().author()
     }
 
     /// Get the key of the entry.
@@ -432,7 +427,7 @@ impl RangeEntry for SignedEntry {
 
     fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(self.namespace_bytes().as_ref());
+        hasher.update(self.namespace().as_ref());
         hasher.update(self.author_bytes().as_ref());
         hasher.update(self.key());
         hasher.update(&self.timestamp().to_be_bytes());
@@ -483,8 +478,8 @@ impl EntrySignature {
     pub fn verify(
         &self,
         entry: &Entry,
-        namespace: &NamespaceId,
-        author: &AuthorId,
+        namespace: &NamespacePublicKey,
+        author: &AuthorPublicKey,
     ) -> Result<(), SignatureError> {
         let bytes = entry.to_vec();
         namespace.verify(&bytes, &self.namespace_signature)?;
@@ -535,16 +530,13 @@ impl Entry {
     }
 
     /// Get the [`NamespaceId`] of this entry.
-    pub fn namespace<S: store::PubkeyStore>(
-        &self,
-        store: S,
-    ) -> Result<NamespaceId, SignatureError> {
-        self.id.namespace(&store)
+    pub fn namespace(&self) -> NamespaceId {
+        self.id.namespace()
     }
 
-    /// Get the namespace id of this entry as bytes.
-    pub fn namespace_bytes(&self) -> NamespaceIdBytes {
-        self.id.namespace_bytes()
+    /// Get the [`AuthorId`] of this entry.
+    pub fn author(&self) -> AuthorId {
+        self.id.author()
     }
 
     /// Get the [`Record`] contained in this entry.
@@ -575,9 +567,9 @@ impl Entry {
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RecordIdentifier {
     /// The [`NamespaceId`] of the namespace this record belongs to.
-    namespace: NamespaceIdBytes,
+    namespace: NamespaceId,
     /// The [`AuthorId`] of the author that wrote this record.
-    author: AuthorIdBytes,
+    author: AuthorId,
     /// The key of the record.
     key: Vec<u8>,
 }
@@ -629,7 +621,11 @@ fn system_time_now() -> u64 {
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
-    pub fn new(namespace: NamespaceId, author: AuthorId, key: impl AsRef<[u8]>) -> Self {
+    pub fn new(
+        namespace: NamespacePublicKey,
+        author: AuthorPublicKey,
+        key: impl AsRef<[u8]>,
+    ) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
             namespace: namespace.into(),
@@ -637,11 +633,7 @@ impl RecordIdentifier {
         }
     }
 
-    pub(crate) fn from_parts(
-        namespace: NamespaceIdBytes,
-        author: AuthorIdBytes,
-        key: Vec<u8>,
-    ) -> Self {
+    pub(crate) fn from_parts(namespace: NamespaceId, author: AuthorId, key: Vec<u8>) -> Self {
         RecordIdentifier {
             key: key.to_vec(),
             namespace,
@@ -666,26 +658,13 @@ impl RecordIdentifier {
         &self.key
     }
 
-    /// Get the [`NamespaceId`] of this record.
-    pub fn namespace<S: store::PubkeyStore>(
-        &self,
-        store: &S,
-    ) -> Result<NamespaceId, SignatureError> {
-        store.namespace_id(&self.namespace)
-    }
-
     /// Get the [`NamespaceId`] of this record as byte array.
-    pub fn namespace_bytes(&self) -> NamespaceIdBytes {
+    pub fn namespace(&self) -> NamespaceId {
         self.namespace
     }
 
-    /// Get the [`AuthorId`] of this record.
-    pub fn author<S: store::PubkeyStore>(&self, store: &S) -> Result<AuthorId, SignatureError> {
-        store.author_id(&self.author)
-    }
-
     /// Get the [`AuthorId`] of this record as byte array.
-    pub fn author_bytes(&self) -> AuthorIdBytes {
+    pub fn author(&self) -> AuthorId {
         self.author
     }
 }
@@ -1256,8 +1235,8 @@ mod tests {
 
     fn get_entry<S: store::Store>(
         store: &S,
-        namespace: impl Into<NamespaceId>,
-        author: impl Into<AuthorId>,
+        namespace: impl Into<NamespacePublicKey>,
+        author: impl Into<AuthorPublicKey>,
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
@@ -1268,8 +1247,8 @@ mod tests {
 
     fn get_content_hash<S: store::Store>(
         store: &S,
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: NamespacePublicKey,
+        author: AuthorPublicKey,
         key: &[u8],
     ) -> anyhow::Result<Hash> {
         let hash = store
@@ -1306,7 +1285,7 @@ mod tests {
 
     fn check_entries<S: store::Store>(
         store: &S,
-        namespace: &NamespaceId,
+        namespace: &NamespacePublicKey,
         author: &Author,
         set: &[&str],
     ) -> Result<()> {

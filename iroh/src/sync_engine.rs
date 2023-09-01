@@ -10,7 +10,7 @@ use iroh_gossip::net::Gossip;
 use iroh_net::MagicEndpoint;
 use iroh_sync::{
     store::Store,
-    sync::{Author, AuthorId, NamespaceId, Replica},
+    sync::{Author, AuthorPublicKey, NamespacePublicKey, Replica},
 };
 use parking_lot::RwLock;
 
@@ -32,7 +32,7 @@ pub struct SyncEngine<S: Store> {
     pub(crate) store: S,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) live: LiveSync<S>,
-    active: Arc<RwLock<HashSet<NamespaceId>>>,
+    active: Arc<RwLock<HashSet<NamespacePublicKey>>>,
 }
 
 impl<S: Store> SyncEngine<S> {
@@ -68,7 +68,7 @@ impl<S: Store> SyncEngine<S> {
     /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
     pub async fn start_sync(
         &self,
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         peers: Vec<PeerSource>,
     ) -> anyhow::Result<()> {
         if !self.active.read().contains(&namespace) {
@@ -82,7 +82,7 @@ impl<S: Store> SyncEngine<S> {
     }
 
     /// Stop syncing a document.
-    pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
+    pub async fn stop_sync(&self, namespace: NamespacePublicKey) -> anyhow::Result<()> {
         let replica = self.get_replica(&namespace)?;
         self.active.write().remove(&replica.namespace());
         self.live.stop_sync(namespace).await?;
@@ -96,14 +96,14 @@ impl<S: Store> SyncEngine<S> {
     }
 
     /// Get a [`Replica`] from the store, returning an error if the replica does not exist.
-    pub fn get_replica(&self, id: &NamespaceId) -> anyhow::Result<Replica<S::Instance>> {
+    pub fn get_replica(&self, id: &NamespacePublicKey) -> anyhow::Result<Replica<S::Instance>> {
         self.store
             .open_replica(id)?
             .ok_or_else(|| anyhow!("doc not found"))
     }
 
     /// Get an [`Author`] from the store, returning an error if the replica does not exist.
-    pub fn get_author(&self, id: &AuthorId) -> anyhow::Result<Author> {
+    pub fn get_author(&self, id: &AuthorPublicKey) -> anyhow::Result<Author> {
         self.store
             .get_author(id)?
             .ok_or_else(|| anyhow!("author not found"))

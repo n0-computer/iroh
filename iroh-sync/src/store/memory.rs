@@ -12,34 +12,40 @@ use parking_lot::{RwLock, RwLockReadGuard};
 
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
-    sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
-    AuthorIdBytes, NamespaceIdBytes,
+    sync::{
+        Author, AuthorPublicKey, Namespace, NamespacePublicKey, RecordIdentifier, Replica,
+        SignedEntry,
+    },
+    AuthorId, NamespaceId,
 };
 
-use super::{pubkeys::MemPubkeyStore, PubkeyStore};
+use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
-    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<ReplicaStoreInstance>>>>,
-    authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
+    replicas: Arc<RwLock<HashMap<NamespacePublicKey, Replica<ReplicaStoreInstance>>>>,
+    authors: Arc<RwLock<HashMap<AuthorPublicKey, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
-    pubkeys: MemPubkeyStore,
+    pubkeys: MemPublicKeyStore,
 }
 
-type Rid = (AuthorIdBytes, Vec<u8>);
+type Rid = (AuthorId, Vec<u8>);
 type Rvalue = SignedEntry;
 type RecordMap = BTreeMap<Rid, Rvalue>;
-type ReplicaRecordsOwned = HashMap<NamespaceIdBytes, RecordMap>;
+type ReplicaRecordsOwned = HashMap<NamespaceId, RecordMap>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
     type GetIter<'a> = EntryIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespacePublicKey>>;
 
-    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
+    fn open_replica(
+        &self,
+        namespace: &NamespacePublicKey,
+    ) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
         Ok(replicas.get(namespace).cloned())
     }
@@ -56,7 +62,7 @@ impl super::Store for Store {
             .into_iter())
     }
 
-    fn get_author(&self, author: &AuthorId) -> Result<Option<Author>> {
+    fn get_author(&self, author: &AuthorPublicKey) -> Result<Option<Author>> {
         let authors = &*self.authors.read();
         Ok(authors.get(author).cloned())
     }
@@ -87,7 +93,11 @@ impl super::Store for Store {
         Ok(replica)
     }
 
-    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
+    fn get(
+        &self,
+        namespace: NamespacePublicKey,
+        filter: super::GetFilter,
+    ) -> Result<Self::GetIter<'_>> {
         let iter = match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
@@ -102,8 +112,8 @@ impl super::Store for Store {
 
     fn get_by_key_and_author(
         &self,
-        namespace: &NamespaceIdBytes,
-        author: &AuthorIdBytes,
+        namespace: &NamespaceId,
+        author: &AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
@@ -129,7 +139,7 @@ impl<'a> Iterator for EntryIterator<'a> {
 impl Store {
     fn get_by_key(
         &self,
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         key: impl AsRef<[u8]>,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
@@ -145,7 +155,7 @@ impl Store {
 
     fn get_by_prefix(
         &self,
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         prefix: impl AsRef<[u8]>,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
@@ -161,8 +171,8 @@ impl Store {
 
     fn get_by_author(
         &self,
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: NamespacePublicKey,
+        author: AuthorPublicKey,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::Author { namespace, author };
@@ -176,8 +186,8 @@ impl Store {
 
     fn get_by_author_and_prefix(
         &self,
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: NamespacePublicKey,
+        author: AuthorPublicKey,
         prefix: Vec<u8>,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
@@ -194,7 +204,7 @@ impl Store {
         })
     }
 
-    fn get_all(&self, namespace: NamespaceId) -> Result<StoreRangeIterator<'_>> {
+    fn get_all(&self, namespace: NamespacePublicKey) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
 
@@ -209,32 +219,32 @@ impl Store {
 #[derive(Debug)]
 enum GetFilter {
     /// All entries.
-    All { namespace: NamespaceId },
+    All { namespace: NamespacePublicKey },
     /// Filter by author.
     Author {
-        namespace: NamespaceId,
-        author: AuthorId,
+        namespace: NamespacePublicKey,
+        author: AuthorPublicKey,
     },
     /// Filter by key only.
     Key {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         key: Vec<u8>,
     },
     /// Filter by prefix only.
     Prefix {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         prefix: Vec<u8>,
     },
     /// Filter by author and prefix.
     AuthorAndPrefix {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         prefix: Vec<u8>,
-        author: AuthorId,
+        author: AuthorPublicKey,
     },
 }
 
 impl GetFilter {
-    fn namespace(&self) -> NamespaceId {
+    fn namespace(&self) -> NamespacePublicKey {
         match self {
             GetFilter::All { namespace } => *namespace,
             GetFilter::Key { namespace, .. } => *namespace,
@@ -289,28 +299,28 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
 /// Instance of a [`Store`]
 #[derive(Debug, Clone)]
 pub struct ReplicaStoreInstance {
-    namespace: NamespaceIdBytes,
+    namespace: NamespaceId,
     store: Store,
 }
 
-impl PubkeyStore for ReplicaStoreInstance {
-    fn namespace_id(
+impl PublicKeyStore for ReplicaStoreInstance {
+    fn namespace_key(
         &self,
-        bytes: &NamespaceIdBytes,
-    ) -> std::result::Result<NamespaceId, ed25519_dalek::SignatureError> {
-        self.store.pubkeys.namespace_id(bytes)
+        bytes: &NamespaceId,
+    ) -> std::result::Result<NamespacePublicKey, ed25519_dalek::SignatureError> {
+        self.store.pubkeys.namespace_key(bytes)
     }
 
-    fn author_id(
+    fn author_key(
         &self,
-        bytes: &AuthorIdBytes,
-    ) -> std::result::Result<AuthorId, ed25519_dalek::SignatureError> {
-        self.store.pubkeys.author_id(bytes)
+        bytes: &AuthorId,
+    ) -> std::result::Result<AuthorPublicKey, ed25519_dalek::SignatureError> {
+        self.store.pubkeys.author_key(bytes)
     }
 }
 
 impl ReplicaStoreInstance {
-    fn new(namespace: NamespaceId, store: Store) -> Self {
+    fn new(namespace: NamespacePublicKey, store: Store) -> Self {
         ReplicaStoreInstance {
             namespace: namespace.into(),
             store,
@@ -357,7 +367,7 @@ type ReplicaRecords<'a> = RwLockReadGuard<'a, ReplicaRecordsOwned>;
 
 #[derive(Debug)]
 struct RecordsIter<'a> {
-    namespace: NamespaceIdBytes,
+    namespace: NamespaceId,
     replica_records: ReplicaRecords<'a>,
     i: usize,
 }
@@ -393,7 +403,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         Ok(self.with_records(|records| {
             records.and_then(|r| {
-                let v = r.get(&(key.author_bytes(), key.key().to_vec()))?;
+                let v = r.get(&(key.author(), key.key().to_vec()))?;
                 Some(v.clone())
             })
         }))
@@ -439,7 +449,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         // TODO: what if we are trying to remove with the wrong timestamp?
         let res = self.with_records_mut(|records| {
-            records.and_then(|records| records.remove(&(key.author_bytes(), key.key().to_vec())))
+            records.and_then(|records| records.remove(&(key.author(), key.key().to_vec())))
         });
         Ok(res)
     }

@@ -26,7 +26,7 @@ use iroh_net::{key::PublicKey, MagicEndpoint};
 use iroh_sync::{
     net::connect_and_sync,
     store,
-    sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
+    sync::{Entry, InsertOrigin, NamespacePublicKey, Replica, SignedEntry},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -122,7 +122,7 @@ pub struct LiveStatus {
 #[derive(derive_more::Debug)]
 enum ToActor<S: store::Store> {
     Status {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         s: sync::oneshot::Sender<Option<LiveStatus>>,
     },
     StartSync {
@@ -130,21 +130,21 @@ enum ToActor<S: store::Store> {
         peers: Vec<PeerSource>,
     },
     JoinPeers {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         peers: Vec<PeerSource>,
     },
     StopSync {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
     },
     Shutdown,
     Subscribe {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         #[debug("cb")]
         cb: OnLiveEventCallback,
         s: sync::oneshot::Sender<Result<RemovalToken>>,
     },
     Unsubscribe {
-        namespace: NamespaceId,
+        namespace: NamespacePublicKey,
         token: RemovalToken,
         s: sync::oneshot::Sender<bool>,
     },
@@ -267,7 +267,7 @@ impl<S: store::Store> LiveSync<S> {
     }
 
     /// Join and sync with a set of peers for a document that is already syncing.
-    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
+    pub async fn join_peers(&self, namespace: NamespacePublicKey, peers: Vec<PeerSource>) -> Result<()> {
         self.to_actor_tx
             .send(ToActor::<S>::JoinPeers { namespace, peers })
             .await?;
@@ -277,7 +277,7 @@ impl<S: store::Store> LiveSync<S> {
     /// Stop the live sync for a document.
     ///
     /// This will leave the gossip swarm for this document.
-    pub async fn stop_sync(&self, namespace: NamespaceId) -> Result<()> {
+    pub async fn stop_sync(&self, namespace: NamespacePublicKey) -> Result<()> {
         self.to_actor_tx
             .send(ToActor::<S>::StopSync { namespace })
             .await?;
@@ -285,7 +285,7 @@ impl<S: store::Store> LiveSync<S> {
     }
 
     /// Subscribes `cb` to events on this `namespace`.
-    pub async fn subscribe<F>(&self, namespace: NamespaceId, cb: F) -> Result<RemovalToken>
+    pub async fn subscribe<F>(&self, namespace: NamespacePublicKey, cb: F) -> Result<RemovalToken>
     where
         F: Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static,
     {
@@ -303,7 +303,7 @@ impl<S: store::Store> LiveSync<S> {
 
     /// Unsubscribes `token` to events on this `namespace`.
     /// Returns `true` if a callback was found
-    pub async fn unsubscribe(&self, namespace: NamespaceId, token: RemovalToken) -> Result<bool> {
+    pub async fn unsubscribe(&self, namespace: NamespacePublicKey, token: RemovalToken) -> Result<bool> {
         let (s, r) = sync::oneshot::channel();
         self.to_actor_tx
             .send(ToActor::<S>::Unsubscribe {
@@ -317,7 +317,7 @@ impl<S: store::Store> LiveSync<S> {
     }
 
     /// Get status for a document
-    pub async fn status(&self, namespace: NamespaceId) -> Result<Option<LiveStatus>> {
+    pub async fn status(&self, namespace: NamespacePublicKey) -> Result<Option<LiveStatus>> {
         let (s, r) = sync::oneshot::channel();
         self.to_actor_tx
             .send(ToActor::<S>::Status { namespace, s })
@@ -487,7 +487,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
-    async fn status(&mut self, namespace: &NamespaceId) -> Option<LiveStatus> {
+    async fn status(&mut self, namespace: &NamespacePublicKey) -> Option<LiveStatus> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
         if self.replicas.contains_key(&topic) {
             let subscriptions = self
@@ -506,7 +506,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
     async fn subscribe(
         &mut self,
-        namespace: &NamespaceId,
+        namespace: &NamespacePublicKey,
         cb: OnLiveEventCallback,
     ) -> anyhow::Result<RemovalToken> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
@@ -524,7 +524,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     /// Returns `true` if a callback was found and removed
-    async fn unsubscribe(&mut self, namespace: &NamespaceId, token: RemovalToken) -> bool {
+    async fn unsubscribe(&mut self, namespace: &NamespacePublicKey, token: RemovalToken) -> bool {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
         if let Some(subs) = self.event_subscriptions.get_mut(&topic) {
             let res = subs.remove(&token.0).is_some();
@@ -534,7 +534,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         false
     }
 
-    async fn stop_sync(&mut self, namespace: &NamespaceId) -> anyhow::Result<()> {
+    async fn stop_sync(&mut self, namespace: &NamespacePublicKey) -> anyhow::Result<()> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
         if let Some(_replica) = self.replicas.remove(&topic) {
             self.event_subscriptions.remove(&topic);
@@ -545,7 +545,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
     async fn join_gossip_and_start_initial_sync(
         &mut self,
-        namespace: &NamespaceId,
+        namespace: &NamespacePublicKey,
         peers: Vec<PeerSource>,
     ) -> anyhow::Result<()> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
@@ -644,7 +644,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         origin: InsertOrigin,
         signed_entry: SignedEntry,
     ) -> Result<()> {
-        let topic = TopicId::from_bytes(signed_entry.entry().namespace_bytes().into());
+        let topic = TopicId::from_bytes(signed_entry.entry().namespace().into());
         let subs = self.event_subscriptions.get_mut(&topic);
         match origin {
             InsertOrigin::Local => {
