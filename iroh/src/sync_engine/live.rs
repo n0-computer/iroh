@@ -644,7 +644,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         origin: InsertOrigin,
         signed_entry: SignedEntry,
     ) -> Result<()> {
-        let topic = TopicId::from_bytes(*signed_entry.entry().namespace().as_bytes());
+        let topic = TopicId::from_bytes(*signed_entry.entry().namespace_bytes());
         let subs = self.event_subscriptions.get_mut(&topic);
         match origin {
             InsertOrigin::Local => {
