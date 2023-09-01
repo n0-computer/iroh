@@ -209,14 +209,11 @@ pub trait Store<E: RangeEntry>: Sized {
     /// Returns all items in the given range
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
+    /// Get all entries in the store
+    fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error>;
+
     /// Remove an entry from the store.
     fn remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
-
-    type AllIterator<'a>: Iterator<Item = Result<E, Self::Error>>
-    where
-        Self: 'a,
-        E: 'a;
-    fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error>;
 }
 
 #[derive(Debug)]
@@ -593,9 +590,7 @@ mod tests {
             Ok(res)
         }
 
-        type AllIterator<'a> = SimpleRangeIterator<'a, K, V>
-        where K: 'a, V: 'a;
-        fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error> {
+        fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
             let iter = self.data.iter();
 
             Ok(SimpleRangeIterator { iter, range: None })

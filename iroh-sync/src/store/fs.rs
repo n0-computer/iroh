@@ -108,19 +108,9 @@ impl Store {
     }
 }
 
-#[derive(From, Debug)]
-/// Iterator over signed entries
-pub struct EntryIterator<'a>(RangeIterator<'a>);
-impl<'a> Iterator for EntryIterator<'a> {
-    type Item = Result<SignedEntry>;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-
 impl super::Store for Store {
     type Instance = StoreInstance;
-    type GetIter<'a> = EntryIterator<'a>;
+    type GetIter<'a> = RangeIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -205,7 +195,7 @@ impl super::Store for Store {
                 self.get_by_author_and_prefix(namespace, author, prefix)
             }
         }?;
-        Ok(iter.into())
+        Ok(iter)
     }
 
     fn get_by_key_and_author(
@@ -352,6 +342,7 @@ impl PublicKeyStore for StoreInstance {
 
 impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
+    type RangeIterator<'a> = std::iter::Chain<RangeIterator<'a>, RangeIterator<'a>>;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
@@ -430,7 +421,6 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         Ok(())
     }
 
-    type RangeIterator<'a> = std::iter::Chain<RangeIterator<'a>, RangeIterator<'a>>;
     fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
@@ -503,10 +493,10 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         Ok(res)
     }
 
-    type AllIterator<'a> = RangeIterator<'a>;
-
-    fn all(&self) -> Result<Self::AllIterator<'_>> {
-        RangeIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)
+    fn all(&self) -> Result<Self::RangeIterator<'_>> {
+        let iter = RangeIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)?;
+        let iter2 = RangeIterator::empty(&self.store.db)?;
+        Ok(iter.chain(iter2))
     }
 }
 

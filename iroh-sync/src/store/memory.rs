@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::Result;
-use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use parking_lot::{RwLock, RwLockReadGuard};
 
@@ -36,7 +35,7 @@ type ReplicaRecordsOwned = HashMap<NamespaceId, RecordMap>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
-    type GetIter<'a> = EntryIterator<'a>;
+    type GetIter<'a> = RangeIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -117,27 +116,17 @@ impl super::Store for Store {
     }
 }
 
-/// Iterator over signed entries
-#[derive(From, Debug)]
-pub struct EntryIterator<'a>(StoreRangeIterator<'a>);
-impl<'a> Iterator for EntryIterator<'a> {
-    type Item = Result<SignedEntry>;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|res| Ok(res.expect("never errors")))
-    }
-}
-
 impl Store {
     fn get_by_key(
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
-    ) -> Result<StoreRangeIterator<'_>> {
+    ) -> Result<RangeIterator<'_>> {
         let records = self.replica_records.read();
         let key = key.as_ref().to_vec();
         let filter = GetFilter::Key { namespace, key };
 
-        Ok(StoreRangeIterator {
+        Ok(RangeIterator {
             records,
             filter,
             index: 0,
@@ -148,27 +137,23 @@ impl Store {
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> Result<StoreRangeIterator<'_>> {
+    ) -> Result<RangeIterator<'_>> {
         let records = self.replica_records.read();
         let prefix = prefix.as_ref().to_vec();
         let filter = GetFilter::Prefix { namespace, prefix };
 
-        Ok(StoreRangeIterator {
+        Ok(RangeIterator {
             records,
             filter,
             index: 0,
         })
     }
 
-    fn get_by_author(
-        &self,
-        namespace: NamespaceId,
-        author: AuthorId,
-    ) -> Result<StoreRangeIterator<'_>> {
+    fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::Author { namespace, author };
 
-        Ok(StoreRangeIterator {
+        Ok(RangeIterator {
             records,
             filter,
             index: 0,
@@ -180,7 +165,7 @@ impl Store {
         namespace: NamespaceId,
         author: AuthorId,
         prefix: Vec<u8>,
-    ) -> Result<StoreRangeIterator<'_>> {
+    ) -> Result<RangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::AuthorAndPrefix {
             namespace,
@@ -188,18 +173,18 @@ impl Store {
             prefix,
         };
 
-        Ok(StoreRangeIterator {
+        Ok(RangeIterator {
             records,
             filter,
             index: 0,
         })
     }
 
-    fn get_all(&self, namespace: NamespaceId) -> Result<StoreRangeIterator<'_>> {
+    fn get_all(&self, namespace: NamespaceId) -> Result<RangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
 
-        Ok(StoreRangeIterator {
+        Ok(RangeIterator {
             records,
             filter,
             index: 0,
@@ -246,15 +231,16 @@ impl GetFilter {
     }
 }
 
+/// Iterator over entries in the memory store
 #[derive(Debug)]
-struct StoreRangeIterator<'a> {
+pub struct RangeIterator<'a> {
     records: ReplicaRecords<'a>,
     filter: GetFilter,
     /// Current iteration index.
     index: usize,
 }
 
-impl<'a> Iterator for StoreRangeIterator<'a> {
+impl<'a> Iterator for RangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -432,9 +418,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         Ok(res)
     }
 
-    type AllIterator<'a> = InstanceRangeIterator<'a>;
-
-    fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error> {
+    fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
         Ok(InstanceRangeIterator {
             iter: self.records_iter(),
             range: None,
