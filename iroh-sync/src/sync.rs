@@ -24,14 +24,14 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::ranger::{self, AsFingerprint, Fingerprint, Peer, RangeKey};
+use crate::ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey};
 
 pub use crate::keys::*;
 
 /// Protocol message for the set reconciliation protocol.
 ///
 /// Can be serialized to bytes with [serde] to transfer between peers.
-pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>;
+pub type ProtocolMessage = crate::ranger::Message<SignedEntry>;
 
 /// Byte represenation of a `PeerId` from `iroh-net`.
 // TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
@@ -52,16 +52,16 @@ pub enum InsertOrigin {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
-pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+pub struct Replica<S: ranger::Store<SignedEntry>> {
     inner: Arc<RwLock<InnerReplica<S>>>,
     #[allow(clippy::type_complexity)]
     on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct InnerReplica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+struct InnerReplica<S: ranger::Store<SignedEntry>> {
     namespace: Namespace,
-    peer: Peer<RecordIdentifier, SignedEntry, S>,
+    peer: Peer<SignedEntry, S>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,7 +70,7 @@ struct ReplicaData {
     namespace: Namespace,
 }
 
-impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
+impl<S: ranger::Store<SignedEntry> + 'static> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
@@ -152,10 +152,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
             &entry,
             &origin,
         )?;
-        inner
-            .peer
-            .put(entry.id().clone(), entry.clone())
-            .map_err(InsertError::Store)?;
+        inner.peer.put(entry.clone()).map_err(InsertError::Store)?;
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
@@ -202,9 +199,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(
-        &self,
-    ) -> Result<crate::ranger::Message<RecordIdentifier, SignedEntry>, S::Error> {
+    pub fn sync_initial_message(&self) -> Result<crate::ranger::Message<SignedEntry>, S::Error> {
         self.inner.read().peer.initial_message()
     }
 
@@ -213,16 +208,16 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
     /// Returns the next message to be sent to the peer, if any.
     pub fn sync_process_message(
         &self,
-        message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
+        message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
-    ) -> Result<Option<crate::ranger::Message<RecordIdentifier, SignedEntry>>, S::Error> {
+    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
         let expected_namespace = self.namespace();
         let now = system_time_now();
         let reply = self
             .inner
             .write()
             .peer
-            .process_message(message, |store, _key, entry| {
+            .process_message(message, |store, entry| {
                 let origin = InsertOrigin::Sync(from_peer);
                 if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
                     if let Some(sender) = self.on_insert_sender.read().as_ref() {
@@ -256,7 +251,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
 /// * the entry's namespace matches the current replica
 /// * the entry's timestamp is not more than 10 minutes in the future of our system time
 /// * the entry is newer than an existing entry for the same key and author, if such exists.
-fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
+fn validate_entry<S: ranger::Store<SignedEntry>>(
     now: u64,
     store: &S,
     expected_namespace: NamespaceId,
@@ -290,7 +285,7 @@ fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
 
 /// Error emitted when inserting entries into a [`Replica`] failed
 #[derive(thiserror::Error, derive_more::Debug)]
-pub enum InsertError<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Storage error
     #[error("storage error")]
     Store(S::Error),
@@ -404,6 +399,29 @@ impl SignedEntry {
     /// Get the timestamp of the entry.
     pub fn timestamp(&self) -> u64 {
         self.entry().id().timestamp()
+    }
+}
+
+impl RangeEntry for SignedEntry {
+    type Key = RecordIdentifier;
+    type Value = Self;
+
+    fn key(&self) -> &Self::Key {
+        &self.entry.id
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self
+    }
+
+    fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(self.namespace().as_bytes());
+        hasher.update(self.author().as_bytes());
+        hasher.update(&self.key());
+        hasher.update(&self.timestamp().to_be_bytes());
+        hasher.update(self.content_hash().as_bytes());
+        Fingerprint(hasher.finalize().into())
     }
 }
 
@@ -576,17 +594,6 @@ impl Ord for RecordIdentifier {
             &other.author,
             &other.key,
         ))
-    }
-}
-
-impl AsFingerprint for RecordIdentifier {
-    fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(self.namespace.as_bytes());
-        hasher.update(self.author.as_bytes());
-        hasher.update(&self.key);
-        hasher.update(&self.timestamp.to_be_bytes());
-        Fingerprint(hasher.finalize().into())
     }
 }
 
@@ -906,13 +913,7 @@ mod tests {
             .map_err(Into::into)?;
 
         assert_eq!(entries_second.len(), 12);
-        assert_eq!(
-            entries,
-            entries_second
-                .into_iter()
-                .map(|(_, x)| x)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
         Ok(())
     }

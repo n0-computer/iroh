@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
-    sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
+    sync::{Author, AuthorId, Namespace, NamespaceId, Replica, SignedEntry},
 };
 
 #[cfg(feature = "fs-store")]
@@ -16,7 +16,7 @@ pub mod memory;
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
-    type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
+    type Instance: ranger::Store<SignedEntry> + Send + Sync + 'static + Clone;
 
     /// Iterator over entries in the store, returned from [`Self::get`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>

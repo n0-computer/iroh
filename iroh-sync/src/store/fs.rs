@@ -12,7 +12,7 @@ use redb::{
 };
 
 use crate::{
-    ranger::{AsFingerprint, Fingerprint, Range},
+    ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{
         Author, AuthorId, Entry, EntrySignature, Namespace, NamespaceId, Record, RecordIdentifier,
@@ -109,7 +109,7 @@ pub struct EntryIterator<'a>(RangeIterator<'a>);
 impl<'a> Iterator for EntryIterator<'a> {
     type Item = Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|res| res.map(|(_id, entry)| entry))
+        self.0.next()
     }
 }
 
@@ -339,7 +339,7 @@ fn range_end(namespace: &NamespaceId) -> RecordsId {
     (namespace.as_bytes(), &[u8::MAX; 32], &[][..])
 }
 
-impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
+impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
 
     /// Get a the first key (or the default if none is available).
@@ -390,23 +390,29 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         let mut fp = Fingerprint::empty();
         for el in elements {
             let el = el?;
-            fp ^= el.0.as_fingerprint();
+            fp ^= el.as_fingerprint();
         }
 
         Ok(fp)
     }
 
-    fn put(&mut self, k: RecordIdentifier, v: SignedEntry) -> Result<()> {
+    fn put(&mut self, e: SignedEntry) -> Result<()> {
+        // let k = e.id();
+        // let v = e;
         let write_tx = self.store.db.begin_write()?;
         {
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
-            let key = (k.namespace_bytes(), k.author_bytes(), k.key());
-            let hash = v.content_hash();
+            let key = (
+                e.id().namespace_bytes(),
+                e.id().author_bytes(),
+                e.id().key(),
+            );
+            let hash = e.content_hash();
             let value = (
-                k.timestamp(),
-                &v.signature().namespace_signature().to_bytes(),
-                &v.signature().author_signature().to_bytes(),
-                v.content_len(),
+                e.id().timestamp(),
+                &e.signature().namespace_signature().to_bytes(),
+                &e.signature().author_signature().to_bytes(),
+                e.content_len(),
                 hash.as_bytes(),
             );
             record_table.insert(key, value)?;
@@ -567,7 +573,7 @@ impl std::fmt::Debug for RangeIterator<'_> {
 }
 
 impl Iterator for RangeIterator<'_> {
-    type Item = Result<(RecordIdentifier, SignedEntry)>;
+    type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.with_mut(|fields| {
@@ -589,7 +595,7 @@ impl Iterator for RangeIterator<'_> {
                     let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
                     let signed_entry = SignedEntry::new(entry_signature, entry);
 
-                    return Some(Ok((id, signed_entry)));
+                    return Some(Ok(signed_entry));
                 }
             }
             None
@@ -656,9 +662,9 @@ mod tests {
         for i in 0..5 {
             let id =
                 RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
-            let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}")));
+            let entry = Entry::new(id, Record::from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.put(id, entry)?;
+            wrapper.put(entry)?;
         }
 
         // all
@@ -672,7 +678,7 @@ mod tests {
                 RecordIdentifier::new_current(format!("hello-{i}"), namespace.id(), author.id());
             let entry = Entry::new(id.clone(), Record::from_data(format!("world-{i}-2")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.put(id.clone(), entry)?;
+            wrapper.put(entry)?;
             ids.push(id);
         }
 

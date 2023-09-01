@@ -11,7 +11,7 @@ use derive_more::From;
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use crate::{
-    ranger::{AsFingerprint, Fingerprint, Range},
+    ranger::{Fingerprint, Range, RangeEntry},
     sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
 };
 
@@ -118,9 +118,7 @@ pub struct EntryIterator<'a>(StoreRangeIterator<'a>);
 impl<'a> Iterator for EntryIterator<'a> {
     type Item = Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0
-            .next()
-            .map(|res| Ok(res.map(|(_id, entry)| entry).expect("never errors")))
+        self.0.next().map(|res| Ok(res.expect("never errors")))
     }
 }
 
@@ -252,7 +250,7 @@ struct StoreRangeIterator<'a> {
 }
 
 impl<'a> Iterator for StoreRangeIterator<'a> {
-    type Item = Result<(RecordIdentifier, SignedEntry)>;
+    type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.records.get(&self.filter.namespace())?;
@@ -333,7 +331,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 .nth(self.index)?,
         };
         self.index += 1;
-        Some(Ok(res))
+        Some(Ok(res.1))
     }
 }
 
@@ -406,7 +404,7 @@ impl Iterator for RecordsIter<'_> {
     }
 }
 
-impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstance {
+impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     type Error = Infallible;
 
     /// Get a the first key (or the default if none is available).
@@ -444,14 +442,14 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
         let mut fp = Fingerprint::empty();
         for el in elements {
             let el = el?;
-            fp ^= el.0.as_fingerprint();
+            fp ^= el.as_fingerprint();
         }
         Ok(fp)
     }
 
-    fn put(&mut self, k: RecordIdentifier, v: SignedEntry) -> Result<(), Self::Error> {
+    fn put(&mut self, e: SignedEntry) -> Result<(), Self::Error> {
         self.with_records_mut_with_default(|records| {
-            records.insert((k.author(), k.key().to_vec()), v);
+            records.insert((e.author(), e.key().to_vec()), e);
         });
         Ok(())
     }
@@ -500,14 +498,14 @@ impl InstanceRangeIterator<'_> {
 }
 
 impl Iterator for InstanceRangeIterator<'_> {
-    type Item = Result<(RecordIdentifier, SignedEntry), Infallible>;
+    type Item = Result<SignedEntry, Infallible>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.iter.next()?;
         loop {
             let (record_id, v) = next;
             if self.matches(&record_id) {
-                return Some(Ok((record_id, v)));
+                return Some(Ok(v));
             }
 
             next = self.iter.next()?;
