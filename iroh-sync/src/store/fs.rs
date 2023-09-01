@@ -4,6 +4,7 @@ use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::Result;
 use derive_more::From;
+use ed25519_dalek::{SignatureError, VerifyingKey};
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
@@ -356,18 +357,8 @@ fn range_end(namespace: &NamespacePublicKey) -> RecordsId {
 }
 
 impl PublicKeyStore for StoreInstance {
-    fn namespace_key(
-        &self,
-        bytes: &NamespaceId,
-    ) -> std::result::Result<NamespacePublicKey, ed25519_dalek::SignatureError> {
-        self.store.pubkeys.namespace_key(bytes)
-    }
-
-    fn author_key(
-        &self,
-        bytes: &AuthorId,
-    ) -> std::result::Result<AuthorPublicKey, ed25519_dalek::SignatureError> {
-        self.store.pubkeys.author_key(bytes)
+    fn public_key(&self, id: &[u8; 32]) -> std::result::Result<VerifyingKey, SignatureError> {
+        self.store.pubkeys.public_key(id)
     }
 }
 

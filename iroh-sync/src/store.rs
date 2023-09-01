@@ -1,7 +1,6 @@
 //! Storage trait and implementation for iroh-sync documents
 
 use anyhow::Result;
-use ed25519_dalek::{SignatureError, VerifyingKey};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
@@ -15,34 +14,7 @@ use crate::{
 pub mod fs;
 pub mod memory;
 mod pubkeys;
-pub use pubkeys::MemPublicKeyStore;
-
-/// Store trait for expanded public keys for authors and namespaces.
-///
-/// Used to cache crypto keys. This trait is also implemented for the unit type [`()`], where no
-/// caching is used.
-pub trait PublicKeyStore {
-    /// Convert a byte array into a  [`VerifyingKey`], reusing from cache if available.
-    fn public_key(&self, id: &[u8; 32]) -> std::result::Result<VerifyingKey, SignatureError> {
-        VerifyingKey::from_bytes(id)
-    }
-
-    /// Convert a [`NamespaceId`] into a [`NamespacePublicKey`], reusing from cache if available.
-    fn namespace_key(
-        &self,
-        bytes: &NamespaceId,
-    ) -> std::result::Result<NamespacePublicKey, SignatureError> {
-        self.public_key(bytes.as_bytes())
-            .map(NamespacePublicKey::from)
-    }
-
-    /// Convert a [`AuthorId`] into a [`AuthorPublicKey`], reusing from cache if available.
-    fn author_key(&self, bytes: &AuthorId) -> std::result::Result<AuthorPublicKey, SignatureError> {
-        self.public_key(bytes.as_bytes()).map(AuthorPublicKey::from)
-    }
-}
-
-impl PublicKeyStore for () {}
+pub use pubkeys::*;
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
