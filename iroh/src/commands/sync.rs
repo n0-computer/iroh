@@ -289,7 +289,7 @@ impl AuthorCommands {
 fn fmt_entry(entry: &Entry) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let author = fmt_short(id.author().as_bytes());
+    let author = fmt_short(id.author_bytes());
     let hash = entry.record().content_hash();
     let hash = fmt_short(hash.as_bytes());
     let len = HumanBytes(entry.record().content_len());

@@ -678,7 +678,8 @@ impl RecordIdentifier {
         store.namespace_id(&self.namespace)
     }
 
-    pub(crate) fn namespace_bytes(&self) -> &[u8; 32] {
+    /// Get the [`NamespaceId`] of this record as byte array.
+    pub fn namespace_bytes(&self) -> &[u8; 32] {
         &self.namespace
     }
 
@@ -687,7 +688,8 @@ impl RecordIdentifier {
         store.author_id(&self.author)
     }
 
-    pub(crate) fn author_bytes(&self) -> &[u8; 32] {
+    /// Get the [`AuthorId`] of this record as byte array.
+    pub fn author_bytes(&self) -> &[u8; 32] {
         &self.author
     }
 }

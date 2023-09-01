@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
 fn fmt_entry(entry: &Entry) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let author = fmt_hash(id.author().as_bytes());
+    let author = fmt_hash(id.author_bytes());
     let hash = entry.content_hash();
     let hash = fmt_hash(hash.as_bytes());
     let len = HumanBytes(entry.content_len());
