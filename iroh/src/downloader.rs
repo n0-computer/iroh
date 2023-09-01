@@ -362,11 +362,6 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             None => {
                 // prepare the peer that will be sent this request
                 let next_peer = self.get_best_candidate(kind.hash());
-
-                // since this request is new, schedule it
-                let timeout = std::time::Duration::from_millis(300);
-                let delay_key = self.scheduled_request_queue.insert(kind, timeout);
-
                 let intents = HashMap::from([(id, sender)]);
                 self.schedule_request(kind, INITIAL_RETRY_COUNT, next_peer, intents)
             }
