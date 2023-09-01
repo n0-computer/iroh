@@ -20,6 +20,8 @@ use crate::{
     tls,
 };
 
+pub use super::magicsock::EndpointInfo as ConnectionInfo;
+
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]
 pub struct MagicEndpointBuilder {
@@ -287,6 +289,31 @@ impl MagicEndpoint {
         self.msock.my_derp().await
     }
 
+    /// Get information on all the nodes we have connection information about.
+    ///
+    /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
+    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
+    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
+    ///
+    /// Connections are currently only pruned on user action (when we explicitly add a new address
+    /// to the internal [`crate::netmap::NetworkMap`] in [`MagicEndpoint::add_known_addrs`]), so
+    /// these connections are not necessarily active connections.
+    pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
+        self.msock.tracked_endpoints().await
+    }
+
+    /// Get connection information about a specific node.
+    ///
+    /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
+    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
+    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
+    pub async fn connection_info(
+        &self,
+        node_id: PublicKey,
+    ) -> anyhow::Result<Option<ConnectionInfo>> {
+        self.msock.tracked_endpoint(node_id).await
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
@@ -345,6 +372,9 @@ impl MagicEndpoint {
     ///
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
     /// when connecting to this peer (in addition to addresses obtained from a derp server).
+    ///
+    /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
+    /// present in the netmap.
     ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
