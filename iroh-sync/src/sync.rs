@@ -372,8 +372,8 @@ impl SignedEntry {
     pub fn verify<S: store::PublicKeyStore>(&self, store: &S) -> Result<(), SignatureError> {
         self.signature.verify(
             &self.entry,
-            &self.entry.id.namespace().public_key(store)?,
-            &self.entry.id.author().public_key(store)?,
+            &self.entry.namespace().public_key(store)?,
+            &self.entry.author().public_key(store)?,
         )
     }
 
@@ -415,14 +415,9 @@ impl SignedEntry {
 
 impl RangeEntry for SignedEntry {
     type Key = RecordIdentifier;
-    type Value = Self;
 
     fn key(&self) -> &Self::Key {
         &self.entry.id
-    }
-
-    fn value(&self) -> &Self::Value {
-        self
     }
 
     fn as_fingerprint(&self) -> crate::ranger::Fingerprint {

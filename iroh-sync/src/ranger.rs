@@ -8,11 +8,13 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
+/// Store entries that can be fingerprinted and put into ranges.
 pub trait RangeEntry: Debug + Clone + PartialOrd {
+    /// The key for this entry, to be used in ranges.
     type Key: RangeKey + PartialEq + Clone + Default + Debug;
-    type Value: Debug + Clone;
+    /// Get the key for this entry.
     fn key(&self) -> &Self::Key;
-    fn value(&self) -> &Self::Value;
+    /// Get the fingerprint for this entry.
     fn as_fingerprint(&self) -> Fingerprint;
 }
 
@@ -190,7 +192,7 @@ pub trait Store<E: RangeEntry>: Sized {
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<E::Key, Self::Error>;
-    fn get(&self, key: &E::Key) -> Result<Option<E::Value>, Self::Error>;
+    fn get(&self, key: &E::Key) -> Result<Option<E>, Self::Error>;
     fn len(&self) -> Result<usize, Self::Error>;
     fn is_empty(&self) -> Result<bool, Self::Error>;
     /// Calculate the fingerprint of the given range.
@@ -208,7 +210,7 @@ pub trait Store<E: RangeEntry>: Sized {
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Remove an entry from the store.
-    fn remove(&mut self, key: &E::Key) -> Result<Option<E::Value>, Self::Error>;
+    fn remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
 
     type AllIterator<'a>: Iterator<Item = Result<E, Self::Error>>
     where
@@ -246,7 +248,6 @@ where
 impl<E, S> Peer<E, S>
 where
     E: RangeEntry,
-    E::Value: Clone + Debug,
     S: Store<E>,
 {
     pub fn from_store(store: S) -> Self {
@@ -517,14 +518,9 @@ mod tests {
         V: Debug + Clone + PartialOrd,
     {
         type Key = K;
-        type Value = V;
 
         fn key(&self) -> &Self::Key {
             &self.0
-        }
-
-        fn value(&self) -> &Self::Value {
-            &self.1
         }
 
         fn as_fingerprint(&self) -> Fingerprint {
@@ -549,8 +545,8 @@ mod tests {
             }
         }
 
-        fn get(&self, key: &K) -> Result<Option<V>, Self::Error> {
-            Ok(self.data.get(key).cloned())
+        fn get(&self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
+            Ok(self.data.get(key).cloned().map(|v| (key.clone(), v)))
         }
 
         fn len(&self) -> Result<usize, Self::Error> {
@@ -592,8 +588,8 @@ mod tests {
             })
         }
 
-        fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error> {
-            let res = self.data.remove(key);
+        fn remove(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
+            let res = self.data.remove(key).map(|v| (key.clone(), v));
             Ok(res)
         }
 
@@ -917,7 +913,7 @@ mod tests {
             for e in expected {
                 assert_eq!(
                     self.alice.store.get(e.key()).unwrap().as_ref(),
-                    Some(e.value()),
+                    Some(e),
                     "{}: (alice) missing key {:?}",
                     ctx,
                     e.key()
@@ -937,7 +933,7 @@ mod tests {
             for e in expected {
                 assert_eq!(
                     self.bob.store.get(e.key()).unwrap().as_ref(),
-                    Some(e.value()),
+                    Some(e),
                     "{}: (bob) missing key {:?}",
                     ctx,
                     e
@@ -1010,15 +1006,15 @@ mod tests {
         let mut alice = Peer::<(K, V), SimpleStore<K, V>>::default();
         for e in alice_set {
             alice.put(e.clone()).unwrap();
-            expected_set_bob.insert(e.key().clone(), e.value().clone());
-            expected_set_alice.insert(e.key().clone(), e.value().clone());
+            expected_set_bob.insert(e.key().clone(), e.1.clone());
+            expected_set_alice.insert(e.key().clone(), e.1.clone());
         }
 
         let mut bob = Peer::<(K, V), SimpleStore<K, V>>::default();
         for e in bob_set {
             bob.put(e.clone()).unwrap();
-            expected_set_bob.insert(e.key().clone(), e.value().clone());
-            expected_set_alice.insert(e.key().clone(), e.value().clone());
+            expected_set_bob.insert(e.key().clone(), e.1.clone());
+            expected_set_alice.insert(e.key().clone(), e.1.clone());
         }
 
         let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
@@ -1247,7 +1243,6 @@ mod tests {
     where
         S: Store<E> + Default,
         E: RangeEntry,
-        E::Value: Debug + Clone,
     {
         let mut store = S::default();
         let elems = elems.into_iter().collect::<Vec<_>>();
