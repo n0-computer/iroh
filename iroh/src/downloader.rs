@@ -505,32 +505,46 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// The peer that was initially selected is used if possible. Otherwise we try to get a new
     /// peer
     fn on_scheduled_request_ready(&mut self, kind: DownloadKind, info: PendingRequestInfo) {
-        // let PendingRequestInfo {
-        //     intents,
-        //     delay_key,
-        //     next_peer,
-        // } = info;
-        //
-        // let peer_connection =match next_peer {
-        //     Some(peer) => match self.get_peer_connection_for_download(&peer) {
-        //         Some(conn) => (peer, conn),
-        //         None => {
-        //             // the peer is not connected or too busy, try to get another one
-        //         },
-        //     },
-        //     None => todo!(),
-        // };
-        //
-        // match peer_connection {
-        //     Some((peer, connection)) => {
-        //         // TODO(@divma): push the future that uses the connection
-        //         debug!(%peer, ?kind, "starting download");
-        //     }
-        //     None => {
-        //         // TODO(@divma): schedule the retry
-        //         // retries are per intent... maybe make them per request
-        //     }
-        // }
+        let PendingRequestInfo {
+            intents,
+            mut remaining_retries,
+            next_peer,
+            ..
+        } = info;
+
+        // first try with the peer that was initially assigned
+        if let Some((peer, conn)) = next_peer.and_then(|peer| {
+            self.get_peer_connection_for_download(&peer)
+                .map(|conn| (peer, conn))
+        }) {
+            return self.start_download(kind, peer, conn, remaining_retries, intents);
+        }
+
+        // we either didn't have a peer or the peer is busy or dialing. In any case try to get
+        // another peer
+        let next_peer = match self.get_best_candidate(kind.hash()) {
+            None => None,
+            Some(peer) => {
+                // optimistically check if the peer could do the request right away
+                match self.get_peer_connection_for_download(&peer) {
+                    Some(conn) => {
+                        return self.start_download(kind, peer, conn, remaining_retries, intents)
+                    }
+                    None => Some(peer),
+                }
+            }
+        };
+
+        if remaining_retries > 0 {
+            remaining_retries -= 1;
+            self.schedule_request(kind, remaining_retries, next_peer, intents);
+        } else {
+            // request can't be retried
+            for sender in intents.into_values() {
+                let _ = sender.send(DownloadResult::Failed);
+            }
+            return debug!(?kind, "download ran out of attempts");
+        }
     }
 
     fn start_download(
