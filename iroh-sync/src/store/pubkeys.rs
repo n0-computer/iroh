@@ -7,7 +7,7 @@ use crate::{AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey};
 
 /// Store trait for expanded public keys for authors and namespaces.
 ///
-/// Used to cache [`ed25519_dalek::VerifyingKeys`].
+/// Used to cache [`ed25519_dalek::VerifyingKey`].
 ///
 /// This trait is implemented for the unit type [`()`], where no caching is used.
 pub trait PublicKeyStore {

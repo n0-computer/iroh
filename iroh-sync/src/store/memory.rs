@@ -91,7 +91,7 @@ impl super::Store for Store {
         match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
-            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
+            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, prefix),
             super::GetFilter::Author(author) => self.get_by_author(namespace, author),
             super::GetFilter::AuthorAndPrefix(author, prefix) => {
                 self.get_by_author_and_prefix(namespace, author, prefix)
@@ -341,7 +341,7 @@ impl Iterator for RecordsIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
         let ((author, key), value) = records.iter().nth(self.i)?;
-        let id = RecordIdentifier::new(self.namespace, *author, &key);
+        let id = RecordIdentifier::new(self.namespace, *author, key);
         self.i += 1;
         Some((id, value.clone()))
     }

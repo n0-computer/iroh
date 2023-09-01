@@ -114,7 +114,7 @@ impl Namespace {
         NamespacePublicKey(self.signing_key.verifying_key())
     }
 
-    /// Get the [`NamespaceIdBytes`] for this namespace.
+    /// Get the [`NamespaceId`] for this namespace.
     pub fn id(&self) -> NamespaceId {
         NamespaceId::from(self.public_key())
     }
