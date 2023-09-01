@@ -14,7 +14,7 @@ use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},
 };
-use iroh_sync::{AuthorPublicKey, NamespacePublicKey};
+use iroh_sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -272,9 +272,9 @@ pub struct ConsoleEnv(Arc<RwLock<ConsoleEnvInner>>);
 struct ConsoleEnvInner {
     /// Active author. Read from IROH_AUTHOR env variable.
     /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
-    author: Option<AuthorPublicKey>,
+    author: Option<AuthorId>,
     /// Active doc. Read from IROH_DOC env variable. Not persisted.
-    doc: Option<NamespacePublicKey>,
+    doc: Option<NamespaceId>,
     is_console: bool,
 }
 impl ConsoleEnv {
@@ -302,12 +302,12 @@ impl ConsoleEnv {
         Ok(Self(Arc::new(RwLock::new(env))))
     }
 
-    fn get_console_default_author() -> anyhow::Result<Option<AuthorPublicKey>> {
+    fn get_console_default_author() -> anyhow::Result<Option<AuthorId>> {
         let author_path = ConsolePaths::DefaultAuthor.with_env()?;
         if let Ok(s) = std::fs::read(&author_path) {
             let author = String::from_utf8(s)
                 .map_err(Into::into)
-                .and_then(|s| AuthorPublicKey::from_str(&s))
+                .and_then(|s| AuthorId::from_str(&s))
                 .with_context(|| {
                     format!(
                         "Failed to parse author file at {}",
@@ -329,7 +329,7 @@ impl ConsoleEnv {
     ///
     /// Will error if not running in the Iroh console.
     /// Will persist to a file in the Iroh data dir otherwise.
-    pub fn set_author(&self, author: AuthorPublicKey) -> anyhow::Result<()> {
+    pub fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
         let mut inner = self.0.write();
         if !inner.is_console {
             bail!("Switching the author is only supported within the Iroh console, not on the command line");
@@ -346,7 +346,7 @@ impl ConsoleEnv {
     ///
     /// Will error if not running in the Iroh console.
     /// Will not persist, only valid for the current console session.
-    pub fn set_doc(&self, doc: NamespacePublicKey) -> anyhow::Result<()> {
+    pub fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
         let mut inner = self.0.write();
         if !inner.is_console {
             bail!("Switching the document is only supported within the Iroh console, not on the command line");
@@ -356,7 +356,7 @@ impl ConsoleEnv {
     }
 
     /// Get the active document.
-    pub fn doc(&self, arg: Option<NamespacePublicKey>) -> anyhow::Result<NamespacePublicKey> {
+    pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
         let inner = self.0.read();
         let doc_id = arg.or(inner.doc).ok_or_else(|| {
             anyhow!(
@@ -368,7 +368,7 @@ impl ConsoleEnv {
     }
 
     /// Get the active author.
-    pub fn author(&self, arg: Option<AuthorPublicKey>) -> anyhow::Result<AuthorPublicKey> {
+    pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
         let inner = self.0.read();
         let author_id = arg.or(inner.author).ok_or_else(|| {
             anyhow!(
@@ -380,19 +380,19 @@ impl ConsoleEnv {
     }
 }
 
-fn env_author() -> Result<Option<AuthorPublicKey>> {
+fn env_author() -> Result<Option<AuthorId>> {
     match env_var(ENV_AUTHOR) {
         Ok(s) => Ok(Some(
-            AuthorPublicKey::from_str(&s).context("Failed to parse IROH_AUTHOR environment variable")?,
+            AuthorId::from_str(&s).context("Failed to parse IROH_AUTHOR environment variable")?,
         )),
         Err(_) => Ok(None),
     }
 }
 
-fn env_doc() -> Result<Option<NamespacePublicKey>> {
+fn env_doc() -> Result<Option<NamespaceId>> {
     match env_var(ENV_DOC) {
         Ok(s) => Ok(Some(
-            NamespacePublicKey::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
+            NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
         )),
         Err(_) => Ok(None),
     }

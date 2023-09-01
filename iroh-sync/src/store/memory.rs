@@ -13,10 +13,7 @@ use parking_lot::{RwLock, RwLockReadGuard};
 
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
-    sync::{
-        Author, AuthorPublicKey, Namespace, NamespacePublicKey, RecordIdentifier, Replica,
-        SignedEntry,
-    },
+    sync::{Author, Namespace, RecordIdentifier, Replica, SignedEntry},
     AuthorId, NamespaceId,
 };
 
@@ -25,8 +22,8 @@ use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
-    replicas: Arc<RwLock<HashMap<NamespacePublicKey, Replica<ReplicaStoreInstance>>>>,
-    authors: Arc<RwLock<HashMap<AuthorPublicKey, Author>>>,
+    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<ReplicaStoreInstance>>>>,
+    authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
     pubkeys: MemPublicKeyStore,
@@ -41,12 +38,9 @@ impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
     type GetIter<'a> = EntryIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespacePublicKey>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
-    fn open_replica(
-        &self,
-        namespace: &NamespacePublicKey,
-    ) -> Result<Option<Replica<Self::Instance>>> {
+    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
         Ok(replicas.get(namespace).cloned())
     }
@@ -63,7 +57,7 @@ impl super::Store for Store {
             .into_iter())
     }
 
-    fn get_author(&self, author: &AuthorPublicKey) -> Result<Option<Author>> {
+    fn get_author(&self, author: &AuthorId) -> Result<Option<Author>> {
         let authors = &*self.authors.read();
         Ok(authors.get(author).cloned())
     }
@@ -94,11 +88,7 @@ impl super::Store for Store {
         Ok(replica)
     }
 
-    fn get(
-        &self,
-        namespace: NamespacePublicKey,
-        filter: super::GetFilter,
-    ) -> Result<Self::GetIter<'_>> {
+    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
         let iter = match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
@@ -113,15 +103,15 @@ impl super::Store for Store {
 
     fn get_by_key_and_author(
         &self,
-        namespace: &NamespaceId,
-        author: &AuthorId,
+        namespace: NamespaceId,
+        author: AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
 
         let value = inner
-            .get(namespace)
-            .and_then(|records| records.get(&(*author, key.as_ref().to_vec())));
+            .get(&namespace)
+            .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
 
         Ok(value.cloned())
     }
@@ -140,7 +130,7 @@ impl<'a> Iterator for EntryIterator<'a> {
 impl Store {
     fn get_by_key(
         &self,
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         key: impl AsRef<[u8]>,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
@@ -156,7 +146,7 @@ impl Store {
 
     fn get_by_prefix(
         &self,
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
@@ -172,8 +162,8 @@ impl Store {
 
     fn get_by_author(
         &self,
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
+        namespace: NamespaceId,
+        author: AuthorId,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::Author { namespace, author };
@@ -187,8 +177,8 @@ impl Store {
 
     fn get_by_author_and_prefix(
         &self,
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
+        namespace: NamespaceId,
+        author: AuthorId,
         prefix: Vec<u8>,
     ) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
@@ -205,7 +195,7 @@ impl Store {
         })
     }
 
-    fn get_all(&self, namespace: NamespacePublicKey) -> Result<StoreRangeIterator<'_>> {
+    fn get_all(&self, namespace: NamespaceId) -> Result<StoreRangeIterator<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
 
@@ -220,32 +210,32 @@ impl Store {
 #[derive(Debug)]
 enum GetFilter {
     /// All entries.
-    All { namespace: NamespacePublicKey },
+    All { namespace: NamespaceId },
     /// Filter by author.
     Author {
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
+        namespace: NamespaceId,
+        author: AuthorId,
     },
     /// Filter by key only.
     Key {
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         key: Vec<u8>,
     },
     /// Filter by prefix only.
     Prefix {
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         prefix: Vec<u8>,
     },
     /// Filter by author and prefix.
     AuthorAndPrefix {
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         prefix: Vec<u8>,
-        author: AuthorPublicKey,
+        author: AuthorId,
     },
 }
 
 impl GetFilter {
-    fn namespace(&self) -> NamespacePublicKey {
+    fn namespace(&self) -> NamespaceId {
         match self {
             GetFilter::All { namespace } => *namespace,
             GetFilter::Key { namespace, .. } => *namespace,
@@ -281,7 +271,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 .nth(self.index)?,
             GetFilter::Author { ref author, .. } => records
                 .iter()
-                .filter(|((a, _), _)| *a == author.into())
+                .filter(|((a, _), _)| a == author)
                 .nth(self.index)?,
             GetFilter::AuthorAndPrefix {
                 ref prefix,
@@ -289,7 +279,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 ..
             } => records
                 .iter()
-                .filter(|((a, k), _)| *a == author.into() && k.starts_with(prefix))
+                .filter(|((a, k), _)| a == author && k.starts_with(prefix))
                 .nth(self.index)?,
         };
         self.index += 1;
@@ -311,7 +301,7 @@ impl PublicKeyStore for ReplicaStoreInstance {
 }
 
 impl ReplicaStoreInstance {
-    fn new(namespace: NamespacePublicKey, store: Store) -> Self {
+    fn new(namespace: NamespaceId, store: Store) -> Self {
         ReplicaStoreInstance {
             namespace: namespace.into(),
             store,

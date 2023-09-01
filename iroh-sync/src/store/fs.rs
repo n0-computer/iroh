@@ -16,8 +16,7 @@ use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{
-        Author, AuthorPublicKey, Entry, EntrySignature, Namespace, NamespacePublicKey, Record,
-        RecordIdentifier, Replica, SignedEntry,
+        Author, Entry, EntrySignature, Namespace, Record, RecordIdentifier, Replica, SignedEntry,
     },
     AuthorId, NamespaceId,
 };
@@ -28,7 +27,7 @@ use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<Database>,
-    replicas: Arc<RwLock<HashMap<NamespacePublicKey, Replica<StoreInstance>>>>,
+    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<StoreInstance>>>>,
     pubkeys: MemPublicKeyStore,
 }
 
@@ -123,12 +122,9 @@ impl super::Store for Store {
     type Instance = StoreInstance;
     type GetIter<'a> = EntryIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespacePublicKey>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
-    fn open_replica(
-        &self,
-        namespace_id: &NamespacePublicKey,
-    ) -> Result<Option<Replica<Self::Instance>>> {
+    fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
             return Ok(Some(replica.clone()));
         }
@@ -158,7 +154,7 @@ impl super::Store for Store {
         Ok(namespaces.into_iter())
     }
 
-    fn get_author(&self, author_id: &AuthorPublicKey) -> Result<Option<Author>> {
+    fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
         let read_tx = self.db.begin_read()?;
         let author_table = read_tx.open_table(AUTHORS_TABLE)?;
         let Some(author) = author_table.get(author_id.as_bytes())? else {
@@ -199,18 +195,14 @@ impl super::Store for Store {
         Ok(replica)
     }
 
-    fn get(
-        &self,
-        namespace: NamespacePublicKey,
-        filter: super::GetFilter,
-    ) -> Result<Self::GetIter<'_>> {
+    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
         let iter = match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
             super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
-            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+            super::GetFilter::Author(author) => self.get_by_author(namespace, &author),
             super::GetFilter::AuthorAndPrefix(author, prefix) => {
-                self.get_by_author_and_prefix(namespace, author, prefix)
+                self.get_by_author_and_prefix(namespace, &author, prefix)
             }
         }?;
         Ok(iter.into())
@@ -218,8 +210,8 @@ impl super::Store for Store {
 
     fn get_by_key_and_author(
         &self,
-        namespace: &NamespaceId,
-        author: &AuthorId,
+        namespace: NamespaceId,
+        author: AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
@@ -233,7 +225,7 @@ impl super::Store for Store {
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
 
         let record = Record::new(hash.into(), len, timestamp);
-        let id = RecordIdentifier::from_parts(*namespace, *author, key.as_ref().to_vec());
+        let id = RecordIdentifier::from_parts(namespace, author, key.as_ref().to_vec());
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
         let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -245,7 +237,7 @@ impl super::Store for Store {
 impl Store {
     fn get_by_key(
         &self,
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         key: impl AsRef<[u8]>,
     ) -> Result<RangeIterator<'_>> {
         RangeIterator::namespace(
@@ -256,8 +248,8 @@ impl Store {
     }
     fn get_by_author(
         &self,
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
+        namespace: NamespaceId,
+        author: &AuthorId,
     ) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, &[][..]);
@@ -274,8 +266,8 @@ impl Store {
 
     fn get_by_author_and_prefix(
         &self,
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
+        namespace: NamespaceId,
+        author: &AuthorId,
         prefix: impl AsRef<[u8]>,
     ) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
@@ -293,7 +285,7 @@ impl Store {
 
     fn get_by_prefix(
         &self,
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
     ) -> Result<RangeIterator<'_>> {
         RangeIterator::namespace(
@@ -303,7 +295,7 @@ impl Store {
         )
     }
 
-    fn get_all(&self, namespace: NamespacePublicKey) -> Result<RangeIterator<'_>> {
+    fn get_all(&self, namespace: NamespaceId) -> Result<RangeIterator<'_>> {
         RangeIterator::namespace(&self.db, &namespace, RangeFilter::None)
     }
 }
@@ -339,20 +331,20 @@ fn prefix_range_end<'a>(value: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32],
 /// [`Namespace`] specific wrapper around the [`Store`].
 #[derive(Debug, Clone)]
 pub struct StoreInstance {
-    namespace: NamespacePublicKey,
+    namespace: NamespaceId,
     store: Store,
 }
 
 impl StoreInstance {
-    fn new(namespace: NamespacePublicKey, store: Store) -> Self {
+    fn new(namespace: NamespaceId, store: Store) -> Self {
         StoreInstance { namespace, store }
     }
 }
 
-fn range_start(namespace: &NamespacePublicKey) -> RecordsId {
+fn range_start(namespace: &NamespaceId) -> RecordsId {
     (namespace.as_bytes(), &[u8::MIN; 32], &[][..])
 }
-fn range_end(namespace: &NamespacePublicKey) -> RecordsId {
+fn range_end(namespace: &NamespaceId) -> RecordsId {
     (namespace.as_bytes(), &[u8::MAX; 32], &[][..])
 }
 
@@ -390,7 +382,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store
-            .get_by_key_and_author(&id.namespace(), &id.author(), id.key())
+            .get_by_key_and_author(id.namespace(), id.author(), id.key())
     }
 
     fn len(&self) -> Result<usize> {
@@ -559,7 +551,7 @@ impl<'a> RangeIterator<'a> {
 
     fn namespace(
         db: &'a Arc<Database>,
-        namespace: &NamespacePublicKey,
+        namespace: &NamespaceId,
         filter: RangeFilter,
     ) -> anyhow::Result<Self> {
         let start = range_start(namespace);

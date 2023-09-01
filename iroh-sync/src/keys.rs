@@ -30,14 +30,14 @@ impl Author {
         self.signing_key.to_bytes()
     }
 
-    /// Get the [`AuthorId`] for this author.
-    pub fn id(&self) -> AuthorPublicKey {
+    /// Get the [`AuthorPublicKey`] for this author.
+    pub fn public_key(&self) -> AuthorPublicKey {
         AuthorPublicKey(self.signing_key.verifying_key())
     }
 
-    /// Get the [`AuthorIdBytes`] for this author.
-    pub fn id_bytes(&self) -> AuthorId {
-        AuthorId::from(self.id())
+    /// Get the [`AuthorId`] for this author.
+    pub fn id(&self) -> AuthorId {
+        AuthorId::from(self.public_key())
     }
 
     /// Sign a message with this [`Author`] key.
@@ -107,14 +107,14 @@ impl Namespace {
         self.signing_key.to_bytes()
     }
 
-    /// Get the [`NamespaceId`] for this namespace.
-    pub fn id(&self) -> NamespacePublicKey {
+    /// Get the [`NamespacePublicKey`] for this namespace.
+    pub fn public_key(&self) -> NamespacePublicKey {
         NamespacePublicKey(self.signing_key.verifying_key())
     }
 
     /// Get the [`NamespaceIdBytes`] for this namespace.
-    pub fn id_bytes(&self) -> NamespaceId {
-        NamespaceId::from(self.id())
+    pub fn id(&self) -> NamespaceId {
+        NamespaceId::from(self.public_key())
     }
 
     /// Sign a message with this [`Namespace`] key.
@@ -176,6 +176,18 @@ impl fmt::Display for AuthorPublicKey {
 }
 
 impl fmt::Display for NamespacePublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", base32::fmt(self.as_bytes()))
+    }
+}
+
+impl fmt::Display for AuthorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", base32::fmt(self.as_bytes()))
+    }
+}
+
+impl fmt::Display for NamespaceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", base32::fmt(self.as_bytes()))
     }
@@ -275,25 +287,25 @@ impl Ord for AuthorPublicKey {
 
 impl From<Namespace> for NamespacePublicKey {
     fn from(value: Namespace) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
 impl From<Author> for AuthorPublicKey {
     fn from(value: Author) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
 impl From<&Namespace> for NamespacePublicKey {
     fn from(value: &Namespace) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
 impl From<&Author> for AuthorPublicKey {
     fn from(value: &Author) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
@@ -462,5 +474,21 @@ impl TryFrom<AuthorId> for AuthorPublicKey {
     type Error = SignatureError;
     fn try_from(value: AuthorId) -> Result<Self, Self::Error> {
         Self::from_bytes(&value.0)
+    }
+}
+
+impl FromStr for AuthorId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        AuthorPublicKey::from_str(s).map(|x| x.into())
+    }
+}
+
+impl FromStr for NamespaceId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        NamespacePublicKey::from_str(s).map(|x| x.into())
     }
 }

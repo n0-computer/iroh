@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
-    sync::{Author, AuthorPublicKey, Namespace, NamespacePublicKey, Replica, SignedEntry},
+    sync::{Author, Namespace, Replica, SignedEntry},
     AuthorId, NamespaceId,
 };
 
@@ -27,7 +27,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Iterator over replica namespaces in the store, returned from [`Self::list_namespaces`]
-    type NamespaceIter<'a>: Iterator<Item = Result<NamespacePublicKey>>
+    type NamespaceIter<'a>: Iterator<Item = Result<NamespaceId>>
     where
         Self: 'a;
 
@@ -48,10 +48,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
     ///
     // TODO: Add close_replica
-    fn open_replica(
-        &self,
-        namespace: &NamespacePublicKey,
-    ) -> Result<Option<Replica<Self::Instance>>>;
+    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
     /// Create a new author key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
@@ -67,18 +64,18 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>>;
 
     /// Get an author key from the store.
-    fn get_author(&self, author: &AuthorPublicKey) -> Result<Option<Author>>;
+    fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
 
     /// Iterate over entries of a replica.
     ///
     /// The [`GetFilter`] has several methods of filtering the returned entries.
-    fn get(&self, namespace: NamespacePublicKey, filter: GetFilter) -> Result<Self::GetIter<'_>>;
+    fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
     /// Get an entry by key and author.
     fn get_by_key_and_author(
         &self,
-        namespace: &NamespaceId,
-        author: &AuthorId,
+        namespace: NamespaceId,
+        author: AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>>;
 }
@@ -93,9 +90,9 @@ pub enum GetFilter {
     /// Filter for key prefix
     Prefix(Vec<u8>),
     /// Filter by author
-    Author(AuthorPublicKey),
+    Author(AuthorId),
     /// Filter by key prefix and author
-    AuthorAndPrefix(AuthorPublicKey, Vec<u8>),
+    AuthorAndPrefix(AuthorId, Vec<u8>),
 }
 
 impl Default for GetFilter {
@@ -106,10 +103,7 @@ impl Default for GetFilter {
 
 impl GetFilter {
     /// Create a [`GetFilter`] from author and prefix options.
-    pub fn author_prefix(
-        author: Option<AuthorPublicKey>,
-        prefix: Option<impl AsRef<[u8]>>,
-    ) -> Self {
+    pub fn author_prefix(author: Option<AuthorId>, prefix: Option<impl AsRef<[u8]>>) -> Self {
         match (author, prefix) {
             (None, None) => Self::All,
             (Some(author), None) => Self::Author(author),

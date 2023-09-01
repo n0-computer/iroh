@@ -144,7 +144,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Insert a signed entry into the database.
     fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), InsertError<S>> {
-        let expected_namespace = self.namespace_bytes();
+        let expected_namespace = self.namespace();
 
         let len = entry.content_len();
         let mut inner = self.inner.write();
@@ -215,7 +215,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
-        let expected_namespace = self.namespace_bytes();
+        let expected_namespace = self.namespace();
         let now = system_time_now();
         let reply = self
             .inner
@@ -237,14 +237,14 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Get the namespace identifier for this [`Replica`].
-    pub fn namespace(&self) -> NamespacePublicKey {
+    pub fn namespace(&self) -> NamespaceId {
         self.inner.read().namespace.id()
     }
 
-    /// Get the namespace identifier for this [`Replica`] in byte represenation.
-    pub fn namespace_bytes(&self) -> NamespaceId {
-        self.inner.read().namespace.id().into()
-    }
+    // /// Get the namespace identifier for this [`Replica`] in byte represenation.
+    // pub fn namespace(&self) -> NamespaceId {
+    //     self.inner.read().namespace.id().into()
+    // }
 
     /// Get the byte represenation of the [`Namespace`] key for this replica.
     // TODO: Why return [u8; 32] and not `Namespace` here?
@@ -621,15 +621,11 @@ fn system_time_now() -> u64 {
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
-    pub fn new(
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
-        key: impl AsRef<[u8]>,
-    ) -> Self {
+    pub fn new(namespace: NamespaceId, author: AuthorId, key: impl AsRef<[u8]>) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
-            namespace: namespace.into(),
-            author: author.into(),
+            namespace,
+            author,
         }
     }
 
@@ -799,11 +795,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_by_key_and_author(
-                    &my_replica.namespace_bytes(),
-                    &alice.id_bytes(),
-                    format!("/{i}"),
-                )?
+                .get_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -813,20 +805,12 @@ mod tests {
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_by_key_and_author(
-                &my_replica.namespace_bytes(),
-                &alice.id_bytes(),
-                "/cool/path",
-            )?
+            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_by_key_and_author(
-                &my_replica.namespace_bytes(),
-                &alice.id_bytes(),
-                "/cool/path",
-            )?
+            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
 
         // Get All by author
@@ -1055,7 +1039,7 @@ mod tests {
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
         let res = store
-            .get_by_key_and_author(&namespace.id_bytes(), &author.id_bytes(), key)?
+            .get_by_key_and_author(namespace.id(), author.id(), key)?
             .unwrap();
         assert_eq!(res, entry);
 
@@ -1074,7 +1058,7 @@ mod tests {
             ))
         ));
         let res = store
-            .get_by_key_and_author(&namespace.id_bytes(), &author.id_bytes(), key)?
+            .get_by_key_and_author(namespace.id(), author.id(), key)?
             .unwrap();
         assert_eq!(res, entry);
 
@@ -1204,19 +1188,19 @@ mod tests {
         let entry0 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry0.clone(), InsertOrigin::Local)?;
 
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry0);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry0);
 
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
         let record = Record::from_data(b"2", t);
         let entry1 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry1);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry1);
 
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT;
         let record = Record::from_data(b"2", t);
         let entry2 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
 
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
         let record = Record::from_data(b"2", t);
@@ -1228,31 +1212,31 @@ mod tests {
                 ValidationFailure::TooFarInTheFuture
             ))
         ));
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
 
         Ok(())
     }
 
     fn get_entry<S: store::Store>(
         store: &S,
-        namespace: impl Into<NamespacePublicKey>,
-        author: impl Into<AuthorPublicKey>,
+        namespace: NamespaceId,
+        author: AuthorId,
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
-            .get_by_key_and_author(&namespace.into().into(), &author.into().into(), key)?
+            .get_by_key_and_author(namespace.into(), author.into(), key)?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(entry)
     }
 
     fn get_content_hash<S: store::Store>(
         store: &S,
-        namespace: NamespacePublicKey,
-        author: AuthorPublicKey,
+        namespace: NamespaceId,
+        author: AuthorId,
         key: &[u8],
     ) -> anyhow::Result<Hash> {
         let hash = store
-            .get_by_key_and_author(&namespace.into(), &author.into(), key)?
+            .get_by_key_and_author(namespace, author, key)?
             .unwrap()
             .content_hash();
         Ok(hash)
@@ -1285,13 +1269,13 @@ mod tests {
 
     fn check_entries<S: store::Store>(
         store: &S,
-        namespace: &NamespacePublicKey,
+        namespace: &NamespaceId,
         author: &Author,
         set: &[&str],
     ) -> Result<()> {
         let replica = store.open_replica(namespace)?.unwrap();
         for el in set {
-            store.get_by_key_and_author(&replica.namespace_bytes(), &author.id_bytes(), el)?;
+            store.get_by_key_and_author(replica.namespace(), author.id(), el)?;
         }
         Ok(())
     }

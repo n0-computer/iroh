@@ -182,7 +182,7 @@ impl<S: Store> SyncEngine<S> {
             .map_err(anyhow::Error::from)?;
         let entry = self
             .store
-            .get_by_key_and_author(&replica.namespace_bytes(), &author.id().into(), &key)?
+            .get_by_key_and_author(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
     }
@@ -210,9 +210,9 @@ impl<S: Store> SyncEngine<S> {
             key,
         } = req;
         let replica = self.get_replica(&doc_id)?;
-        let entry =
-            self.store
-                .get_by_key_and_author(&replica.namespace().into(), &author.into(), key)?;
+        let entry = self
+            .store
+            .get_by_key_and_author(replica.namespace(), author, key)?;
         Ok(DocGetOneResponse { entry })
     }
 }

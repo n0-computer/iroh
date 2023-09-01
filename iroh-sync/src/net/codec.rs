@@ -8,7 +8,7 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::{debug, trace};
 
-use crate::{store, NamespacePublicKey, Replica};
+use crate::{store, NamespaceId, Replica};
 
 #[derive(Debug, Default)]
 struct SyncCodec;
@@ -78,7 +78,7 @@ impl Encoder<Message> for SyncCodec {
 enum Message {
     Init {
         /// Namespace to sync
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
         /// Initial message
         message: crate::sync::ProtocolMessage,
     },
@@ -193,7 +193,7 @@ mod tests {
     use crate::{
         store::{GetFilter, Store},
         sync::Namespace,
-        AuthorId, AuthorPublicKey,
+        AuthorId,
     };
     use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
@@ -319,7 +319,7 @@ mod tests {
         replica: &Replica<S::Instance>,
         num_authors: usize,
         msgs_per_author: usize,
-        key_value_fn: impl Fn(&AuthorPublicKey, usize) -> (String, String),
+        key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
     ) -> Vec<Message> {
         let mut res = vec![];
         let authors: Vec<_> = (0..num_authors)
@@ -330,14 +330,14 @@ mod tests {
             for author in authors.iter() {
                 let (key, value) = key_value_fn(&author.id(), i);
                 let hash = replica.hash_and_insert(key.clone(), author, value).unwrap();
-                res.push((author.id_bytes(), key.as_bytes().to_vec(), hash));
+                res.push((author.id(), key.as_bytes().to_vec(), hash));
             }
         }
         res.sort();
         res
     }
 
-    fn get_messages<S: Store>(store: &S, namespace: NamespacePublicKey) -> Vec<Message> {
+    fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
             .get(namespace, GetFilter::All)
             .unwrap()
@@ -440,7 +440,7 @@ mod tests {
         alice_node_pubkey: PublicKey,
         bob_store: &S,
         bob_node_pubkey: PublicKey,
-        namespace: NamespacePublicKey,
+        namespace: NamespaceId,
     ) -> Result<()> {
         let (alice, bob) = tokio::io::duplex(1024);
 
@@ -515,12 +515,12 @@ mod tests {
 
         assert_eq!(
             get_messages(&alice_store, alice_replica.namespace()),
-            vec![(author.id_bytes(), key.clone(), hash_alice)]
+            vec![(author.id(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
             get_messages(&bob_store, bob_replica.namespace()),
-            vec![(author.id_bytes(), key.clone(), hash_bob)]
+            vec![(author.id(), key.clone(), hash_bob)]
         );
 
         run_sync(
@@ -534,12 +534,12 @@ mod tests {
 
         assert_eq!(
             get_messages(&alice_store, alice_replica.namespace()),
-            vec![(author.id_bytes(), key.clone(), hash_bob)]
+            vec![(author.id(), key.clone(), hash_bob)]
         );
 
         assert_eq!(
             get_messages(&bob_store, bob_replica.namespace()),
-            vec![(author.id_bytes(), key.clone(), hash_bob)]
+            vec![(author.id(), key.clone(), hash_bob)]
         );
 
         Ok(())

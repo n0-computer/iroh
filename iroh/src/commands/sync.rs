@@ -7,7 +7,7 @@ use iroh::{
     rpc_protocol::{DocTicket, ShareMode},
     sync_engine::LiveEvent,
 };
-use iroh_sync::{store::GetFilter, AuthorPublicKey, Entry, NamespacePublicKey};
+use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
 use crate::config::ConsoleEnv;
 
@@ -16,7 +16,7 @@ const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
-    Switch { id: NamespacePublicKey },
+    Switch { id: NamespaceId },
     /// Create a new document.
     New {
         /// Switch to the created document (only in the Iroh console).
@@ -39,7 +39,7 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc: Option<NamespacePublicKey>,
+        doc: Option<NamespaceId>,
         mode: ShareMode,
     },
     /// Set an entry in a document.
@@ -49,13 +49,13 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc: Option<NamespacePublicKey>,
+        doc: Option<NamespaceId>,
         /// Author of the entry.
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
         #[clap(short, long)]
-        author: Option<AuthorPublicKey>,
+        author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
         /// Content to store for this entry (parsed as UTF-8 string)
@@ -70,7 +70,7 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc: Option<NamespacePublicKey>,
+        doc: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
         /// If true, get all entries that start with KEY.
@@ -78,7 +78,7 @@ pub enum DocCommands {
         prefix: bool,
         /// Filter by author.
         #[clap(short, long)]
-        author: Option<AuthorPublicKey>,
+        author: Option<AuthorId>,
         /// Also print the content for each entry (but only if smaller than 1MB and valid UTf-8)
         #[clap(short, long)]
         content: bool,
@@ -91,10 +91,10 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc: Option<NamespacePublicKey>,
+        doc: Option<NamespaceId>,
         /// Filter by author.
         #[clap(short, long)]
-        author: Option<AuthorPublicKey>,
+        author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
     },
@@ -105,14 +105,14 @@ pub enum DocCommands {
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
-        doc: Option<NamespacePublicKey>,
+        doc: Option<NamespaceId>,
     },
 }
 
 #[derive(Debug, Clone, Parser)]
 pub enum AuthorCommands {
     /// Set the active author (only works within the Iroh console).
-    Switch { author: AuthorPublicKey },
+    Switch { author: AuthorId },
     /// Create a new author.
     New {
         /// Switch to the created author (only in the Iroh console).
