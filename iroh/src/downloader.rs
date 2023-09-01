@@ -1,16 +1,16 @@
-//! Handle downloading blobs and collections concurrently and from multiple peers.
+//! Handle downloading blobs and collections concurrently and from peers.
 //!
 //! The [`Service`] interacts with five main components to this end.
-//! - [`Dialer`]: Used to queue opening connection to peers we need perform downloads.
+//! - [`Dialer`]: Used to queue opening connections to peers we need perform downloads.
 //! - [`AvailabilityRegistry`]: Where the downloader obtains information about peers that could be
 //!   used to perform a download.
 //! - [`Store`]: Where data is stored.
 //! - [`CollectionParser`]: Used by the [`GetRequest`] associated logic to identify blobs encoding
 //!   collections.
 //!
-//! Once a download request is recevied, the logic is as follows:
+//! Once a download request is received, the logic is as follows:
 //! 1. The [`AvailabilityRegistry`] is queried for peers. From these peers some are selected
-//!    priorizing connected peers with lower number of active requests. If no useful peer is
+//!    prioritizing connected peers with lower number of active requests. If no useful peer is
 //!    connected, or useful connected peers have no capacity to perform the request, a connection
 //!    attempt is started using the [`Dialer`].
 //! 2. The download is queued for processing at a later time. Downloads are not performed right
@@ -21,10 +21,10 @@
 //!
 //! Concurrency is limited in different ways:
 //! - *Total number of active request:* This is a way to prevent a self DoS by overwhelming our own
-//!   bandwith capacity. This is a best effort heuristic since it doesn't take into account how
-//!   much data we are actually requesting ort receiving.
+//!   bandwidth capacity. This is a best effort heuristic since it doesn't take into account how
+//!   much data we are actually requesting or receiving.
 //! - *Total number of connected peers:* Peer connections are kept for a longer time than they are
-//!   strictly needed since it's likely they will be usefull soon again.
+//!   strictly needed since it's likely they will be useful soon again.
 //! - *Requests per peer*: to avoid overwhelming peers with requests, the number of concurrent
 //!   requests to a single peer is also limited.
 
@@ -164,9 +164,9 @@ pub struct Downloader;
 struct DownloadInfo {
     /// Kind of download.
     kind: DownloadKind,
-    /// How many times can this request be attempted again before declearing it failed.
+    /// How many times can this request be attempted again before declaring it failed.
     remaining_retries: u8,
-    /// oneshot to return the download result back to the requester.
+    /// Oneshot to return the download result back to the requester.
     #[debug(skip)]
     sender: oneshot::Sender<DownloadResult>,
 }
@@ -240,7 +240,7 @@ type DownloadFut = BoxFuture<'static, (DownloadKind, DownloadResult)>;
 struct Service<S, C, R> {
     /// The store to which data is downloaded.
     store: S,
-    /// Parser to idenfity blobs encoding collections.
+    /// Parser to identify blobs encoding collections.
     collection_parser: C,
     /// Registry to query for peers that we believe have the data we are looking for.
     availabiliy_registry: R,
@@ -332,8 +332,8 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
 
     /// Handle a [`Message::Queue`].
     ///
-    /// This will not start the download right away. Instead, if this intent maps to a request that
-    /// already exists, it will be registered with it. If the request is new it will be scheduled.
+    /// If this intent maps to a request that already exists, it will be registered with it. If the
+    /// request is new it will be scheduled.
     fn handle_queue_new_download(
         &mut self,
         kind: DownloadKind,
@@ -370,14 +370,14 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
 
     /// Gets the best candidate for a download.
     ///
-    /// Peers are selected priorizing those with an open connection and with capacity for another
+    /// Peers are selected prioritizing those with an open connection and with capacity for another
     /// request, followed by peers we are currently dialing with capacity for another request.
     /// Lastly, peers not connected and not dialing are considered.
     ///
     /// If the selected candidate is not connected and we have capacity for another connection, a
     /// dial is queued.
     fn get_best_candidate(&self, hash: &Hash) -> Option<PublicKey> {
-        /// Model the states of peers found in the obtains candidates
+        /// Model the state of peers found in the candidates
         #[derive(PartialEq, Eq)]
         enum PeerState {
             Dialing,
@@ -461,7 +461,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
 
     /// Cancels the download request.
     ///
-    /// This removes the registerd download intent and, depending on its state, it will either
+    /// This removes the registered download intent and, depending on its state, it will either
     /// remove it from the scheduled requests, or cancel the future.
     fn handle_cancel_download(&mut self, id: Id, kind: DownloadKind) {
         if let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(kind) {
@@ -547,6 +547,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
+    /// Start downloading from the given peer.
     fn start_download(
         &mut self,
         kind: DownloadKind,
@@ -569,6 +570,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         debug!(%peer, ?kind, "starting download");
     }
 
+    /// Schedule a request for later processing.
     fn schedule_request(
         &mut self,
         kind: DownloadKind,
