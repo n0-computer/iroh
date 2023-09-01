@@ -869,12 +869,12 @@ mod tests {
 
         let mut alice = Peer::default();
         for (k, v) in alice_set {
-            alice.put(k.clone(), v.clone()).unwrap();
+            alice.put(k, v).unwrap();
         }
 
         let mut bob = Peer::default();
         for (k, v) in bob_set {
-            bob.put(k.clone(), v.clone()).unwrap();
+            bob.put(k, v).unwrap();
         }
 
         // run sync with a validate callback returning false, which means no new entries are stored
