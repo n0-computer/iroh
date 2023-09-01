@@ -172,7 +172,7 @@ struct DownloadInfo {
 }
 
 enum Message {
-    Start {
+    Queue {
         kind: DownloadKind,
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
@@ -325,16 +325,16 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// Handle receiving a [`Message`].
     fn handle_message(&mut self, msg: Message) {
         match msg {
-            Message::Start { kind, id, sender } => self.handle_start_download(kind, id, sender),
+            Message::Queue { kind, id, sender } => self.handle_queue_new_download(kind, id, sender),
             Message::Cancel { id, kind } => self.handle_cancel_download(id, kind),
         }
     }
 
-    /// Handle a [`Message::Start`].
+    /// Handle a [`Message::Queue`].
     ///
     /// This will not start the download right away. Instead, if this intent maps to a request that
     /// already exists, it will be registered with it. If the request is new it will be scheduled.
-    fn handle_start_download(
+    fn handle_queue_new_download(
         &mut self,
         kind: DownloadKind,
         id: Id,
@@ -368,15 +368,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 let delay_key = self.scheduled_request_queue.insert(kind, timeout);
 
                 let intents = HashMap::from([(id, sender)]);
-                let remaining_retries = 4;
-                let info = PendingRequestInfo {
-                    intents,
-                    remaining_retries,
-                    delay_key,
-                    next_peer,
-                };
-                debug!(?kind, ?info, "new request scheduled");
-                self.scheduled_requests.insert(kind, info);
+                self.schedule_request(kind, INITIAL_RETRY_COUNT, next_peer, intents)
             }
         }
     }
@@ -544,6 +536,51 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         //         // retries are per intent... maybe make them per request
         //     }
         // }
+    }
+
+    fn start_download(
+        &mut self,
+        kind: DownloadKind,
+        peer: PublicKey,
+        conn: quinn::Connection,
+        remaining_retries: u8,
+        intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
+    ) {
+        let cancellation = CancellationToken::new();
+        let info = ActiveRequestInfo {
+            intents,
+            remaining_retries,
+            cancellation,
+            peer,
+        };
+        self.current_requests.insert(kind, info);
+        let fut = todo!();
+        self.in_progress_downloads.push(fut);
+        // TODO(@divma): this needs a waker
+        debug!(%peer, ?kind, "starting download");
+    }
+
+    fn schedule_request(
+        &mut self,
+        kind: DownloadKind,
+        remaining_retries: u8,
+        next_peer: Option<PublicKey>,
+        intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
+    ) {
+        // this is simply INITIAL_REQUEST_DELAY * attempt_num where attempt_num (as an ordinal
+        // number) is maxed at INITIAL_RETRY_COUNT
+        let delay = INITIAL_REQUEST_DELAY
+            * (INITIAL_RETRY_COUNT.saturating_sub(remaining_retries) as u32 + 1);
+        let delay_key = self.scheduled_request_queue.insert(kind, delay);
+
+        let info = PendingRequestInfo {
+            intents,
+            remaining_retries,
+            delay_key,
+            next_peer,
+        };
+        debug!(?kind, ?info, "request scheduled");
+        self.scheduled_requests.insert(kind, info);
     }
 
     /// Gets the [`quinn::Connection`] for a peer if it's connected an has capacity for another
