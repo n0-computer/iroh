@@ -540,15 +540,15 @@ impl Entry {
     }
 
     /// Serialize this entry into its canonical byte representation used for signing.
-    pub fn into_vec(&self, out: &mut Vec<u8>) {
-        self.id.as_bytes(out);
-        self.record.as_bytes(out);
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        self.id.encode(out);
+        self.record.encode(out);
     }
 
     /// Serialize this entry into a new vector with its canonical byte representation.
     pub fn to_vec(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        self.into_vec(&mut out);
+        self.encode(&mut out);
         out
     }
 
@@ -633,7 +633,7 @@ impl RecordIdentifier {
     }
 
     /// Serialize this [`RecordIdentifier`] into a mutable byte array.
-    pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.namespace.as_ref());
         out.extend_from_slice(self.author.as_ref());
         out.extend_from_slice(&self.key);
@@ -641,7 +641,7 @@ impl RecordIdentifier {
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
     pub(crate) fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
-        (self.namespace.as_ref(), self.author.as_ref(), &self.key)
+        (self.namespace.as_bytes(), self.author.as_bytes(), &self.key)
     }
 
     /// Get the key of this record.
@@ -731,7 +731,7 @@ impl Record {
     }
 
     /// Serialize this record into a mutable byte array.
-    pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.len.to_be_bytes());
         out.extend_from_slice(self.hash.as_ref());
         out.extend_from_slice(&self.timestamp.to_be_bytes())
