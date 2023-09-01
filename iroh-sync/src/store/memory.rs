@@ -88,7 +88,7 @@ impl super::Store for Store {
     }
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
-        let iter = match filter {
+        match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
             super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
@@ -96,8 +96,7 @@ impl super::Store for Store {
             super::GetFilter::AuthorAndPrefix(author, prefix) => {
                 self.get_by_author_and_prefix(namespace, author, prefix)
             }
-        }?;
-        Ok(iter.into())
+        }
     }
 
     fn get_by_key_and_author(

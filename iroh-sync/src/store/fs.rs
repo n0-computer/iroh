@@ -186,7 +186,7 @@ impl super::Store for Store {
     }
 
     fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
-        let iter = match filter {
+        match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
             super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
@@ -194,8 +194,7 @@ impl super::Store for Store {
             super::GetFilter::AuthorAndPrefix(author, prefix) => {
                 self.get_by_author_and_prefix(namespace, author, prefix)
             }
-        }?;
-        Ok(iter)
+        }
     }
 
     fn get_by_key_and_author(
@@ -299,10 +298,13 @@ fn increment_by_one(value: &mut [u8]) -> bool {
     false
 }
 
-fn prefix_range_end<'a>(value: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
-    let mut namespace = *value.0;
-    let mut author = *value.1;
-    let mut prefix = value.2.to_vec();
+// Get the end point of a prefix range
+//
+// Increments the last byte of the byte represenation of `prefix` and returns it as an owned tuple
+// with the parts of the new [`RecordsId`].
+// Returns `None` if all bytes are equal to 255.
+fn prefix_range_end<'a>(prefix: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
+    let (mut namespace, mut author, mut prefix) = (*prefix.0, *prefix.1, prefix.2.to_vec());
     if !increment_by_one(&mut prefix)
         && !increment_by_one(&mut author)
         && !increment_by_one(&mut namespace)
