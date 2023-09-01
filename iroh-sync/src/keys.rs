@@ -382,7 +382,7 @@ impl AuthorId {
         &self,
         store: &S,
     ) -> Result<AuthorPublicKey, SignatureError> {
-        store.author_key(&self)
+        store.author_key(self)
     }
 }
 
@@ -402,7 +402,7 @@ impl NamespaceId {
         &self,
         store: &S,
     ) -> Result<NamespacePublicKey, SignatureError> {
-        store.namespace_key(&self)
+        store.namespace_key(self)
     }
 }
 
@@ -454,12 +454,12 @@ impl From<&NamespacePublicKey> for NamespaceId {
 
 impl From<Author> for AuthorId {
     fn from(value: Author) -> Self {
-        Self::from(value.id())
+        value.id()
     }
 }
 impl From<Namespace> for NamespaceId {
     fn from(value: Namespace) -> Self {
-        Self::from(value.id())
+        value.id()
     }
 }
 

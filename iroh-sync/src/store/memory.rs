@@ -258,7 +258,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let records = self.records.get(&self.filter.namespace().into())?;
+        let records = self.records.get(&self.filter.namespace())?;
         let entry = match self.filter {
             GetFilter::All { .. } => records.iter().nth(self.index)?,
             GetFilter::Key { ref key, .. } => records
@@ -302,10 +302,7 @@ impl PublicKeyStore for ReplicaStoreInstance {
 
 impl ReplicaStoreInstance {
     fn new(namespace: NamespaceId, store: Store) -> Self {
-        ReplicaStoreInstance {
-            namespace: namespace.into(),
-            store,
-        }
+        ReplicaStoreInstance { namespace, store }
     }
 
     fn with_records<F, T>(&self, f: F) -> T

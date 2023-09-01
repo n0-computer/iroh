@@ -1219,7 +1219,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
-            .get_by_key_and_author(namespace.into(), author.into(), key)?
+            .get_by_key_and_author(namespace, author, key)?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(entry)
     }
