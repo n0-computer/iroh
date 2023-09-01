@@ -6,6 +6,8 @@ use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey}
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::store::PublicKeyStore;
+
 /// Author key to insert entries in a [`crate::Replica`]
 ///
 /// Internally, an author is a [`SigningKey`] which is used to sign entries.
@@ -377,12 +379,21 @@ impl AuthorId {
         &self.0
     }
 
-    /// Convert into crypto public key.
-    pub fn public_key<S: crate::store::PublicKeyStore>(
+    /// Convert into [`AuthorPublicKey`] by fetching from a [`PublicKeyStore`].
+    ///
+    /// Fails if the bytes of this [`AuthorId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn public_key<S: PublicKeyStore>(
         &self,
         store: &S,
     ) -> Result<AuthorPublicKey, SignatureError> {
         store.author_key(self)
+    }
+
+    /// Convert into [`AuthorPublicKey`].
+    ///
+    /// Fails if the bytes of this [`AuthorId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<AuthorPublicKey, SignatureError> {
+        AuthorPublicKey::from_bytes(&self.0)
     }
 }
 
@@ -397,12 +408,21 @@ impl NamespaceId {
         &self.0
     }
 
-    /// Convert into crypto public key.
-    pub fn public_key<S: crate::store::PublicKeyStore>(
+    /// Convert into [`NamespacePublicKey`] by fetching from a [`PublicKeyStore`].
+    ///
+    /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn public_key<S: PublicKeyStore>(
         &self,
         store: &S,
     ) -> Result<NamespacePublicKey, SignatureError> {
         store.namespace_key(self)
+    }
+
+    /// Convert into [`NamespacePublicKey`].
+    ///
+    /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<NamespacePublicKey, SignatureError> {
+        NamespacePublicKey::from_bytes(&self.0)
     }
 }
 
