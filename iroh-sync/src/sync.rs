@@ -226,7 +226,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
                 let origin = InsertOrigin::Sync(from_peer);
                 if validate_entry(now, store, expected_namespace, &entry, &origin).is_ok() {
                     if let Some(sender) = self.on_insert_sender.read().as_ref() {
-                        sender.send((origin, entry)).ok();
+                        sender.send((origin, entry.clone())).ok();
                     }
                     true
                 } else {
