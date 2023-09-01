@@ -1108,8 +1108,6 @@ mod tests {
         let mut bob_to_alice = Vec::new();
         let initial_message = alice.initial_message().unwrap();
 
-        // let bob_validate_cb = |_, _, _| true;
-
         let mut next_to_bob = Some(initial_message);
         let mut rounds = 0;
         while let Some(msg) = next_to_bob.take() {
