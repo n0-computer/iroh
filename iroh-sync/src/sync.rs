@@ -616,19 +616,15 @@ fn system_time_now() -> u64 {
 
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
-    pub fn new(namespace: NamespaceId, author: AuthorId, key: impl AsRef<[u8]>) -> Self {
+    pub fn new(
+        namespace: impl Into<NamespaceId>,
+        author: impl Into<AuthorId>,
+        key: impl AsRef<[u8]>,
+    ) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
-            namespace,
-            author,
-        }
-    }
-
-    pub(crate) fn from_parts(namespace: NamespaceId, author: AuthorId, key: Vec<u8>) -> Self {
-        RecordIdentifier {
-            key: key.to_vec(),
-            namespace,
-            author,
+            namespace: namespace.into(),
+            author: author.into(),
         }
     }
 
@@ -640,7 +636,7 @@ impl RecordIdentifier {
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
-    pub(crate) fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
+    pub fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
         (self.namespace.as_bytes(), self.author.as_bytes(), &self.key)
     }
 

@@ -225,7 +225,7 @@ impl super::Store for Store {
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
 
         let record = Record::new(hash.into(), len, timestamp);
-        let id = RecordIdentifier::from_parts(namespace, author, key.as_ref().to_vec());
+        let id = RecordIdentifier::new(namespace, author, key);
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
         let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -372,11 +372,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         };
         let (compound_key, _value) = record?;
         let (namespace_id, author_id, key) = compound_key.value();
-        let id = RecordIdentifier::from_parts(
-            NamespaceId::from(*namespace_id),
-            AuthorId::from(*author_id),
-            key.to_vec(),
-        );
+        let id = RecordIdentifier::new(namespace_id, author_id, key);
         Ok(id)
     }
 
@@ -602,8 +598,7 @@ impl Iterator for RangeIterator<'_> {
 
                 let (namespace, author, key) = next.0.value();
                 let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
-                let id =
-                    RecordIdentifier::from_parts(namespace.into(), author.into(), key.to_vec());
+                let id = RecordIdentifier::new(namespace, author, key);
                 if fields.filter.matches(&id) {
                     let record = Record::new(hash.into(), len, timestamp);
                     let entry = Entry::new(id, record);

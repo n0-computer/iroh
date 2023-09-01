@@ -356,7 +356,7 @@ impl Iterator for RecordsIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
         let ((author, key), value) = records.iter().nth(self.i)?;
-        let id = RecordIdentifier::from_parts(self.namespace, *author, key.clone());
+        let id = RecordIdentifier::new(self.namespace, *author, &key);
         self.i += 1;
         Some((id, value.clone()))
     }
@@ -371,7 +371,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
             records
                 .and_then(|r| {
                     r.first_key_value().map(|((author, key), _value)| {
-                        RecordIdentifier::from_parts(self.namespace, *author, key.clone())
+                        RecordIdentifier::new(self.namespace, *author, key.clone())
                     })
                 })
                 .unwrap_or_default()
