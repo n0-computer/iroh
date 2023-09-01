@@ -32,7 +32,11 @@
 
 use std::collections::{hash_map::Entry, HashMap};
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt};
+use futures::{
+    future::{BoxFuture, LocalBoxFuture},
+    stream::FuturesUnordered,
+    FutureExt, StreamExt, TryFutureExt,
+};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
@@ -45,6 +49,8 @@ use iroh_net::key::PublicKey;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error, info, trace, warn};
+
+use self::get::FailureAction;
 
 mod get;
 
@@ -234,7 +240,7 @@ impl ConnectionInfo {
 }
 
 /// Type of future that performs a download request.
-type DownloadFut = BoxFuture<'static, (DownloadKind, DownloadResult)>;
+type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
 
 #[derive(Debug)]
 struct Service<S, C, R> {
@@ -498,7 +504,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
-    fn on_download_completed(&mut self, kind: DownloadKind, result: DownloadResult) {}
+    fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {}
 
     /// A scheduled request is ready to be processed.
     ///
@@ -564,9 +570,24 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             peer,
         };
         self.current_requests.insert(kind, info);
-        let fut = todo!();
-        self.in_progress_downloads.push(fut);
-        // TODO(@divma): this needs a waker
+        let get = match kind {
+            DownloadKind::Blob { hash } => {
+                get::get(&self.store, &self.collection_parser, conn, hash, false)
+            }
+            DownloadKind::Collection { hash } => {
+                get::get(&self.store, &self.collection_parser, conn, hash, true)
+            }
+        };
+        let cancellation = info.cancellation.clone();
+        let fut = async {
+            let res = tokio::select! {
+                _ = cancellation.cancelled() => Err(FailureAction::AbortRequest(anyhow::anyhow!("cancelled"))),
+                res = get => res
+            };
+            // TODO: use stats for metrics
+            (kind, res.and_then(|_stats| Ok(())))
+        };
+        self.in_progress_downloads.push(fut.boxed_local());
         debug!(%peer, ?kind, "starting download");
     }
 
