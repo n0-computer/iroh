@@ -2,10 +2,9 @@
 //! "Range-Based Set Reconciliation" by Aljoscha Meyer.
 //!
 
-use std::convert::Infallible;
+use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::{cmp::Ordering, collections::BTreeMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -216,145 +215,6 @@ pub trait Store<E: RangeEntry>: Sized {
         Self: 'a,
         E: 'a;
     fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error>;
-}
-
-#[derive(Debug)]
-pub struct SimpleStore<K, V> {
-    data: BTreeMap<K, V>,
-}
-
-impl<K, V> Default for SimpleStore<K, V> {
-    fn default() -> Self {
-        SimpleStore {
-            data: BTreeMap::default(),
-        }
-    }
-}
-
-impl<K, V> RangeEntry for (K, V)
-where
-    K: RangeKey + PartialEq + Clone + Default + Debug,
-    V: Debug + Clone + PartialOrd,
-{
-    type Key = K;
-    type Value = V;
-
-    fn key(&self) -> &Self::Key {
-        &self.0
-    }
-
-    fn value(&self) -> &Self::Value {
-        &self.1
-    }
-
-    fn as_fingerprint(&self) -> Fingerprint {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(format!("{:?}", self.0).as_bytes());
-        Fingerprint(hasher.finalize().into())
-    }
-}
-
-impl<K, V> Store<(K, V)> for SimpleStore<K, V>
-where
-    K: RangeKey + PartialEq + Clone + Default + Debug,
-    V: Debug + Clone + PartialOrd,
-{
-    type Error = Infallible;
-
-    fn get_first(&self) -> Result<K, Self::Error> {
-        if let Some((k, _)) = self.data.first_key_value() {
-            Ok(k.clone())
-        } else {
-            Ok(Default::default())
-        }
-    }
-
-    fn get(&self, key: &K) -> Result<Option<V>, Self::Error> {
-        Ok(self.data.get(key).cloned())
-    }
-
-    fn len(&self) -> Result<usize, Self::Error> {
-        Ok(self.data.len())
-    }
-
-    fn is_empty(&self) -> Result<bool, Self::Error> {
-        Ok(self.data.is_empty())
-    }
-
-    /// Calculate the fingerprint of the given range.
-    fn get_fingerprint(&self, range: &Range<K>) -> Result<Fingerprint, Self::Error> {
-        let elements = self.get_range(range.clone())?;
-        let mut fp = Fingerprint::empty();
-        for el in elements {
-            let el = el?;
-            fp ^= el.as_fingerprint();
-        }
-
-        Ok(fp)
-    }
-
-    /// Insert the given key value pair.
-    fn put(&mut self, e: (K, V)) -> Result<(), Self::Error> {
-        self.data.insert(e.0, e.1);
-        Ok(())
-    }
-
-    type RangeIterator<'a> = SimpleRangeIterator<'a, K, V>
-        where K: 'a, V: 'a;
-    /// Returns all items in the given range
-    fn get_range(&self, range: Range<K>) -> Result<Self::RangeIterator<'_>, Self::Error> {
-        // TODO: this is not very efficient, optimize depending on data structure
-        let iter = self.data.iter();
-
-        Ok(SimpleRangeIterator {
-            iter,
-            range: Some(range),
-        })
-    }
-
-    fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error> {
-        let res = self.data.remove(key);
-        Ok(res)
-    }
-
-    type AllIterator<'a> = SimpleRangeIterator<'a, K, V>
-        where K: 'a, V: 'a;
-    fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error> {
-        let iter = self.data.iter();
-
-        Ok(SimpleRangeIterator { iter, range: None })
-    }
-}
-
-#[derive(Debug)]
-pub struct SimpleRangeIterator<'a, K, V> {
-    iter: std::collections::btree_map::Iter<'a, K, V>,
-    range: Option<Range<K>>,
-}
-
-impl<'a, K, V> Iterator for SimpleRangeIterator<'a, K, V>
-where
-    K: Clone + Ord,
-    V: Clone,
-{
-    type Item = Result<(K, V), Infallible>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut next = self.iter.next()?;
-
-        let filter = |x: &K| match &self.range {
-            None => true,
-            Some(ref range) => range.contains(x),
-        };
-
-        loop {
-            if filter(next.0) {
-                return Some(Ok((next.0.clone(), next.1.clone())));
-            }
-
-            next = self.iter.next()?;
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -633,10 +493,149 @@ where
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use std::{cell::RefCell, fmt::Debug, rc::Rc};
+    use std::{cell::RefCell, collections::BTreeMap, convert::Infallible, fmt::Debug, rc::Rc};
     use test_strategy::proptest;
 
     use super::*;
+
+    #[derive(Debug)]
+    pub struct SimpleStore<K, V> {
+        data: BTreeMap<K, V>,
+    }
+
+    impl<K, V> Default for SimpleStore<K, V> {
+        fn default() -> Self {
+            SimpleStore {
+                data: BTreeMap::default(),
+            }
+        }
+    }
+
+    impl<K, V> RangeEntry for (K, V)
+    where
+        K: RangeKey + PartialEq + Clone + Default + Debug,
+        V: Debug + Clone + PartialOrd,
+    {
+        type Key = K;
+        type Value = V;
+
+        fn key(&self) -> &Self::Key {
+            &self.0
+        }
+
+        fn value(&self) -> &Self::Value {
+            &self.1
+        }
+
+        fn as_fingerprint(&self) -> Fingerprint {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(format!("{:?}", self.0).as_bytes());
+            Fingerprint(hasher.finalize().into())
+        }
+    }
+
+    impl<K, V> Store<(K, V)> for SimpleStore<K, V>
+    where
+        K: RangeKey + PartialEq + Clone + Default + Debug,
+        V: Debug + Clone + PartialOrd,
+    {
+        type Error = Infallible;
+
+        fn get_first(&self) -> Result<K, Self::Error> {
+            if let Some((k, _)) = self.data.first_key_value() {
+                Ok(k.clone())
+            } else {
+                Ok(Default::default())
+            }
+        }
+
+        fn get(&self, key: &K) -> Result<Option<V>, Self::Error> {
+            Ok(self.data.get(key).cloned())
+        }
+
+        fn len(&self) -> Result<usize, Self::Error> {
+            Ok(self.data.len())
+        }
+
+        fn is_empty(&self) -> Result<bool, Self::Error> {
+            Ok(self.data.is_empty())
+        }
+
+        /// Calculate the fingerprint of the given range.
+        fn get_fingerprint(&self, range: &Range<K>) -> Result<Fingerprint, Self::Error> {
+            let elements = self.get_range(range.clone())?;
+            let mut fp = Fingerprint::empty();
+            for el in elements {
+                let el = el?;
+                fp ^= el.as_fingerprint();
+            }
+
+            Ok(fp)
+        }
+
+        /// Insert the given key value pair.
+        fn put(&mut self, e: (K, V)) -> Result<(), Self::Error> {
+            self.data.insert(e.0, e.1);
+            Ok(())
+        }
+
+        type RangeIterator<'a> = SimpleRangeIterator<'a, K, V>
+        where K: 'a, V: 'a;
+        /// Returns all items in the given range
+        fn get_range(&self, range: Range<K>) -> Result<Self::RangeIterator<'_>, Self::Error> {
+            // TODO: this is not very efficient, optimize depending on data structure
+            let iter = self.data.iter();
+
+            Ok(SimpleRangeIterator {
+                iter,
+                range: Some(range),
+            })
+        }
+
+        fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error> {
+            let res = self.data.remove(key);
+            Ok(res)
+        }
+
+        type AllIterator<'a> = SimpleRangeIterator<'a, K, V>
+        where K: 'a, V: 'a;
+        fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error> {
+            let iter = self.data.iter();
+
+            Ok(SimpleRangeIterator { iter, range: None })
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct SimpleRangeIterator<'a, K, V> {
+        iter: std::collections::btree_map::Iter<'a, K, V>,
+        range: Option<Range<K>>,
+    }
+
+    impl<'a, K, V> Iterator for SimpleRangeIterator<'a, K, V>
+    where
+        K: Clone + Ord,
+        V: Clone,
+    {
+        type Item = Result<(K, V), Infallible>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let mut next = self.iter.next()?;
+
+            let filter = |x: &K| match &self.range {
+                None => true,
+                Some(ref range) => range.contains(x),
+            };
+
+            loop {
+                if filter(next.0) {
+                    return Some(Ok((next.0.clone(), next.1.clone())));
+                }
+
+                next = self.iter.next()?;
+            }
+        }
+    }
 
     #[test]
     fn test_paper_1() {
