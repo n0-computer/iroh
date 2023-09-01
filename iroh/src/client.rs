@@ -9,16 +9,18 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 use iroh_sync::store::GetFilter;
 use iroh_sync::sync::{AuthorId, NamespaceId};
 use iroh_sync::Entry;
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocCreateRequest,
-    DocGetOneRequest, DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest,
-    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
-    DocTicket, ProviderService, ShareMode, StatsGetRequest,
+    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, ConnectionInfoRequest,
+    ConnectionInfoResponse, ConnectionsRequest, CounterStats, DocCreateRequest, DocGetOneRequest,
+    DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
+    ProviderService, ShareMode, StatsGetRequest,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
@@ -112,6 +114,19 @@ where
     pub async fn stats(&self) -> Result<HashMap<String, CounterStats>> {
         let res = self.rpc.rpc(StatsGetRequest {}).await??;
         Ok(res.stats)
+    }
+
+    /// Get information about the different connections we have made
+    pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
+        let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
+        Ok(flatten(stream).map_ok(|res| res.conn_info))
+    }
+
+    /// Get connection information about a node
+    pub async fn connection_info(&self, node_id: PublicKey) -> Result<Option<ConnectionInfo>> {
+        let ConnectionInfoResponse { conn_info } =
+            self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
+        Ok(conn_info)
     }
 }
 

@@ -13,7 +13,7 @@ use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
 use iroh_gossip::proto::util::base32;
-use iroh_net::key::PublicKey;
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 
 use iroh_sync::{
     store::GetFilter,
@@ -192,6 +192,46 @@ pub struct VersionRequest;
 
 impl RpcMsg<ProviderService> for VersionRequest {
     type Response = VersionResponse;
+}
+
+/// List connection information about all the nodes we know about
+///
+/// These can be nodes that we have explicitly connected to or nodes
+/// that have initiated connections to us.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionsRequest;
+
+/// A response to a connections request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionsResponse {
+    /// Information about a connection
+    pub conn_info: ConnectionInfo,
+}
+
+impl Msg<ProviderService> for ConnectionsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ConnectionsRequest {
+    type Response = RpcResult<ConnectionsResponse>;
+}
+
+/// Get connection information about a specific node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionInfoRequest {
+    /// The node identifier
+    pub node_id: PublicKey,
+}
+
+/// A response to a connection request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionInfoResponse {
+    /// Information about a connection to a node
+    pub conn_info: Option<ConnectionInfo>,
+}
+
+impl RpcMsg<ProviderService> for ConnectionInfoRequest {
+    type Response = RpcResult<ConnectionInfoResponse>;
 }
 
 /// A request to shutdown the node
@@ -648,6 +688,9 @@ pub enum ProviderRequest {
 
     BytesGet(BytesGetRequest),
 
+    Connections(ConnectionsRequest),
+    ConnectionInfo(ConnectionInfoRequest),
+
     Stats(StatsGetRequest),
 }
 
@@ -681,6 +724,9 @@ pub enum ProviderResponse {
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),
     DocSubscribe(RpcResult<DocSubscribeResponse>),
+
+    Connections(RpcResult<ConnectionsResponse>),
+    ConnectionInfo(RpcResult<ConnectionInfoResponse>),
 
     BytesGet(RpcResult<BytesGetResponse>),
 

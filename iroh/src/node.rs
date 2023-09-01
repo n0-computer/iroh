@@ -58,11 +58,13 @@ use tracing::{debug, error, info, trace, warn};
 use crate::dial::Ticket;
 use crate::download::Downloader;
 use crate::rpc_protocol::{
-    BytesGetRequest, BytesGetResponse, ListBlobsRequest, ListBlobsResponse, ListCollectionsRequest,
-    ListCollectionsResponse, ListIncompleteBlobsRequest, ListIncompleteBlobsResponse,
-    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShareRequest,
-    ShutdownRequest, StatsGetRequest, StatsGetResponse, StatusRequest, StatusResponse,
-    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    BytesGetRequest, BytesGetResponse, ConnectionInfoRequest, ConnectionInfoResponse,
+    ConnectionsRequest, ConnectionsResponse, ListBlobsRequest, ListBlobsResponse,
+    ListCollectionsRequest, ListCollectionsResponse, ListIncompleteBlobsRequest,
+    ListIncompleteBlobsResponse, ProvideRequest, ProviderRequest, ProviderResponse,
+    ProviderService, ShareRequest, ShutdownRequest, StatsGetRequest, StatsGetResponse,
+    StatusRequest, StatusResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -1163,6 +1165,39 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             .map_err(|_err| anyhow::anyhow!("task failed to complete"))??;
         Ok(BytesGetResponse { data })
     }
+
+    fn connections(
+        self,
+        _: ConnectionsRequest,
+    ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
+        self.rt().local_pool().spawn_pinned(|| async move {
+            match self.inner.endpoint.connection_infos().await {
+                Ok(mut conn_infos) => {
+                    conn_infos.sort_by_key(|n| n.public_key.to_string());
+                    for conn_info in conn_infos {
+                        tx.send_async(Ok(ConnectionsResponse { conn_info }))
+                            .await
+                            .ok();
+                    }
+                }
+                Err(e) => {
+                    tx.send_async(Err(e.into())).await.ok();
+                }
+            }
+        });
+        rx.into_stream()
+    }
+
+    async fn connection_info(
+        self,
+        req: ConnectionInfoRequest,
+    ) -> RpcResult<ConnectionInfoResponse> {
+        let ConnectionInfoRequest { node_id } = req;
+        let conn_info = self.inner.endpoint.connection_info(node_id).await?;
+        Ok(ConnectionInfoResponse { conn_info })
+    }
 }
 
 fn handle_rpc_request<
@@ -1291,6 +1326,11 @@ fn handle_rpc_request<
                 })
                 .await
             }
+            Connections(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::connections)
+                    .await
+            }
+            ConnectionInfo(msg) => chan.rpc(msg, handler, RpcHandler::connection_info).await,
             // TODO: make streaming
             BytesGet(msg) => chan.rpc(msg, handler, RpcHandler::bytes_get).await,
         }
