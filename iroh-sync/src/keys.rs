@@ -35,6 +35,11 @@ impl Author {
         AuthorId(self.signing_key.verifying_key())
     }
 
+    /// Get the [`AuthorIdBytes`] for this author.
+    pub fn id_bytes(&self) -> AuthorIdBytes {
+        AuthorIdBytes::from(self.id())
+    }
+
     /// Sign a message with this [`Author`] key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         self.signing_key.sign(msg)
@@ -105,6 +110,11 @@ impl Namespace {
     /// Get the [`NamespaceId`] for this namespace.
     pub fn id(&self) -> NamespaceId {
         NamespaceId(self.signing_key.verifying_key())
+    }
+
+    /// Get the [`NamespaceIdBytes`] for this namespace.
+    pub fn id_bytes(&self) -> NamespaceIdBytes {
+        NamespaceIdBytes::from(self.id())
     }
 
     /// Sign a message with this [`Namespace`] key.
@@ -303,5 +313,138 @@ pub(super) mod base32 {
             .decode(input.to_ascii_uppercase().as_bytes())?
             .try_into()
             .map_err(|_| ::anyhow::anyhow!("Failed to parse: invalid byte length"))
+    }
+}
+
+/// [`NamespaceId`] in bytes
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialOrd,
+    Ord,
+    Eq,
+    PartialEq,
+    Hash,
+    derive_more::From,
+    derive_more::Into,
+    derive_more::AsRef,
+    Serialize,
+    Deserialize,
+)]
+pub struct NamespaceIdBytes([u8; 32]);
+
+/// [`AuthorId`] in bytes
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialOrd,
+    Ord,
+    Eq,
+    PartialEq,
+    Hash,
+    derive_more::From,
+    derive_more::Into,
+    derive_more::AsRef,
+    Serialize,
+    Deserialize,
+)]
+pub struct AuthorIdBytes([u8; 32]);
+
+impl AuthorIdBytes {
+    /// Convert to byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Convert to byte slice.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl NamespaceIdBytes {
+    /// Convert to byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Convert to byte slice.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl From<&[u8; 32]> for NamespaceIdBytes {
+    fn from(value: &[u8; 32]) -> Self {
+        Self(*value)
+    }
+}
+
+impl From<&[u8; 32]> for AuthorIdBytes {
+    fn from(value: &[u8; 32]) -> Self {
+        Self(*value)
+    }
+}
+
+impl AsRef<[u8]> for NamespaceIdBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for AuthorIdBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<AuthorId> for AuthorIdBytes {
+    fn from(value: AuthorId) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+impl From<NamespaceId> for NamespaceIdBytes {
+    fn from(value: NamespaceId) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+
+impl From<&AuthorId> for AuthorIdBytes {
+    fn from(value: &AuthorId) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+impl From<&NamespaceId> for NamespaceIdBytes {
+    fn from(value: &NamespaceId) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+
+impl From<Author> for AuthorIdBytes {
+    fn from(value: Author) -> Self {
+        Self::from(value.id())
+    }
+}
+impl From<Namespace> for NamespaceIdBytes {
+    fn from(value: Namespace) -> Self {
+        Self::from(value.id())
+    }
+}
+
+impl TryFrom<NamespaceIdBytes> for NamespaceId {
+    type Error = SignatureError;
+    fn try_from(value: NamespaceIdBytes) -> Result<Self, Self::Error> {
+        Self::from_bytes(&value.0)
+    }
+}
+
+impl TryFrom<AuthorIdBytes> for AuthorId {
+    type Error = SignatureError;
+    fn try_from(value: AuthorIdBytes) -> Result<Self, Self::Error> {
+        Self::from_bytes(&value.0)
     }
 }

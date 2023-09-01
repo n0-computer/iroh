@@ -330,7 +330,7 @@ mod tests {
             for author in authors.iter() {
                 let (key, value) = key_value_fn(&author.id(), i);
                 let hash = replica.hash_and_insert(key.clone(), author, value).unwrap();
-                res.push((*author.id().as_bytes(), key.as_bytes().to_vec(), hash));
+                res.push((author.id_bytes(), key.as_bytes().to_vec(), hash));
             }
         }
         res.sort();
@@ -344,7 +344,7 @@ mod tests {
             .map(|entry| {
                 entry.map(|entry| {
                     (
-                        *entry.author_bytes(),
+                        entry.author_bytes(),
                         entry.key().to_vec(),
                         entry.content_hash(),
                     )
@@ -515,12 +515,12 @@ mod tests {
 
         assert_eq!(
             get_messages(&alice_store, alice_replica.namespace()),
-            vec![(*author.id().as_bytes(), key.clone(), hash_alice)]
+            vec![(author.id_bytes(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
             get_messages(&bob_store, bob_replica.namespace()),
-            vec![(*author.id().as_bytes(), key.clone(), hash_bob)]
+            vec![(author.id_bytes(), key.clone(), hash_bob)]
         );
 
         run_sync(
@@ -534,12 +534,12 @@ mod tests {
 
         assert_eq!(
             get_messages(&alice_store, alice_replica.namespace()),
-            vec![(*author.id().as_bytes(), key.clone(), hash_bob)]
+            vec![(author.id_bytes(), key.clone(), hash_bob)]
         );
 
         assert_eq!(
             get_messages(&bob_store, bob_replica.namespace()),
-            vec![(*author.id().as_bytes(), key.clone(), hash_bob)]
+            vec![(author.id_bytes(), key.clone(), hash_bob)]
         );
 
         Ok(())

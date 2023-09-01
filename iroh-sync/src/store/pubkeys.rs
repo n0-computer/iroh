@@ -19,7 +19,7 @@ impl PubkeyStore for MemPubkeyStore {
         if let Some(id) = self.namespaces.read().get(bytes) {
             return Ok(*id);
         }
-        let id = NamespaceId::from_bytes(bytes)?;
+        let id = NamespaceId::try_from(*bytes)?;
         self.namespaces.write().insert(*bytes, id);
         Ok(id)
     }
@@ -28,7 +28,7 @@ impl PubkeyStore for MemPubkeyStore {
         if let Some(id) = self.authors.read().get(bytes) {
             return Ok(*id);
         }
-        let id = AuthorId::from_bytes(bytes)?;
+        let id = AuthorId::try_from(*bytes)?;
         self.authors.write().insert(*bytes, id);
         Ok(id)
     }

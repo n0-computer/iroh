@@ -27,11 +27,11 @@ pub trait PubkeyStore {
         &self,
         bytes: &NamespaceIdBytes,
     ) -> std::result::Result<NamespaceId, SignatureError> {
-        NamespaceId::from_bytes(bytes)
+        NamespaceId::from_bytes(bytes.as_ref())
     }
     /// todo
     fn author_id(&self, bytes: &AuthorIdBytes) -> std::result::Result<AuthorId, SignatureError> {
-        AuthorId::from_bytes(bytes)
+        AuthorId::from_bytes(bytes.as_ref())
     }
 }
 

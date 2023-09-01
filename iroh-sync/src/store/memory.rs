@@ -257,7 +257,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let records = self.records.get(self.filter.namespace().as_bytes())?;
+        let records = self.records.get(&self.filter.namespace().into())?;
         let entry = match self.filter {
             GetFilter::All { .. } => records.iter().nth(self.index)?,
             GetFilter::Key { ref key, .. } => records
@@ -270,7 +270,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 .nth(self.index)?,
             GetFilter::Author { ref author, .. } => records
                 .iter()
-                .filter(|((a, _), _)| a == author.as_bytes())
+                .filter(|((a, _), _)| *a == author.into())
                 .nth(self.index)?,
             GetFilter::AuthorAndPrefix {
                 ref prefix,
@@ -278,7 +278,7 @@ impl<'a> Iterator for StoreRangeIterator<'a> {
                 ..
             } => records
                 .iter()
-                .filter(|((a, k), _)| a == author.as_bytes() && k.starts_with(prefix))
+                .filter(|((a, k), _)| *a == author.into() && k.starts_with(prefix))
                 .nth(self.index)?,
         };
         self.index += 1;
@@ -312,7 +312,7 @@ impl PubkeyStore for ReplicaStoreInstance {
 impl ReplicaStoreInstance {
     fn new(namespace: NamespaceId, store: Store) -> Self {
         ReplicaStoreInstance {
-            namespace: *namespace.as_bytes(),
+            namespace: namespace.into(),
             store,
         }
     }
@@ -368,7 +368,7 @@ impl Iterator for RecordsIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
         let ((author, key), value) = records.iter().nth(self.i)?;
-        let id = RecordIdentifier::from_parts(&self.namespace, author, key);
+        let id = RecordIdentifier::from_parts(self.namespace, *author, key.clone());
         self.i += 1;
         Some((id, value.clone()))
     }
@@ -383,7 +383,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
             records
                 .and_then(|r| {
                     r.first_key_value().map(|((author, key), _value)| {
-                        RecordIdentifier::from_parts(&self.namespace, author, key)
+                        RecordIdentifier::from_parts(self.namespace, *author, key.clone())
                     })
                 })
                 .unwrap_or_default()
@@ -393,7 +393,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         Ok(self.with_records(|records| {
             records.and_then(|r| {
-                let v = r.get(&(*key.author_bytes(), key.key().to_vec()))?;
+                let v = r.get(&(key.author_bytes(), key.key().to_vec()))?;
                 Some(v.clone())
             })
         }))
@@ -419,7 +419,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
 
     fn put(&mut self, e: SignedEntry) -> Result<(), Self::Error> {
         self.with_records_mut_with_default(|records| {
-            records.insert((*e.author_bytes(), e.key().to_vec()), e);
+            records.insert((e.author_bytes(), e.key().to_vec()), e);
         });
         Ok(())
     }
@@ -439,7 +439,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         // TODO: what if we are trying to remove with the wrong timestamp?
         let res = self.with_records_mut(|records| {
-            records.and_then(|records| records.remove(&(*key.author_bytes(), key.key().to_vec())))
+            records.and_then(|records| records.remove(&(key.author_bytes(), key.key().to_vec())))
         });
         Ok(res)
     }

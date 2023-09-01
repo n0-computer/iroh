@@ -41,11 +41,6 @@ pub type ProtocolMessage = crate::ranger::Message<SignedEntry>;
 // TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
 
-/// [`NamespaceId`] in bytes
-pub type NamespaceIdBytes = [u8; 32];
-/// [`AuthorId`] in bytes
-pub type AuthorIdBytes = [u8; 32];
-
 /// Max time in the future from our wall clock time that we accept entries for.
 /// Value is 10 minutes.
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
@@ -149,7 +144,7 @@ impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
 
     /// Insert a signed entry into the database.
     fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), InsertError<S>> {
-        let expected_namespace = self.namespace();
+        let expected_namespace = self.namespace_bytes();
 
         let len = entry.content_len();
         let mut inner = self.inner.write();
@@ -220,7 +215,7 @@ impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
-        let expected_namespace = self.namespace();
+        let expected_namespace = self.namespace_bytes();
         let now = system_time_now();
         let reply = self
             .inner
@@ -247,9 +242,8 @@ impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
     }
 
     /// Get the namespace identifier for this [`Replica`] in byte represenation.
-    pub fn namespace_bytes(&self) -> IdBytes {
-        let id = self.inner.read().namespace.id();
-        *id.as_bytes()
+    pub fn namespace_bytes(&self) -> NamespaceIdBytes {
+        self.inner.read().namespace.id().into()
     }
 
     /// Get the byte represenation of the [`Namespace`] key for this replica.
@@ -269,12 +263,12 @@ impl<S: ranger::Store<SignedEntry> + PubkeyStore + 'static> Replica<S> {
 fn validate_entry<S: ranger::Store<SignedEntry> + PubkeyStore>(
     now: u64,
     store: &S,
-    expected_namespace: NamespaceId,
+    expected_namespace: NamespaceIdBytes,
     entry: &SignedEntry,
     origin: &InsertOrigin,
 ) -> Result<(), ValidationFailure> {
     // Verify the namespace
-    if entry.namespace_bytes() != expected_namespace.as_bytes() {
+    if entry.namespace_bytes() != expected_namespace {
         return Err(ValidationFailure::InvalidNamespace);
     }
 
@@ -409,7 +403,7 @@ impl SignedEntry {
     }
 
     /// Get the author bytes of this entry.
-    pub fn author_bytes(&self) -> &IdBytes {
+    pub fn author_bytes(&self) -> AuthorIdBytes {
         self.entry().id().author_bytes()
     }
 
@@ -438,8 +432,8 @@ impl RangeEntry for SignedEntry {
 
     fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(self.namespace_bytes());
-        hasher.update(self.author_bytes());
+        hasher.update(self.namespace_bytes().as_ref());
+        hasher.update(self.author_bytes().as_ref());
         hasher.update(self.key());
         hasher.update(&self.timestamp().to_be_bytes());
         hasher.update(self.content_hash().as_bytes());
@@ -549,7 +543,7 @@ impl Entry {
     }
 
     /// Get the namespace id of this entry as bytes.
-    pub fn namespace_bytes(&self) -> &IdBytes {
+    pub fn namespace_bytes(&self) -> NamespaceIdBytes {
         self.id.namespace_bytes()
     }
 
@@ -577,15 +571,13 @@ impl Entry {
     }
 }
 
-type IdBytes = [u8; 32];
-
 /// The indentifier of a record.
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct RecordIdentifier {
     /// The [`NamespaceId`] of the namespace this record belongs to.
-    namespace: IdBytes,
+    namespace: NamespaceIdBytes,
     /// The [`AuthorId`] of the author that wrote this record.
-    author: IdBytes,
+    author: AuthorIdBytes,
     /// The key of the record.
     key: Vec<u8>,
 }
@@ -640,29 +632,33 @@ impl RecordIdentifier {
     pub fn new(namespace: NamespaceId, author: AuthorId, key: impl AsRef<[u8]>) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
-            namespace: *namespace.as_bytes(),
-            author: *author.as_bytes(),
+            namespace: namespace.into(),
+            author: author.into(),
         }
     }
 
-    pub(crate) fn from_parts(namespace: &[u8; 32], author: &[u8; 32], key: &[u8]) -> Self {
+    pub(crate) fn from_parts(
+        namespace: NamespaceIdBytes,
+        author: AuthorIdBytes,
+        key: Vec<u8>,
+    ) -> Self {
         RecordIdentifier {
             key: key.to_vec(),
-            namespace: *namespace,
-            author: *author,
+            namespace,
+            author,
         }
     }
 
     /// Serialize this [`RecordIdentifier`] into a mutable byte array.
     pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.namespace);
-        out.extend_from_slice(&self.author);
+        out.extend_from_slice(self.namespace.as_ref());
+        out.extend_from_slice(self.author.as_ref());
         out.extend_from_slice(&self.key);
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
     pub(crate) fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
-        (&self.namespace, &self.author, &self.key)
+        (self.namespace.as_ref(), self.author.as_ref(), &self.key)
     }
 
     /// Get the key of this record.
@@ -679,8 +675,8 @@ impl RecordIdentifier {
     }
 
     /// Get the [`NamespaceId`] of this record as byte array.
-    pub fn namespace_bytes(&self) -> &[u8; 32] {
-        &self.namespace
+    pub fn namespace_bytes(&self) -> NamespaceIdBytes {
+        self.namespace
     }
 
     /// Get the [`AuthorId`] of this record.
@@ -689,8 +685,8 @@ impl RecordIdentifier {
     }
 
     /// Get the [`AuthorId`] of this record as byte array.
-    pub fn author_bytes(&self) -> &[u8; 32] {
-        &self.author
+    pub fn author_bytes(&self) -> AuthorIdBytes {
+        self.author
     }
 }
 
@@ -826,7 +822,7 @@ mod tests {
             let res = store
                 .get_by_key_and_author(
                     &my_replica.namespace_bytes(),
-                    alice.id().as_bytes(),
+                    &alice.id_bytes(),
                     format!("/{i}"),
                 )?
                 .unwrap();
@@ -840,7 +836,7 @@ mod tests {
         let _entry = store
             .get_by_key_and_author(
                 &my_replica.namespace_bytes(),
-                alice.id().as_bytes(),
+                &alice.id_bytes(),
                 "/cool/path",
             )?
             .unwrap();
@@ -849,7 +845,7 @@ mod tests {
         let _entry = store
             .get_by_key_and_author(
                 &my_replica.namespace_bytes(),
-                alice.id().as_bytes(),
+                &alice.id_bytes(),
                 "/cool/path",
             )?
             .unwrap();
@@ -1080,7 +1076,7 @@ mod tests {
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
         let res = store
-            .get_by_key_and_author(namespace.id().as_bytes(), author.id().as_bytes(), key)?
+            .get_by_key_and_author(&namespace.id_bytes(), &author.id_bytes(), key)?
             .unwrap();
         assert_eq!(res, entry);
 
@@ -1099,7 +1095,7 @@ mod tests {
             ))
         ));
         let res = store
-            .get_by_key_and_author(namespace.id().as_bytes(), author.id().as_bytes(), key)?
+            .get_by_key_and_author(&namespace.id_bytes(), &author.id_bytes(), key)?
             .unwrap();
         assert_eq!(res, entry);
 
@@ -1265,7 +1261,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
-            .get_by_key_and_author(namespace.into().as_bytes(), author.into().as_bytes(), key)?
+            .get_by_key_and_author(&namespace.into().into(), &author.into().into(), key)?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(entry)
     }
@@ -1277,7 +1273,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<Hash> {
         let hash = store
-            .get_by_key_and_author(namespace.as_bytes(), author.as_bytes(), key)?
+            .get_by_key_and_author(&namespace.into(), &author.into(), key)?
             .unwrap()
             .content_hash();
         Ok(hash)
@@ -1316,7 +1312,7 @@ mod tests {
     ) -> Result<()> {
         let replica = store.open_replica(namespace)?.unwrap();
         for el in set {
-            store.get_by_key_and_author(&replica.namespace_bytes(), author.id().as_bytes(), el)?;
+            store.get_by_key_and_author(&replica.namespace_bytes(), &author.id_bytes(), el)?;
         }
         Ok(())
     }

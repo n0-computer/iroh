@@ -217,7 +217,7 @@ impl super::Store for Store {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
-        let db_key = (namespace, author, key.as_ref());
+        let db_key = (namespace.as_ref(), author.as_ref(), key.as_ref());
         let record = record_table.get(db_key)?;
         let Some(record) = record else {
             return Ok(None);
@@ -225,7 +225,7 @@ impl super::Store for Store {
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
 
         let record = Record::new(hash.into(), len, timestamp);
-        let id = RecordIdentifier::from_parts(namespace, author, key.as_ref());
+        let id = RecordIdentifier::from_parts(*namespace, *author, key.as_ref().to_vec());
         let entry = Entry::new(id, record);
         let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
         let signed_entry = SignedEntry::new(entry_signature, entry);
@@ -378,13 +378,17 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         };
         let (compound_key, _value) = record?;
         let (namespace_id, author_id, key) = compound_key.value();
-        let id = RecordIdentifier::from_parts(namespace_id, author_id, key);
+        let id = RecordIdentifier::from_parts(
+            NamespaceIdBytes::from(*namespace_id),
+            AuthorIdBytes::from(*author_id),
+            key.to_vec(),
+        );
         Ok(id)
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store
-            .get_by_key_and_author(id.namespace_bytes(), id.author_bytes(), id.key())
+            .get_by_key_and_author(&id.namespace_bytes(), &id.author_bytes(), id.key())
     }
 
     fn len(&self) -> Result<usize> {
@@ -422,8 +426,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         {
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
             let key = (
-                e.id().namespace_bytes(),
-                e.id().author_bytes(),
+                &e.id().namespace_bytes().to_bytes(),
+                &e.id().author_bytes().to_bytes(),
                 e.id().key(),
             );
             let hash = e.content_hash();
@@ -499,7 +503,11 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let write_tx = self.store.db.begin_write()?;
         let res = {
             let mut records_table = write_tx.open_table(RECORDS_TABLE)?;
-            let key = (k.namespace_bytes(), k.author_bytes(), k.key());
+            let key = (
+                &k.namespace_bytes().to_bytes(),
+                &k.author_bytes().to_bytes(),
+                k.key(),
+            );
             let record = records_table.remove(key)?;
             record.map(|record| {
                 let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
@@ -604,7 +612,8 @@ impl Iterator for RangeIterator<'_> {
 
                 let (namespace, author, key) = next.0.value();
                 let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
-                let id = RecordIdentifier::from_parts(namespace, author, key);
+                let id =
+                    RecordIdentifier::from_parts(namespace.into(), author.into(), key.to_vec());
                 if fields.filter.matches(&id) {
                     let record = Record::new(hash.into(), len, timestamp);
                     let entry = Entry::new(id, record);
