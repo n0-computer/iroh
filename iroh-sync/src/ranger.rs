@@ -848,21 +848,21 @@ mod tests {
     #[test]
     fn test_validate_cb() {
         let alice_set = [("alice1", 1), ("alice2", 2)];
-        let bob_set = [("bob1", 3)];
+        let bob_set = [("bob1", 3), ("bob2", 4), ("bob3", 5)];
         let alice_validate_set = Rc::new(RefCell::new(vec![]));
         let bob_validate_set = Rc::new(RefCell::new(vec![]));
 
         let validate_alice: ValidateCb<&str, i32> = Box::new({
             let alice_validate_set = alice_validate_set.clone();
-            move |_, _, entry| {
-                alice_validate_set.borrow_mut().push(entry);
+            move |_, k, v| {
+                alice_validate_set.borrow_mut().push((*k, *v));
                 false
             }
         });
         let validate_bob: ValidateCb<&str, i32> = Box::new({
             let bob_validate_set = bob_validate_set.clone();
-            move |_, _, entry| {
-                bob_validate_set.borrow_mut().push(entry);
+            move |_, k, v| {
+                bob_validate_set.borrow_mut().push((*k, *v));
                 false
             }
         });
@@ -877,15 +877,14 @@ mod tests {
             bob.put(k, v).unwrap();
         }
 
-        // run sync with a validate callback returning false, which means no new entries are stored
-        // on either side
+        // run sync with a validate callback returning false, so no new entries are stored on either side
         let res = sync_exchange_messages(alice, bob, &validate_alice, &validate_bob, 100);
         res.assert_alice_set("unchanged", &alice_set);
         res.assert_bob_set("unchanged", &bob_set);
 
         // assert that the validate callbacks received all expected entries
-        assert_eq!(alice_validate_set.take(), vec![3]);
-        assert_eq!(bob_validate_set.take(), vec![1, 2]);
+        assert_eq!(alice_validate_set.take(), bob_set);
+        assert_eq!(bob_validate_set.take(), alice_set);
     }
 
     struct SyncResult<K, V>
