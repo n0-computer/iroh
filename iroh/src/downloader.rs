@@ -35,7 +35,7 @@ use std::{
     task::Poll::{Pending, Ready},
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
@@ -95,42 +95,18 @@ pub enum DownloadKind {
         /// Blob to be downloaded.
         hash: Hash,
     },
-    /*
-     * TODO(@divma): removed for now while I get a better understanding of how to perform this
-     * download
-    /// Download ranges of a blob.
-    BlobRanges {
-        /// Blob to be downloaded.
-        hash: Hash,
-        /// Ranges to be downloaded from this blob.
-        range_set: RangeSpec,
-    },
-    */
     /// Download a collection entirely.
     Collection {
         /// Blob to be downloaded.
         hash: Hash,
     },
-    /*
-     * TODO(@divma): unsure if we want this or not. Removing it for now
-    /// Download ranges of a collection.
-    CollectionRanges {
-        /// Blob to be downloaded.
-        hash: Hash,
-        /// Sequence of ranges to be downloaded from this collection.
-        range_set_seq: RangeSpecSeq,
-    },
-    */
 }
 
 impl DownloadKind {
     /// Get the requested hash.
     const fn hash(&self) -> &Hash {
         match self {
-            DownloadKind::Blob { hash }
-            // | Download::BlobRanges { hash, .. }
-            | DownloadKind::Collection { hash }
-            /*| Download::CollectionRanges { hash, .. }*/ => hash,
+            DownloadKind::Blob { hash } | DownloadKind::Collection { hash } => hash,
         }
     }
 
@@ -138,14 +114,7 @@ impl DownloadKind {
     fn ranges(&self) -> RangeSpecSeq {
         match self {
             DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
-            // Download::BlobRanges { range_set, .. } => {
-            //     RangeSpecSeq::from_ranges([range_set.to_chunk_ranges()])
-            // }
             DownloadKind::Collection { hash } => RangeSpecSeq::all(),
-            // Download::CollectionRanges {
-            //     hash,
-            //     range_set_seq,
-            // } => range_set_seq.clone(),
         }
     }
 }
@@ -213,7 +182,10 @@ enum Message {
 #[derive(derive_more::Debug)]
 struct ActiveRequestInfo {
     /// Ids of intents associated with this request.
-    intents: Vec<Id>,
+    #[debug("{:?}", intents.keys().collect::<Vec<_>>())]
+    intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
+    /// How many times can this request be retried.
+    remaining_retries: u8,
     /// Token used to cancel the future doing the request.
     #[debug(skip)]
     cancellation: CancellationToken,
@@ -225,7 +197,10 @@ struct ActiveRequestInfo {
 #[derive(derive_more::Debug)]
 struct PendingRequestInfo {
     /// Ids of intents associated with this request.
-    intents: Vec<Id>,
+    #[debug("{:?}", intents.keys().collect::<Vec<_>>())]
+    intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
+    /// How many times can this request be retried.
+    remaining_retries: u8,
     /// Key to manage the delay associated with this scheduled request.
     #[debug(skip)]
     delay_key: delay_queue::Key,
@@ -236,32 +211,19 @@ struct PendingRequestInfo {
 
 /// State of the connection to this peer.
 #[derive(derive_more::Debug)]
-enum ConnectionState {
-    Dialing,
-    Connected {
-        /// Connection to this peer.
-        #[debug(skip)]
-        connection: quinn::Connection,
-        /// Number of active requests this peer is performing for us.
-        active_requests: usize,
-    },
+struct ConnectionInfo {
+    /// Connection to this peer.
+    #[debug(skip)]
+    connection: quinn::Connection,
+    /// Number of active requests this peer is performing for us.
+    active_requests: usize,
 }
 
-impl ConnectionState {
-    fn new_connected(connection: quinn::Connection) -> ConnectionState {
-        ConnectionState::Connected {
+impl ConnectionInfo {
+    fn new(connection: quinn::Connection) -> ConnectionInfo {
+        ConnectionInfo {
             connection,
             active_requests: 0,
-        }
-    }
-
-    fn active_requests(&self) -> Option<usize> {
-        match self {
-            ConnectionState::Dialing => None,
-            ConnectionState::Connected {
-                connection,
-                active_requests,
-            } => Some(*active_requests),
         }
     }
 }
@@ -284,13 +246,9 @@ struct Service<S, C, R> {
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
     /// Peers available to use and their relevant information.
-    peers: HashMap<PublicKey, ConnectionState>,
-    /// Download requests as received by the [`Downloader`]. These requests might be underway or
-    /// pending.
-    registered_intents: HashMap<Id, DownloadInfo>,
+    peers: HashMap<PublicKey, ConnectionInfo>,
     /// Requests performed for download intents. Two download requests can produce the same
-    /// request. This map allows deduplication of efforts. These requests might be underway or
-    /// pending.
+    /// request. This map allows deduplication of efforts.
     current_requests: HashMap<DownloadKind, ActiveRequestInfo>,
     /// Requests scheduled to be downloaded at a later time.
     scheduled_requests: HashMap<DownloadKind, PendingRequestInfo>,
@@ -318,7 +276,6 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             concurrency_limits,
             msg_rx,
             peers: HashMap::default(),
-            registered_intents: HashMap::default(),
             current_requests: HashMap::default(),
             scheduled_requests: HashMap::default(),
             scheduled_request_queue: delay_queue::DelayQueue::default(),
@@ -336,19 +293,25 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
 
             tokio::select! {
                 (peer, conn_result) = self.dialer.next() => {
+                    trace!("tick: connection ready");
                     self.on_connection_ready(peer, conn_result);
                 }
                 maybe_msg = self.msg_rx.recv() => {
+                    trace!("tick: message received");
                     match maybe_msg {
                         Some(msg) => self.handle_message(msg),
                         None => return self.shutdown().await,
                     }
                 }
                 Some((kind, result)) = self.in_progress_downloads.next() => {
+                    trace!("tick: download completed");
                     self.on_download_completed(kind, result);
                 }
                 Some(expired) = self.scheduled_request_queue.next(), if !at_capacity => {
-                    self.on_scheduled_request_ready(expired.into_inner());
+                    trace!("tick: scheduled request ready");
+                    let kind = expired.into_inner();
+                    let request_info = self.scheduled_requests.remove(&kind).expect("is registered");
+                    self.on_scheduled_request_ready(kind, request_info);
                 }
             }
         }
@@ -372,39 +335,38 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
     ) {
-        // register the intent
-        let remaining_retries = 3; // TODO(@divma): we can receive a number of retries if we want or even a strategy
-        let intent_info = DownloadInfo {
-            kind: kind.clone(),
-            remaining_retries,
-            sender,
-        };
-
-        self.registered_intents.insert(id, intent_info);
-
         if let Some(info) = self.current_requests.get_mut(&kind) {
             // this intent maps to a download that already exists, simply register it
-            info.intents.push(id);
+            info.intents.insert(id, sender);
+            // increasing the retries by one accounts for multiple intents for the same request in
+            // a conservative way
+            info.remaining_retries += 1;
             return trace!(?kind, ?info, "intent registered with active request");
         }
 
         // if we are here this request is not active, check if it needs to be scheduled
         match self.scheduled_requests.get_mut(&kind) {
             Some(info) => {
-                info.intents.push(id);
+                info.intents.insert(id, sender);
+                // pre-emptively get a peer if we don't already have one
+                if info.next_peer.is_none() {
+                    info.next_peer = self.get_best_candidate(kind.hash(), None);
+                }
                 trace!(?kind, ?info, "intent registered with scheduled request");
             }
             None => {
                 // prepare the peer that will be sent this request
-                let next_peer = self.get_best_candidate(kind.hash());
+                let next_peer = self.get_best_candidate(kind.hash(), None);
 
                 // since this request is new, schedule it
                 let timeout = std::time::Duration::from_millis(300);
                 let delay_key = self.scheduled_request_queue.insert(kind, timeout);
 
-                let intents = vec![id];
+                let intents = HashMap::from([(id, sender)]);
+                let remaining_retries = 4;
                 let info = PendingRequestInfo {
                     intents,
+                    remaining_retries,
                     delay_key,
                     next_peer,
                 };
@@ -422,76 +384,94 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     ///
     /// If the selected candidate is not connected and we have capacity for another connection, a
     /// dial is queued.
-    fn get_best_candidate(&self, hash: &Hash) -> Option<PublicKey> {
+    fn get_best_candidate(&self, hash: &Hash, exclude: Option<&PublicKey>) -> Option<PublicKey> {
+        /// Model the states of peers found in the obtains candidates
+        #[derive(PartialEq, Eq)]
+        enum PeerState {
+            Dialing,
+            Connected(usize),
+            NotConnected,
+        }
+
+        impl Ord for PeerState {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                // define the order of preference between candidates as follows:
+                // - prefer connected peers to dialing ones
+                // - prefer dialing peers to not connected ones
+                // - prefer peers with less active requests when connected
+                use std::cmp::Ordering::*;
+                match (self, other) {
+                    (PeerState::Dialing, PeerState::Dialing) => Equal,
+                    (PeerState::Dialing, PeerState::Connected(_)) => Less,
+                    (PeerState::Dialing, PeerState::NotConnected) => Greater,
+                    (PeerState::NotConnected, PeerState::Dialing) => Less,
+                    (PeerState::NotConnected, PeerState::Connected(_)) => Less,
+                    (PeerState::NotConnected, PeerState::NotConnected) => Equal,
+                    (PeerState::Connected(_), PeerState::Dialing) => Greater,
+                    (PeerState::Connected(_), PeerState::NotConnected) => Greater,
+                    (PeerState::Connected(a), PeerState::Connected(b)) => {
+                        if a < b {
+                            Greater
+                        } else if a > b {
+                            Less
+                        } else {
+                            Equal
+                        }
+                    }
+                }
+            }
+        }
+
+        impl PartialOrd for PeerState {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
         // first collect suitable candidates
         let mut candidates = self
             .availabiliy_registry
             .get_candidates(hash)
             .filter_map(|peer| {
-                match self.peers.get(peer).map(ConnectionState::active_requests) {
-                    Some(Some(active_requests))
-                        if self
-                            .concurrency_limits
-                            .peer_at_request_capacity(active_requests) =>
-                    {
-                        // filter out peers that at are at request capacity
-                        None
-                    }
-                    Some(maybe_active_requests) => Some((peer, maybe_active_requests)),
-                    None => Some((peer, None)),
+                if Some(peer) == exclude {
+                    None
+                } else if let Some(info) = self.peers.get(peer) {
+                    let req_count = info.active_requests;
+                    // filter out peers at capacity
+                    let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
+                    has_capacity.then_some((peer, PeerState::Connected(req_count)))
+                } else if self.dialer.is_pending(peer) {
+                    Some((peer, PeerState::Dialing))
+                } else {
+                    Some((peer, PeerState::NotConnected))
                 }
             })
             .collect::<Vec<_>>();
 
-        // sort candidates to obtain the one with the least requests and an open connection
-        //
-        // peers we prefer go to the end of the vector to be able to pop from it (more efficient
-        // than removing the first element)
-        candidates.sort_unstable_by(|(_peer_a, info_a), (_peer_b, info_b)| {
-            use std::cmp::Ordering::*;
-            match (info_a, info_b) {
-                (None, None) => Equal, // no preference between two peers for which we don't have a connection
-                (None, Some(_)) => Less, // prefer peers with open connections
-                (Some(_), None) => Greater, // prefer peers with open connections
-                (Some(a), Some(b)) => {
-                    if a < b {
-                        Greater // prefer a, which has less requests
-                    } else if b < a {
-                        Less // prefer b, which has less requests
-                    } else {
-                        Equal // no preference between peers with same num of assigned requests
-                    }
-                }
+        candidates.sort_unstable_by_key(|&(_peer, state)| state);
+
+        // this is our best peer, check if we need to dial it
+        let (peer, state) = candidates.pop()?;
+
+        if let PeerState::NotConnected = state {
+            let total_conns = self.peers.len() + self.dialer.pending_count();
+            if !self.concurrency_limits.at_connections_capacity(total_conns) {
+                // peer is not connected, not dialing and concurrency limits allow another connection
+                debug!(%peer, "dialing peer");
+                self.dialer.queue_dial(*peer, &iroh_bytes::protocol::ALPN);
+                Some(*peer)
+            } else {
+                trace!(%peer, "required peer not dialed to maintain concurrency limits");
+                None
             }
-        });
-
-        // this is our best peer
-        let peer = candidates.pop().map(|(peer, _)| *peer)?;
-
-        // check if the peer needs and can be dialed
-        let is_connected_or_dialing = self.peers.contains_key(&peer);
-        if !is_connected_or_dialing
-            && !self
-                .concurrency_limits
-                .at_connections_capacity(self.peers.len())
-        {
-            debug!(%peer, "dialing peer");
-            self.dialer.queue_dial(peer, &iroh_bytes::protocol::ALPN);
-            self.peers.insert(peer, ConnectionState::Dialing);
-
-            Some(peer)
         } else {
-            if !is_connected_or_dialing {
-                trace!(%peer, "required peer not dialed to maintain concurrency limits")
-            }
-
-            None
+            Some(*peer)
         }
     }
 
     /// Cancels the download request.
     ///
-    /// This removes the registerd download intent and, depending on it's state, it will either
+    /// This removes the registerd download intent and, depending on its state, it will either
     /// remove it from the scheduled requests, or cancel the future.
     fn handle_cancel_download(&mut self, id: Id) {
         // remove the intent first
@@ -533,12 +513,12 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
+    /// Handle receiving a new connection.
     fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<quinn::Connection>) {
         match result {
             Ok(connection) => {
                 trace!(%peer, "connected to peer");
-                self.peers
-                    .insert(peer, ConnectionState::new_connected(connection));
+                self.peers.insert(peer, ConnectionInfo::new(connection));
             }
             Err(err) => {
                 debug!(%peer, %err, "connection to peer failed")
@@ -548,21 +528,55 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
 
     fn on_download_completed(&mut self, kind: DownloadKind, result: DownloadResult) {}
 
-    fn on_scheduled_request_ready(&mut self, kind: DownloadKind) {
-        let maybe_peer = self
-            .scheduled_requests
-            .remove(&kind)
-            .expect("scheduled request is present")
-            .next_peer;
+    /// A scheduled request is ready to be processed.
+    ///
+    /// The peer that was initially selected is used if possible. Otherwise we try to get a new
+    /// peer
+    fn on_scheduled_request_ready(&mut self, kind: DownloadKind, info: PendingRequestInfo) {
+        // let PendingRequestInfo {
+        //     intents,
+        //     delay_key,
+        //     next_peer,
+        // } = info;
+        //
+        // let peer_connection =match next_peer {
+        //     Some(peer) => match self.get_peer_connection_for_download(&peer) {
+        //         Some(conn) => (peer, conn),
+        //         None => {
+        //             // the peer is not connected or too busy, try to get another one
+        //         },
+        //     },
+        //     None => todo!(),
+        // };
+        //
+        // match peer_connection {
+        //     Some((peer, connection)) => {
+        //         // TODO(@divma): push the future that uses the connection
+        //         debug!(%peer, ?kind, "starting download");
+        //     }
+        //     None => {
+        //         // TODO(@divma): schedule the retry
+        //         // retries are per intent... maybe make them per request
+        //     }
+        // }
+    }
 
-        // check if we had a peer, and if their connection is ready
-        match maybe_peer.map(|peer| self.peers.get_key_value(&peer)) {
-            Some((peer, &ConnectionState::Dialing)) => {
-                // peer is not ready, check if there is a better candidate
-                let maybe_new_peer = self.get_best_candidate(kind.hash());
-                // if the peer is connected use it, if the peer is dialing consider this failed.
+    /// Gets the [`quinn::Connection`] for a peer if it's connected an has capacity for another
+    /// request. In this case, the count of active requests for the peer is incremented.
+    fn get_peer_connection_for_download(&mut self, peer: &PublicKey) -> Option<quinn::Connection> {
+        match self.peers.get_mut(peer)? {
+            // check if the peer is connected and can be sent another request
+            ConnectionInfo::Connected {
+                connection,
+                active_requests,
+            } if !self
+                .concurrency_limits
+                .peer_at_request_capacity(*active_requests) =>
+            {
+                *active_requests += 1;
+                Some(connection.clone())
             }
-            None => todo!(),
+            _ => None,
         }
     }
 
