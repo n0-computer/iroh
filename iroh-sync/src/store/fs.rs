@@ -200,9 +200,9 @@ impl super::Store for Store {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
             super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, &prefix),
-            super::GetFilter::Author(author) => self.get_by_author(namespace, &author),
+            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
             super::GetFilter::AuthorAndPrefix(author, prefix) => {
-                self.get_by_author_and_prefix(namespace, &author, prefix)
+                self.get_by_author_and_prefix(namespace, author, prefix)
             }
         }?;
         Ok(iter.into())
@@ -246,11 +246,7 @@ impl Store {
             RangeFilter::Key(key.as_ref().to_vec()),
         )
     }
-    fn get_by_author(
-        &self,
-        namespace: NamespaceId,
-        author: &AuthorId,
-    ) -> Result<RangeIterator<'_>> {
+    fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();
         let start = (namespace.as_bytes(), author, &[][..]);
         let end = prefix_range_end(&start);
@@ -267,7 +263,7 @@ impl Store {
     fn get_by_author_and_prefix(
         &self,
         namespace: NamespaceId,
-        author: &AuthorId,
+        author: AuthorId,
         prefix: impl AsRef<[u8]>,
     ) -> Result<RangeIterator<'_>> {
         let author = author.as_bytes();

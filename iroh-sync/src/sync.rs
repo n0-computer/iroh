@@ -534,6 +534,11 @@ impl Entry {
         self.id.author()
     }
 
+    /// Get the key of this entry.
+    pub fn key(&self) -> &[u8] {
+        self.id.key()
+    }
+
     /// Get the [`Record`] contained in this entry.
     pub fn record(&self) -> &Record {
         &self.record
