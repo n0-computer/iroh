@@ -1,19 +1,30 @@
 use std::str::FromStr;
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use comfy_table::presets::NOTHING;
+use comfy_table::{Cell, Table};
+use futures::stream::BoxStream;
 use futures::StreamExt;
+use human_time::ToHumanTimeString;
 use iroh::client::quic::{Iroh, RpcClient};
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
+use iroh_bytes::util::RpcError;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::key::{PublicKey, SecretKey};
+use iroh_net::{
+    key::{PublicKey, SecretKey},
+    magic_endpoint::ConnectionInfo,
+};
+use quic_rpc::client::StreamingResponseItemError;
+use quic_rpc::transport::ConnectionErrors;
 
+use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
-use self::sync::{fmt_short, AuthorCommands, DocCommands};
+use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -299,9 +310,12 @@ pub enum RpcCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum NodeCommands {
     /// Get information about the different connections we have made
     Connections,
+    /// Get connection information about a particular node
+    Connection { node_id: PublicKey },
     /// Get status of the running node.
     Status,
     /// Get statistics and metrics from the running node.
@@ -321,11 +335,17 @@ impl NodeCommands {
     pub async fn run(self, client: RpcClient) -> Result<()> {
         match self {
             Self::Connections => {
-                let mut connections = client.server_streaming(ConnectionsRequest).await?;
-                println!("node id\t\tderp region\tconn type\tlatency");
-                while let Some(Ok(Ok(ConnectionsResponse { conn_info }))) = connections.next().await
-                {
-                    fmt_connection(conn_info);
+                let connections = client.server_streaming(ConnectionsRequest).await?;
+                println!("{}", fmt_connections(connections).await);
+            }
+            Self::Connection { node_id } => {
+                let conn_info = client
+                    .rpc(ConnectionInfoRequest { node_id })
+                    .await??
+                    .conn_info;
+                match conn_info {
+                    Some(info) => println!("{}", fmt_connection(info)),
+                    None => println!("Not Found"),
                 }
             }
             Self::Shutdown { force } => {
@@ -533,16 +553,63 @@ impl FromStr for RequestTokenOptions {
     }
 }
 
-fn fmt_connection(info: iroh_net::magic_endpoint::ConnectionInfo) {
-    let node_id = fmt_short(info.public_key);
-    let region = info
-        .derp_region
-        .map_or(String::new(), |region| region.to_string());
-    let conn_type = info.conn_type.to_string();
-    let latency = match info.latency {
-        Some(latency) => duration_string::DurationString::new(latency).into(),
-        None => String::from("unknown"),
-    };
+fn bold_cell(s: &str) -> Cell {
+    Cell::new(s).add_attribute(comfy_table::Attribute::Bold)
+}
 
-    println!("{node_id}\t{region}\t\t{conn_type}\t\t{latency}");
+async fn fmt_connections<C: ConnectionErrors>(
+    mut infos: BoxStream<
+        'static,
+        Result<Result<ConnectionsResponse, RpcError>, StreamingResponseItemError<C>>,
+    >,
+) -> String {
+    let mut table = Table::new();
+    table.load_preset(NOTHING).set_header(
+        vec!["node id", "region", "conn type", "latency"]
+            .into_iter()
+            .map(bold_cell),
+    );
+    while let Some(Ok(Ok(ConnectionsResponse { conn_info }))) = infos.next().await {
+        let node_id = conn_info.public_key.to_string();
+        let region = conn_info
+            .derp_region
+            .map_or(String::new(), |region| region.to_string());
+        let conn_type = conn_info.conn_type.to_string();
+        let latency = match conn_info.latency {
+            Some(latency) => latency.to_human_time_string(),
+            None => String::from("unknown"),
+        };
+        table.add_row(vec![node_id, region, conn_type, latency]);
+    }
+    table.to_string()
+}
+
+fn fmt_connection(info: ConnectionInfo) -> String {
+    format!(
+        "node_id: {}\nderp_region: {}\nconnection type: {}\nlatency: {}\n\n{}",
+        fmt_short(info.public_key),
+        info.derp_region
+            .map_or(String::from("unknown"), |r| r.to_string()),
+        info.conn_type,
+        fmt_latency(info.latency),
+        fmt_addrs(info.addrs)
+    )
+}
+
+fn fmt_addrs(addrs: Vec<(SocketAddr, Option<Duration>)>) -> String {
+    let mut table = Table::new();
+    table
+        .load_preset(NOTHING)
+        .set_header(vec!["addr", "latency"].into_iter().map(bold_cell));
+    for addr in addrs {
+        table.add_row(vec![addr.0.to_string(), fmt_latency(addr.1)]);
+    }
+    table.to_string()
+}
+
+fn fmt_latency(latency: Option<Duration>) -> String {
+    match latency {
+        Some(latency) => latency.to_human_time_string(),
+        None => String::from("unknown"),
+    }
 }

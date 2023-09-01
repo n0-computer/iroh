@@ -1089,6 +1089,11 @@ impl PeerMap {
         self.endpoints().map(|(_, ep)| ep.info()).collect()
     }
 
+    /// Get the [`EndpointInfo`]s for each endpoint
+    pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
+        self.endpoint_for_node_key(public_key).map(|ep| ep.info())
+    }
+
     /// Inserts a new endpoint into the [`PeerMap`].
     pub(super) fn insert_endpoint(&mut self, options: Options) -> usize {
         let id = self.next_id;

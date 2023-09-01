@@ -446,7 +446,7 @@ impl MagicSock {
         Ok(c)
     }
 
-    /// Retrieve information about known peers' endpoints in the network.
+    /// Retrieve connection information about nodes in the network.
     pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
         self.inner
@@ -457,6 +457,16 @@ impl MagicSock {
         Ok(res)
     }
 
+    /// Retrieve connection information about a node in the network.
+    pub async fn tracked_endpoint(&self, node_key: PublicKey) -> Result<Option<EndpointInfo>> {
+        let (s, r) = sync::oneshot::channel();
+        self.inner
+            .actor_sender
+            .send(ActorMessage::TrackedEndpoint(node_key, s))
+            .await?;
+        let res = r.await?;
+        Ok(res)
+    }
     /// Query for the local endpoints discovered during the last endpoint discovery.
     pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         let (s, r) = sync::oneshot::channel();
@@ -832,6 +842,7 @@ impl Drop for WgGuard {
 #[allow(clippy::large_enum_variant)]
 enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
+    TrackedEndpoint(PublicKey, sync::oneshot::Sender<Option<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
     GetMappingAddr(PublicKey, sync::oneshot::Sender<Option<QuicMappedAddr>>),
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
@@ -984,6 +995,9 @@ impl Actor {
             ActorMessage::TrackedEndpoints(s) => {
                 let eps: Vec<_> = self.peer_map.endpoint_infos();
                 let _ = s.send(eps);
+            }
+            ActorMessage::TrackedEndpoint(node_key, s) => {
+                let _ = s.send(self.peer_map.endpoint_info(&node_key));
             }
             ActorMessage::LocalEndpoints(s) => {
                 let eps: Vec<_> = self.last_endpoints.clone();
