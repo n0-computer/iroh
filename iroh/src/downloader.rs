@@ -353,13 +353,13 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 info.intents.insert(id, sender);
                 // pre-emptively get a peer if we don't already have one
                 if info.next_peer.is_none() {
-                    info.next_peer = self.get_best_candidate(kind.hash(), None);
+                    info.next_peer = self.get_best_candidate(kind.hash());
                 }
                 trace!(?kind, ?info, "intent registered with scheduled request");
             }
             None => {
                 // prepare the peer that will be sent this request
-                let next_peer = self.get_best_candidate(kind.hash(), None);
+                let next_peer = self.get_best_candidate(kind.hash());
 
                 // since this request is new, schedule it
                 let timeout = std::time::Duration::from_millis(300);
@@ -387,7 +387,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     ///
     /// If the selected candidate is not connected and we have capacity for another connection, a
     /// dial is queued.
-    fn get_best_candidate(&self, hash: &Hash, exclude: Option<&PublicKey>) -> Option<PublicKey> {
+    fn get_best_candidate(&self, hash: &Hash) -> Option<PublicKey> {
         /// Model the states of peers found in the obtains candidates
         #[derive(PartialEq, Eq)]
         enum PeerState {
@@ -436,9 +436,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             .availabiliy_registry
             .get_candidates(hash)
             .filter_map(|peer| {
-                if Some(peer) == exclude {
-                    None
-                } else if let Some(info) = self.peers.get(peer) {
+                if let Some(info) = self.peers.get(peer) {
                     let req_count = info.active_requests;
                     // filter out peers at capacity
                     let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
