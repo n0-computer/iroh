@@ -19,7 +19,7 @@
 // pub(crate) use conn::tests as conn_tests;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -48,8 +48,9 @@ use crate::{
     derp::{DerpMap, DerpRegion},
     disco,
     key::{PublicKey, SecretKey, SharedSecret},
+    magic_endpoint::NodeAddr,
     net::ip::LocalAddresses,
-    netcheck, netmap, portmapper, stun,
+    netcheck, portmapper, stun,
     util::AbortingJoinHandle,
 };
 
@@ -409,7 +410,6 @@ impl MagicSock {
                     network_receiver,
                     ip_receiver,
                     inner: inner2,
-                    net_map: None,
                     derp_recv_sender: network_recv_ch_sender,
                     endpoints_update_state: EndpointUpdateState::new(),
                     last_endpoints: Vec::new(),
@@ -570,15 +570,13 @@ impl MagicSock {
         }
     }
 
-    /// Called when the control client gets a new network map from the control server.
-    /// It should not use the DerpMap field of NetworkMap; that's
-    /// conditionally sent to set_derp_map instead.
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
-    pub async fn set_network_map(&self, nm: netmap::NetworkMap) -> Result<()> {
+    /// Add addresses for a node to the magic socket's addresbook.
+    pub async fn add_known_addr(&self, addr: NodeAddr) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
         self.inner
             .actor_sender
-            .send(ActorMessage::SetNetworkMap(nm, s))
+            .send(ActorMessage::AddKnownAddr(addr, s))
             .await?;
         r.await?;
         Ok(())
@@ -859,14 +857,13 @@ enum ActorMessage {
         dst_key: PublicKey,
         msg: disco::Message,
     },
-    SetNetworkMap(netmap::NetworkMap, sync::oneshot::Sender<()>),
+    AddKnownAddr(NodeAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
 }
 
 struct Actor {
     inner: Arc<Inner>,
-    net_map: Option<netmap::NetworkMap>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
@@ -1059,8 +1056,8 @@ impl Actor {
             ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
-            ActorMessage::SetNetworkMap(nm, s) => {
-                self.set_network_map(nm);
+            ActorMessage::AddKnownAddr(addr, s) => {
+                self.add_known_addr(addr);
                 s.send(()).unwrap();
             }
             ActorMessage::ReceiveDerp(read_result) => {
@@ -2196,78 +2193,34 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn set_network_map(&mut self, nm: netmap::NetworkMap) {
-        if self.inner.is_closed() {
-            return;
+    fn add_known_addr(&mut self, addr: NodeAddr) {
+        let n = config::Node {
+            name: None,
+            addresses: addr.endpoints.iter().map(|e| e.ip()).collect(),
+            endpoints: addr.endpoints.clone(),
+            key: addr.node_id,
+            derp: addr.derp_region,
+        };
+
+        if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
+            info!(
+                peer = ?n.key,
+                "inserting peer's endpoint in PeerMap"
+            );
+            self.peer_map.insert_endpoint(EndpointOptions {
+                msock_sender: self.inner.actor_sender.clone(),
+                msock_public_key: self.inner.public_key(),
+                public_key: n.key,
+                derp_region: n.derp,
+            });
         }
 
-        // Update self.net_map regardless, before the following early return.
-        let prior_netmap = self.net_map.replace(nm);
-
-        if prior_netmap.is_some()
-            && prior_netmap.as_ref().unwrap().peers == self.net_map.as_ref().unwrap().peers
-        {
-            // The rest of this function is all adjusting state for peers that have
-            // changed. But if the set of peers is equal no need to do anything else.
-            return;
-        }
-
-        info!(
-            "got updated network map; {} peers",
-            self.net_map.as_ref().unwrap().peers.len()
-        );
-
-        // Try a pass of just inserting missing endpoints. If the set of nodes is the same,
-        // this is an efficient alloc-free update. If the set of nodes is different, we'll
-        // remove moribund nodes in the next step below.
-        for n in &self.net_map.as_ref().unwrap().peers {
-            if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
-                info!(
-                    peer = ?n.key,
-                    "inserting peer's endpoint in PeerMap"
-                );
-                self.peer_map.insert_endpoint(EndpointOptions {
-                    msock_sender: self.inner.actor_sender.clone(),
-                    msock_public_key: self.inner.public_key(),
-                    public_key: n.key,
-                    derp_region: n.derp,
-                });
-            }
-
-            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.key) {
-                ep.update_from_node(n);
-                let id = ep.id;
-                for endpoint in &n.endpoints {
-                    self.peer_map
-                        .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
-                }
-            }
-        }
-
-        // If the set of nodes changed since the last set_network_map, the
-        // insert loop just above made self.peer_map contain the union of the
-        // old and new peers - which will be larger than the set from the
-        // current netmap. If that happens, go through the allocful
-        // deletion path to clean up moribund nodes.
-        if self.peer_map.node_count() != self.net_map.as_ref().unwrap().peers.len() {
-            let keep: HashSet<_> = self
-                .net_map
-                .as_ref()
-                .unwrap()
-                .peers
-                .iter()
-                .map(|n| n.key)
-                .collect();
-
-            let mut to_delete = Vec::new();
-            for (id, ep) in self.peer_map.endpoints() {
-                if !keep.contains(ep.public_key()) {
-                    to_delete.push(*id);
-                }
-            }
-
-            for id in to_delete {
-                self.peer_map.delete_endpoint(id);
+        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.key) {
+            ep.update_from_node(&n);
+            let id = ep.id;
+            for endpoint in &n.endpoints {
+                self.peer_map
+                    .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
         }
     }
@@ -2775,49 +2728,18 @@ pub(crate) mod tests {
 
     /// Monitors endpoint changes and plumbs things together.
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
-        // Serialize all reconfigurations globally, just to keep things simpler.
-        let eps = Arc::new(Mutex::new(vec![Vec::new(); stacks.len()]));
-
-        async fn build_netmap(
-            eps: &[Vec<config::Endpoint>],
-            ms: &[MagicStack],
-            my_idx: usize,
-        ) -> netmap::NetworkMap {
-            let mut peers = Vec::new();
-
-            for (i, peer) in ms.iter().enumerate() {
+        async fn update_eps(ms: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
+            let me = &ms[my_idx];
+            for (i, m) in ms.iter().enumerate() {
                 if i == my_idx {
                     continue;
                 }
-                if eps[i].is_empty() {
-                    continue;
-                }
-
-                let addresses = vec![Ipv4Addr::new(1, 0, 0, (i + 1) as u8).into()];
-                peers.push(config::Node {
-                    addresses: addresses.clone(),
-                    name: Some(format!("node{}", i + 1)),
-                    key: peer.public(),
-                    endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
-                    derp: Some(1),
-                });
-            }
-
-            netmap::NetworkMap { peers }
-        }
-
-        async fn update_eps(
-            eps: Arc<Mutex<Vec<Vec<config::Endpoint>>>>,
-            ms: &[MagicStack],
-            my_idx: usize,
-            new_eps: Vec<config::Endpoint>,
-        ) {
-            let eps = &mut *eps.lock().await;
-            eps[my_idx] = new_eps;
-
-            for (i, m) in ms.iter().enumerate() {
-                let nm = build_netmap(eps, ms, i).await;
-                let _ = m.endpoint.magic_sock().set_network_map(nm).await;
+                let addr = NodeAddr {
+                    endpoints: new_eps.iter().map(|ep| ep.addr).collect(),
+                    node_id: me.public(),
+                    derp_region: Some(1),
+                };
+                let _ = m.endpoint.magic_sock().add_known_addr(addr).await;
             }
         }
 
@@ -2825,7 +2747,6 @@ pub(crate) mod tests {
 
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
-            let eps = eps.clone();
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 loop {
@@ -2833,7 +2754,7 @@ pub(crate) mod tests {
                         res = m.ep_ch.recv_async() => match res {
                             Ok(new_eps) => {
                                 debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                                update_eps(eps.clone(), &stacks, my_idx, new_eps).await;
+                                update_eps(&stacks, my_idx, new_eps).await;
                             }
                             Err(err) => {
                                 warn!("err: {:?}", err);
