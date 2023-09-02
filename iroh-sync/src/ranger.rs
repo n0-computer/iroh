@@ -224,7 +224,9 @@ pub struct Peer<E: RangeEntry, S: Store<E>> {
     /// `k` in the protocol, how many splits to generate. at least 2
     split_factor: usize,
 
-    _phantom: PhantomData<E>, // why???
+    /// This is needed because the `E: RangeEntry` would be unused otherwise.
+    /// Only having it referenced in the `S: Store` generic doesn't satisfy rustc.
+    _phantom: PhantomData<E>,
 }
 
 impl<E, S> Default for Peer<E, S>
