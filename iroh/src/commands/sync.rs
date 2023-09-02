@@ -205,7 +205,7 @@ impl DocCommands {
                     }
                 };
 
-                let mut stream = doc.get(filter).await?;
+                let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     print_entry(&doc, &entry, content).await?;
                 }
@@ -218,7 +218,7 @@ impl DocCommands {
                 let doc = iroh.get_doc(env.doc(doc)?).await?;
                 let filter = GetFilter::author_prefix(author, prefix);
 
-                let mut stream = doc.get(filter).await?;
+                let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
                 }

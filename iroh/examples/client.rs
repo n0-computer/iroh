@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;
-    let mut stream = doc.get(GetFilter::All).await?;
+    let mut stream = doc.get_many(GetFilter::All).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
         let content = doc.get_content_bytes(entry.content_hash()).await?;

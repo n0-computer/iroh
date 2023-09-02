@@ -185,7 +185,11 @@ impl super::Store for Store {
         Ok(replica)
     }
 
-    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
+    fn get_many(
+        &self,
+        namespace: NamespaceId,
+        filter: super::GetFilter,
+    ) -> Result<Self::GetIter<'_>> {
         match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
@@ -197,7 +201,7 @@ impl super::Store for Store {
         }
     }
 
-    fn get_by_key_and_author(
+    fn get_one(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
@@ -366,8 +370,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        self.store
-            .get_by_key_and_author(id.namespace(), id.author(), id.key())
+        self.store.get_one(id.namespace(), id.author(), id.key())
     }
 
     fn len(&self) -> Result<usize> {
@@ -623,7 +626,7 @@ mod tests {
         replica.hash_and_insert(&key1, &author, b"v1")?;
         replica.hash_and_insert(&key2, &author, b"v2")?;
         let res = store
-            .get(
+            .get_many(
                 replica.namespace(),
                 GetFilter::AuthorAndPrefix(author.id(), vec![255]),
             )?

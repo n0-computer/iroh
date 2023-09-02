@@ -87,7 +87,11 @@ impl super::Store for Store {
         Ok(replica)
     }
 
-    fn get(&self, namespace: NamespaceId, filter: super::GetFilter) -> Result<Self::GetIter<'_>> {
+    fn get_many(
+        &self,
+        namespace: NamespaceId,
+        filter: super::GetFilter,
+    ) -> Result<Self::GetIter<'_>> {
         match filter {
             super::GetFilter::All => self.get_all(namespace),
             super::GetFilter::Key(key) => self.get_by_key(namespace, key),
@@ -99,7 +103,7 @@ impl super::Store for Store {
         }
     }
 
-    fn get_by_key_and_author(
+    fn get_one(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
