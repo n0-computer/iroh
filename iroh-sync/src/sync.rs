@@ -242,11 +242,6 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.inner.read().namespace.id()
     }
 
-    // /// Get the namespace identifier for this [`Replica`] in byte represenation.
-    // pub fn namespace(&self) -> NamespaceId {
-    //     self.inner.read().namespace.id().into()
-    // }
-
     /// Get the byte represenation of the [`Namespace`] key for this replica.
     // TODO: Why return [u8; 32] and not `Namespace` here?
     pub fn secret_key(&self) -> [u8; 32] {

@@ -402,8 +402,6 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn put(&mut self, e: SignedEntry) -> Result<()> {
-        // let k = e.id();
-        // let v = e;
         let write_tx = self.store.db.begin_write()?;
         {
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;

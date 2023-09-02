@@ -38,6 +38,7 @@ impl PublicKeyStore for () {
 }
 
 /// In-memory key storage
+// TODO: Make max number of keys stored configurable.
 #[derive(Debug, Clone, Default)]
 pub struct MemPublicKeyStore {
     keys: Arc<RwLock<HashMap<[u8; 32], VerifyingKey>>>,

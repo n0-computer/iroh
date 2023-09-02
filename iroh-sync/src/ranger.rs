@@ -497,7 +497,7 @@ mod tests {
     use super::*;
 
     #[derive(Debug)]
-    pub struct SimpleStore<K, V> {
+    struct SimpleStore<K, V> {
         data: BTreeMap<K, V>,
     }
 
@@ -523,6 +523,7 @@ mod tests {
         fn as_fingerprint(&self) -> Fingerprint {
             let mut hasher = blake3::Hasher::new();
             hasher.update(format!("{:?}", self.0).as_bytes());
+            hasher.update(format!("{:?}", self.1).as_bytes());
             Fingerprint(hasher.finalize().into())
         }
     }
