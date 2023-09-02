@@ -570,11 +570,14 @@ impl Endpoint {
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
-        debug!(
-            "Changing derp region for {:?} from {:?} to {:?}",
-            self.public_key, self.derp_region, n.derp
-        );
-        self.derp_region = n.derp;
+
+        if n.derp.is_some() {
+            debug!(
+                "Changing derp region for {:?} from {:?} to {:?}",
+                self.public_key, self.derp_region, n.derp
+            );
+            self.derp_region = n.derp;
+        }
 
         for st in self.endpoint_state.values_mut() {
             st.index = Index::Deleted; // assume deleted until updated in next loop
@@ -1131,15 +1134,18 @@ impl PeerMap {
         self.by_ip_port.insert(*ipp, id);
     }
 
-    /// Deletes the endpoint.
-    pub(super) fn delete_endpoint(&mut self, id: usize) {
-        if let Some(mut ep) = self.by_id.remove(&id) {
-            ep.stop_and_reset();
-            self.by_node_key.remove(ep.public_key());
-        }
-
-        self.by_ip_port.retain(|_, v| *v != id);
-    }
+    // TODO: When do we want to remove endpoints?
+    // Dead code at the moment. This was already never called before, because entries were never
+    // removed from the now-removed NetworkMap.
+    // /// Deletes the endpoint.
+    // pub(super) fn delete_endpoint(&mut self, id: usize) {
+    //     if let Some(mut ep) = self.by_id.remove(&id) {
+    //         ep.stop_and_reset();
+    //         self.by_node_key.remove(ep.public_key());
+    //     }
+    //
+    //     self.by_ip_port.retain(|_, v| *v != id);
+    // }
 }
 
 /// Some state and history for a specific endpoint of a endpoint.
