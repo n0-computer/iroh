@@ -14,6 +14,7 @@ use std::{
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
+use bytes::{Bytes, BytesMut};
 use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
@@ -563,50 +564,21 @@ impl Entry {
     }
 }
 
+const NAMESPACE_BYTES: std::ops::Range<usize> = 0..32;
+const AUTHOR_BYTES: std::ops::Range<usize> = 32..64;
+const KEY_BYTES: std::ops::RangeFrom<usize> = 64..;
+
 /// The indentifier of a record.
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct RecordIdentifier {
-    /// The [`NamespaceId`] of the namespace this record belongs to.
-    namespace: NamespaceId,
-    /// The [`AuthorId`] of the author that wrote this record.
-    author: AuthorId,
-    /// The key of the record.
-    key: Vec<u8>,
-}
+#[derive(Default, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RecordIdentifier(Bytes);
 
 impl Debug for RecordIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RecordIdentifier")
-            .field("namespace", &self.namespace)
-            .field("author", &self.author)
-            .field("key", &std::string::String::from_utf8_lossy(&self.key))
+            .field("namespace", &self.namespace())
+            .field("author", &self.author())
+            .field("key", &std::string::String::from_utf8_lossy(&self.key()))
             .finish()
-    }
-}
-
-impl PartialEq for RecordIdentifier {
-    fn eq(&self, other: &Self) -> bool {
-        self.namespace.eq(&other.namespace)
-            && self.author.eq(&other.author)
-            && self.key.eq(&other.key)
-    }
-}
-
-impl Eq for RecordIdentifier {}
-
-impl PartialOrd for RecordIdentifier {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for RecordIdentifier {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.namespace, &self.author, &self.key).cmp(&(
-            &other.namespace,
-            &other.author,
-            &other.key,
-        ))
     }
 }
 
@@ -626,38 +598,47 @@ impl RecordIdentifier {
         author: impl Into<AuthorId>,
         key: impl AsRef<[u8]>,
     ) -> Self {
-        RecordIdentifier {
-            key: key.as_ref().to_vec(),
-            namespace: namespace.into(),
-            author: author.into(),
-        }
+        let mut bytes = BytesMut::with_capacity(32 + 32 + key.as_ref().len());
+        bytes.extend_from_slice(namespace.into().as_bytes());
+        bytes.extend_from_slice(author.into().as_bytes());
+        bytes.extend_from_slice(key.as_ref());
+        Self(bytes.freeze())
     }
 
     /// Serialize this [`RecordIdentifier`] into a mutable byte array.
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.namespace.as_ref());
-        out.extend_from_slice(self.author.as_ref());
-        out.extend_from_slice(&self.key);
+        out.extend_from_slice(&self.0);
+    }
+
+    /// Get this [`RecordIdentifier`] as a byte slices.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
     pub fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
-        (self.namespace.as_bytes(), self.author.as_bytes(), &self.key)
+        (
+            self.0[NAMESPACE_BYTES].try_into().unwrap(),
+            self.0[AUTHOR_BYTES].try_into().unwrap(),
+            &self.0[KEY_BYTES],
+        )
     }
 
     /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
-        &self.key
+        &self.0[KEY_BYTES]
     }
 
     /// Get the [`NamespaceId`] of this record as byte array.
     pub fn namespace(&self) -> NamespaceId {
-        self.namespace
+        let value: &[u8; 32] = &self.0[NAMESPACE_BYTES].try_into().unwrap();
+        value.into()
     }
 
     /// Get the [`AuthorId`] of this record as byte array.
     pub fn author(&self) -> AuthorId {
-        self.author
+        let value: &[u8; 32] = &self.0[AUTHOR_BYTES].try_into().unwrap();
+        value.into()
     }
 }
 
