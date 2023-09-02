@@ -21,7 +21,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
     type Instance: ranger::Store<SignedEntry> + PublicKeyStore + Send + Sync + 'static + Clone;
 
-    /// Iterator over entries in the store, returned from [`Self::get`]
+    /// Iterator over entries in the store, returned from [`Self::get_many`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
     where
         Self: 'a;
