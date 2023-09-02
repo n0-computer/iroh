@@ -6,19 +6,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
-    sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
+    sync::{Author, Namespace, Replica, SignedEntry},
+    AuthorId, NamespaceId,
 };
 
 #[cfg(feature = "fs-store")]
 pub mod fs;
 pub mod memory;
+mod pubkeys;
+pub use pubkeys::*;
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
-    type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
+    type Instance: ranger::Store<SignedEntry> + PublicKeyStore + Send + Sync + 'static + Clone;
 
-    /// Iterator over entries in the store, returned from [`Self::get`]
+    /// Iterator over entries in the store, returned from [`Self::get_many`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
     where
         Self: 'a;
@@ -43,7 +46,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
-    ///
+    //
     // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
@@ -63,13 +66,13 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Get an author key from the store.
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
 
-    /// Iterate over entries of a replica.
+    /// Get an iterator over entries of a replica.
     ///
     /// The [`GetFilter`] has several methods of filtering the returned entries.
-    fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
+    fn get_many(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
     /// Get an entry by key and author.
-    fn get_by_key_and_author(
+    fn get_one(
         &self,
         namespace: NamespaceId,
         author: AuthorId,

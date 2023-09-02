@@ -17,7 +17,8 @@ use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 
 use iroh_sync::{
     store::GetFilter,
-    sync::{AuthorId, NamespaceId, SignedEntry},
+    sync::{NamespaceId, SignedEntry},
+    AuthorId,
 };
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -563,24 +564,24 @@ pub struct DocSetResponse {
 
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetRequest {
+pub struct DocGetManyRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// Filter entries by this [`GetFilter`]
     pub filter: GetFilter,
 }
 
-impl Msg<ProviderService> for DocGetRequest {
+impl Msg<ProviderService> for DocGetManyRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for DocGetRequest {
-    type Response = RpcResult<DocGetResponse>;
+impl ServerStreamingMsg<ProviderService> for DocGetManyRequest {
+    type Response = RpcResult<DocGetManyResponse>;
 }
 
-/// Response to [`DocGetRequest`]
+/// Response to [`DocGetManyRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetResponse {
+pub struct DocGetManyResponse {
     /// The document entry
     pub entry: SignedEntry,
 }
@@ -600,7 +601,7 @@ impl RpcMsg<ProviderService> for DocGetOneRequest {
     type Response = RpcResult<DocGetOneResponse>;
 }
 
-/// Response to [`DocGetRequest`]
+/// Response to [`DocGetOneRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetOneResponse {
     /// The document entry
@@ -679,7 +680,7 @@ pub enum ProviderRequest {
     DocCreate(DocCreateRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
-    DocGet(DocGetRequest),
+    DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
     DocStartSync(DocStartSyncRequest),
     DocStopSync(DocStopSyncRequest),
@@ -718,7 +719,7 @@ pub enum ProviderResponse {
     DocCreate(RpcResult<DocCreateResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
-    DocGet(RpcResult<DocGetResponse>),
+    DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),

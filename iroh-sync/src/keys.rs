@@ -6,6 +6,8 @@ use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey}
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::store::PublicKeyStore;
+
 /// Author key to insert entries in a [`crate::Replica`]
 ///
 /// Internally, an author is a [`SigningKey`] which is used to sign entries.
@@ -30,9 +32,14 @@ impl Author {
         self.signing_key.to_bytes()
     }
 
+    /// Get the [`AuthorPublicKey`] for this author.
+    pub fn public_key(&self) -> AuthorPublicKey {
+        AuthorPublicKey(self.signing_key.verifying_key())
+    }
+
     /// Get the [`AuthorId`] for this author.
     pub fn id(&self) -> AuthorId {
-        AuthorId(self.signing_key.verifying_key())
+        AuthorId::from(self.public_key())
     }
 
     /// Sign a message with this [`Author`] key.
@@ -50,10 +57,10 @@ impl Author {
 ///
 /// This is the corresponding [`VerifyingKey`] for an author. It is used as an identifier, and can
 /// be used to verify [`Signature`]s.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct AuthorId(VerifyingKey);
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
+pub struct AuthorPublicKey(VerifyingKey);
 
-impl AuthorId {
+impl AuthorPublicKey {
     /// Verify that a signature matches the `msg` bytes and was created with the [`Author`]
     /// that corresponds to this [`AuthorId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
@@ -70,8 +77,8 @@ impl AuthorId {
     /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
     /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
-    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
-        Ok(AuthorId(VerifyingKey::from_bytes(bytes)?))
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
+        Ok(AuthorPublicKey(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
@@ -102,9 +109,14 @@ impl Namespace {
         self.signing_key.to_bytes()
     }
 
+    /// Get the [`NamespacePublicKey`] for this namespace.
+    pub fn public_key(&self) -> NamespacePublicKey {
+        NamespacePublicKey(self.signing_key.verifying_key())
+    }
+
     /// Get the [`NamespaceId`] for this namespace.
     pub fn id(&self) -> NamespaceId {
-        NamespaceId(self.signing_key.verifying_key())
+        NamespaceId::from(self.public_key())
     }
 
     /// Sign a message with this [`Namespace`] key.
@@ -122,10 +134,10 @@ impl Namespace {
 ///
 /// This is the corresponding [`VerifyingKey`] for a [`Namespace`]. It is used as an identifier, and can
 /// be used to verify [`Signature`]s.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct NamespaceId(VerifyingKey);
+#[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
+pub struct NamespacePublicKey(VerifyingKey);
 
-impl NamespaceId {
+impl NamespacePublicKey {
     /// Verify that a signature matches the `msg` bytes and was created with the [`Namespace`]
     /// that corresponds to this [`NamespaceId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
@@ -142,8 +154,8 @@ impl NamespaceId {
     /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
     /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
-    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
-        Ok(NamespaceId(VerifyingKey::from_bytes(bytes)?))
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
+        Ok(NamespacePublicKey(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
@@ -156,6 +168,18 @@ impl fmt::Display for Author {
 impl fmt::Display for Namespace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", base32::fmt(self.to_bytes()))
+    }
+}
+
+impl fmt::Display for AuthorPublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", base32::fmt(self.as_bytes()))
+    }
+}
+
+impl fmt::Display for NamespacePublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", base32::fmt(self.as_bytes()))
     }
 }
 
@@ -183,13 +207,13 @@ impl fmt::Debug for Author {
     }
 }
 
-impl fmt::Debug for NamespaceId {
+impl fmt::Debug for NamespacePublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "NamespaceId({})", self)
     }
 }
 
-impl fmt::Debug for AuthorId {
+impl fmt::Debug for AuthorPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "AuthorId({})", self)
     }
@@ -211,19 +235,19 @@ impl FromStr for Namespace {
     }
 }
 
-impl FromStr for AuthorId {
+impl FromStr for AuthorPublicKey {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_array(s)?)
+        Self::from_bytes(&base32::parse_array(s)?).map_err(Into::into)
     }
 }
 
-impl FromStr for NamespaceId {
+impl FromStr for NamespacePublicKey {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_array(s)?)
+        Self::from_bytes(&base32::parse_array(s)?).map_err(Into::into)
     }
 }
 
@@ -239,51 +263,51 @@ impl From<SigningKey> for Namespace {
     }
 }
 
-impl PartialOrd for NamespaceId {
+impl PartialOrd for NamespacePublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for NamespaceId {
+impl Ord for NamespacePublicKey {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
-impl PartialOrd for AuthorId {
+impl PartialOrd for AuthorPublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for AuthorId {
+impl Ord for AuthorPublicKey {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
-impl From<Namespace> for NamespaceId {
+impl From<Namespace> for NamespacePublicKey {
     fn from(value: Namespace) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
-impl From<Author> for AuthorId {
+impl From<Author> for AuthorPublicKey {
     fn from(value: Author) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
-impl From<&Namespace> for NamespaceId {
+impl From<&Namespace> for NamespacePublicKey {
     fn from(value: &Namespace) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
-impl From<&Author> for AuthorId {
+impl From<&Author> for AuthorPublicKey {
     fn from(value: &Author) -> Self {
-        value.id()
+        value.public_key()
     }
 }
 
@@ -303,5 +327,188 @@ pub(super) mod base32 {
             .decode(input.to_ascii_uppercase().as_bytes())?
             .try_into()
             .map_err(|_| ::anyhow::anyhow!("Failed to parse: invalid byte length"))
+    }
+}
+
+/// [`NamespacePublicKey`] in bytes
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialOrd,
+    Ord,
+    Eq,
+    PartialEq,
+    Hash,
+    derive_more::From,
+    derive_more::Into,
+    derive_more::AsRef,
+    Serialize,
+    Deserialize,
+)]
+pub struct NamespaceId([u8; 32]);
+
+/// [`AuthorPublicKey`] in bytes
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialOrd,
+    Ord,
+    Eq,
+    PartialEq,
+    Hash,
+    derive_more::From,
+    derive_more::Into,
+    derive_more::AsRef,
+    Serialize,
+    Deserialize,
+)]
+pub struct AuthorId([u8; 32]);
+
+impl AuthorId {
+    /// Convert to byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Convert to byte slice.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Convert into [`AuthorPublicKey`] by fetching from a [`PublicKeyStore`].
+    ///
+    /// Fails if the bytes of this [`AuthorId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn public_key<S: PublicKeyStore>(
+        &self,
+        store: &S,
+    ) -> Result<AuthorPublicKey, SignatureError> {
+        store.author_key(self)
+    }
+
+    /// Convert into [`AuthorPublicKey`].
+    ///
+    /// Fails if the bytes of this [`AuthorId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<AuthorPublicKey, SignatureError> {
+        AuthorPublicKey::from_bytes(&self.0)
+    }
+}
+
+impl NamespaceId {
+    /// Convert to byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Convert to byte slice.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Convert into [`NamespacePublicKey`] by fetching from a [`PublicKeyStore`].
+    ///
+    /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn public_key<S: PublicKeyStore>(
+        &self,
+        store: &S,
+    ) -> Result<NamespacePublicKey, SignatureError> {
+        store.namespace_key(self)
+    }
+
+    /// Convert into [`NamespacePublicKey`].
+    ///
+    /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
+    pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<NamespacePublicKey, SignatureError> {
+        NamespacePublicKey::from_bytes(&self.0)
+    }
+}
+
+impl From<&[u8; 32]> for NamespaceId {
+    fn from(value: &[u8; 32]) -> Self {
+        Self(*value)
+    }
+}
+
+impl From<&[u8; 32]> for AuthorId {
+    fn from(value: &[u8; 32]) -> Self {
+        Self(*value)
+    }
+}
+
+impl AsRef<[u8]> for NamespaceId {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for AuthorId {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<AuthorPublicKey> for AuthorId {
+    fn from(value: AuthorPublicKey) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+impl From<NamespacePublicKey> for NamespaceId {
+    fn from(value: NamespacePublicKey) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+
+impl From<&AuthorPublicKey> for AuthorId {
+    fn from(value: &AuthorPublicKey) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+impl From<&NamespacePublicKey> for NamespaceId {
+    fn from(value: &NamespacePublicKey) -> Self {
+        Self(*value.as_bytes())
+    }
+}
+
+impl From<Author> for AuthorId {
+    fn from(value: Author) -> Self {
+        value.id()
+    }
+}
+impl From<Namespace> for NamespaceId {
+    fn from(value: Namespace) -> Self {
+        value.id()
+    }
+}
+
+impl TryFrom<NamespaceId> for NamespacePublicKey {
+    type Error = SignatureError;
+    fn try_from(value: NamespaceId) -> Result<Self, Self::Error> {
+        Self::from_bytes(&value.0)
+    }
+}
+
+impl TryFrom<AuthorId> for AuthorPublicKey {
+    type Error = SignatureError;
+    fn try_from(value: AuthorId) -> Result<Self, Self::Error> {
+        Self::from_bytes(&value.0)
+    }
+}
+
+impl FromStr for AuthorId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        AuthorPublicKey::from_str(s).map(|x| x.into())
+    }
+}
+
+impl FromStr for NamespaceId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        NamespacePublicKey::from_str(s).map(|x| x.into())
     }
 }

@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;
-    let mut stream = doc.get(GetFilter::All).await?;
+    let mut stream = doc.get_many(GetFilter::All).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
         let content = doc.get_content_bytes(entry.content_hash()).await?;
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
 fn fmt_entry(entry: &Entry) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let author = fmt_hash(id.author().as_bytes());
+    let author = fmt_hash(id.author());
     let hash = entry.content_hash();
     let hash = fmt_hash(hash.as_bytes());
     let len = HumanBytes(entry.content_len());

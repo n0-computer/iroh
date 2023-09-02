@@ -10,15 +10,13 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
-use iroh_sync::store::GetFilter;
-use iroh_sync::sync::{AuthorId, NamespaceId};
-use iroh_sync::Entry;
+use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, ConnectionInfoRequest,
-    ConnectionInfoResponse, ConnectionsRequest, CounterStats, DocCreateRequest, DocGetOneRequest,
-    DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
+    ConnectionInfoResponse, ConnectionsRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
+    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
     ProviderService, ShareMode, StatsGetRequest,
 };
@@ -186,10 +184,10 @@ where
     }
 
     /// Get entries.
-    pub async fn get(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
+    pub async fn get_many(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
         let stream = self
             .rpc
-            .server_streaming(DocGetRequest {
+            .server_streaming(DocGetManyRequest {
                 doc_id: self.id,
                 filter,
             })

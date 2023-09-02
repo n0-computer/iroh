@@ -14,6 +14,7 @@ use std::{
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
+use bytes::{Bytes, BytesMut};
 use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
@@ -24,14 +25,18 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::ranger::{self, AsFingerprint, Fingerprint, Peer, RangeKey};
+use crate::store;
+use crate::{
+    ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
+    store::PublicKeyStore,
+};
 
 pub use crate::keys::*;
 
 /// Protocol message for the set reconciliation protocol.
 ///
 /// Can be serialized to bytes with [serde] to transfer between peers.
-pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>;
+pub type ProtocolMessage = crate::ranger::Message<SignedEntry>;
 
 /// Byte represenation of a `PeerId` from `iroh-net`.
 // TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
@@ -52,16 +57,16 @@ pub enum InsertOrigin {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
-pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     inner: Arc<RwLock<InnerReplica<S>>>,
     #[allow(clippy::type_complexity)]
     on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct InnerReplica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
-    peer: Peer<RecordIdentifier, SignedEntry, S>,
+    peer: Peer<SignedEntry, S>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,7 +75,7 @@ struct ReplicaData {
     namespace: Namespace,
 }
 
-impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
@@ -116,8 +121,8 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
         hash: Hash,
         len: u64,
     ) -> Result<(), InsertError<S>> {
-        let id = RecordIdentifier::new_current(key, self.namespace(), author.id());
-        let record = Record::from_hash(hash, len);
+        let id = RecordIdentifier::new(self.namespace(), author.id(), key);
+        let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
         let signed_entry = entry.sign(&self.inner.read().namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
@@ -152,10 +157,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
             &entry,
             &origin,
         )?;
-        inner
-            .peer
-            .put(entry.id().clone(), entry.clone())
-            .map_err(InsertError::Store)?;
+        inner.peer.put(entry.clone()).map_err(InsertError::Store)?;
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
@@ -196,15 +198,13 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
     }
 
     /// Get the identifier for an entry in this replica.
-    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author, timestamp: u64) -> RecordIdentifier {
+    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
         let inner = self.inner.read();
-        RecordIdentifier::new(key, inner.namespace.id(), author.id(), timestamp)
+        RecordIdentifier::new(inner.namespace.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(
-        &self,
-    ) -> Result<crate::ranger::Message<RecordIdentifier, SignedEntry>, S::Error> {
+    pub fn sync_initial_message(&self) -> Result<crate::ranger::Message<SignedEntry>, S::Error> {
         self.inner.read().peer.initial_message()
     }
 
@@ -213,16 +213,16 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
     /// Returns the next message to be sent to the peer, if any.
     pub fn sync_process_message(
         &self,
-        message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
+        message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
-    ) -> Result<Option<crate::ranger::Message<RecordIdentifier, SignedEntry>>, S::Error> {
+    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
         let expected_namespace = self.namespace();
         let now = system_time_now();
         let reply = self
             .inner
             .write()
             .peer
-            .process_message(message, |store, _key, entry| {
+            .process_message(message, |store, entry| {
                 let origin = InsertOrigin::Sync(from_peer);
                 if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
                     if let Some(sender) = self.on_insert_sender.read().as_ref() {
@@ -256,7 +256,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry> + 'static> Replica<S> {
 /// * the entry's namespace matches the current replica
 /// * the entry's timestamp is not more than 10 minutes in the future of our system time
 /// * the entry is newer than an existing entry for the same key and author, if such exists.
-fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
+fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
     now: u64,
     store: &S,
     expected_namespace: NamespaceId,
@@ -269,7 +269,7 @@ fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
     }
 
     // Verify signature for non-local entries.
-    if !matches!(origin, InsertOrigin::Local) && entry.verify().is_err() {
+    if !matches!(origin, InsertOrigin::Local) && entry.verify(store).is_err() {
         return Err(ValidationFailure::BadSignature);
     }
 
@@ -290,7 +290,7 @@ fn validate_entry<S: ranger::Store<RecordIdentifier, SignedEntry>>(
 
 /// Error emitted when inserting entries into a [`Replica`] failed
 #[derive(thiserror::Error, derive_more::Debug)]
-pub enum InsertError<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Storage error
     #[error("storage error")]
     Store(S::Error),
@@ -357,18 +357,20 @@ impl SignedEntry {
         namespace: &Namespace,
         author: &Author,
         key: impl AsRef<[u8]>,
-        timestamp: u64,
         record: Record,
     ) -> Self {
-        let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
+        let id = RecordIdentifier::new(namespace.id(), author.id(), key);
         let entry = Entry::new(id, record);
         Self::from_entry(entry, namespace, author)
     }
 
     /// Verify the signatures on this entry.
-    pub fn verify(&self) -> Result<(), SignatureError> {
-        self.signature
-            .verify(&self.entry, &self.entry.id.namespace, &self.entry.id.author)
+    pub fn verify<S: store::PublicKeyStore>(&self, store: &S) -> Result<(), SignatureError> {
+        self.signature.verify(
+            &self.entry,
+            &self.entry.namespace().public_key(store)?,
+            &self.entry.author().public_key(store)?,
+        )
     }
 
     /// Get the signature.
@@ -391,8 +393,8 @@ impl SignedEntry {
         self.entry().content_len()
     }
 
-    /// Get the [`AuthorId`] of the entry.
-    pub fn author(&self) -> AuthorId {
+    /// Get the author bytes of this entry.
+    pub fn author_bytes(&self) -> AuthorId {
         self.entry().id().author()
     }
 
@@ -403,7 +405,25 @@ impl SignedEntry {
 
     /// Get the timestamp of the entry.
     pub fn timestamp(&self) -> u64 {
-        self.entry().id().timestamp()
+        self.entry().timestamp()
+    }
+}
+
+impl RangeEntry for SignedEntry {
+    type Key = RecordIdentifier;
+
+    fn key(&self) -> &Self::Key {
+        &self.entry.id
+    }
+
+    fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(self.namespace().as_ref());
+        hasher.update(self.author_bytes().as_ref());
+        hasher.update(self.key());
+        hasher.update(&self.timestamp().to_be_bytes());
+        hasher.update(self.content_hash().as_bytes());
+        Fingerprint(hasher.finalize().into())
     }
 }
 
@@ -449,8 +469,8 @@ impl EntrySignature {
     pub fn verify(
         &self,
         entry: &Entry,
-        namespace: &NamespaceId,
-        author: &AuthorId,
+        namespace: &NamespacePublicKey,
+        author: &AuthorPublicKey,
     ) -> Result<(), SignatureError> {
         let bytes = entry.to_vec();
         namespace.verify(&bytes, &self.namespace_signature)?;
@@ -505,21 +525,31 @@ impl Entry {
         self.id.namespace()
     }
 
+    /// Get the [`AuthorId`] of this entry.
+    pub fn author(&self) -> AuthorId {
+        self.id.author()
+    }
+
+    /// Get the key of this entry.
+    pub fn key(&self) -> &[u8] {
+        self.id.key()
+    }
+
     /// Get the [`Record`] contained in this entry.
     pub fn record(&self) -> &Record {
         &self.record
     }
 
     /// Serialize this entry into its canonical byte representation used for signing.
-    pub fn into_vec(&self, out: &mut Vec<u8>) {
-        self.id.as_bytes(out);
-        self.record.as_bytes(out);
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        self.id.encode(out);
+        self.record.encode(out);
     }
 
     /// Serialize this entry into a new vector with its canonical byte representation.
     pub fn to_vec(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        self.into_vec(&mut out);
+        self.encode(&mut out);
         out
     }
 
@@ -529,64 +559,21 @@ impl Entry {
     }
 }
 
+const NAMESPACE_BYTES: std::ops::Range<usize> = 0..32;
+const AUTHOR_BYTES: std::ops::Range<usize> = 32..64;
+const KEY_BYTES: std::ops::RangeFrom<usize> = 64..;
+
 /// The indentifier of a record.
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct RecordIdentifier {
-    /// The key of the record.
-    key: Vec<u8>,
-    /// The [`NamespaceId`] of the namespace this record belongs to.
-    namespace: NamespaceId,
-    /// The [`AuthorId`] of the author that wrote this record.
-    author: AuthorId,
-    /// Record creation timestamp. Counted as micros since the Unix epoch.
-    timestamp: u64,
-}
+#[derive(Default, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RecordIdentifier(Bytes);
 
 impl Debug for RecordIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RecordIdentifier")
-            .field("namespace", &self.namespace)
-            .field("author", &self.author)
-            .field("key", &std::string::String::from_utf8_lossy(&self.key))
-            .field("timestamp", &self.timestamp)
+            .field("namespace", &self.namespace())
+            .field("author", &self.author())
+            .field("key", &std::string::String::from_utf8_lossy(self.key()))
             .finish()
-    }
-}
-
-impl PartialEq for RecordIdentifier {
-    fn eq(&self, other: &Self) -> bool {
-        self.namespace.eq(&other.namespace)
-            && self.author.eq(&other.author)
-            && self.key.eq(&other.key)
-    }
-}
-
-impl Eq for RecordIdentifier {}
-
-impl PartialOrd for RecordIdentifier {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for RecordIdentifier {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.namespace, &self.author, &self.key).cmp(&(
-            &other.namespace,
-            &other.author,
-            &other.key,
-        ))
-    }
-}
-
-impl AsFingerprint for RecordIdentifier {
-    fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(self.namespace.as_bytes());
-        hasher.update(self.author.as_bytes());
-        hasher.update(&self.key);
-        hasher.update(&self.timestamp.to_be_bytes());
-        Fingerprint(hasher.finalize().into())
     }
 }
 
@@ -602,84 +589,51 @@ fn system_time_now() -> u64 {
 impl RecordIdentifier {
     /// Create a new [`RecordIdentifier`].
     pub fn new(
+        namespace: impl Into<NamespaceId>,
+        author: impl Into<AuthorId>,
         key: impl AsRef<[u8]>,
-        namespace: NamespaceId,
-        author: AuthorId,
-        timestamp: u64,
     ) -> Self {
-        RecordIdentifier {
-            key: key.as_ref().to_vec(),
-            namespace,
-            author,
-            timestamp,
-        }
-    }
-
-    /// Create a new [`RecordIdentifier`] with the timestamp set to now.
-    pub fn new_current(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
-        let timestamp = system_time_now();
-
-        RecordIdentifier {
-            key: key.as_ref().to_vec(),
-            namespace,
-            author,
-            timestamp,
-        }
-    }
-
-    pub(crate) fn from_parts(
-        key: &[u8],
-        namespace: &[u8; 32],
-        author: &[u8; 32],
-        timestamp: u64,
-    ) -> anyhow::Result<Self> {
-        Ok(RecordIdentifier {
-            key: key.to_vec(),
-            namespace: NamespaceId::from_bytes(namespace)?,
-            author: AuthorId::from_bytes(author)?,
-            timestamp,
-        })
+        let mut bytes = BytesMut::with_capacity(32 + 32 + key.as_ref().len());
+        bytes.extend_from_slice(namespace.into().as_bytes());
+        bytes.extend_from_slice(author.into().as_bytes());
+        bytes.extend_from_slice(key.as_ref());
+        Self(bytes.freeze())
     }
 
     /// Serialize this [`RecordIdentifier`] into a mutable byte array.
-    pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.namespace.as_bytes());
-        out.extend_from_slice(self.author.as_bytes());
-        out.extend_from_slice(&self.key);
-        out.extend_from_slice(&self.timestamp.to_be_bytes())
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0);
+    }
+
+    /// Get this [`RecordIdentifier`] as a byte slices.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
-    pub(crate) fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
-        (self.namespace.as_bytes(), self.author.as_bytes(), &self.key)
+    pub fn as_byte_tuple(&self) -> (&[u8; 32], &[u8; 32], &[u8]) {
+        (
+            self.0[NAMESPACE_BYTES].try_into().unwrap(),
+            self.0[AUTHOR_BYTES].try_into().unwrap(),
+            &self.0[KEY_BYTES],
+        )
     }
 
     /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
-        &self.key
+        &self.0[KEY_BYTES]
     }
 
-    /// Get the [`NamespaceId`] of this record.
+    /// Get the [`NamespaceId`] of this record as byte array.
     pub fn namespace(&self) -> NamespaceId {
-        self.namespace
+        let value: &[u8; 32] = &self.0[NAMESPACE_BYTES].try_into().unwrap();
+        value.into()
     }
 
-    /// Get the timestamp of this record.
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
-    }
-
-    pub(crate) fn namespace_bytes(&self) -> &[u8; 32] {
-        self.namespace.as_bytes()
-    }
-
-    /// Get the [`AuthorId`] of this record.
+    /// Get the [`AuthorId`] of this record as byte array.
     pub fn author(&self) -> AuthorId {
-        self.author
-    }
-
-    pub(crate) fn author_bytes(&self) -> &[u8; 32] {
-        self.author.as_bytes()
+        let value: &[u8; 32] = &self.0[AUTHOR_BYTES].try_into().unwrap();
+        value.into()
     }
 }
 
@@ -704,12 +658,24 @@ pub struct Record {
     len: u64,
     /// Hash of the content data.
     hash: Hash,
+    /// Record creation timestamp. Counted as micros since the Unix epoch.
+    timestamp: u64,
 }
 
 impl Record {
     /// Create a new record.
-    pub fn new(len: u64, hash: Hash) -> Self {
-        Record { len, hash }
+    pub fn new(hash: Hash, len: u64, timestamp: u64) -> Self {
+        Record {
+            hash,
+            len,
+            timestamp,
+        }
+    }
+
+    /// Create a new [`Record`] with the timestamp set to now.
+    pub fn new_current(hash: Hash, len: u64) -> Self {
+        let timestamp = system_time_now();
+        Self::new(hash, len, timestamp)
     }
 
     /// Get the length of the data addressed by this record's content hash.
@@ -722,22 +688,30 @@ impl Record {
         self.hash
     }
 
-    /// Create a new record.
-    pub fn from_hash(hash: Hash, len: u64) -> Self {
-        Self::new(len, hash)
+    /// Get the timestamp of this record.
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
     }
 
     #[cfg(test)]
-    pub(crate) fn from_data(data: impl AsRef<[u8]>) -> Self {
+    pub(crate) fn current_from_data(data: impl AsRef<[u8]>) -> Self {
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
-        Self::from_hash(hash, len)
+        Self::new_current(hash, len)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_data(data: impl AsRef<[u8]>, timestamp: u64) -> Self {
+        let len = data.as_ref().len() as u64;
+        let hash = Hash::new(data);
+        Self::new(hash, len, timestamp)
     }
 
     /// Serialize this record into a mutable byte array.
-    pub(crate) fn as_bytes(&self, out: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.len.to_be_bytes());
         out.extend_from_slice(self.hash.as_ref());
+        out.extend_from_slice(&self.timestamp.to_be_bytes())
     }
 }
 
@@ -776,11 +750,11 @@ mod tests {
         let bob = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
 
-        let record_id = RecordIdentifier::new_current("/my/key", myspace.id(), alice.id());
-        let record = Record::from_data(b"this is my cool data");
+        let record_id = RecordIdentifier::new(myspace.id(), alice.id(), "/my/key");
+        let record = Record::current_from_data(b"this is my cool data");
         let entry = Entry::new(record_id, record);
         let signed_entry = entry.sign(&myspace, &alice);
-        signed_entry.verify().expect("failed to verify");
+        signed_entry.verify(&()).expect("failed to verify");
 
         let my_replica = store.new_replica(myspace)?;
         for i in 0..10 {
@@ -793,39 +767,39 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
+                .get_one(my_replica.namespace(), alice.id(), format!("/{i}"))?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
-            res.verify()?;
+            res.verify(&())?;
         }
 
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_one(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_one(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::Author(alice.id()))?
+            .get_many(my_replica.namespace(), GetFilter::Author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::Author(bob.id()))?
+            .get_many(my_replica.namespace(), GetFilter::Author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get(
+            .get_many(
                 my_replica.namespace(),
                 GetFilter::Key(b"/cool/path".to_vec()),
             )?
@@ -834,7 +808,7 @@ mod tests {
 
         // Get All
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::All)?
+            .get_many(my_replica.namespace(), GetFilter::All)?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
@@ -843,18 +817,18 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::Author(alice.id()))?
+            .get_many(my_replica.namespace(), GetFilter::Author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::Author(bob.id()))?
+            .get_many(my_replica.namespace(), GetFilter::Author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get(
+            .get_many(
                 my_replica.namespace(),
                 GetFilter::Key(b"/cool/path".to_vec()),
             )?
@@ -863,13 +837,13 @@ mod tests {
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::Prefix(b"/cool".to_vec()))?
+            .get_many(my_replica.namespace(), GetFilter::Prefix(b"/cool".to_vec()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get All by author and prefix
         let entries: Vec<_> = store
-            .get(
+            .get_many(
                 my_replica.namespace(),
                 GetFilter::AuthorAndPrefix(alice.id(), b"/cool".to_vec()),
             )?
@@ -877,7 +851,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
 
         let entries: Vec<_> = store
-            .get(
+            .get_many(
                 my_replica.namespace(),
                 GetFilter::AuthorAndPrefix(bob.id(), b"/cool".to_vec()),
             )?
@@ -886,7 +860,7 @@ mod tests {
 
         // Get All
         let entries: Vec<_> = store
-            .get(my_replica.namespace(), GetFilter::All)?
+            .get_many(my_replica.namespace(), GetFilter::All)?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
@@ -906,13 +880,7 @@ mod tests {
             .map_err(Into::into)?;
 
         assert_eq!(entries_second.len(), 12);
-        assert_eq!(
-            entries,
-            entries_second
-                .into_iter()
-                .map(|(_, x)| x)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
         Ok(())
     }
@@ -931,9 +899,9 @@ mod tests {
 
         // Just key
         {
-            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new_current(k[1], n[0].id(), a[0].id());
-            let ri2 = RecordIdentifier::new_current(k[2], n[0].id(), a[0].id());
+            let ri0 = RecordIdentifier::new(n[0].id(), a[0].id(), k[0]);
+            let ri1 = RecordIdentifier::new(n[0].id(), a[0].id(), k[1]);
+            let ri2 = RecordIdentifier::new(n[0].id(), a[0].id(), k[2]);
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -946,9 +914,9 @@ mod tests {
 
         // Just namespace
         {
-            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new_current(k[0], n[1].id(), a[0].id());
-            let ri2 = RecordIdentifier::new_current(k[0], n[2].id(), a[0].id());
+            let ri0 = RecordIdentifier::new(n[0].id(), a[0].id(), k[0]);
+            let ri1 = RecordIdentifier::new(n[1].id(), a[0].id(), k[1]);
+            let ri2 = RecordIdentifier::new(n[2].id(), a[0].id(), k[2]);
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -961,9 +929,9 @@ mod tests {
 
         // Just author
         {
-            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new_current(k[0], n[0].id(), a[1].id());
-            let ri2 = RecordIdentifier::new_current(k[0], n[0].id(), a[2].id());
+            let ri0 = RecordIdentifier::new(n[0].id(), a[0].id(), k[0]);
+            let ri1 = RecordIdentifier::new(n[0].id(), a[1].id(), k[0]);
+            let ri2 = RecordIdentifier::new(n[0].id(), a[2].id(), k[0]);
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -976,9 +944,9 @@ mod tests {
 
         // Just key and namespace
         {
-            let ri0 = RecordIdentifier::new_current(k[0], n[0].id(), a[0].id());
-            let ri1 = RecordIdentifier::new_current(k[1], n[1].id(), a[0].id());
-            let ri2 = RecordIdentifier::new_current(k[2], n[2].id(), a[0].id());
+            let ri0 = RecordIdentifier::new(n[0].id(), a[0].id(), k[0]);
+            let ri1 = RecordIdentifier::new(n[1].id(), a[0].id(), k[1]);
+            let ri2 = RecordIdentifier::new(n[2].id(), a[0].id(), k[2]);
 
             let range = Range::new(ri0.clone(), ri2.clone());
             assert!(range.contains(&ri0), "start");
@@ -1000,22 +968,10 @@ mod tests {
             let k0 = k[0];
             let k1 = k[1];
 
-            assert!(
-                RecordIdentifier::new_current(k0, n0, a0)
-                    < RecordIdentifier::new_current(k1, n1, a1)
-            );
-            assert!(
-                RecordIdentifier::new_current(k1, n0, a0)
-                    < RecordIdentifier::new_current(k0, n1, a0)
-            );
-            assert!(
-                RecordIdentifier::new_current(k0, n0, a1)
-                    < RecordIdentifier::new_current(k1, n0, a1)
-            );
-            assert!(
-                RecordIdentifier::new_current(k0, n1, a1)
-                    < RecordIdentifier::new_current(k1, n1, a1)
-            );
+            assert!(RecordIdentifier::new(n0, a0, k0) < RecordIdentifier::new(n1, a1, k1));
+            assert!(RecordIdentifier::new(n0, a0, k1) < RecordIdentifier::new(n1, a0, k0));
+            assert!(RecordIdentifier::new(n0, a1, k0) < RecordIdentifier::new(n0, a1, k1));
+            assert!(RecordIdentifier::new(n1, a1, k0) < RecordIdentifier::new(n1, a1, k1));
         }
     }
 
@@ -1046,23 +1002,21 @@ mod tests {
         let value = b"world";
         let entry = {
             let timestamp = 2;
-            let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
-            let record = Record::from_data(value);
+            let id = RecordIdentifier::new(namespace.id(), author.id(), key);
+            let record = Record::from_data(value, timestamp);
             Entry::new(id, record).sign(&namespace, &author)
         };
 
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
-        let res = store
-            .get_by_key_and_author(namespace.id(), author.id(), key)?
-            .unwrap();
+        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
         assert_eq!(res, entry);
 
         let entry2 = {
             let timestamp = 1;
-            let id = RecordIdentifier::new(key, namespace.id(), author.id(), timestamp);
-            let record = Record::from_data(value);
+            let id = RecordIdentifier::new(namespace.id(), author.id(), key);
+            let record = Record::from_data(value, timestamp);
             Entry::new(id, record).sign(&namespace, &author)
         };
 
@@ -1073,9 +1027,7 @@ mod tests {
                 ValidationFailure::OlderThanExisting
             ))
         ));
-        let res = store
-            .get_by_key_and_author(namespace.id(), author.id(), key)?
-            .unwrap();
+        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
         assert_eq!(res, entry);
 
         Ok(())
@@ -1200,27 +1152,27 @@ mod tests {
 
         let key = b"hi";
         let t = system_time_now();
-        let record = Record::from_data(b"1");
-        let entry0 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        let record = Record::from_data(b"1", t);
+        let entry0 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry0.clone(), InsertOrigin::Local)?;
 
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry0);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry0);
 
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
-        let record = Record::from_data(b"2");
-        let entry1 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        let record = Record::from_data(b"2", t);
+        let entry1 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry1);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry1);
 
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT;
-        let record = Record::from_data(b"2");
-        let entry2 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        let record = Record::from_data(b"2", t);
+        let entry2 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
 
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
-        let record = Record::from_data(b"2");
-        let entry3 = SignedEntry::from_parts(&namespace, &author, key, t, record);
+        let record = Record::from_data(b"2", t);
+        let entry3 = SignedEntry::from_parts(&namespace, &author, key, record);
         let res = replica.insert_entry(entry3, InsertOrigin::Local);
         assert!(matches!(
             res,
@@ -1228,19 +1180,19 @@ mod tests {
                 ValidationFailure::TooFarInTheFuture
             ))
         ));
-        assert_eq!(get_entry(&store, &namespace, &author, key)?, entry2);
+        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
 
         Ok(())
     }
 
     fn get_entry<S: store::Store>(
         store: &S,
-        namespace: impl Into<NamespaceId>,
-        author: impl Into<AuthorId>,
+        namespace: NamespaceId,
+        author: AuthorId,
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
-            .get_by_key_and_author(namespace.into(), author.into(), key)?
+            .get_one(namespace, author, key)?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(entry)
     }
@@ -1252,7 +1204,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<Hash> {
         let hash = store
-            .get_by_key_and_author(namespace, author, key)?
+            .get_one(namespace, author, key)?
             .unwrap()
             .content_hash();
         Ok(hash)
@@ -1291,7 +1243,7 @@ mod tests {
     ) -> Result<()> {
         let replica = store.open_replica(namespace)?.unwrap();
         for el in set {
-            store.get_by_key_and_author(replica.namespace(), author.id(), el)?;
+            store.get_one(replica.namespace(), author.id(), el)?;
         }
         Ok(())
     }

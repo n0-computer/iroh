@@ -359,12 +359,12 @@ impl ReplState {
                 prefix,
             } => {
                 let entries = if prefix {
-                    self.store.get(
+                    self.store.get_many(
                         self.doc.namespace(),
                         GetFilter::Prefix(key.as_bytes().to_vec()),
                     )?
                 } else {
-                    self.store.get(
+                    self.store.get_many(
                         self.doc.namespace(),
                         GetFilter::Key(key.as_bytes().to_vec()),
                     )?
@@ -391,8 +391,8 @@ impl ReplState {
             },
             Cmd::Ls { prefix } => {
                 let entries = match prefix {
-                    None => self.store.get(self.doc.namespace(), GetFilter::All)?,
-                    Some(prefix) => self.store.get(
+                    None => self.store.get_many(self.doc.namespace(), GetFilter::All)?,
+                    Some(prefix) => self.store.get_many(
                         self.doc.namespace(),
                         GetFilter::Prefix(prefix.as_bytes().to_vec()),
                     )?,
@@ -462,7 +462,7 @@ impl ReplState {
                                 let mut read = 0;
                                 for i in 0..count {
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let entries = store.get(
+                                    let entries = store.get_many(
                                         doc.namespace(),
                                         GetFilter::Key(key.as_bytes().to_vec()),
                                     )?;
@@ -560,7 +560,7 @@ impl ReplState {
                 }
                 let root = canonicalize_path(&dir_path)?;
                 println!("> exporting {key_prefix} to {root:?}");
-                let entries = self.store.get(
+                let entries = self.store.get_many(
                     self.doc.namespace(),
                     GetFilter::Prefix(key_prefix.as_bytes().to_vec()),
                 )?;
@@ -594,7 +594,7 @@ impl ReplState {
                 // TODO: Fix
                 let entry = self
                     .store
-                    .get(
+                    .get_many(
                         self.doc.namespace(),
                         GetFilter::Key(key.as_bytes().to_vec()),
                     )?
