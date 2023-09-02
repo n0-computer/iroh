@@ -631,11 +631,6 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
-    /// Returns whether the service is at capcity to perform another concurrent request.
-    fn at_request_capacity(&self) -> bool {
-        self.in_progress_downloads.len() >= self.concurrency_limits.max_concurrent_requests
-    }
-
     async fn shutdown(mut self) {
         debug!("shutting down");
         // TODO(@divma): how to make sure the download futures end gracefully?
