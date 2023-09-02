@@ -577,7 +577,7 @@ impl Debug for RecordIdentifier {
         f.debug_struct("RecordIdentifier")
             .field("namespace", &self.namespace())
             .field("author", &self.author())
-            .field("key", &std::string::String::from_utf8_lossy(&self.key()))
+            .field("key", &std::string::String::from_utf8_lossy(self.key()))
             .finish()
     }
 }
