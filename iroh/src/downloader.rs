@@ -127,12 +127,8 @@ impl DownloadKind {
     }
 }
 
-// TODO(@divma): mot likely drop this. Useful for now
-#[derive(Debug)]
-pub enum DownloadResult {
-    Success,
-    Failed,
-}
+// TODO(@divma): do we care about failure reason? do we care about success data reporting?
+type DownloadResult = Result<(), ()>;
 
 /// Handle to interact with a download request.
 #[derive(Debug)]
@@ -157,7 +153,7 @@ impl std::future::Future for DownloadHandle {
         // from the middle
         match self.receiver.poll_unpin(cx) {
             Ready(Ok(result)) => Ready(result),
-            Ready(Err(_recv_err)) => Ready(DownloadResult::Failed),
+            Ready(Err(_recv_err)) => Ready(Err(())),
             Pending => Pending,
         }
     }
@@ -504,7 +500,62 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
-    fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {}
+    fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {
+        // first remove the request
+        let info = self
+            .current_requests
+            .remove(&kind)
+            .expect("request was active");
+
+        // update the active requests for this peer
+        let ActiveRequestInfo {
+            intents,
+            peer,
+            mut remaining_retries,
+            ..
+        } = info;
+
+        // NOTE: since a request can deem a peer unsuitable in general, a peer might no longer be
+        // connected at this point
+        if let Some(peer_info) = self.peers.get_mut(&peer) {
+            peer_info.active_requests -= 1;
+        }
+
+        match result {
+            Ok(()) => {
+                debug!(%peer, ?kind, "download compleated");
+                for sender in intents.into_values() {
+                    let _ = sender.send(Ok(()));
+                }
+            }
+            Err(FailureAction::AbortRequest(reason)) => {
+                debug!(%peer, ?kind, %reason, "aborting request");
+                for sender in intents.into_values() {
+                    let _ = sender.send(Err(()));
+                }
+            }
+            Err(FailureAction::DropPeer(reason)) => {
+                debug!(%peer, ?kind, %reason, "dropping peer after failed request");
+                self.peers.remove(&peer);
+                // TODO(@divma): should we keep a small set of peers that should not be used for a
+                // bit? so that we don't retry the same peer after disconnecting them
+            }
+            Err(FailureAction::RetryLater(reason)) => {
+                // check if the download can be retried
+                if remaining_retries > 0 {
+                    debug!(%peer, ?kind, %reason, "download attempt failed");
+                    remaining_retries -= 1;
+                    let next_peer = self.get_best_candidate(kind.hash());
+                    self.schedule_request(kind, remaining_retries, next_peer, intents);
+                } else {
+                    debug!(%peer, ?kind, %reason, "download failed");
+                    for sender in intents.into_values() {
+                        let _ = sender.send(Err(()));
+                    }
+                }
+            }
+        }
+    }
 
     /// A scheduled request is ready to be processed.
     ///
@@ -541,13 +592,15 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             }
         };
 
+        // we tried to get a peer to perform this request but didn't get one, so now this attempt
+        // is failed
         if remaining_retries > 0 {
             remaining_retries -= 1;
             self.schedule_request(kind, remaining_retries, next_peer, intents);
         } else {
             // request can't be retried
             for sender in intents.into_values() {
-                let _ = sender.send(DownloadResult::Failed);
+                let _ = sender.send(Err(()));
             }
             return debug!(?kind, "download ran out of attempts");
         }
