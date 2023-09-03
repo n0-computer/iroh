@@ -1,7 +1,7 @@
 //! Handle downloading blobs and collections concurrently and from peers.
 //!
-//! The [`Service`] interacts with five main components to this end.
-//! - [`Dialer`]: Used to queue opening connections to peers we need perform downloads.
+//! The [`Service`] interacts with four main components to this end.
+//! - [`Dialer`]: Used to queue opening connections to peers we need to perform downloads.
 //! - [`AvailabilityRegistry`]: Where the downloader obtains information about peers that could be
 //!   used to perform a download.
 //! - [`Store`]: Where data is stored.
