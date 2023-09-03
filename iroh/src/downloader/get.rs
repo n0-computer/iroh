@@ -1,8 +1,6 @@
 //! Get requests in the context of the [`super::Downloader`].
 // error management here is a nightmare
 
-use super::Download;
-
 use std::io;
 
 use anyhow::Context;
