@@ -551,9 +551,10 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             }
             Err(FailureAction::DropPeer(reason)) => {
                 debug!(%peer, ?kind, %reason, "dropping peer after failed request");
-                self.peers.remove(&peer);
-                // TODO(@divma): should we keep a small set of peers that should not be used for a
-                // bit? so that we don't retry the same peer after disconnecting them
+                if let Some(_connection) = peer_info.connection.take() {
+                    // TODO(@divma): this will fail open streams, do we want this?
+                    // connection.close(..)
+                }
             }
             Err(FailureAction::RetryLater(reason)) => {
                 // check if the download can be retried
