@@ -464,8 +464,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         let (peer, state) = candidates.pop()?;
 
         if let PeerState::NotConnected = state {
-            let total_conns = self.peers.len() + self.dialer.pending_count();
-            if !self.concurrency_limits.at_connections_capacity(total_conns) {
+            if !self.at_connections_capacity() {
                 // peer is not connected, not dialing and concurrency limits allow another connection
                 debug!(%peer, "dialing peer");
                 self.dialer.queue_dial(*peer, &iroh_bytes::protocol::ALPN);
@@ -706,6 +705,18 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         } else {
             None
         }
+    }
+
+    /// Check if we have maxed our connection capacity.
+    fn at_connections_capacity(&self) -> bool {
+        let connected_peers = self
+            .peers
+            .values()
+            .filter(|info| info.connection.is_some())
+            .count();
+        let dialing_peers = self.dialer.pending_count();
+        self.concurrency_limits
+            .at_connections_capacity(dialing_peers + connected_peers)
     }
 
     async fn shutdown(mut self) {
