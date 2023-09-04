@@ -17,7 +17,7 @@ use bytes::Bytes;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use indicatif::HumanBytes;
 use iroh::{
-    download::Downloader,
+    downloader::Downloader,
     sync_engine::{PeerSource, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
@@ -229,8 +229,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
 
+    let collection_parser = iroh_bytes::collection::IrohCollectionParser;
+
     // create the live syncer
-    let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
+    let downloader =
+        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
