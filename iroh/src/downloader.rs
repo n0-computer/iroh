@@ -30,7 +30,10 @@
 
 #![allow(clippy::all, unused, missing_docs)]
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    num::NonZeroUsize,
+};
 
 use futures::{
     future::{BoxFuture, LocalBoxFuture},
@@ -59,6 +62,8 @@ mod test;
 const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 /// Number of retries initially assigned to a request.
 const INITIAL_RETRY_COUNT: u8 = 4;
+/// Duration for which we keep peers connected after they were last useful to us.
+const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Download identifier.
 // Mainly for readability.
@@ -227,18 +232,42 @@ struct ConnectionInfo {
     /// Since peers are kept for a longer time that they are strictly necessary, this acts as a
     /// temporary ban.
     #[debug(skip)]
-    connection: Option<quinn::Connection>,
-    /// Number of active requests this peer is performing for us.
-    active_requests: usize,
+    conn: Option<quinn::Connection>,
+    /// State of this peer.
+    state: PeerState,
 }
 
 impl ConnectionInfo {
-    fn new(connection: quinn::Connection) -> ConnectionInfo {
+    /// Create a new idle peer.
+    fn new_idle(connection: quinn::Connection, drop_key: delay_queue::Key) -> ConnectionInfo {
         ConnectionInfo {
-            connection: Some(connection),
-            active_requests: 0,
+            conn: Some(connection),
+            state: PeerState::Idle { drop_key },
         }
     }
+
+    /// Count of active requests for the peer.
+    fn active_requests(&self) -> usize {
+        match self.state {
+            PeerState::Busy { active_requests } => active_requests.get(),
+            PeerState::Idle { .. } => 0,
+        }
+    }
+}
+
+/// State of a connected peer.
+#[derive(derive_more::Debug)]
+enum PeerState {
+    /// Peer is handling at least one request.
+    Busy {
+        #[debug("{}", active_requests.get())]
+        active_requests: NonZeroUsize,
+    },
+    /// Peer is idle.
+    Idle {
+        #[debug(skip)]
+        drop_key: delay_queue::Key,
+    },
 }
 
 /// Type of future that performs a download request.
@@ -260,15 +289,17 @@ struct Service<S, C, R> {
     msg_rx: mpsc::Receiver<Message>,
     /// Peers available to use and their relevant information.
     peers: HashMap<PublicKey, ConnectionInfo>,
+    /// Queue to manage dropping keys.
+    goodbye_peer_queue: delay_queue::DelayQueue<PublicKey>,
     /// Requests performed for download intents. Two download requests can produce the same
     /// request. This map allows deduplication of efforts.
     current_requests: HashMap<DownloadKind, ActiveRequestInfo>,
+    /// Downloads underway.
+    in_progress_downloads: FuturesUnordered<DownloadFut>,
     /// Requests scheduled to be downloaded at a later time.
     scheduled_requests: HashMap<DownloadKind, PendingRequestInfo>,
     /// Queue of scheduled requests.
     scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
-    /// Downloads underway.
-    in_progress_downloads: FuturesUnordered<DownloadFut>,
 }
 
 impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
@@ -289,10 +320,11 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             concurrency_limits,
             msg_rx,
             peers: HashMap::default(),
+            goodbye_peer_queue: delay_queue::DelayQueue::default(),
             current_requests: HashMap::default(),
+            in_progress_downloads: FuturesUnordered::default(),
             scheduled_requests: HashMap::default(),
             scheduled_request_queue: delay_queue::DelayQueue::default(),
-            in_progress_downloads: FuturesUnordered::default(),
         }
     }
 
@@ -325,6 +357,11 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                     let kind = expired.into_inner();
                     let request_info = self.scheduled_requests.remove(&kind).expect("is registered");
                     self.on_scheduled_request_ready(kind, request_info);
+                }
+                Some(expired) = self.goodbye_peer_queue.next() => {
+                    let peer = expired.into_inner();
+                    self.peers.remove(&peer);
+                    trace!(%peer, "tick: goodbye peer");
                 }
             }
         }
@@ -395,13 +432,13 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     fn get_best_candidate(&mut self, hash: &Hash) -> Option<PublicKey> {
         /// Model the state of peers found in the candidates
         #[derive(PartialEq, Eq, Clone, Copy)]
-        enum PeerState {
+        enum ConnState {
             Dialing,
             Connected(usize),
             NotConnected,
         }
 
-        impl Ord for PeerState {
+        impl Ord for ConnState {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                 // define the order of preference between candidates as follows:
                 // - prefer connected peers to dialing ones
@@ -409,15 +446,15 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 // - prefer peers with less active requests when connected
                 use std::cmp::Ordering::*;
                 match (self, other) {
-                    (PeerState::Dialing, PeerState::Dialing) => Equal,
-                    (PeerState::Dialing, PeerState::Connected(_)) => Less,
-                    (PeerState::Dialing, PeerState::NotConnected) => Greater,
-                    (PeerState::NotConnected, PeerState::Dialing) => Less,
-                    (PeerState::NotConnected, PeerState::Connected(_)) => Less,
-                    (PeerState::NotConnected, PeerState::NotConnected) => Equal,
-                    (PeerState::Connected(_), PeerState::Dialing) => Greater,
-                    (PeerState::Connected(_), PeerState::NotConnected) => Greater,
-                    (PeerState::Connected(a), PeerState::Connected(b)) => {
+                    (ConnState::Dialing, ConnState::Dialing) => Equal,
+                    (ConnState::Dialing, ConnState::Connected(_)) => Less,
+                    (ConnState::Dialing, ConnState::NotConnected) => Greater,
+                    (ConnState::NotConnected, ConnState::Dialing) => Less,
+                    (ConnState::NotConnected, ConnState::Connected(_)) => Less,
+                    (ConnState::NotConnected, ConnState::NotConnected) => Equal,
+                    (ConnState::Connected(_), ConnState::Dialing) => Greater,
+                    (ConnState::Connected(_), ConnState::NotConnected) => Greater,
+                    (ConnState::Connected(a), ConnState::Connected(b)) => {
                         if a < b {
                             Greater
                         } else if a > b {
@@ -430,7 +467,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             }
         }
 
-        impl PartialOrd for PeerState {
+        impl PartialOrd for ConnState {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
                 Some(self.cmp(other))
             }
@@ -442,18 +479,18 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             .get_candidates(hash)
             .filter_map(|peer| {
                 if let Some(info) = self.peers.get(peer) {
-                    if info.connection.is_none() {
+                    if info.conn.is_none() {
                         // peer is temporarily banned, filter them out
                         return None;
                     }
-                    let req_count = info.active_requests;
+                    let req_count = info.active_requests();
                     // filter out peers at capacity
                     let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
-                    has_capacity.then_some((peer, PeerState::Connected(req_count)))
+                    has_capacity.then_some((peer, ConnState::Connected(req_count)))
                 } else if self.dialer.is_pending(peer) {
-                    Some((peer, PeerState::Dialing))
+                    Some((peer, ConnState::Dialing))
                 } else {
-                    Some((peer, PeerState::NotConnected))
+                    Some((peer, ConnState::NotConnected))
                 }
             })
             .collect::<Vec<_>>();
@@ -463,7 +500,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         // this is our best peer, check if we need to dial it
         let (peer, state) = candidates.pop()?;
 
-        if let PeerState::NotConnected = state {
+        if let ConnState::NotConnected = state {
             if !self.at_connections_capacity() {
                 // peer is not connected, not dialing and concurrency limits allow another connection
                 debug!(%peer, "dialing peer");
@@ -509,7 +546,9 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         match result {
             Ok(connection) => {
                 trace!(%peer, "connected to peer");
-                self.peers.insert(peer, ConnectionInfo::new(connection));
+                let drop_key = self.goodbye_peer_queue.insert(peer, IDLE_PEER_TIMEOUT);
+                self.peers
+                    .insert(peer, ConnectionInfo::new_idle(connection, drop_key));
             }
             Err(err) => {
                 debug!(%peer, %err, "connection to peer failed")
@@ -533,11 +572,22 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         } = info;
 
         let peer_info = self.peers.get_mut(&peer).expect("peer is connected");
-        peer_info.active_requests -= 1;
+        peer_info.state = match &peer_info.state {
+            PeerState::Busy { active_requests } => {
+                match NonZeroUsize::new(active_requests.get() - 1) {
+                    Some(active_requests) => PeerState::Busy { active_requests },
+                    None => {
+                        let drop_key = self.goodbye_peer_queue.insert(peer, IDLE_PEER_TIMEOUT);
+                        PeerState::Idle { drop_key }
+                    }
+                }
+            }
+            PeerState::Idle { .. } => unreachable!("peer was busy"),
+        };
 
         match result {
             Ok(()) => {
-                debug!(%peer, ?kind, "download compleated");
+                debug!(%peer, ?kind, "download completed");
                 for sender in intents.into_values() {
                     let _ = sender.send(Ok(()));
                 }
@@ -549,8 +599,8 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 }
             }
             Err(FailureAction::DropPeer(reason)) => {
-                debug!(%peer, ?kind, %reason, "dropping peer after failed request");
-                if let Some(_connection) = peer_info.connection.take() {
+                debug!(%peer, ?kind, %reason, "peer will be dropped");
+                if let Some(_connection) = peer_info.conn.take() {
                     // TODO(@divma): this will fail open streams, do we want this?
                     // connection.close(..)
                 }
@@ -694,16 +744,28 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// request. In this case, the count of active requests for the peer is incremented.
     fn get_peer_connection_for_download(&mut self, peer: &PublicKey) -> Option<quinn::Connection> {
         let info = self.peers.get_mut(peer)?;
-        let connection = info.connection.as_ref()?;
+        let connection = info.conn.as_ref()?;
         // check if the peer can be sent another request
-        if !self
-            .concurrency_limits
-            .peer_at_request_capacity(info.active_requests)
-        {
-            info.active_requests += 1;
-            Some(connection.clone())
-        } else {
-            None
+        match &mut info.state {
+            PeerState::Busy { active_requests } => {
+                if !self
+                    .concurrency_limits
+                    .peer_at_request_capacity(active_requests.get())
+                {
+                    *active_requests = active_requests.saturating_add(1);
+                    Some(connection.clone())
+                } else {
+                    None
+                }
+            }
+            PeerState::Idle { drop_key } => {
+                // peer is no longer idle
+                self.goodbye_peer_queue.remove(&drop_key);
+                info.state = PeerState::Busy {
+                    active_requests: NonZeroUsize::new(1).expect("clearly non zero"),
+                };
+                Some(connection.clone())
+            }
         }
     }
 
@@ -712,7 +774,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         let connected_peers = self
             .peers
             .values()
-            .filter(|info| info.connection.is_some())
+            .filter(|info| info.conn.is_some())
             .count();
         let dialing_peers = self.dialer.pending_count();
         self.concurrency_limits

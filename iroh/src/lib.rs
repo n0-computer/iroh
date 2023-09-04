@@ -11,12 +11,12 @@ pub mod client;
 pub mod collection;
 pub mod dial;
 pub mod download;
+pub mod downloader;
 pub mod get;
 pub mod node;
 pub mod rpc_protocol;
 pub mod sync_engine;
 pub mod util;
-pub mod downloader;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]
