@@ -31,27 +31,22 @@
 #![allow(clippy::all, unused, missing_docs)]
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet},
     num::NonZeroUsize,
 };
 
-use futures::{
-    future::{BoxFuture, LocalBoxFuture},
-    stream::FuturesUnordered,
-    FutureExt, StreamExt, TryFutureExt,
-};
+use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
-    protocol::{RangeSpec, RangeSpecSeq},
-    util::progress::IgnoreProgressSender,
+    protocol::RangeSpecSeq,
     Hash,
 };
 use iroh_gossip::net::util::Dialer;
 use iroh_net::key::PublicKey;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace};
 
 use self::get::FailureAction;
 
@@ -828,6 +823,7 @@ struct Registry {
 struct RegistryIter<'a> {
     inner: Option<std::collections::hash_set::Iter<'a, PublicKey>>,
 }
+
 impl<'a> Iterator for RegistryIter<'a> {
     type Item = &'a PublicKey;
 
