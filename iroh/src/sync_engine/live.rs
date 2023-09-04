@@ -6,7 +6,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use crate::download::Downloader;
+use crate::downloader::{DownloadKind, Downloader};
 use anyhow::{anyhow, bail, Result};
 use futures::{
     future::{BoxFuture, Shared},
@@ -673,11 +673,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // content.
                 let entry_status = self.bao_store.contains(&hash);
                 if matches!(entry_status, EntryStatus::NotFound) {
-                    self.downloader.push(hash, vec![from]).await;
-                    let fut = self.downloader.finished(&hash).await;
-                    let fut = fut
-                        .map(move |res| res.map(move |(hash, _len)| (topic, hash)))
-                        .boxed();
+                    let handle = self.downloader.queue(DownloadKind::Blob { hash }).await;
+                    self.downloader.peers_have(hash, vec![from]).await;
+                    let fut = async move {
+                        // NOTE: this ignores the result for now, simply keeping the option
+                        let res = handle.await.ok();
+                        res.map(|_| (topic, hash))
+                    }
+                    .boxed();
                     self.pending_downloads.push(fut);
                 }
 

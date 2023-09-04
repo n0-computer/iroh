@@ -56,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::dial::Ticket;
-use crate::download::Downloader;
+use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BytesGetRequest, BytesGetResponse, ListBlobsRequest, ListBlobsResponse, ListCollectionsRequest,
     ListCollectionsResponse, ListIncompleteBlobsRequest, ListIncompleteBlobsResponse,
@@ -367,7 +367,13 @@ where
         gossip_cell.set(gossip.clone()).unwrap();
 
         // spawn the sync engine
-        let downloader = Downloader::new(rt.clone(), endpoint.clone(), self.db.clone());
+        let downloader = Downloader::new(
+            self.db.clone(),
+            self.collection_parser.clone(),
+            endpoint.clone(),
+            rt.clone(),
+        )
+        .await;
         let sync = SyncEngine::spawn(
             rt.clone(),
             endpoint.clone(),
