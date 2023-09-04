@@ -31,7 +31,7 @@
 #![allow(clippy::all, unused, missing_docs)]
 
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     num::NonZeroUsize,
 };
 
@@ -818,5 +818,37 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     async fn shutdown(mut self) {
         debug!("shutting down");
         // TODO(@divma): how to make sure the download futures end gracefully?
+    }
+}
+
+struct Registry {
+    candidates: HashMap<Hash, HashSet<PublicKey>>,
+}
+
+struct RegistryIter<'a> {
+    inner: Option<std::collections::hash_set::Iter<'a, PublicKey>>,
+}
+impl<'a> Iterator for RegistryIter<'a> {
+    type Item = &'a PublicKey;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.as_mut().map(|iter| iter.next()).flatten()
+    }
+}
+
+impl AvailabilityRegistry for Registry {
+    type CandidateIter<'a> = RegistryIter<'a>;
+
+    fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter<'_> {
+        let inner = self.candidates.get(hash).map(|peer_set| peer_set.iter());
+        RegistryIter { inner }
+    }
+
+    fn add_peers(&mut self, hash: Hash, peers: &[PublicKey]) {
+        self.candidates.entry(hash).or_default().extend(peers)
+    }
+
+    fn remove(&mut self, hash: Hash) {
+        self.candidates.remove(&hash);
     }
 }
