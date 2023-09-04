@@ -2541,7 +2541,7 @@ pub(crate) mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{test_utils::run_derp_and_stun, tls, MagicEndpoint};
+    use crate::{test_utils::run_derper, tls, MagicEndpoint};
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
         quinn_udp::Transmit {
@@ -2659,10 +2659,6 @@ pub(crate) mod tests {
         t.await.unwrap().unwrap();
 
         c.close().await.unwrap();
-    }
-
-    struct Devices {
-        stun_ip: IpAddr,
     }
 
     /// Magicsock plus wrappers for sending packets
@@ -2783,11 +2779,7 @@ pub(crate) mod tests {
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
 
-        let devices = Devices {
-            stun_ip: "127.0.0.1".parse()?,
-        };
-
-        let (derp_map, region, _cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+        let (derp_map, region, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -2954,12 +2946,8 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_multithreaded_logging();
-        let devices = Devices {
-            stun_ip: "127.0.0.1".parse()?,
-        };
-
         for _ in 0..10 {
-            let (derp_map, _, _cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+            let (derp_map, _, _cleanup) = run_derper().await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;

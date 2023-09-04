@@ -481,7 +481,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
 mod tests {
     use tracing::{info, info_span, Instrument};
 
-    use crate::test_utils::run_derp_and_stun;
+    use crate::test_utils::run_derper;
 
     use super::*;
 
@@ -491,7 +491,7 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
-        let (derp_map, region_id, _guard) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
+        let (derp_map, region_id, _guard) = run_derper().await.unwrap();
         let server_secret_key = SecretKey::generate();
         let server_peer_id = server_secret_key.public();
 

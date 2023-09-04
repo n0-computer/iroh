@@ -91,7 +91,6 @@ mod tests {
                 url: format!("http://localhost:{port}").parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
-                stun_test_ip: None,
                 ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
             }
@@ -235,7 +234,6 @@ mod tests {
                 url: format!("https://localhost:{port}").parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
-                stun_test_ip: None,
                 ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
             }

@@ -193,7 +193,6 @@ pub mod test {
                 ipv6,
                 stun_port: port,
                 stun_only: true,
-                stun_test_ip: None,
             };
             DerpRegion {
                 region_id,
