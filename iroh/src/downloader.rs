@@ -28,18 +28,12 @@
 //! - *Requests per peer*: to avoid overwhelming peers with requests, the number of concurrent
 //!   requests to a single peer is also limited.
 
-#![allow(clippy::all, unused, missing_docs)]
-
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     num::NonZeroUsize,
 };
 
-use futures::{
-    future::{BoxFuture, LocalBoxFuture},
-    stream::FuturesUnordered,
-    FutureExt, StreamExt,
-};
+use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
@@ -70,7 +64,9 @@ const SERVICE_CHANNEL_CAPACITY: usize = 120;
 // Mainly for readability.
 pub type Id = u64;
 
+/// Trait modeling a registry of peers that have the hashes we want to download.
 pub trait AvailabilityRegistry {
+    /// Iterator of candidates.
     type CandidateIter<'a>: Iterator<Item = &'a PublicKey>
     where
         Self: 'a;
@@ -131,10 +127,12 @@ impl DownloadKind {
     }
 
     /// Get the ranges this download is requesting.
+    // NOTE: necessary to extend downloads to support ranges of blobs ranges of collections.
+    #[allow(dead_code)]
     fn ranges(&self) -> RangeSpecSeq {
         match self {
             DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
-            DownloadKind::Collection { hash } => RangeSpecSeq::all(),
+            DownloadKind::Collection { .. } => RangeSpecSeq::all(),
         }
     }
 }
@@ -181,6 +179,7 @@ pub struct Downloader {
 }
 
 impl Downloader {
+    /// Create a new Downloader.
     pub async fn new<S, C>(
         store: S,
         collection_parser: C,
@@ -238,7 +237,7 @@ impl Downloader {
     }
 
     /// Cancel a download.
-    // receiving the handle ensures an intent can't be cancelled twice
+    // NOTE: receiving the handle ensures an intent can't be cancelled twice
     pub async fn cancel(&mut self, handle: DownloadHandle) {
         let DownloadHandle {
             id,
@@ -252,6 +251,7 @@ impl Downloader {
         }
     }
 
+    /// Declare that certains peers can be used to download a hash.
     pub async fn peers_have(&mut self, hash: Hash, peers: Vec<PublicKey>) {
         let msg = Message::PeersHave { hash, peers };
         if let Err(send_err) = self.msg_tx.send(msg).await {
@@ -259,17 +259,6 @@ impl Downloader {
             debug!(?msg, "peers have not sent")
         }
     }
-}
-
-#[derive(derive_more::Debug)]
-struct DownloadInfo {
-    /// Kind of download.
-    kind: DownloadKind,
-    /// How many times can this request be attempted again before declaring it failed.
-    remaining_retries: u8,
-    /// Oneshot to return the download result back to the requester.
-    #[debug(skip)]
-    sender: oneshot::Sender<DownloadResult>,
 }
 
 /// Messages the service can receive.
@@ -804,7 +793,6 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         remaining_retries: u8,
         intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
     ) {
-        use iroh_bytes::baomap::MapEntry;
         debug!(%peer, ?kind, "starting download");
         let cancellation = CancellationToken::new();
         let info = ActiveRequestInfo {
@@ -906,7 +894,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             .at_connections_capacity(dialing_peers + connected_peers)
     }
 
-    async fn shutdown(mut self) {
+    async fn shutdown(self) {
         debug!("shutting down");
         // TODO(@divma): how to make sure the download futures end gracefully?
     }

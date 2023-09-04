@@ -1,5 +1,6 @@
 #![cfg(test)]
-
+// WIP
+#![allow(unused)]
 use super::*;
 
 impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {

@@ -16,11 +16,7 @@ use iroh_bytes::{
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
-    provider::ShareProgress,
-    util::{
-        progress::{IdGenerator, ProgressSender},
-        Hash,
-    },
+    util::Hash,
     IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
@@ -333,7 +329,7 @@ async fn get_blob_inner<D: Store>(
     } else {
         None
     };
-    let on_write = move |offset: u64, _length: usize| Ok(());
+    let on_write = move |_offset: u64, _length: usize| Ok(());
     let mut pw = ProgressSliceWriter2::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let end = content
@@ -367,7 +363,6 @@ async fn get_blob_inner_partial<D: Store>(
     // that it actually contains the requested ranges. Or DO WE?
     use iroh_io::AsyncSliceWriter;
 
-    let hash = header.hash();
     // read the size
     let (content, size) = header.next().await?;
     // open the data file in any case
@@ -377,7 +372,7 @@ async fn get_blob_inner_partial<D: Store>(
     } else {
         None
     };
-    let on_write = move |offset: u64, _length: usize| Ok(());
+    let on_write = move |_offset: u64, _length: usize| Ok(());
     let mut pw = ProgressSliceWriter2::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let end = content
@@ -441,7 +436,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(0, reader).await.map_err(|e| {
+        let (mut collection, _) = collection_parser.parse(0, reader).await.map_err(|e| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection : {e}"
             ))
@@ -483,7 +478,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
             };
             let child_offset = usize::try_from(start.child_offset())
                 .context("child offset too large")
-                .map_err(|e| {
+                .map_err(|_| {
                     FailureAction::AbortRequest(anyhow::anyhow!(
                         "requested offsets surpasses platform's usize"
                     ))
@@ -532,11 +527,11 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
         // read the blob and add it to the database
         let end_root = get_blob_inner(db, header).await?;
         // read the collection fully for now
-        let entry = db.get(root_hash).context("just downloaded").map_err(|e| {
+        let entry = db.get(root_hash).context("just downloaded").map_err(|_| {
             FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
         })?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(0, reader).await.map_err(|e| {
+        let (mut collection, _) = collection_parser.parse(0, reader).await.map_err(|_| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection"
             ))
@@ -558,7 +553,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
             };
             let child_offset = usize::try_from(start.child_offset())
                 .context("child offset too large")
-                .map_err(|e| {
+                .map_err(|_| {
                     FailureAction::AbortRequest(anyhow::anyhow!(
                         "requested offsets surpasses platform's usize"
                     ))
