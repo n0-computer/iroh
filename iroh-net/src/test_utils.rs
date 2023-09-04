@@ -1,7 +1,5 @@
 //! Internal utilities to support testing.
 
-use std::net::IpAddr;
-
 use anyhow::Result;
 use tokio::sync::oneshot;
 use tracing::{info_span, Instrument};
@@ -22,9 +20,7 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
-pub(crate) async fn run_derp_and_stun(
-    stun_ip: IpAddr,
-) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
+pub(crate) async fn run_derper() -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
     // TODO: pass a mesh_key?
 
     let server_key = SecretKey::generate();
@@ -38,7 +34,7 @@ pub(crate) async fn run_derp_and_stun(
     let https_addr = server.addr();
     println!("DERP listening on {:?}", https_addr);
 
-    let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(stun_ip).await?;
+    let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(server.addr().ip()).await?;
     let region_id = 1;
     let m = DerpMap::from_regions([DerpRegion {
         region_id,
@@ -55,7 +51,6 @@ pub(crate) async fn run_derp_and_stun(
             stun_port: stun_addr.port(),
             ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
             ipv6: UseIpv6::Disabled,
-            stun_test_ip: Some(stun_addr.ip()),
         }
         .into()],
         avoid: false,

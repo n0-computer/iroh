@@ -915,7 +915,6 @@ mod tests {
                     stun_port,
                     ipv4: UseIpv4::TryDns,
                     ipv6: UseIpv6::TryDns,
-                    stun_test_ip: None,
                 })
                 .map(Arc::new)
                 .collect(),

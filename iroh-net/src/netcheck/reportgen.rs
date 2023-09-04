@@ -949,16 +949,6 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     if port == 0 {
         port = DEFAULT_DERP_STUN_PORT;
     }
-    if let Some(ip) = n.stun_test_ip {
-        if proto == ProbeProto::StunIpv4 && ip.is_ipv6() {
-            bail!("STUN test IP set has mismatching protocol");
-        }
-        if proto == ProbeProto::StunIpv6 && ip.is_ipv4() {
-            bail!("STUN test IP set has mismatching protocol");
-        }
-        return Ok(SocketAddr::new(ip, port));
-    }
-
     match proto {
         ProbeProto::StunIpv4 => {
             if let UseIpv4::Some(ip) = n.ipv4 {
