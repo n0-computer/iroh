@@ -9,14 +9,14 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
-use iroh_sync::store::GetFilter;
-use iroh_sync::sync::{AuthorId, NamespaceId};
-use iroh_sync::Entry;
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
+use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocCreateRequest,
-    DocGetRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
+    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, ConnectionInfoRequest,
+    ConnectionInfoResponse, ConnectionsRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
+    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
     ProviderService, ShareMode, StatsGetRequest,
 };
@@ -113,6 +113,19 @@ where
         let res = self.rpc.rpc(StatsGetRequest {}).await??;
         Ok(res.stats)
     }
+
+    /// Get information about the different connections we have made
+    pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
+        let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
+        Ok(flatten(stream).map_ok(|res| res.conn_info))
+    }
+
+    /// Get connection information about a node
+    pub async fn connection_info(&self, node_id: PublicKey) -> Result<Option<ConnectionInfo>> {
+        let ConnectionInfoResponse { conn_info } =
+            self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
+        Ok(conn_info)
+    }
 }
 
 /// Document handle
@@ -158,21 +171,23 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_latest(&self, author_id: AuthorId, key: Vec<u8>) -> Result<Entry> {
-        let filter = GetFilter::latest().with_key(key).with_author(author_id);
-        let mut stream = self.get(filter).await?;
-        let entry = stream
-            .next()
-            .await
-            .unwrap_or_else(|| Err(anyhow!("not found")))?;
-        Ok(entry)
+    pub async fn get_one(&self, author: AuthorId, key: Vec<u8>) -> Result<Option<Entry>> {
+        let res = self
+            .rpc
+            .rpc(DocGetOneRequest {
+                author,
+                key,
+                doc_id: self.id,
+            })
+            .await??;
+        Ok(res.entry.map(|entry| entry.into()))
     }
 
     /// Get entries.
-    pub async fn get(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
+    pub async fn get_many(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
         let stream = self
             .rpc
-            .server_streaming(DocGetRequest {
+            .server_streaming(DocGetManyRequest {
                 doc_id: self.id,
                 filter,
             })

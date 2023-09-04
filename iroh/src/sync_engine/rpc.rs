@@ -10,11 +10,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocGetRequest, DocGetResponse, DocImportRequest,
-        DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
-        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
-        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
+        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
+        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
+        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
+        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, PeerSource, SyncEngine},
 };
@@ -178,21 +179,24 @@ impl<S: Store> SyncEngine<S> {
         let hash = bao_store.import_bytes(value.into()).await?;
         replica
             .insert(&key, &author, hash, len as u64)
-            .map_err(Into::into)?;
+            .map_err(anyhow::Error::from)?;
         let entry = self
             .store
-            .get_latest_by_key_and_author(replica.namespace(), author.id(), &key)?
+            .get_one(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
     }
 
-    pub fn doc_get(&self, req: DocGetRequest) -> impl Stream<Item = RpcResult<DocGetResponse>> {
-        let DocGetRequest { doc_id, filter } = req;
+    pub fn doc_get_many(
+        &self,
+        req: DocGetManyRequest,
+    ) -> impl Stream<Item = RpcResult<DocGetManyResponse>> {
+        let DocGetManyRequest { doc_id, filter } = req;
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let store = self.store.clone();
         self.rt.main().spawn_blocking(move || {
-            let ite = store.get(doc_id, filter);
-            let ite = inline_result(ite).map_ok(|entry| DocGetResponse { entry });
+            let ite = store.get_many(doc_id, filter);
+            let ite = inline_result(ite).map_ok(|entry| DocGetManyResponse { entry });
             for entry in ite {
                 if let Err(_err) = tx.send(entry) {
                     break;
@@ -200,6 +204,17 @@ impl<S: Store> SyncEngine<S> {
             }
         });
         rx.into_stream()
+    }
+
+    pub async fn doc_get_one(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
+        let DocGetOneRequest {
+            doc_id,
+            author,
+            key,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let entry = self.store.get_one(replica.namespace(), author, key)?;
+        Ok(DocGetOneResponse { entry })
     }
 }
 

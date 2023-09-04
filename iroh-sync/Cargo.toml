@@ -9,14 +9,14 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.67"
+rust-version = "1.70"
 
 [dependencies]
 anyhow = "1"
 blake3 = { package = "iroh-blake3", version = "1.4.3"}
 crossbeam = "0.8.2"
 data-encoding = "2.4.0"
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "into", "as_ref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.10"
 iroh-bytes = { version = "0.6.0-alpha.0", path = "../iroh-bytes" }
@@ -30,6 +30,7 @@ url = "2.4"
 bytes = "1"
 parking_lot = "0.12.1"
 hex = "0.4"
+thiserror = "1"
 tracing = "0.1"
 
 # fs-store
@@ -45,8 +46,12 @@ quinn = { version = "0.10", optional = true }
 futures = { version = "0.3", optional = true }
 
 [dev-dependencies]
+iroh-test = { version = "0.6.0-alpha.0", path = "../iroh-test" }
+rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["sync", "macros"] }
 tempfile = "3.4"
+proptest = "1.2.0"
+test-strategy = "0.3.1"
 
 [features]
 default = ["net", "fs-store", "metrics"]

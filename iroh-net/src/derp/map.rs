@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr},
     sync::Arc,
 };
 
@@ -92,7 +92,6 @@ impl DerpMap {
                     stun_port,
                     ipv4: derp_ipv4,
                     ipv6: derp_ipv6,
-                    stun_test_ip: None,
                 }
                 .into()],
                 avoid: false,
@@ -190,17 +189,20 @@ pub struct DerpNode {
     ///
     /// This name MUST be unique among all configured DERP servers.
     pub name: String,
-    /// The numeric region ID
+    /// The numeric region ID.
     pub region_id: u16,
-    /// The [`Url`] where this derp server can be dialed
+    /// The [`Url`] where this derp server can be dialed.
     #[debug("{}", url)]
     pub url: Url,
-    /// Whether this derp server should only be used for STUN requests
+    /// Whether this derp server should only be used for STUN requests.
+    ///
+    /// This essentially allows you to use a normal STUN server as a DERP node, no DERP
+    /// functionality is used.
     pub stun_only: bool,
-    /// The stun port of the derp server
+    /// The stun port of the derp server.
+    ///
+    /// Setting this to `0` means the default STUN port is used.
     pub stun_port: u16,
-    /// Optional stun-specific IP address
-    pub stun_test_ip: Option<IpAddr>,
     /// Whether to dial this server on IPv4.
     pub ipv4: UseIpv4,
     /// Whether to dial this server on IPv6.

@@ -9,6 +9,7 @@ use std::{
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
+use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
@@ -58,9 +59,9 @@ pub(super) struct Endpoint {
     pub(super) public_key: PublicKey,
     /// Last time we pinged all endpoints
     last_full_ping: Option<Instant>,
-    /// Fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
-    /// Only the region_id/port of the mapped derp addr.
-    derp_addr: Option<u16>,
+    /// The region id of DERP node that we can relay over to communicate.
+    /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
+    derp_region: Option<u16>,
     /// Best non-DERP path.
     best_addr: Option<AddrLatency>,
     /// Time best address re-confirmed.
@@ -94,14 +95,14 @@ pub(super) struct Options {
     pub(super) msock_sender: mpsc::Sender<ActorMessage>,
     pub(super) msock_public_key: PublicKey,
     pub(super) public_key: PublicKey,
-    pub(super) derp_addr: Option<u16>,
+    pub(super) derp_region: Option<u16>,
 }
 
 impl Endpoint {
     pub fn new(id: usize, options: Options) -> Self {
         let quic_mapped_addr = QuicMappedAddr::generate();
 
-        if options.derp_addr.is_some() {
+        if options.derp_region.is_some() {
             // we potentially have a relay connection to the peer
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
@@ -113,7 +114,7 @@ impl Endpoint {
             conn_public_key: options.msock_public_key,
             public_key: options.public_key,
             last_full_ping: None,
-            derp_addr: options.derp_addr,
+            derp_region: options.derp_region,
             best_addr: None,
             best_addr_at: None,
             trust_best_addr_until: None,
@@ -132,32 +133,47 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub fn info(&self) -> EndpointInfo {
+        let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
+            let addr_info = self.best_addr.as_ref().expect("checked");
+            (ConnectionType::Direct(addr_info.addr), addr_info.latency)
+        } else if let Some(region_id) = self.derp_region {
+            let latency = match self.endpoint_state.get(&SendAddr::Derp(region_id)) {
+                Some(endpoint_state) => endpoint_state.recent_pong().map(|pong| pong.latency),
+                None => None,
+            };
+            (ConnectionType::Relay(region_id), latency)
+        } else {
+            (ConnectionType::None, None)
+        };
         let addrs = self
             .endpoint_state
-            .keys()
-            .filter_map(|addr| match addr {
-                SendAddr::Udp(addr) => Some(*addr),
+            .iter()
+            .filter_map(|(addr, endpoint_state)| match addr {
+                SendAddr::Udp(addr) => {
+                    Some((*addr, endpoint_state.recent_pong().map(|pong| pong.latency)))
+                }
                 _ => None,
             })
             .collect();
 
         EndpointInfo {
+            id: self.id,
             public_key: self.public_key,
-            derp_addr: self.derp_addr,
+            derp_region: self.derp_region,
             addrs,
-            has_direct_connection: self.is_best_addr_valid(Instant::now()),
-            latency: self.best_addr.as_ref().and_then(|a| a.latency),
+            conn_type,
+            latency,
         }
     }
 
-    /// Returns the derp addr of this endpoint
-    pub fn derp_addr(&self) -> Option<u16> {
-        self.derp_addr
+    /// Returns the derp region of this endpoint
+    pub fn derp_region(&self) -> Option<u16> {
+        self.derp_region
     }
 
-    /// Adds a derp addr for this endpoint
-    pub fn add_derp_addr(&mut self, region: u16) {
-        self.derp_addr = Some(region);
+    /// Adds a derp region for this endpoint
+    pub fn add_derp_region(&mut self, region: u16) {
+        self.derp_region = Some(region);
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
@@ -165,7 +181,7 @@ impl Endpoint {
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
-            return (None, self.derp_addr, false);
+            return (None, self.derp_region, false);
         }
         match self.best_addr {
             Some(ref best_addr) => {
@@ -176,7 +192,7 @@ impl Endpoint {
                         now, best_addr, self.trust_best_addr_until
                     );
 
-                    (Some(best_addr.addr), self.derp_addr, true)
+                    (Some(best_addr.addr), self.derp_region, true)
                 } else {
                     // Address is current and can be used
                     (Some(best_addr.addr), None, false)
@@ -185,15 +201,15 @@ impl Endpoint {
             None => {
                 let (addr, should_ping) = self.get_candidate_udp_addr();
 
-                // Provide backup derp addr if no known latency or no addr.
-                let derp_addr = if should_ping || addr.is_none() {
-                    self.derp_addr
+                // Provide backup derp region if no known latency or no addr.
+                let derp_region = if should_ping || addr.is_none() {
+                    self.derp_region
                 } else {
                     None
                 };
 
-                debug!("using candidate addr {addr:?}, derp addr: {derp_addr:?}");
-                (addr, derp_addr, should_ping)
+                debug!("using candidate addr {addr:?}, derp addr: {derp_region:?}");
+                (addr, derp_region, should_ping)
             }
         }
     }
@@ -221,7 +237,7 @@ impl Endpoint {
             if self.best_addr.is_none() {
                 // we now have a direct connection, adjust direct connection count
                 inc!(MagicsockMetrics, num_direct_conns_added);
-                if self.derp_addr.is_some() {
+                if self.derp_region.is_some() {
                     // we no longer rely on the relay connection, decrease the relay connection
                     // count
                     inc!(MagicsockMetrics, num_relay_conns_removed);
@@ -304,9 +320,9 @@ impl Endpoint {
         });
 
         let now = Instant::now();
-        let (udp_addr, derp_addr, _should_ping) = self.addr_for_send(&now);
-        if let Some(derp_addr) = derp_addr {
-            self.start_ping(SendAddr::Derp(derp_addr), now, DiscoPingPurpose::Cli)
+        let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
+        if let Some(derp_region) = derp_region {
+            self.start_ping(SendAddr::Derp(derp_region), now, DiscoPingPurpose::Cli)
                 .await;
         }
         if let Some(udp_addr) = udp_addr {
@@ -327,7 +343,7 @@ impl Endpoint {
         // NOTE: this should be checked for before dialing
         // In our current set up, there is no way to report an error.
         // TODO(ramfox): figure out method of reporting dial errors this far down into the stack
-        if udp_addr.is_none() && derp_addr.is_none() {
+        if udp_addr.is_none() && derp_region.is_none() {
             tracing::error!(
                 "unable to ping endpoint {} {:?}, no UDP or DERP addresses known.",
                 self.id,
@@ -352,7 +368,7 @@ impl Endpoint {
                 if sp.to == addr.addr {
                     // we had a direct connection that is no longer valid
                     inc!(MagicsockMetrics, num_direct_conns_removed);
-                    if self.derp_addr.is_some() {
+                    if self.derp_region.is_some() {
                         // we can only connect through a relay connection
                         inc!(MagicsockMetrics, num_relay_conns_added);
                     }
@@ -474,7 +490,7 @@ impl Endpoint {
                     // we no longer rely on a direct connection
                     if self.best_addr.is_some() {
                         inc!(MagicsockMetrics, num_direct_conns_removed);
-                        if self.derp_addr.is_some() {
+                        if self.derp_region.is_some() {
                             inc!(MagicsockMetrics, num_relay_conns_added);
                         }
                     }
@@ -514,14 +530,14 @@ impl Endpoint {
             self.start_ping(ep, now, DiscoPingPurpose::Discovery).await;
         }
 
-        let derp_addr = self.derp_addr;
+        let derp_region = self.derp_region;
 
         if send_call_me_maybe && (sent_any || !have_endpoints) {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
             // of potential UDP addresses.
             //
             // Otherwise it is used for hole punching, as described below.
-            if let Some(derp_addr) = derp_addr {
+            if let Some(derp_region) = derp_region {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
                 // it doesn't know already) and then send a CallMeMaybe
                 // message to our peer via DERP informing them that we've
@@ -531,7 +547,7 @@ impl Endpoint {
                 let sender = self.conn_sender.clone();
                 if let Err(err) = sender
                     .send(ActorMessage::EnqueueCallMeMaybe {
-                        derp_addr,
+                        derp_region,
                         endpoint_id: id,
                     })
                     .await
@@ -546,19 +562,22 @@ impl Endpoint {
         if self.best_addr.is_none() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status
-            if self.derp_addr.is_none() && n.derp.is_some() {
+            if self.derp_region.is_none() && n.derp.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.derp_addr.is_some() && n.derp.is_none() {
+            } else if self.derp_region.is_some() && n.derp.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
-        debug!(
-            "Changing derp region for {:?} from {:?} to {:?}",
-            self.public_key, self.derp_addr, n.derp
-        );
-        self.derp_addr = n.derp;
+
+        if n.derp.is_some() {
+            debug!(
+                "Changing derp region for {:?} from {:?} to {:?}",
+                self.public_key, self.derp_region, n.derp
+            );
+            self.derp_region = n.derp;
+        }
 
         for st in self.endpoint_state.values_mut() {
             st.index = Index::Deleted; // assume deleted until updated in next loop
@@ -592,7 +611,7 @@ impl Endpoint {
                     if self.best_addr.is_some() {
                         // we no long rely on a direct connection
                         inc!(MagicsockMetrics, num_direct_conns_removed);
-                        if self.derp_addr.is_some() {
+                        if self.derp_region.is_some() {
                             // we only have a relay connection to the peer
                             inc!(MagicsockMetrics, num_relay_conns_added);
                         }
@@ -610,7 +629,7 @@ impl Endpoint {
         if self.best_addr.is_some() {
             // we no longer rely on a direct connection
             inc!(MagicsockMetrics, num_relay_conns_removed);
-            if self.derp_addr.is_some() {
+            if self.derp_region.is_some() {
                 // we are now relying on a relay connection
                 inc!(MagicsockMetrics, num_direct_conns_added);
             }
@@ -676,7 +695,7 @@ impl Endpoint {
                         // no longer relying on a direct connection, remove conn count
                         if self.best_addr.is_some() {
                             inc!(MagicsockMetrics, num_direct_conns_removed);
-                            if self.derp_addr.is_some() {
+                            if self.derp_region.is_some() {
                                 // we now rely on a relay connection, add a relay count
                                 inc!(MagicsockMetrics, num_relay_conns_added);
                             }
@@ -811,7 +830,7 @@ impl Endpoint {
                         if self.best_addr.is_none() {
                             // we now have direct connection!
                             inc!(MagicsockMetrics, num_direct_conns_added);
-                            if self.derp_addr.is_some() {
+                            if self.derp_region.is_some() {
                                 // no long relying on a relay connection, remove a relay conn
                                 inc!(MagicsockMetrics, num_relay_conns_removed);
                             }
@@ -881,7 +900,7 @@ impl Endpoint {
                     if self.best_addr.is_some() {
                         // no longer relying on the direct connection
                         inc!(MagicsockMetrics, num_direct_conns_removed);
-                        if self.derp_addr.is_some() {
+                        if self.derp_region.is_some() {
                             // we are now relying on the relay connection, add a relay conn
                             inc!(MagicsockMetrics, num_relay_conns_added);
                         }
@@ -958,16 +977,16 @@ impl Endpoint {
 
         let now = Instant::now();
         self.last_active = now;
-        let (udp_addr, derp_addr, should_ping) = self.addr_for_send(&now);
+        let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
 
         // Trigger a round of pings if we haven't had any full pings yet.
         if should_ping && self.want_full_ping(&now) {
             self.send_pings(now, true).await;
         }
 
-        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_addr);
+        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_region);
 
-        Ok((udp_addr, derp_addr))
+        Ok((udp_addr, derp_region))
     }
 
     fn is_best_addr_valid(&self, instant: Instant) -> bool {
@@ -1068,6 +1087,16 @@ impl PeerMap {
         self.by_id.iter_mut()
     }
 
+    /// Get the [`EndpointInfo`]s for each endpoint
+    pub(super) fn endpoint_infos(&self) -> Vec<EndpointInfo> {
+        self.endpoints().map(|(_, ep)| ep.info()).collect()
+    }
+
+    /// Get the [`EndpointInfo`]s for each endpoint
+    pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
+        self.endpoint_for_node_key(public_key).map(|ep| ep.info())
+    }
+
     /// Inserts a new endpoint into the [`PeerMap`].
     pub(super) fn insert_endpoint(&mut self, options: Options) -> usize {
         let id = self.next_id;
@@ -1105,15 +1134,18 @@ impl PeerMap {
         self.by_ip_port.insert(*ipp, id);
     }
 
-    /// Deletes the endpoint.
-    pub(super) fn delete_endpoint(&mut self, id: usize) {
-        if let Some(mut ep) = self.by_id.remove(&id) {
-            ep.stop_and_reset();
-            self.by_node_key.remove(ep.public_key());
-        }
-
-        self.by_ip_port.retain(|_, v| *v != id);
-    }
+    // TODO: When do we want to remove endpoints?
+    // Dead code at the moment. This was already never called before, because entries were never
+    // removed from the now-removed NetworkMap.
+    // /// Deletes the endpoint.
+    // pub(super) fn delete_endpoint(&mut self, id: usize) {
+    //     if let Some(mut ep) = self.by_id.remove(&id) {
+    //         ep.stop_and_reset();
+    //         self.by_node_key.remove(ep.public_key());
+    //     }
+    //
+    //     self.by_ip_port.retain(|_, v| *v != id);
+    // }
 }
 
 /// Some state and history for a specific endpoint of a endpoint.
@@ -1147,18 +1179,35 @@ struct EndpointState {
     index: Index,
 }
 
+/// The type of connection we have to the endpoint.
+#[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ConnectionType {
+    /// Direct UDP connection
+    #[display("direct")]
+    Direct(SocketAddr),
+    /// Relay connection over DERP
+    #[display("relay")]
+    Relay(u16),
+    /// We have no verified connection to this PublicKey
+    #[display("none")]
+    None,
+}
+
 /// Details about an Endpoint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointInfo {
+    /// The id in the peer_map
+    pub id: usize,
     /// The public key of the endpoint.
     pub public_key: PublicKey,
     /// Derp region, if available.
-    pub derp_addr: Option<u16>,
-    /// List of addresses this node might be reachable under.
-    pub addrs: Vec<SocketAddr>,
-    /// Is this node currently direcly reachable?
-    pub has_direct_connection: bool,
-    /// Current latency information, for a direct connection if available.
+    pub derp_region: Option<u16>,
+    /// List of addresses at which this node might be reachable, plus any latency information we
+    /// have about that address.
+    pub addrs: Vec<(SocketAddr, Option<Duration>)>,
+    /// The type of connection we have to the peer, either direct or over relay.
+    pub conn_type: ConnectionType,
+    /// The latency of the `conn_type`.
     pub latency: Option<Duration>,
 }
 
@@ -1261,5 +1310,266 @@ impl AddrLatency {
             return false;
         }
         self.latency < other.latency
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::key::SecretKey;
+
+    #[test]
+    fn test_endpoint_infos() {
+        // endpoint with a `best_addr` that has a latency
+        let pong_src = "0.0.0.0:1".parse().unwrap();
+        let latency = Duration::from_millis(50);
+        let (a_endpoint, a_socket_addr) = {
+            let socket_addr = "0.0.0.0:10".parse().unwrap();
+            let now = Instant::now();
+            let endpoint_state = HashMap::from([(
+                SendAddr::Udp(socket_addr),
+                EndpointState {
+                    index: Index::Some(0),
+                    last_ping: None,
+                    last_got_ping: None,
+                    last_got_ping_tx_id: None,
+                    call_me_maybe_time: None,
+                    recent_pongs: vec![PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Udp(socket_addr),
+                        pong_src,
+                    }],
+                    recent_pong: 0,
+                },
+            )]);
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            (
+                Endpoint {
+                    id: 0,
+                    conn_sender: send,
+                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    conn_public_key: key.public(),
+                    public_key: key.public(),
+                    last_full_ping: None,
+                    derp_region: Some(0),
+                    best_addr: Some(AddrLatency {
+                        addr: socket_addr,
+                        latency: Some(latency),
+                    }),
+                    best_addr_at: Some(now),
+                    trust_best_addr_until: now.checked_add(Duration::from_secs(100)),
+                    endpoint_state,
+                    is_call_me_maybe_ep: HashMap::new(),
+                    pending_cli_pings: Vec::new(),
+                    expired: false,
+                    sent_ping: HashMap::new(),
+                    last_active: now,
+                },
+                socket_addr,
+            )
+        };
+        // endpoint w/ no best addr but a derp  w/ latency
+        let b_endpoint = {
+            // let socket_addr = "0.0.0.0:9".parse().unwrap();
+            let now = Instant::now();
+            let endpoint_state = HashMap::from([(
+                SendAddr::Derp(0),
+                EndpointState {
+                    index: Index::Some(1),
+                    last_ping: None,
+                    last_got_ping: None,
+                    last_got_ping_tx_id: None,
+                    call_me_maybe_time: None,
+                    recent_pongs: vec![PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Derp(0),
+                        pong_src,
+                    }],
+                    recent_pong: 0,
+                },
+            )]);
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            Endpoint {
+                id: 1,
+                conn_sender: send,
+                quic_mapped_addr: QuicMappedAddr::generate(),
+                conn_public_key: key.public(),
+                public_key: key.public(),
+                last_full_ping: None,
+                derp_region: Some(0),
+                best_addr: None,
+                best_addr_at: None,
+                trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
+                endpoint_state,
+                is_call_me_maybe_ep: HashMap::new(),
+                pending_cli_pings: Vec::new(),
+                expired: false,
+                sent_ping: HashMap::new(),
+                last_active: now,
+            }
+        };
+
+        // endpoint w/ no best addr but a derp  w/ no latency
+        let c_endpoint = {
+            // let socket_addr = "0.0.0.0:8".parse().unwrap();
+            let now = Instant::now();
+            let endpoint_state = HashMap::new();
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            Endpoint {
+                id: 2,
+                conn_sender: send,
+                quic_mapped_addr: QuicMappedAddr::generate(),
+                conn_public_key: key.public(),
+                public_key: key.public(),
+                last_full_ping: None,
+                derp_region: Some(0),
+                best_addr: None,
+                best_addr_at: None,
+                trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
+                endpoint_state,
+                is_call_me_maybe_ep: HashMap::new(),
+                pending_cli_pings: Vec::new(),
+                expired: false,
+                sent_ping: HashMap::new(),
+                last_active: now,
+            }
+        };
+
+        // endpoint w/ expired best addr
+        let (d_endpoint, d_socket_addr) = {
+            let socket_addr = "0.0.0.0:7".parse().unwrap();
+            let now = Instant::now();
+            let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
+            let endpoint_state = HashMap::from([
+                (
+                    SendAddr::Udp(socket_addr),
+                    EndpointState {
+                        index: Index::Some(0),
+                        last_ping: None,
+                        last_got_ping: None,
+                        last_got_ping_tx_id: None,
+                        call_me_maybe_time: None,
+                        recent_pongs: vec![PongReply {
+                            latency,
+                            pong_at: now,
+                            from: SendAddr::Udp(socket_addr),
+                            pong_src,
+                        }],
+                        recent_pong: 0,
+                    },
+                ),
+                (
+                    SendAddr::Derp(0),
+                    EndpointState {
+                        index: Index::Some(1),
+                        last_ping: None,
+                        last_got_ping: None,
+                        last_got_ping_tx_id: None,
+                        call_me_maybe_time: None,
+                        recent_pongs: vec![PongReply {
+                            latency,
+                            pong_at: now,
+                            from: SendAddr::Derp(0),
+                            pong_src,
+                        }],
+                        recent_pong: 0,
+                    },
+                ),
+            ]);
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            (
+                Endpoint {
+                    id: 3,
+                    conn_sender: send,
+                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    conn_public_key: key.public(),
+                    public_key: key.public(),
+                    last_full_ping: None,
+                    derp_region: Some(0),
+                    best_addr: Some(AddrLatency {
+                        addr: socket_addr,
+                        latency: Some(Duration::from_millis(80)),
+                    }),
+                    best_addr_at: Some(now),
+                    trust_best_addr_until: Some(expired),
+                    endpoint_state,
+                    is_call_me_maybe_ep: HashMap::new(),
+                    pending_cli_pings: Vec::new(),
+                    expired: false,
+                    sent_ping: HashMap::new(),
+                    last_active: now,
+                },
+                socket_addr,
+            )
+        };
+        let expect = Vec::from([
+            EndpointInfo {
+                id: a_endpoint.id,
+                public_key: a_endpoint.public_key,
+                derp_region: a_endpoint.derp_region,
+                addrs: Vec::from([(a_socket_addr, Some(latency))]),
+                conn_type: ConnectionType::Direct(a_socket_addr),
+                latency: Some(latency),
+            },
+            EndpointInfo {
+                id: b_endpoint.id,
+                public_key: b_endpoint.public_key,
+                derp_region: b_endpoint.derp_region,
+                addrs: Vec::new(),
+                conn_type: ConnectionType::Relay(0),
+                latency: Some(latency),
+            },
+            EndpointInfo {
+                id: c_endpoint.id,
+                public_key: c_endpoint.public_key,
+                derp_region: c_endpoint.derp_region,
+                addrs: Vec::new(),
+                conn_type: ConnectionType::Relay(0),
+                latency: None,
+            },
+            EndpointInfo {
+                id: d_endpoint.id,
+                public_key: d_endpoint.public_key,
+                derp_region: d_endpoint.derp_region,
+                addrs: Vec::from([(d_socket_addr, Some(latency))]),
+                conn_type: ConnectionType::Relay(0),
+                latency: Some(latency),
+            },
+        ]);
+
+        let peer_map = PeerMap {
+            by_node_key: HashMap::from([
+                (a_endpoint.public_key, a_endpoint.id),
+                (b_endpoint.public_key, b_endpoint.id),
+                (c_endpoint.public_key, c_endpoint.id),
+                (d_endpoint.public_key, d_endpoint.id),
+            ]),
+            by_ip_port: HashMap::from([
+                (SendAddr::Udp(a_socket_addr), a_endpoint.id),
+                (SendAddr::Udp(d_socket_addr), d_endpoint.id),
+            ]),
+            by_quic_mapped_addr: HashMap::from([
+                (a_endpoint.quic_mapped_addr, a_endpoint.id),
+                (b_endpoint.quic_mapped_addr, b_endpoint.id),
+                (c_endpoint.quic_mapped_addr, c_endpoint.id),
+                (d_endpoint.quic_mapped_addr, d_endpoint.id),
+            ]),
+            by_id: HashMap::from([
+                (a_endpoint.id, a_endpoint),
+                (b_endpoint.id, b_endpoint),
+                (c_endpoint.id, c_endpoint),
+                (d_endpoint.id, d_endpoint),
+            ]),
+            next_id: 5,
+        };
+        let mut got = peer_map.endpoint_infos();
+        got.sort_by_key(|p| p.id);
+        assert_eq!(expect, got);
     }
 }

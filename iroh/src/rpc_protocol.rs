@@ -13,11 +13,12 @@ use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
 use iroh_gossip::proto::util::base32;
-use iroh_net::key::PublicKey;
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 
 use iroh_sync::{
     store::GetFilter,
-    sync::{AuthorId, NamespaceId, SignedEntry},
+    sync::{NamespaceId, SignedEntry},
+    AuthorId,
 };
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -192,6 +193,46 @@ pub struct VersionRequest;
 
 impl RpcMsg<ProviderService> for VersionRequest {
     type Response = VersionResponse;
+}
+
+/// List connection information about all the nodes we know about
+///
+/// These can be nodes that we have explicitly connected to or nodes
+/// that have initiated connections to us.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionsRequest;
+
+/// A response to a connections request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionsResponse {
+    /// Information about a connection
+    pub conn_info: ConnectionInfo,
+}
+
+impl Msg<ProviderService> for ConnectionsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ConnectionsRequest {
+    type Response = RpcResult<ConnectionsResponse>;
+}
+
+/// Get connection information about a specific node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionInfoRequest {
+    /// The node identifier
+    pub node_id: PublicKey,
+}
+
+/// A response to a connection request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionInfoResponse {
+    /// Information about a connection to a node
+    pub conn_info: Option<ConnectionInfo>,
+}
+
+impl RpcMsg<ProviderService> for ConnectionInfoRequest {
+    type Response = RpcResult<ConnectionInfoResponse>;
 }
 
 /// A request to shutdown the node
@@ -523,26 +564,48 @@ pub struct DocSetResponse {
 
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetRequest {
+pub struct DocGetManyRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// Filter entries by this [`GetFilter`]
     pub filter: GetFilter,
 }
 
-impl Msg<ProviderService> for DocGetRequest {
+impl Msg<ProviderService> for DocGetManyRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for DocGetRequest {
-    type Response = RpcResult<DocGetResponse>;
+impl ServerStreamingMsg<ProviderService> for DocGetManyRequest {
+    type Response = RpcResult<DocGetManyResponse>;
 }
 
-/// Response to [`DocGetRequest`]
+/// Response to [`DocGetManyRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetResponse {
+pub struct DocGetManyResponse {
     /// The document entry
     pub entry: SignedEntry,
+}
+
+/// Get entries from a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetOneRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Key
+    pub key: Vec<u8>,
+    /// Author
+    pub author: AuthorId,
+}
+
+impl RpcMsg<ProviderService> for DocGetOneRequest {
+    type Response = RpcResult<DocGetOneResponse>;
+}
+
+/// Response to [`DocGetOneRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetOneResponse {
+    /// The document entry
+    pub entry: Option<SignedEntry>,
 }
 
 /// Get the bytes for a hash
@@ -617,13 +680,17 @@ pub enum ProviderRequest {
     DocCreate(DocCreateRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
-    DocGet(DocGetRequest),
+    DocGet(DocGetManyRequest),
+    DocGetOne(DocGetOneRequest),
     DocStartSync(DocStartSyncRequest),
     DocStopSync(DocStopSyncRequest),
     DocShare(DocShareRequest),
     DocSubscribe(DocSubscribeRequest),
 
     BytesGet(BytesGetRequest),
+
+    Connections(ConnectionsRequest),
+    ConnectionInfo(ConnectionInfoRequest),
 
     Stats(StatsGetRequest),
 }
@@ -652,11 +719,15 @@ pub enum ProviderResponse {
     DocCreate(RpcResult<DocCreateResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
-    DocGet(RpcResult<DocGetResponse>),
+    DocGet(RpcResult<DocGetManyResponse>),
+    DocGetOne(RpcResult<DocGetOneResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),
     DocSubscribe(RpcResult<DocSubscribeResponse>),
+
+    Connections(RpcResult<ConnectionsResponse>),
+    ConnectionInfo(RpcResult<ConnectionInfoResponse>),
 
     BytesGet(RpcResult<BytesGetResponse>),
 

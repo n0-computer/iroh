@@ -1,10 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
@@ -16,9 +12,21 @@ use crate::{
     derp::DerpMap,
     key::{PublicKey, SecretKey},
     magicsock::{self, Callbacks, MagicSock},
-    netmap::NetworkMap,
     tls,
 };
+
+pub use super::magicsock::EndpointInfo as ConnectionInfo;
+
+/// Adress information for a node.
+#[derive(Debug)]
+pub struct NodeAddr {
+    /// The node's public key.
+    pub node_id: PublicKey,
+    /// The node's home DERP region.
+    pub derp_region: Option<u16>,
+    /// Socket addresses where this node might be reached directly.
+    pub endpoints: Vec<SocketAddr>,
+}
 
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]
@@ -200,7 +208,6 @@ pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
     msock: MagicSock,
     endpoint: quinn::Endpoint,
-    netmap: Arc<Mutex<NetworkMap>>,
     keylog: bool,
 }
 
@@ -243,7 +250,6 @@ impl MagicEndpoint {
             secret_key: Arc::new(secret_key),
             msock,
             endpoint,
-            netmap: Arc::new(Mutex::new(NetworkMap { peers: vec![] })),
             keylog,
         })
     }
@@ -287,6 +293,31 @@ impl MagicEndpoint {
         self.msock.my_derp().await
     }
 
+    /// Get information on all the nodes we have connection information about.
+    ///
+    /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
+    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
+    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
+    ///
+    /// Connections are currently only pruned on user action (when we explicitly add a new address
+    /// to the internal addressbook through [`MagicEndpoint::add_known_addrs`]), so these connections
+    /// are not necessarily active connections.
+    pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
+        self.msock.tracked_endpoints().await
+    }
+
+    /// Get connection information about a specific node.
+    ///
+    /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
+    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
+    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
+    pub async fn connection_info(
+        &self,
+        node_id: PublicKey,
+    ) -> anyhow::Result<Option<ConnectionInfo>> {
+        self.msock.tracked_endpoint(node_id).await
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
@@ -304,14 +335,21 @@ impl MagicEndpoint {
         derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
     ) -> Result<quinn::Connection> {
-        if derp_region.is_some() || !known_addrs.is_empty() {
-            self.add_known_addrs(node_id, derp_region, known_addrs)
-                .await?;
-        }
+        self.add_known_addrs(node_id, derp_region, known_addrs)
+            .await?;
 
-        let addr = self.msock.get_mapping_addr(&node_id).await.ok_or_else(|| {
-            anyhow!("failed to retrieve the mapped address from the magic socket")
-        })?;
+        let addr = self.msock.get_mapping_addr(&node_id).await;
+        let Some(addr) = addr else {
+            return Err(match (known_addrs.is_empty(), derp_region) {
+                (true, None) => {
+                    anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {node_id:?}")
+                }
+                (true, Some(region)) if !self.msock.has_derp_region(region).await => {
+                    anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}. Unable to dial peer {node_id:?}")
+                }
+                _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {node_id:?}")
+            });
+        };
 
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -346,6 +384,9 @@ impl MagicEndpoint {
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
     /// when connecting to this peer (in addition to addresses obtained from a derp server).
     ///
+    /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
+    /// present in the netmap.
+    ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     pub async fn add_known_addrs(
@@ -354,49 +395,12 @@ impl MagicEndpoint {
         derp_region: Option<u16>,
         endpoints: &[SocketAddr],
     ) -> Result<()> {
-        match (endpoints.is_empty(), derp_region) {
-            (true, None) => {
-                anyhow::bail!(
-                    "No UDP addresses or DERP region provided. Unable to dial peer {node_id:?}"
-                );
-            }
-            (true, Some(region)) if !self.msock.has_derp_region(region).await => {
-                anyhow::bail!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
-            }
-            (false, None) => {
-                tracing::warn!("No DERP region provided, any hole punching required to establish a connection will not be possible.");
-            }
-            (false, Some(region)) if !self.msock.has_derp_region(region).await => {
-                tracing::warn!("We do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
-            }
-            _ => {}
-        }
-
-        let netmap = {
-            let mut netmap = self.netmap.lock().unwrap();
-            let node = netmap.peers.iter_mut().find(|peer| peer.key == node_id);
-            if let Some(node) = node {
-                for endpoint in endpoints {
-                    if !node.endpoints.contains(endpoint) {
-                        node.endpoints.push(*endpoint);
-                        node.addresses.push(endpoint.ip());
-                    }
-                }
-            } else {
-                let endpoints = endpoints.to_vec();
-                let addresses = endpoints.iter().map(|ep| ep.ip()).collect();
-                let node = config::Node {
-                    name: None,
-                    addresses,
-                    endpoints,
-                    key: node_id,
-                    derp: derp_region,
-                };
-                netmap.peers.push(node)
-            }
-            netmap.clone()
+        let addr = NodeAddr {
+            node_id,
+            derp_region,
+            endpoints: endpoints.to_vec(),
         };
-        self.msock.set_network_map(netmap).await?;
+        self.msock.add_known_addr(addr).await?;
         Ok(())
     }
 
@@ -477,7 +481,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
 mod tests {
     use tracing::{info, info_span, Instrument};
 
-    use crate::test_utils::run_derp_and_stun;
+    use crate::test_utils::run_derper;
 
     use super::*;
 
@@ -487,7 +491,7 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
-        let (derp_map, region_id, _guard) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
+        let (derp_map, region_id, _guard) = run_derper().await.unwrap();
         let server_secret_key = SecretKey::generate();
         let server_peer_id = server_secret_key.public();
 

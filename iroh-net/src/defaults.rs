@@ -39,7 +39,6 @@ pub fn default_na_derp_region() -> DerpRegion {
         stun_port: DEFAULT_DERP_STUN_PORT,
         ipv4: UseIpv4::Some(NA_DERP_IPV4),
         ipv6: UseIpv6::TryDns,
-        stun_test_ip: None,
     };
     DerpRegion {
         region_id: NA_REGION_ID,
@@ -60,7 +59,6 @@ pub fn default_eu_derp_region() -> DerpRegion {
         stun_port: DEFAULT_DERP_STUN_PORT,
         ipv4: UseIpv4::Some(EU_DERP_IPV4),
         ipv6: UseIpv6::TryDns,
-        stun_test_ip: None,
     };
     DerpRegion {
         region_id: EU_REGION_ID,

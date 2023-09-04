@@ -6,19 +6,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
-    sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
+    sync::{Author, Namespace, Replica, SignedEntry},
+    AuthorId, NamespaceId,
 };
 
 #[cfg(feature = "fs-store")]
 pub mod fs;
 pub mod memory;
+mod pubkeys;
+pub use pubkeys::*;
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
-    type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
+    type Instance: ranger::Store<SignedEntry> + PublicKeyStore + Send + Sync + 'static + Clone;
 
-    /// Iterator over entries in the store, returned from [`Self::get`]
+    /// Iterator over entries in the store, returned from [`Self::get_many`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
     where
         Self: 'a;
@@ -43,12 +46,19 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
-    ///
+    //
     // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
     /// Create a new author key and persist it in the store.
-    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author>;
+    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
+        let author = Author::new(rng);
+        self.import_author(author.clone())?;
+        Ok(author)
+    }
+
+    /// Import an author key pair.
+    fn import_author(&self, author: Author) -> Result<()>;
 
     /// List all author keys in this store.
     fn list_authors(&self) -> Result<Self::AuthorsIter<'_>>;
@@ -56,13 +66,13 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Get an author key from the store.
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
 
-    /// Iterate over entries of a replica.
+    /// Get an iterator over entries of a replica.
     ///
     /// The [`GetFilter`] has several methods of filtering the returned entries.
-    fn get(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
+    fn get_many(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
 
-    /// Gets the single latest entry for the specified key and author.
-    fn get_latest_by_key_and_author(
+    /// Get an entry by key and author.
+    fn get_one(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
@@ -72,79 +82,33 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
 /// Filter a get query onto a namespace
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetFilter {
-    latest: bool,
-    author: Option<AuthorId>,
-    key: KeyFilter,
+pub enum GetFilter {
+    /// No filter, list all entries
+    All,
+    /// Filter for exact key match
+    Key(Vec<u8>),
+    /// Filter for key prefix
+    Prefix(Vec<u8>),
+    /// Filter by author
+    Author(AuthorId),
+    /// Filter by key prefix and author
+    AuthorAndPrefix(AuthorId, Vec<u8>),
 }
 
 impl Default for GetFilter {
     fn default() -> Self {
-        Self::latest()
+        Self::All
     }
 }
 
 impl GetFilter {
-    /// Create a new get filter.
-    ///
-    /// When `latest` is `true`, it will iterate over the latest entries, otherwise it will
-    /// iterate over all entires.
-    pub fn new(latest: bool) -> Self {
-        GetFilter {
-            latest,
-            author: None,
-            key: KeyFilter::All,
+    /// Create a [`GetFilter`] from author and prefix options.
+    pub fn author_prefix(author: Option<AuthorId>, prefix: Option<impl AsRef<[u8]>>) -> Self {
+        match (author, prefix) {
+            (None, None) => Self::All,
+            (Some(author), None) => Self::Author(author),
+            (None, Some(prefix)) => Self::Prefix(prefix.as_ref().to_vec()),
+            (Some(author), Some(prefix)) => Self::AuthorAndPrefix(author, prefix.as_ref().to_vec()),
         }
     }
-
-    /// No filter, iterate over all entries.
-    pub fn all() -> Self {
-        Self::new(false)
-    }
-
-    /// Only include the latest entries.
-    pub fn latest() -> Self {
-        Self::new(true)
-    }
-
-    /// Set the key filter.
-    pub fn with_key_filter(mut self, key_filter: KeyFilter) -> Self {
-        self.key = key_filter;
-        self
-    }
-
-    /// Filter by exact key match.
-    pub fn with_key(mut self, key: impl AsRef<[u8]>) -> Self {
-        self.key = KeyFilter::Key(key.as_ref().to_vec());
-        self
-    }
-
-    /// Filter by prefix key match.
-    pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
-        self.key = KeyFilter::Prefix(prefix.as_ref().to_vec());
-        self
-    }
-
-    /// Filter by author.
-    pub fn with_author(mut self, author: AuthorId) -> Self {
-        self.author = Some(author);
-        self
-    }
-
-    /// Include not only latest entries but also all historical entries.
-    pub fn with_history(mut self) -> Self {
-        self.latest = false;
-        self
-    }
-}
-
-/// Filter the keys in a namespace
-#[derive(Debug, Serialize, Deserialize)]
-pub enum KeyFilter {
-    /// No filter, list all entries
-    All,
-    /// Filter for entries starting with a prefix
-    Prefix(Vec<u8>),
-    /// Filter for exact key match
-    Key(Vec<u8>),
 }

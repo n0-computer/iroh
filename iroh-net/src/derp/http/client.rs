@@ -1227,7 +1227,6 @@ mod tests {
                 url: "https://bad.url".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
-                stun_test_ip: None,
                 ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
                 ipv6: UseIpv6::Disabled,
             }

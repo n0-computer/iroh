@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 publish = true
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.67"
+rust-version = "1.70"
 
 [dependencies]
 anyhow = "1"

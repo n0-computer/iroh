@@ -21,7 +21,6 @@ pub mod magicsock;
 pub mod metrics;
 pub mod net;
 pub mod netcheck;
-pub mod netmap;
 pub mod ping;
 pub mod portmapper;
 pub mod stun;

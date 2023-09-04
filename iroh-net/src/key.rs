@@ -11,6 +11,7 @@ use std::{
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
+use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
@@ -216,10 +217,15 @@ impl SecretKey {
         self.secret.verifying_key().into()
     }
 
-    /// Generate a new [`SecretKey`].
+    /// Generate a new [`SecretKey`] with the default randomness generator.
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng;
-        let secret = SigningKey::generate(&mut rng);
+        Self::generate_with_rng(&mut rng)
+    }
+
+    /// Generate a new [`SecretKey`] with a randomness generator.
+    pub fn generate_with_rng<R: CryptoRngCore + ?Sized>(csprng: &mut R) -> Self {
+        let secret = SigningKey::generate(csprng);
 
         Self {
             secret,
