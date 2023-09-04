@@ -35,7 +35,11 @@ use std::{
     num::NonZeroUsize,
 };
 
-use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{
+    future::{BoxFuture, LocalBoxFuture},
+    stream::FuturesUnordered,
+    FutureExt, StreamExt,
+};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
     collection::CollectionParser,
@@ -43,7 +47,7 @@ use iroh_bytes::{
     Hash,
 };
 use iroh_gossip::net::util::Dialer;
-use iroh_net::key::PublicKey;
+use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, trace};
@@ -59,6 +63,8 @@ const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_mil
 const INITIAL_RETRY_COUNT: u8 = 4;
 /// Duration for which we keep peers connected after they were last useful to us.
 const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
+const SERVICE_CHANNEL_CAPACITY: usize = 120;
 
 /// Download identifier.
 // Mainly for readability.
@@ -165,8 +171,95 @@ impl std::future::Future for DownloadHandle {
     }
 }
 
+/// Handle for the [`Service`].
 #[derive(Debug)]
-pub struct Downloader;
+pub struct Downloader {
+    /// Next id to use for a download intent.
+    next_id: Id,
+    /// Channel to communicate with the service.
+    msg_tx: mpsc::Sender<Message>,
+}
+
+impl Downloader {
+    pub async fn new<S, C>(
+        store: S,
+        collection_parser: C,
+        endpoint: MagicEndpoint,
+        rt: iroh_bytes::util::runtime::Handle,
+    ) -> Self
+    where
+        S: Store,
+        C: CollectionParser,
+    {
+        let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
+
+        let create_future = move || {
+            let availabiliy_registry = Registry::default();
+            // these numbers should be checked against a running node and might depend on platform
+            let concurrency_limits = ConcurrencyLimits {
+                max_concurrent_requests: 50,
+                max_concurrent_requests_per_peer: 4,
+                max_open_connections: 100,
+            };
+
+            let service = Service::new(
+                store,
+                collection_parser,
+                availabiliy_registry,
+                endpoint,
+                concurrency_limits,
+                msg_rx,
+            );
+
+            service.run()
+        };
+        rt.local_pool().spawn_pinned(create_future);
+        Self { next_id: 0, msg_tx }
+    }
+    /// Queue a download.
+    pub async fn queue(&mut self, kind: DownloadKind) -> DownloadHandle {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+
+        let (sender, receiver) = oneshot::channel();
+        let handle = DownloadHandle {
+            id,
+            kind: kind.clone(),
+            receiver,
+        };
+        let msg = Message::Queue { kind, id, sender };
+        // if this fails polling the handle will fail as well since the sender side of the oneshot
+        // will be dropped
+        if let Err(send_err) = self.msg_tx.send(msg).await {
+            let msg = send_err.0;
+            debug!(?msg, "download not sent");
+        }
+        handle
+    }
+
+    /// Cancel a download.
+    // receiving the handle ensures an intent can't be cancelled twice
+    pub async fn cancel(&mut self, handle: DownloadHandle) {
+        let DownloadHandle {
+            id,
+            kind,
+            receiver: _,
+        } = handle;
+        let msg = Message::Cancel { id, kind };
+        if let Err(send_err) = self.msg_tx.send(msg).await {
+            let msg = send_err.0;
+            debug!(?msg, "cancel not sent");
+        }
+    }
+
+    pub async fn peers_have(&mut self, hash: Hash, peers: Vec<PublicKey>) {
+        let msg = Message::PeersHave { hash, peers };
+        if let Err(send_err) = self.msg_tx.send(msg).await {
+            let msg = send_err.0;
+            debug!(?msg, "peers have not sent")
+        }
+    }
+}
 
 #[derive(derive_more::Debug)]
 struct DownloadInfo {
@@ -180,11 +273,13 @@ struct DownloadInfo {
 }
 
 /// Messages the service can receive.
+#[derive(derive_more::Debug)]
 enum Message {
     /// Queue a download intent.
     Queue {
         kind: DownloadKind,
         id: Id,
+        #[debug(skip)]
         sender: oneshot::Sender<DownloadResult>,
     },
     /// Cancel an intent. The associated request will be cancelled when the last intent is
@@ -709,6 +804,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         remaining_retries: u8,
         intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
     ) {
+        use iroh_bytes::baomap::MapEntry;
         debug!(%peer, ?kind, "starting download");
         let cancellation = CancellationToken::new();
         let info = ActiveRequestInfo {
@@ -816,6 +912,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     }
 }
 
+#[derive(Default)]
 struct Registry {
     candidates: HashMap<Hash, HashSet<PublicKey>>,
 }
