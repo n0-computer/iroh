@@ -31,7 +31,7 @@
 #![allow(clippy::all, unused, missing_docs)]
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     num::NonZeroUsize,
 };
 
@@ -73,7 +73,12 @@ pub trait AvailabilityRegistry {
     type CandidateIter<'a>: Iterator<Item = &'a PublicKey>
     where
         Self: 'a;
+    /// Get candidates to download this hash.
     fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter<'_>;
+    /// Register peers for a hash. Should only be done for hashes we care to download.
+    fn add_peers(&mut self, hash: Hash, peers: &[PublicKey]);
+    /// Signal the registry that this hash is no longer of interest.
+    fn remove(&mut self, hash: Hash);
 }
 
 /// Concurrency limits for the [`Service`].
@@ -179,16 +184,19 @@ struct DownloadInfo {
     sender: oneshot::Sender<DownloadResult>,
 }
 
+/// Messages the service can receive.
 enum Message {
+    /// Queue a download intent.
     Queue {
         kind: DownloadKind,
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
     },
-    Cancel {
-        id: Id,
-        kind: DownloadKind,
-    },
+    /// Cancel an intent. The associated request will be cancelled when the last intent is
+    /// cancelled.
+    Cancel { id: Id, kind: DownloadKind },
+    /// Declare that peers have certains hash and can be used for downloading. This feeds the [`AvailabilityRegistry`].
+    PeersHave { hash: Hash, peers: Vec<PublicKey> },
 }
 
 /// Information about a request being processed.
@@ -372,6 +380,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         match msg {
             Message::Queue { kind, id, sender } => self.handle_queue_new_download(kind, id, sender),
             Message::Cancel { id, kind } => self.handle_cancel_download(id, kind),
+            Message::PeersHave { hash, peers } => self.handle_peers_have(hash, peers),
         }
     }
 
@@ -541,6 +550,24 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         }
     }
 
+    /// Handle a [`Message::PeersHave`].
+    fn handle_peers_have(&mut self, hash: Hash, peers: Vec<PublicKey>) {
+        // check if this still needed
+        if self.is_needed(hash) {
+            self.availabiliy_registry.add_peers(hash, &peers);
+        }
+    }
+
+    /// Checks if this hash is needed.
+    fn is_needed(&self, hash: Hash) -> bool {
+        let as_blob = DownloadKind::Blob { hash };
+        let as_collection = DownloadKind::Collection { hash };
+        self.current_requests.contains_key(&as_blob)
+            || self.scheduled_requests.contains_key(&as_blob)
+            || self.current_requests.contains_key(&as_collection)
+            || self.scheduled_requests.contains_key(&as_collection)
+    }
+
     /// Handle receiving a new connection.
     fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<quinn::Connection>) {
         match result {
@@ -577,6 +604,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 match NonZeroUsize::new(active_requests.get() - 1) {
                     Some(active_requests) => PeerState::Busy { active_requests },
                     None => {
+                        // last request of the peer was this one
                         let drop_key = self.goodbye_peer_queue.insert(peer, IDLE_PEER_TIMEOUT);
                         PeerState::Idle { drop_key }
                     }
@@ -584,6 +612,8 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             }
             PeerState::Idle { .. } => unreachable!("peer was busy"),
         };
+
+        let hash = *kind.hash();
 
         match result {
             Ok(()) => {
@@ -619,6 +649,10 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                     }
                 }
             }
+        }
+
+        if !self.is_needed(hash) {
+            self.availabiliy_registry.remove(hash)
         }
     }
 
