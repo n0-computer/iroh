@@ -229,7 +229,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
 
-    let collection_parser = iroh_bytes::collection::IrohCollectionParser;
+    let collection_parser = iroh::collection::IrohCollectionParser;
 
     // create the live syncer
     let downloader =
