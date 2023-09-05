@@ -98,13 +98,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// the receiver to be received from.
     // TODO: Allow to clear a previous subscription?
     pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
+        println!("subscribing..");
         let mut on_insert_sender = self.on_insert_sender.write();
-        if let Some(_sender) = on_insert_sender.as_ref() {
-            None
-        } else {
-            let (s, r) = flume::bounded(16); // TODO: should this be configurable?
-            *on_insert_sender = Some(s);
-            Some(r)
+        match &*on_insert_sender {
+            Some(_sender) => None,
+            None => {
+                let (s, r) = flume::bounded(16); // TODO: should this be configurable?
+                *on_insert_sender = Some(s);
+                Some(r)
+            }
         }
     }
 
