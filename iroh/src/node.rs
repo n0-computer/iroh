@@ -1214,11 +1214,7 @@ fn handle_rpc_request<
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
-        info!(
-            "handling rpc request: {:?} {}",
-            msg,
-            std::any::type_name::<E>()
-        );
+        debug!("handling rpc request: {}", std::any::type_name::<E>());
         match msg {
             ListBlobs(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::list_blobs)
