@@ -1,4 +1,21 @@
-# [v0.6.0-alpha](https://github.com/n0-computer/iroh/compare/v0.5.1...v0.6.0-alpha) (2023-08-28)
+# [v0.6.0-alpha.1](https://github.com/n0-computer/iroh/compare/v0.6.0-alpha.0...v0.6.0-alpha.1) (2023-09-05)
+
+This release includes important fixes and improvements based on recent testing. Document sync is now more correct and faster!
+
+### Bug Fixes
+
+* **iroh-net:** dns fallback to default config ([#1438](https://github.com/n0-computer/iroh/issues/1438)) ([b89f4e1](https://github.com/n0-computer/iroh/commit/b89f4e1528339528f6b620f9dece524ffcdfa977)), closes [#1436](https://github.com/n0-computer/iroh/issues/1436)
+* **iroh:** update example to use correct subscription API ([#1452](https://github.com/n0-computer/iroh/issues/1452)) ([2522fca](https://github.com/n0-computer/iroh/commit/2522fcabfcc1edcd492ae5f4696a69530e2dee7d)), closes [#1451](https://github.com/n0-computer/iroh/issues/1451)
+
+
+### Features
+
+* get list of `ConnectionInfo`s or an individual node's `ConnectionInfo` ([#1435](https://github.com/n0-computer/iroh/issues/1435)) ([bdf966e](https://github.com/n0-computer/iroh/commit/bdf966ef04de18966c6cced7c32983675bea1471))
+* **iroh-sync:** validate timestamps and move validation up ([#1439](https://github.com/n0-computer/iroh/issues/1439)) ([4e8ff56](https://github.com/n0-computer/iroh/commit/4e8ff5653d8a6dd4548bef7886060525c3025acd))
+
+
+
+# [v0.6.0-alpha.0](https://github.com/n0-computer/iroh/compare/v0.5.1...v0.6.0-alpha.0) (2023-08-28)
 
 _This is the first alpha preview of iroh v0.6.0. iroh v0.6.0 is targeting a Sept 25th release date._
 
