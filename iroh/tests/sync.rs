@@ -68,6 +68,15 @@ async fn sync_full_basic() -> Result<()> {
     let nodes = spawn_nodes(rt, 3).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
+    async fn get_event(
+        node: usize,
+        events: &mut (impl futures::Stream<Item = anyhow::Result<LiveEvent>> + std::marker::Unpin),
+    ) -> LiveEvent {
+        let event = events.try_next().await.unwrap().unwrap();
+        println!("[node {node}] event");
+        event
+    }
+
     // node1: create doc and ticket
     let (ticket, doc1) = {
         let iroh = &clients[0];
@@ -89,15 +98,17 @@ async fn sync_full_basic() -> Result<()> {
 
         // wait for remote insert on doc2
         let mut events = doc.subscribe().await?;
-        let event = events.try_next().await?.unwrap();
+        let events = &mut events;
+        let event = get_event(2, events).await;
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
-        let event = events.try_next().await?.unwrap();
+        let event = get_event(2, events).await;
         assert!(matches!(event, LiveEvent::ContentReady { .. }));
 
         assert_latest(&doc, b"k1", b"v1").await;
 
         // setup event channel on on doc1
         let mut events = doc1.subscribe().await?;
+        let events = &mut events;
 
         let key = b"k2";
         let value = b"v2";
@@ -105,9 +116,9 @@ async fn sync_full_basic() -> Result<()> {
         assert_latest(&doc, key, value).await;
 
         // wait for remote insert on doc1
-        let event = events.try_next().await?.unwrap();
+        let event = get_event(2, events).await;
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
-        let event = events.try_next().await?.unwrap();
+        let event = get_event(2, events).await;
         assert!(matches!(event, LiveEvent::ContentReady { .. }));
 
         assert_latest(&doc1, key, value).await;
@@ -121,26 +132,16 @@ async fn sync_full_basic() -> Result<()> {
 
         // wait for 2 remote inserts
         let mut events = doc.subscribe().await?;
-        let event = events.try_next().await?.unwrap();
-        assert!(
-            matches!(event, LiveEvent::InsertRemote { .. }),
-            "got {event:?} instead"
-        );
-        let event = events.try_next().await?.unwrap();
-        assert!(
-            matches!(event, LiveEvent::InsertRemote { .. }),
-            "got {event:?} instead"
-        );
-        let event = events.try_next().await?.unwrap();
-        assert!(
-            matches!(event, LiveEvent::ContentReady { .. }),
-            "got {event:?} instead"
-        );
-        let event = events.try_next().await?.unwrap();
-        assert!(
-            matches!(event, LiveEvent::ContentReady { .. }),
-            "got {event:?} instead"
-        );
+        let events = &mut events;
+
+        let event = get_event(3, events).await;
+        assert!(matches!(event, LiveEvent::InsertRemote { .. }),);
+        let event = get_event(3, events).await;
+        assert!(matches!(event, LiveEvent::InsertRemote { .. }),);
+        let event = get_event(3, events).await;
+        assert!(matches!(event, LiveEvent::ContentReady { .. }),);
+        let event = get_event(3, events).await;
+        assert!(matches!(event, LiveEvent::ContentReady { .. }),);
 
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;
