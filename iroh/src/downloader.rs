@@ -567,10 +567,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             .get_candidates(hash)
             .filter_map(|peer| {
                 if let Some(info) = self.peers.get(peer) {
-                    if info.conn.is_none() {
-                        // peer is temporarily banned, filter them out
-                        return None;
-                    }
+                    info.conn.as_ref()?;
                     let req_count = info.active_requests();
                     // filter out peers at capacity
                     let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
@@ -780,7 +777,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             for sender in intents.into_values() {
                 let _ = sender.send(Err(()));
             }
-            return debug!(?kind, "download ran out of attempts");
+            debug!(?kind, "download ran out of attempts")
         }
     }
 
@@ -824,7 +821,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             };
 
             // TODO: use stats for metrics
-            (kind, res.and_then(|_stats| Ok(())))
+            (kind, res.map(|_stats| ()))
         };
         self.in_progress_downloads.push(fut.boxed_local());
     }
@@ -873,7 +870,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
             }
             PeerState::Idle { drop_key } => {
                 // peer is no longer idle
-                self.goodbye_peer_queue.remove(&drop_key);
+                self.goodbye_peer_queue.remove(drop_key);
                 info.state = PeerState::Busy {
                     active_requests: NonZeroUsize::new(1).expect("clearly non zero"),
                 };
@@ -913,7 +910,7 @@ impl<'a> Iterator for RegistryIter<'a> {
     type Item = &'a PublicKey;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.as_mut().map(|iter| iter.next()).flatten()
+        self.inner.as_mut().and_then(|iter| iter.next())
     }
 }
 
