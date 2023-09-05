@@ -15,10 +15,11 @@ use std::{
 use anyhow::{anyhow, bail};
 use bytes::Bytes;
 use clap::{CommandFactory, FromArgMatches, Parser};
+use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
     downloader::Downloader,
-    sync_engine::{PeerSource, SyncEngine, SYNC_ALPN},
+    sync_engine::{LiveEvent, PeerSource, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
@@ -274,15 +275,23 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Arc::new(tokio::sync::Mutex::new(None));
 
     let watch = current_watch.clone();
-    let doc_events = doc.subscribe().expect("already subscribed");
+    let mut doc_events = live_sync
+        .doc_subscribe(iroh::rpc_protocol::DocSubscribeRequest {
+            doc_id: doc.namespace(),
+        })
+        .await;
     rt.main().spawn(async move {
-        while let Ok((_origin, entry)) = doc_events.recv_async().await {
-            let entry = entry.entry();
+        while let Some(Ok(event)) = doc_events.next().await {
             let matcher = watch.lock().await;
             if let Some(matcher) = &*matcher {
-                let key = entry.id().key();
-                if key.starts_with(matcher.as_bytes()) {
-                    println!("change: {}", fmt_entry(entry));
+                match event.event {
+                    LiveEvent::ContentReady { .. } => {}
+                    LiveEvent::InsertLocal { entry } | LiveEvent::InsertRemote { entry, .. } => {
+                        let key = entry.id().key();
+                        if key.starts_with(matcher.as_bytes()) {
+                            println!("change: {}", fmt_entry(&entry));
+                        }
+                    }
                 }
             }
         }

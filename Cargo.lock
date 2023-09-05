@@ -1921,7 +1921,7 @@ checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
 
 [[package]]
 name = "iroh"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -1995,7 +1995,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bytes"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2075,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "erased_set",
  "hyper",
@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "aead",
  "anyhow",
@@ -2167,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-sync"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2206,7 +2206,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.6.0-alpha.0"
+version = "0.6.0-alpha.1"
 dependencies = [
  "anyhow",
  "tokio",
