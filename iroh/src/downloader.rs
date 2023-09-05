@@ -542,15 +542,11 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                     (ConnState::NotConnected, ConnState::NotConnected) => Equal,
                     (ConnState::Connected(_), ConnState::Dialing) => Greater,
                     (ConnState::Connected(_), ConnState::NotConnected) => Greater,
-                    (ConnState::Connected(a), ConnState::Connected(b)) => {
-                        if a < b {
-                            Greater
-                        } else if a > b {
-                            Less
-                        } else {
-                            Equal
-                        }
-                    }
+                    (ConnState::Connected(a), ConnState::Connected(b)) => match a.cmp(b) {
+                        Less => Greater, // less preferable if greater number of requests
+                        Equal => Equal,  // no preference
+                        Greater => Less, // more preferable if less number of requests
+                    },
                 }
             }
         }
