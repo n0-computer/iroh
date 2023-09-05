@@ -83,6 +83,23 @@ pub enum DocCommands {
         #[clap(short, long)]
         content: bool,
     },
+    /// Delete one or more entries in a document. Cannot be undone.
+    Delete {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Key to the entry (parsed as UTF-8 string).
+        key: String,
+        /// If true, get all entries that start with KEY.
+        #[clap(short, long)]
+        prefix: bool,
+        /// Filter by author.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
+    },
     /// List all keys in a document.
     #[clap(alias = "ls")]
     Keys {
@@ -209,6 +226,14 @@ impl DocCommands {
                 while let Some(entry) = stream.try_next().await? {
                     print_entry(&doc, &entry, content).await?;
                 }
+            }
+            Self::Delete {
+                doc: _,
+                key: _,
+                prefix: _,
+                author: _,
+            } => {
+                todo!()
             }
             Self::Keys {
                 doc,
