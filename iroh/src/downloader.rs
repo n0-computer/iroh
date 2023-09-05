@@ -1,11 +1,11 @@
 //! Handle downloading blobs and collections concurrently and from peers.
 //!
-//! The [`Service`] interacts with four main components to this end.
+//! The [`Downloader`] interacts with four main components to this end.
 //! - [`Dialer`]: Used to queue opening connections to peers we need to perform downloads.
 //! - [`AvailabilityRegistry`]: Where the downloader obtains information about peers that could be
 //!   used to perform a download.
 //! - [`Store`]: Where data is stored.
-//! - [`CollectionParser`]: Used by the [`GetRequest`] associated logic to identify blobs encoding
+//! - [`CollectionParser`]: Used by the Get state machine logic to identify blobs encoding
 //!   collections.
 //!
 //! Once a download request is received, the logic is as follows:
@@ -78,7 +78,7 @@ pub trait AvailabilityRegistry {
     fn remove(&mut self, hash: Hash);
 }
 
-/// Concurrency limits for the [`Service`].
+/// Concurrency limits for the [`Downloader`].
 #[derive(Debug)]
 pub struct ConcurrencyLimits {
     /// Maximum number of requests the service performs concurrently.
@@ -169,7 +169,7 @@ impl std::future::Future for DownloadHandle {
     }
 }
 
-/// Handle for the [`Service`].
+/// Handle for the download services.
 #[derive(Debug)]
 pub struct Downloader {
     /// Next id to use for a download intent.
