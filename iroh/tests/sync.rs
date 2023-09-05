@@ -122,13 +122,25 @@ async fn sync_full_basic() -> Result<()> {
         // wait for 2 remote inserts
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "got {event:?} instead"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "got {event:?} instead"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "got {event:?} instead"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "got {event:?} instead"
+        );
 
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;
