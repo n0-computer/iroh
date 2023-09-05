@@ -673,8 +673,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // content.
                 let entry_status = self.bao_store.contains(&hash);
                 if matches!(entry_status, EntryStatus::NotFound) {
-                    let handle = self.downloader.queue(DownloadKind::Blob { hash }).await;
-                    self.downloader.peers_have(hash, vec![from]).await;
+                    let handle = self
+                        .downloader
+                        .queue(DownloadKind::Blob { hash }, vec![from])
+                        .await;
                     let fut = async move {
                         // NOTE: this ignores the result for now, simply keeping the option
                         let res = handle.await.ok();

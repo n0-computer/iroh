@@ -216,7 +216,7 @@ impl Downloader {
         Self { next_id: 0, msg_tx }
     }
     /// Queue a download.
-    pub async fn queue(&mut self, kind: DownloadKind) -> DownloadHandle {
+    pub async fn queue(&mut self, kind: DownloadKind, peers: Vec<PublicKey>) -> DownloadHandle {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
 
@@ -226,7 +226,12 @@ impl Downloader {
             kind: kind.clone(),
             receiver,
         };
-        let msg = Message::Queue { kind, id, sender };
+        let msg = Message::Queue {
+            kind,
+            id,
+            sender,
+            peers,
+        };
         // if this fails polling the handle will fail as well since the sender side of the oneshot
         // will be dropped
         if let Err(send_err) = self.msg_tx.send(msg).await {
@@ -270,6 +275,7 @@ enum Message {
         id: Id,
         #[debug(skip)]
         sender: oneshot::Sender<DownloadResult>,
+        peers: Vec<PublicKey>,
     },
     /// Cancel an intent. The associated request will be cancelled when the last intent is
     /// cancelled.
@@ -457,7 +463,12 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
     /// Handle receiving a [`Message`].
     fn handle_message(&mut self, msg: Message) {
         match msg {
-            Message::Queue { kind, id, sender } => self.handle_queue_new_download(kind, id, sender),
+            Message::Queue {
+                kind,
+                id,
+                sender,
+                peers,
+            } => self.handle_queue_new_download(kind, id, sender, peers),
             Message::Cancel { id, kind } => self.handle_cancel_download(id, kind),
             Message::PeersHave { hash, peers } => self.handle_peers_have(hash, peers),
         }
@@ -472,7 +483,9 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         kind: DownloadKind,
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
+        peers: Vec<PublicKey>,
     ) {
+        self.availabiliy_registry.add_peers(*kind.hash(), &peers);
         if let Some(info) = self.current_requests.get_mut(&kind) {
             // this intent maps to a download that already exists, simply register it
             info.intents.insert(id, sender);
