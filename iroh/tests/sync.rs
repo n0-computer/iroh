@@ -73,7 +73,7 @@ async fn sync_full_basic() -> Result<()> {
         events: &mut (impl futures::Stream<Item = anyhow::Result<LiveEvent>> + std::marker::Unpin),
     ) -> LiveEvent {
         let event = events.try_next().await.unwrap().unwrap();
-        println!("[node {node}] event");
+        println!("[node {node}] {event:?}");
         event
     }
 
