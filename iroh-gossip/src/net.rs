@@ -374,7 +374,7 @@ impl Actor {
                     let peer_data = postcard::to_stdvec(&info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
                 }
-                (peer_id, res) = self.dialer.next() => {
+                (peer_id, res) = self.dialer.next_conn() => {
                     match res {
                         Ok(conn) => {
                             debug!(?me, peer = ?peer_id, "dial successfull");
