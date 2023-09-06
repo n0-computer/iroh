@@ -78,7 +78,9 @@ pub trait AvailabilityRegistry {
 }
 
 /// Trait modeling a dialer. This allows testing without requiring a MagicEndpoint.
-trait Dialer: futures::Stream<Item = (PublicKey, anyhow::Result<quinn::Connection>)> + Unpin {
+pub trait Dialer:
+    futures::Stream<Item = (PublicKey, anyhow::Result<quinn::Connection>)> + Unpin
+{
     /// Dial a peer.
     fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]);
     /// Get the number of dialing peers.
