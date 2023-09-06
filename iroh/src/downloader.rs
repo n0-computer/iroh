@@ -96,14 +96,8 @@ pub trait Dialer:
 pub trait Getter {
     /// Type of connections the Getter requires to perform a download.
     type Connection;
-    /// Return a future that performs the download using the given connections. The future must
-    /// make use of the [`CancellationToken`] to abort the request.
-    fn get(
-        &self,
-        kind: DownloadKind,
-        conn: Self::Connection,
-        cancellation: CancellationToken,
-    ) -> DownloadFut;
+    /// Return a future that performs the download using the given connection.
+    fn get(&mut self, kind: DownloadKind, conn: Self::Connection) -> GetFut;
 }
 
 /// Concurrency limits for the [`Downloader`].
@@ -115,6 +109,17 @@ pub struct ConcurrencyLimits {
     max_concurrent_requests_per_peer: usize,
     /// Maximum number of open connections the service maintains.
     max_open_connections: usize,
+}
+
+impl Default for ConcurrencyLimits {
+    fn default() -> Self {
+        // these numbers should be checked against a running node and might depend on platform
+        ConcurrencyLimits {
+            max_concurrent_requests: 50,
+            max_concurrent_requests_per_peer: 4,
+            max_open_connections: 100,
+        }
+    }
 }
 
 impl ConcurrencyLimits {
@@ -223,13 +228,7 @@ impl Downloader {
 
         let create_future = move || {
             let availabiliy_registry = Registry::default();
-            // these numbers should be checked against a running node and might depend on platform
-            let concurrency_limits = ConcurrencyLimits {
-                max_concurrent_requests: 50,
-                max_concurrent_requests_per_peer: 4,
-                max_open_connections: 100,
-            };
-
+            let concurrency_limits = ConcurrencyLimits::default();
             let getter = io_getter::IoGetter {
                 store,
                 collection_parser,
@@ -398,6 +397,8 @@ enum PeerState {
 
 /// Type of future that performs a download request.
 type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
+
+type GetFut = LocalBoxFuture<'static, Result<(), FailureAction>>;
 
 #[derive(Debug)]
 struct Service<G: Getter, R: AvailabilityRegistry, D: Dialer> {
@@ -840,8 +841,18 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
         let cancellation = info.cancellation.clone();
         self.current_requests.insert(kind.clone(), info);
 
-        let fut = self.getter.get(kind, conn, cancellation);
-        self.in_progress_downloads.push(fut);
+        let get = self.getter.get(kind.clone(), conn);
+        let fut = async move {
+            // TODO(@divma): timeout?
+            let res = tokio::select! {
+                _ = cancellation.cancelled() => Err(get::FailureAction::AbortRequest(anyhow::anyhow!("cancelled"))),
+                res = get => res
+            };
+
+            (kind, res)
+        };
+
+        self.in_progress_downloads.push(fut.boxed_local());
     }
 
     /// Schedule a request for later processing.
