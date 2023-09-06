@@ -39,7 +39,7 @@ fn make_rpc_endpoint(
 
 async fn run(db: impl Store) -> anyhow::Result<()> {
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let rt = runtime::Handle::from_currrent(1)?;
+    let rt = runtime::Handle::from_current(1)?;
     // create a random secret key
     let secret_key = SecretKey::generate();
     // create a rpc endpoint
@@ -81,7 +81,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
-    let rt = runtime::Handle::from_currrent(1)?;
+    let rt = runtime::Handle::from_current(1)?;
 
     let args = Args::parse();
     match args.path {
