@@ -15,13 +15,6 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
     /// Checks concurrency limits are maintained.
     #[track_caller]
     fn chech_concurrency_limits(&self) {
-        // destructure to make sure all concurrency limit variables are checked
-        let ConcurrencyLimits {
-            max_concurrent_requests,
-            max_concurrent_requests_per_peer,
-            max_open_connections,
-        } = &self.concurrency_limits;
-
         // check the total number of active requests to ensure it stays within the limit
         let active_requests = self.current_requests.len();
         assert!(!self
