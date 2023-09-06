@@ -372,7 +372,7 @@ where
         let downloader = Downloader::new(
             self.db.clone(),
             self.collection_parser.clone(),
-            endpoint.clone(),
+            iroh_gossip::net::util::Dialer::new(endpoint.clone()),
             rt.clone(),
         )
         .await;
