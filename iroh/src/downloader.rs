@@ -48,6 +48,7 @@ use tracing::{debug, trace};
 use self::get::FailureAction;
 
 mod get;
+mod io_getter;
 mod test;
 
 /// Delay added to a request when it's first received.
@@ -77,16 +78,32 @@ pub trait AvailabilityRegistry {
     fn remove(&mut self, hash: Hash);
 }
 
-/// Trait modeling a dialer. This allows testing without requiring a MagicEndpoint.
+/// Trait modeling a dialer. This allows for IO-less testing.
 pub trait Dialer:
-    futures::Stream<Item = (PublicKey, anyhow::Result<quinn::Connection>)> + Unpin
+    futures::Stream<Item = (PublicKey, anyhow::Result<Self::Connection>)> + Unpin
 {
+    /// Type of connections returned by the Dialer.
+    type Connection: Clone;
     /// Dial a peer.
-    fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]);
+    fn queue_dial(&mut self, peer_id: PublicKey);
     /// Get the number of dialing peers.
     fn pending_count(&self) -> usize;
     /// Check if a peer is being dialed.
     fn is_pending(&self, peer: &PublicKey) -> bool;
+}
+
+/// Trait modelling performing a single request over a connection. This allows for IO-less testing.
+pub trait Getter {
+    /// Type of connections the Getter requires to perform a download.
+    type Connection;
+    /// Return a future that performs the download using the given connections. The future must
+    /// make use of the [`CancellationToken`] to abort the request.
+    fn get(
+        &self,
+        kind: DownloadKind,
+        conn: Self::Connection,
+        cancellation: CancellationToken,
+    ) -> DownloadFut;
 }
 
 /// Concurrency limits for the [`Downloader`].
@@ -213,9 +230,13 @@ impl Downloader {
                 max_open_connections: 100,
             };
 
-            let service = Service::new(
+            let getter = io_getter::IoGetter {
                 store,
                 collection_parser,
+            };
+
+            let service = Service::new(
+                getter,
                 availabiliy_registry,
                 dialer,
                 concurrency_limits,
@@ -329,7 +350,7 @@ struct PendingRequestInfo {
 
 /// State of the connection to this peer.
 #[derive(derive_more::Debug)]
-struct ConnectionInfo {
+struct ConnectionInfo<Conn> {
     /// Connection to this peer.
     ///
     /// If this peer was deemed unusable by a request, this will be set to `None`. As a
@@ -337,14 +358,14 @@ struct ConnectionInfo {
     /// Since peers are kept for a longer time that they are strictly necessary, this acts as a
     /// temporary ban.
     #[debug(skip)]
-    conn: Option<quinn::Connection>,
+    conn: Option<Conn>,
     /// State of this peer.
     state: PeerState,
 }
 
-impl ConnectionInfo {
+impl<Conn> ConnectionInfo<Conn> {
     /// Create a new idle peer.
-    fn new_idle(connection: quinn::Connection, drop_key: delay_queue::Key) -> ConnectionInfo {
+    fn new_idle(connection: Conn, drop_key: delay_queue::Key) -> Self {
         ConnectionInfo {
             conn: Some(connection),
             state: PeerState::Idle { drop_key },
@@ -379,11 +400,9 @@ enum PeerState {
 type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
 
 #[derive(Debug)]
-struct Service<S, C, R, D> {
-    /// The store to which data is downloaded.
-    store: S,
-    /// Parser to identify blobs encoding collections.
-    collection_parser: C,
+struct Service<G: Getter, R: AvailabilityRegistry, D: Dialer> {
+    /// The getter performs individual requests.
+    getter: G,
     /// Registry to query for peers that we believe have the data we are looking for.
     availabiliy_registry: R,
     /// Dialer to get connections for required peers.
@@ -393,7 +412,7 @@ struct Service<S, C, R, D> {
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
     /// Peers available to use and their relevant information.
-    peers: HashMap<PublicKey, ConnectionInfo>,
+    peers: HashMap<PublicKey, ConnectionInfo<D::Connection>>,
     /// Queue to manage dropping keys.
     goodbye_peer_queue: delay_queue::DelayQueue<PublicKey>,
     /// Requests performed for download intents. Two download requests can produce the same
@@ -407,18 +426,16 @@ struct Service<S, C, R, D> {
     scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
 }
 
-impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<S, C, R, D> {
+impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> Service<G, R, D> {
     fn new(
-        store: S,
-        collection_parser: C,
+        getter: G,
         availabiliy_registry: R,
         dialer: D,
         concurrency_limits: ConcurrencyLimits,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
         Service {
-            store,
-            collection_parser,
+            getter,
             availabiliy_registry,
             dialer,
             concurrency_limits,
@@ -609,7 +626,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<
             if !self.at_connections_capacity() {
                 // peer is not connected, not dialing and concurrency limits allow another connection
                 debug!(%peer, "dialing peer");
-                self.dialer.queue_dial(*peer, &iroh_bytes::protocol::ALPN);
+                self.dialer.queue_dial(*peer);
                 Some(*peer)
             } else {
                 trace!(%peer, "required peer not dialed to maintain concurrency limits");
@@ -665,7 +682,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<
     }
 
     /// Handle receiving a new connection.
-    fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<quinn::Connection>) {
+    fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<D::Connection>) {
         match result {
             Ok(connection) => {
                 trace!(%peer, "connected to peer");
@@ -806,7 +823,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<
         &mut self,
         kind: DownloadKind,
         peer: PublicKey,
-        conn: quinn::Connection,
+        conn: D::Connection,
         remaining_retries: u8,
         intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
     ) {
@@ -821,29 +838,8 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<
         let cancellation = info.cancellation.clone();
         self.current_requests.insert(kind.clone(), info);
 
-        let store = self.store.clone();
-        let collection_parser = self.collection_parser.clone();
-
-        let fut = async move {
-            let get = match kind {
-                DownloadKind::Blob { hash } => {
-                    get::get(&store, &collection_parser, conn, hash, false)
-                }
-                DownloadKind::Collection { hash } => {
-                    get::get(&store, &collection_parser, conn, hash, true)
-                }
-            };
-
-            // TODO(@divma): timeout?
-            let res = tokio::select! {
-                _ = cancellation.cancelled() => Err(FailureAction::AbortRequest(anyhow::anyhow!("cancelled"))),
-                res = get => res
-            };
-
-            // TODO: use stats for metrics
-            (kind, res.map(|_stats| ()))
-        };
-        self.in_progress_downloads.push(fut.boxed_local());
+        let fut = self.getter.get(kind, conn, cancellation);
+        self.in_progress_downloads.push(fut);
     }
 
     /// Schedule a request for later processing.
@@ -872,7 +868,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<
 
     /// Gets the [`quinn::Connection`] for a peer if it's connected an has capacity for another
     /// request. In this case, the count of active requests for the peer is incremented.
-    fn get_peer_connection_for_download(&mut self, peer: &PublicKey) -> Option<quinn::Connection> {
+    fn get_peer_connection_for_download(&mut self, peer: &PublicKey) -> Option<D::Connection> {
         let info = self.peers.get_mut(peer)?;
         let connection = info.conn.as_ref()?;
         // check if the peer can be sent another request
@@ -952,8 +948,10 @@ impl AvailabilityRegistry for Registry {
 }
 
 impl Dialer for iroh_gossip::net::util::Dialer {
-    fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
-        self.queue_dial(peer_id, alpn_protocol)
+    type Connection = quinn::Connection;
+
+    fn queue_dial(&mut self, peer_id: PublicKey) {
+        self.queue_dial(peer_id, &iroh_bytes::protocol::ALPN)
     }
 
     fn pending_count(&self) -> usize {
