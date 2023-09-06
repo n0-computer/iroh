@@ -19,9 +19,7 @@ impl Handle {
 
     /// Create a new iroh runtime using the current tokio runtime as the main
     /// runtime, and the given number of thread per core executors.
-    pub fn from_current(
-        size: usize,
-    ) -> std::result::Result<Self, tokio::runtime::TryCurrentError> {
+    pub fn from_current(size: usize) -> std::result::Result<Self, tokio::runtime::TryCurrentError> {
         Ok(Self::new(
             tokio::runtime::Handle::try_current()?,
             tokio_util::task::LocalPoolHandle::new(size),
