@@ -283,7 +283,7 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
     // If an existing entry exists, make sure it's older than the new entry.
     let existing = store.get(entry.id());
     if let Ok(Some(existing)) = existing {
-        if existing.timestamp() > entry.timestamp() {
+        if existing.timestamp() >= entry.timestamp() {
             return Err(ValidationFailure::OlderThanExisting);
         }
     }
