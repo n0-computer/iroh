@@ -60,6 +60,20 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
     /// Checks that the scheduled requests match the queue that handles their delays.
     #[track_caller]
     fn check_scheduled_requests_consistency(&self) {
-        // scheuled requests against scheduled_request_queue
+        assert_eq!(
+            self.scheduled_requests.len(),
+            self.scheduled_request_queue.len()
+        );
+    }
+
+    /// Check that peers queued to be disconnected are consistent with peers considered idle.
+    #[track_caller]
+    fn check_idle_peer_consistency(&self) {
+        let idle_peers = self
+            .peers
+            .values()
+            .filter(|info| info.active_requests() == 0)
+            .count();
+        assert_eq!(self.goodbye_peer_queue.len(), idle_peers);
     }
 }
