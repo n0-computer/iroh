@@ -41,7 +41,7 @@ use iroh_bytes::{
     Hash,
 };
 use iroh_gossip::net::util::Dialer;
-use iroh_net::key::PublicKey;
+use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, trace};
@@ -183,7 +183,7 @@ impl Downloader {
     pub async fn new<S, C>(
         store: S,
         collection_parser: C,
-        dialer: Dialer,
+        endpoint: MagicEndpoint,
         rt: iroh_bytes::util::runtime::Handle,
     ) -> Self
     where
@@ -205,7 +205,7 @@ impl Downloader {
                 store,
                 collection_parser,
                 availabiliy_registry,
-                dialer,
+                endpoint,
                 concurrency_limits,
                 msg_rx,
             );
@@ -400,10 +400,11 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
         store: S,
         collection_parser: C,
         availabiliy_registry: R,
-        dialer: Dialer,
+        endpoint: iroh_net::MagicEndpoint,
         concurrency_limits: ConcurrencyLimits,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
+        let dialer = Dialer::new(endpoint);
         Service {
             store,
             collection_parser,

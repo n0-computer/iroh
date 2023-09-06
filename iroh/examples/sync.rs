@@ -230,13 +230,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
 
-    let downloader = {
-        let collection_parser = iroh::collection::IrohCollectionParser;
-        let dialer = iroh_gossip::net::util::Dialer::new(endpoint.clone());
-        Downloader::new(db.clone(), collection_parser, dialer, rt.clone()).await
-    };
+    let collection_parser = iroh::collection::IrohCollectionParser;
 
     // create the live syncer
+    let downloader =
+        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
