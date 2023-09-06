@@ -40,7 +40,6 @@ use iroh_bytes::{
     protocol::RangeSpecSeq,
     Hash,
 };
-use iroh_gossip::net::util::Dialer;
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
@@ -76,6 +75,16 @@ pub trait AvailabilityRegistry {
     fn add_peers(&mut self, hash: Hash, peers: &[PublicKey]);
     /// Signal the registry that this hash is no longer of interest.
     fn remove(&mut self, hash: Hash);
+}
+
+/// Trait modeling a dialer. This allows testing without requiring a MagicEndpoint.
+trait Dialer: futures::Stream<Item = (PublicKey, anyhow::Result<quinn::Connection>)> + Unpin {
+    /// Dial a peer.
+    fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]);
+    /// Get the number of dialing peers.
+    fn pending_count(&self) -> usize;
+    /// Check if a peer is being dialed.
+    fn is_pending(&self, peer: &PublicKey) -> bool;
 }
 
 /// Concurrency limits for the [`Downloader`].
@@ -191,6 +200,7 @@ impl Downloader {
         C: CollectionParser,
     {
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
+        let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
 
         let create_future = move || {
             let availabiliy_registry = Registry::default();
@@ -205,7 +215,7 @@ impl Downloader {
                 store,
                 collection_parser,
                 availabiliy_registry,
-                endpoint,
+                dialer,
                 concurrency_limits,
                 msg_rx,
             );
@@ -367,7 +377,7 @@ enum PeerState {
 type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
 
 #[derive(Debug)]
-struct Service<S, C, R> {
+struct Service<S, C, R, D> {
     /// The store to which data is downloaded.
     store: S,
     /// Parser to identify blobs encoding collections.
@@ -375,7 +385,7 @@ struct Service<S, C, R> {
     /// Registry to query for peers that we believe have the data we are looking for.
     availabiliy_registry: R,
     /// Dialer to get connections for required peers.
-    dialer: Dialer,
+    dialer: D,
     /// Limits to concurrent tasks handled by the service.
     concurrency_limits: ConcurrencyLimits,
     /// Channel to receive messages from the service's handle.
@@ -395,16 +405,15 @@ struct Service<S, C, R> {
     scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
 }
 
-impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
+impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<S, C, R, D> {
     fn new(
         store: S,
         collection_parser: C,
         availabiliy_registry: R,
-        endpoint: iroh_net::MagicEndpoint,
+        dialer: D,
         concurrency_limits: ConcurrencyLimits,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
-        let dialer = Dialer::new(endpoint);
         Service {
             store,
             collection_parser,
@@ -430,7 +439,7 @@ impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
                 .at_requests_capacity(self.in_progress_downloads.len());
 
             tokio::select! {
-                (peer, conn_result) = self.dialer.next() => {
+                Some((peer, conn_result)) = self.dialer.next() => {
                     trace!("tick: connection ready");
                     self.on_connection_ready(peer, conn_result);
                 }
@@ -937,5 +946,19 @@ impl AvailabilityRegistry for Registry {
 
     fn remove(&mut self, hash: Hash) {
         self.candidates.remove(&hash);
+    }
+}
+
+impl Dialer for iroh_gossip::net::util::Dialer {
+    fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
+        self.queue_dial(peer_id, alpn_protocol)
+    }
+
+    fn pending_count(&self) -> usize {
+        self.pending_count()
+    }
+
+    fn is_pending(&self, peer: &PublicKey) -> bool {
+        self.is_pending(peer)
     }
 }

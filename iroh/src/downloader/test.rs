@@ -3,7 +3,7 @@
 #![allow(unused)]
 use super::*;
 
-impl<S: Store, C: CollectionParser, R: AvailabilityRegistry> Service<S, C, R> {
+impl<S: Store, C: CollectionParser, R: AvailabilityRegistry, D: Dialer> Service<S, C, R, D> {
     #[track_caller]
     fn check_consistency_invariants(&self) {}
 
