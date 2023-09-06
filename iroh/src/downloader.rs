@@ -485,6 +485,8 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
                     trace!(%peer, "tick: goodbye peer");
                 }
             }
+            #[cfg(test)]
+            self.check_consistency_invariants();
         }
     }
 
