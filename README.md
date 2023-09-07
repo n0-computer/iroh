@@ -38,7 +38,7 @@ Bytes, Distributed.
 </div>
 <br/>
 
-Iroh is a protocol for syncing & moving bytes. Bytes of any size, on any device. At it's core, it's a peer-2-peer network built on a _magic socket_ that establishes [QUIC](https://en.wikipedia.org/wiki/QUIC) connections between peers. Peers request and provide _blobs_ of opaque bytes that are incrementally verified by their BLAKE3 hash during transfer.
+Iroh is a protocol for syncing & moving bytes. Bytes of any size, on any device. At its core, it's a peer-2-peer network built on a _magic socket_ that establishes [QUIC](https://en.wikipedia.org/wiki/QUIC) connections between peers. Peers request and provide _blobs_ of opaque bytes that are incrementally verified by their BLAKE3 hash during transfer.
 
 ## Using Iroh
 
