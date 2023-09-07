@@ -135,7 +135,7 @@ async fn smoke_test() -> anyhow::Result<()> {
     // send a request and make sure the peer is requested the corresponding download
     // check that the requester receives the result
     let peer = SecretKey::generate().public();
-    let hash = Hash::new(&[0u8; 32]);
+    let hash = Hash::new([0u8; 32]);
     let (d_tx, d_rx) = oneshot::channel();
     let id = 0;
     let kind = DownloadKind::Blob { hash };
