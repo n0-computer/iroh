@@ -50,6 +50,7 @@ use self::get::FailureAction;
 mod get;
 mod io_getter;
 mod test;
+mod test_invariants;
 
 /// Delay added to a request when it's first received.
 const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
