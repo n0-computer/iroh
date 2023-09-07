@@ -8,7 +8,7 @@ use super::*;
 impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> Service<G, R, D> {
     /// Checks the various invariants the service must maintain
     #[track_caller]
-    pub(super) fn check_consistency_invariants(&self) {
+    pub(in crate::downloader) fn check_consistency_invariants(&self) {
         self.chech_concurrency_limits();
         self.check_active_request_count();
         self.check_scheduled_requests_consistency();
