@@ -8,30 +8,31 @@ use super::*;
 impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> Service<G, R, D> {
     /// Checks the various invariants the service must maintain
     #[track_caller]
-    pub(in crate::downloader) fn check_consistency_invariants(&self) {
-        self.chech_concurrency_limits();
+    pub(in crate::downloader) fn check_invariants(&self) {
         self.check_active_request_count();
         self.check_scheduled_requests_consistency();
         self.check_idle_peer_consistency();
+        self.chech_concurrency_limits();
     }
 
     /// Checks concurrency limits are maintained.
     #[track_caller]
     fn chech_concurrency_limits(&self) {
+        let ConcurrencyLimits {
+            max_concurrent_requests,
+            max_concurrent_requests_per_peer,
+            max_open_connections,
+        } = &self.concurrency_limits;
+
         // check the total number of active requests to ensure it stays within the limit
-        let active_requests = self.current_requests.len();
-        assert!(!self
-            .concurrency_limits
-            .at_requests_capacity(active_requests));
+        assert!(self.in_progress_downloads.len() <= *max_concurrent_requests);
 
         // check that the open and dialing peers don't exceed the connection capacity
-        assert!(!self.at_connections_capacity());
+        assert!(self.connections_count() <= *max_open_connections);
 
         // check the active requests per peer don't exceed the limit
         for info in self.peers.values() {
-            assert!(!self
-                .concurrency_limits
-                .peer_at_request_capacity(info.active_requests()))
+            assert!(info.active_requests() <= *max_concurrent_requests_per_peer)
         }
     }
 

@@ -104,11 +104,11 @@ pub trait Getter {
 #[derive(Debug)]
 pub struct ConcurrencyLimits {
     /// Maximum number of requests the service performs concurrently.
-    max_concurrent_requests: usize,
+    pub max_concurrent_requests: usize,
     /// Maximum number of requests performed by a single peer concurrently.
-    max_concurrent_requests_per_peer: usize,
+    pub max_concurrent_requests_per_peer: usize,
     /// Maximum number of open connections the service maintains.
-    max_open_connections: usize,
+    pub max_open_connections: usize,
 }
 
 impl Default for ConcurrencyLimits {
@@ -487,7 +487,7 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
                 }
             }
             #[cfg(test)]
-            self.check_consistency_invariants();
+            self.check_invariants();
         }
     }
 
@@ -913,14 +913,19 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
 
     /// Check if we have maxed our connection capacity.
     fn at_connections_capacity(&self) -> bool {
+        self.concurrency_limits
+            .at_connections_capacity(self.connections_count())
+    }
+
+    /// Get the total number of connected and dialing peers.
+    fn connections_count(&self) -> usize {
         let connected_peers = self
             .peers
             .values()
             .filter(|info| info.conn.is_some())
             .count();
         let dialing_peers = self.dialer.pending_count();
-        self.concurrency_limits
-            .at_connections_capacity(dialing_peers + connected_peers)
+        connected_peers + dialing_peers
     }
 
     async fn shutdown(self) {
