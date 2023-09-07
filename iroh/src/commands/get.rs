@@ -78,7 +78,7 @@ impl GetInteractive {
             provider = provider.enable_derp(dm.clone());
         }
         let provider = provider
-            .runtime(&iroh_bytes::util::runtime::Handle::from_currrent(1)?)
+            .runtime(&iroh_bytes::util::runtime::Handle::from_current(1)?)
             .spawn()
             .await?;
         let out = out_dir

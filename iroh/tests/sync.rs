@@ -20,7 +20,7 @@ use iroh_sync::store::{self, GetFilter};
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
 fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_currrent(1).unwrap()
+    runtime::Handle::from_current(1).unwrap()
 }
 
 fn test_node(

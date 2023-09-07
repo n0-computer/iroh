@@ -218,7 +218,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> storage directory: {storage_path:?}");
 
     // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
-    let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
+    let rt = iroh_bytes::util::runtime::Handle::from_current(num_cpus::get())?;
 
     // create a doc store for the iroh-sync docs
     let author = Author::from_bytes(&secret_key.to_bytes());
