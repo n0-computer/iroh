@@ -108,3 +108,31 @@ async fn test_deduplication() {
     // verify that the request was sent just once
     getter.assert_history(&[(kind, peer)]);
 }
+
+/// Tests that two intents produce a single request, and that the requesst is cancelled only when
+/// all intents are cancelled.
+#[tokio::test]
+async fn test_cancellation() {
+    let dialer = test_dialer::TestingDialer::default();
+    let getter = test_getter::TestingGetter::default();
+    // make request take some time to ensure cancellations are received on time
+    getter.set_request_duration(Duration::from_millis(500));
+    let availabiliy_registry = Registry::default();
+    let concurrency_limits = ConcurrencyLimits::default();
+
+    let mut downloader =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+
+    let peer = SecretKey::generate().public();
+    let kind = DownloadKind::Blob {
+        hash: Hash::new([0u8; 32]),
+    };
+    let handle_a = downloader.queue(kind.clone(), vec![peer]).await;
+    let handle_b = downloader.queue(kind.clone(), vec![peer]).await;
+    downloader.cancel(handle_a);
+
+    // wait for the download result to be reported, a was cancelled but b should continue
+    handle_b.await.expect("should report success");
+    // verify that the request was sent just once
+    getter.assert_history(&[(kind, peer)]);
+}

@@ -464,7 +464,7 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
                     self.on_connection_ready(peer, conn_result);
                 }
                 maybe_msg = self.msg_rx.recv() => {
-                    trace!("tick: message received");
+                    trace!(msg=?maybe_msg, "tick: message received");
                     match maybe_msg {
                         Some(msg) => self.handle_message(msg),
                         None => return self.shutdown().await,
