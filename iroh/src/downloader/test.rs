@@ -52,7 +52,7 @@ impl Downloader {
 
 /// Tests that receiving a download request and performing it doesn't explode.
 #[tokio::test]
-async fn smoke_test() -> anyhow::Result<()> {
+async fn smoke_test() {
     let dialer = test_dialer::TestingDialer::default();
     let getter = test_getter::TestingGetter::default();
     let availabiliy_registry = Registry::default();
@@ -73,6 +73,38 @@ async fn smoke_test() -> anyhow::Result<()> {
     dialer.assert_history(&[peer]);
     // verify that the request was sent
     getter.assert_history(&[(kind, peer)]);
+}
 
-    Ok(())
+/// Tests that two intents produce a single request, and that the requesst is cancelled only when
+/// all intents are cancelled.
+#[tokio::test]
+async fn test_deduplication() {
+    let dialer = test_dialer::TestingDialer::default();
+    let getter = test_getter::TestingGetter::default();
+    // make request take some time to ensure the intents are received before completion
+    getter.set_request_duration(Duration::from_secs(1));
+    let availabiliy_registry = Registry::default();
+    let concurrency_limits = ConcurrencyLimits::default();
+
+    let mut downloader =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+
+    let peer = SecretKey::generate().public();
+    let kind = DownloadKind::Blob {
+        hash: Hash::new([0u8; 32]),
+    };
+    let mut handles = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let h = downloader.queue(kind.clone(), vec![peer]).await;
+        handles.push(h);
+    }
+    assert!(
+        futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .all(|r| r.is_ok()),
+        "all downloads should succeed"
+    );
+    // verify that the request was sent just once
+    getter.assert_history(&[(kind, peer)]);
 }

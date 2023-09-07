@@ -16,8 +16,8 @@ pub(super) struct TestingGetter(Arc<RwLock<TestingGetterInner>>);
 
 #[derive(Default)]
 struct TestingGetterInner {
-    /// Number in the [0, 100] range indicating how often should requests fail.
-    failure_rate: u8,
+    /// How long requests take.
+    request_duration: Duration,
     /// History of requests performed by the [`Getter`] and if they were successful.
     request_history: Vec<(DownloadKind, PublicKey)>,
 }
@@ -28,10 +28,11 @@ impl Getter for TestingGetter {
     type Connection = PublicKey;
 
     fn get(&mut self, kind: DownloadKind, peer: PublicKey) -> GetFut {
-        // for now, every download is successful
-        self.0.write().request_history.push((kind, peer));
+        let mut inner = self.0.write();
+        inner.request_history.push((kind, peer));
+        let request_duration = inner.request_duration;
         async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(request_duration).await;
             Ok(())
         }
         .boxed_local()
@@ -39,6 +40,9 @@ impl Getter for TestingGetter {
 }
 
 impl TestingGetter {
+    pub(super) fn set_request_duration(&self, request_duration: Duration) {
+        self.0.write().request_duration = request_duration;
+    }
     /// Verify that the request history is as expected
     #[track_caller]
     pub(super) fn assert_history(&self, history: &[(DownloadKind, PublicKey)]) {

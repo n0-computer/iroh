@@ -544,6 +544,9 @@ impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> 
                 if info.next_peer.is_none() {
                     info.next_peer = next_peer
                 }
+                // increasing the retries by one accounts for multiple intents for the same request in
+                // a conservative way
+                info.remaining_retries += 1;
                 trace!(?kind, ?info, "intent registered with scheduled request");
             }
             None => {
