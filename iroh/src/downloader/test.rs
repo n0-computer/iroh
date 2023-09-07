@@ -29,7 +29,7 @@ impl Downloader {
 
         let availabiliy_registry = Registry::default();
 
-        iroh_bytes::util::runtime::Handle::from_currrent(1)
+        iroh_bytes::util::runtime::Handle::from_current(1)
             .unwrap()
             .local_pool()
             .spawn_pinned(move || async move {
