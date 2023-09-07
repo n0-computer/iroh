@@ -58,7 +58,8 @@ async fn smoke_test() -> anyhow::Result<()> {
     let availabiliy_registry = Registry::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let mut downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let mut downloader =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send a request and make sure the peer is requested the corresponding download
     let peer = SecretKey::generate().public();
