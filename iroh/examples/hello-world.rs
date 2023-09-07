@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
     // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let rt = runtime::Handle::from_currrent(1)?;
+    let rt = runtime::Handle::from_current(1)?;
     // add some data and remember the hash
     let hash = db.insert(b"Hello, world!");
     // create a new node

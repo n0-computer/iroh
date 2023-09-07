@@ -1420,7 +1420,7 @@ mod tests {
     /// Pick up the tokio runtime from the thread local and add a
     /// thread per core runtime.
     fn test_runtime() -> runtime::Handle {
-        runtime::Handle::from_currrent(1).unwrap()
+        runtime::Handle::from_current(1).unwrap()
     }
 
     #[tokio::test]
@@ -1444,7 +1444,7 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let rt = runtime::Handle::from_currrent(1)?;
+        let rt = runtime::Handle::from_current(1)?;
         let db = crate::baomap::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
