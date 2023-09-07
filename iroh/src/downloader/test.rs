@@ -136,3 +136,47 @@ async fn test_cancellation() {
     // verify that the request was sent just once
     getter.assert_history(&[(kind, peer)]);
 }
+
+/// Test that when the downloader receives a flood of requests, they are scheduled so that the
+/// maximum number of concurrent requests is not exceed.
+/// NOTE: This is internally tested by [`Service::check_invariants`].
+#[tokio::test]
+async fn test_max_concurrent_requests() {
+    let dialer = test_dialer::TestingDialer::default();
+    let getter = test_getter::TestingGetter::default();
+    // make request take some time to ensure concurreny limits are hit
+    getter.set_request_duration(Duration::from_millis(500));
+    let availabiliy_registry = Registry::default();
+    // set the concurreny limit very low to ensure it's hit
+    let concurrency_limits = ConcurrencyLimits {
+        max_concurrent_requests: 2,
+        ..Default::default()
+    };
+
+    let mut downloader =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+
+    // send the downloads
+    let peer = SecretKey::generate().public();
+    let mut handles = Vec::with_capacity(5);
+    let mut expected_history = Vec::with_capacity(5);
+    for i in 0..5 {
+        let kind = DownloadKind::Blob {
+            hash: Hash::new([i; 32]),
+        };
+        let h = downloader.queue(kind.clone(), vec![peer]).await;
+        expected_history.push((kind, peer));
+        handles.push(h);
+    }
+
+    assert!(
+        futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .all(|r| r.is_ok()),
+        "all downloads should succeed"
+    );
+
+    // verify that the request was sent just once
+    getter.assert_history(&expected_history);
+}
