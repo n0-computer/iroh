@@ -481,7 +481,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
 mod tests {
     use tracing::{info, info_span, Instrument};
 
-    use crate::test_utils::run_derper;
+    use crate::test_utils::TestDerper;
 
     use super::*;
 
@@ -491,12 +491,12 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
-        let (derp_map, region_id, _guard) = run_derper().await.unwrap();
+        let derper = TestDerper::run().await.unwrap();
         let server_secret_key = SecretKey::generate();
         let server_peer_id = server_secret_key.public();
 
         let server = {
-            let derp_map = derp_map.clone();
+            let derp_map = derper.derp_map.clone();
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
@@ -535,13 +535,13 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .enable_derp(derp_map)
+                    .enable_derp(derper.derp_map)
                     .bind(0)
                     .await
                     .unwrap();
                 info!("client connecting");
                 let conn = ep
-                    .connect(server_peer_id, TEST_ALPN, region_id, &[])
+                    .connect(server_peer_id, TEST_ALPN, derper.region_id, &[])
                     .await
                     .unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
