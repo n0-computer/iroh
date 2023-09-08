@@ -2,14 +2,14 @@
 //!
 //! The [`Downloader`] interacts with four main components to this end.
 //! - [`Dialer`]: Used to queue opening connections to peers we need to perform downloads.
-//! - [`AvailabilityRegistry`]: Where the downloader obtains information about peers that could be
+//! - [`ProviderMap`]: Where the downloader obtains information about peers that could be
 //!   used to perform a download.
 //! - [`Store`]: Where data is stored.
 //! - [`CollectionParser`]: Used by the Get state machine logic to identify blobs encoding
 //!   collections.
 //!
 //! Once a download request is received, the logic is as follows:
-//! 1. The [`AvailabilityRegistry`] is queried for peers. From these peers some are selected
+//! 1. The [`ProviderMap`] is queried for peers. From these peers some are selected
 //!    prioritizing connected peers with lower number of active requests. If no useful peer is
 //!    connected, or useful connected peers have no capacity to perform the request, a connection
 //!    attempt is started using the [`Dialer`].
@@ -64,8 +64,10 @@ const SERVICE_CHANNEL_CAPACITY: usize = 120;
 // Mainly for readability.
 pub type Id = u64;
 
-/// Trait modeling a registry of peers that have the hashes we want to download.
-pub trait AvailabilityRegistry {
+/// Trait modeling a map of peers that have the hashes we want to download.
+// TODO(@divma): this is probably not needed outside the downloader (not even for testing) so we
+// might as well remove the trait.
+pub trait ProviderMap {
     /// Iterator of candidates.
     type CandidateIter<'a>: Iterator<Item = &'a PublicKey>
     where
@@ -91,6 +93,9 @@ pub trait Dialer:
     /// Check if a peer is being dialed.
     fn is_pending(&self, peer: &PublicKey) -> bool;
 }
+
+/// Future of a get request.
+type GetFut = LocalBoxFuture<'static, Result<(), FailureAction>>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
@@ -312,7 +317,7 @@ enum Message {
     /// Cancel an intent. The associated request will be cancelled when the last intent is
     /// cancelled.
     Cancel { id: Id, kind: DownloadKind },
-    /// Declare that peers have certains hash and can be used for downloading. This feeds the [`AvailabilityRegistry`].
+    /// Declare that peers have certains hash and can be used for downloading. This feeds the [`ProviderMap`].
     PeersHave { hash: Hash, peers: Vec<PublicKey> },
 }
 
@@ -343,7 +348,7 @@ struct PendingRequestInfo {
     #[debug(skip)]
     delay_key: delay_queue::Key,
     /// If this attempt was scheduled with a known potential peer, this is stored here to
-    /// prevent another query to the [`AvailabilityRegistry`].
+    /// prevent another query to the [`ProviderMap`].
     next_peer: Option<PublicKey>,
 }
 
@@ -398,10 +403,8 @@ enum PeerState {
 /// Type of future that performs a download request.
 type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
 
-type GetFut = LocalBoxFuture<'static, Result<(), FailureAction>>;
-
 #[derive(Debug)]
-struct Service<G: Getter, R: AvailabilityRegistry, D: Dialer> {
+struct Service<G: Getter, R: ProviderMap, D: Dialer> {
     /// The getter performs individual requests.
     getter: G,
     /// Registry to query for peers that we believe have the data we are looking for.
@@ -427,7 +430,7 @@ struct Service<G: Getter, R: AvailabilityRegistry, D: Dialer> {
     scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
 }
 
-impl<G: Getter<Connection = D::Connection>, R: AvailabilityRegistry, D: Dialer> Service<G, R, D> {
+impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G, R, D> {
     fn new(
         getter: G,
         availabiliy_registry: R,
@@ -951,7 +954,7 @@ impl<'a> Iterator for RegistryIter<'a> {
     }
 }
 
-impl AvailabilityRegistry for Registry {
+impl ProviderMap for Registry {
     type CandidateIter<'a> = RegistryIter<'a>;
 
     fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter<'_> {
