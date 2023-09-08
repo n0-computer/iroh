@@ -2,6 +2,7 @@
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    ops::Range,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -851,6 +852,95 @@ async fn test_custom_request_collection() {
         assert_eq!(items.len(), 2);
         assert_eq!(items[&0], child1);
         assert_eq!(items[&1], child2);
+        anyhow::Ok(())
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
+}
+
+/// compute the range of the last chunk of a blob of the given size
+fn last_chunk_range(size: usize) -> Range<usize> {
+    const CHUNK_LEN: usize = 1024;
+    const MASK: usize = CHUNK_LEN - 1;
+    if (size & MASK) == 0 {
+        size - CHUNK_LEN..size
+    } else {
+        (size & !MASK)..size
+    }
+}
+
+fn last_chunk(data: &[u8]) -> &[u8] {
+    let range = last_chunk_range(data.len());
+    &data[range]
+}
+
+fn make_test_data(n: usize) -> Vec<u8> {
+    let mut data = Vec::with_capacity(n);
+    for i in 0..n {
+        data.push((i / 1024) as u8);
+    }
+    data
+}
+
+/// Ask for the last chunk of a blob, even if we don't know the size yet.
+///
+/// The verified last chunk also verifies the size.
+#[tokio::test]
+async fn test_size_request_blob() {
+    let rt = test_runtime();
+    let expected = make_test_data(1024 * 64 + 1234);
+    let last_chunk = last_chunk(&expected);
+    let (db, hashes) = iroh::baomap::readonly_mem::Store::new([("test", &expected)]);
+    let hash = Hash::from(*hashes.values().next().unwrap());
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let request = GetRequest::last_chunk(hash).into();
+        let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
+        let response = fsm::start(connection, request);
+        let connected = response.next().await?;
+        let ConnectedNext::StartRoot(start) = connected.next().await? else {
+            panic!()
+        };
+        let header = start.next();
+        let (_, actual) = header.concatenate_into_vec().await?;
+        assert_eq!(actual, last_chunk);
+        anyhow::Ok(())
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
+}
+
+/// Ask for the last chunk of all children in a collection, even if we don't know
+/// the number of children and their sizes yet.
+///
+/// The verified last chunks also verifies the sizes.
+#[tokio::test]
+async fn test_size_request_collection() {
+    let rt = test_runtime();
+    let child1 = make_test_data(123456);
+    let child2 = make_test_data(345678);
+    let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = test_node(db.clone(), addr)
+        .runtime(&rt)
+        .custom_get_handler(Arc::new(CollectionCustomHandler { hash }))
+        .spawn()
+        .await
+        .unwrap();
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let request = GetRequest::last_chunks(hash).into();
+        let opts = get_options(peer_id, addrs);
+        let (_collection, items, _stats) = run_get_request(opts, request).await?;
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[&0], last_chunk(&child1));
+        assert_eq!(items[&1], last_chunk(&child2));
         anyhow::Ok(())
     })
     .await

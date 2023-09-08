@@ -293,7 +293,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["65.98 KiB"]);
+        assert_eq!(matches, vec!["69.79 KiB"]);
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
