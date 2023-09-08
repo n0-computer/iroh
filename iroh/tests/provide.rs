@@ -25,9 +25,10 @@ use iroh_net::{
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
+use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
-use bao_tree::blake3;
+use bao_tree::{blake3, ChunkNum};
 use iroh_bytes::{
     baomap::{PartialMap, Store},
     collection::{CollectionParser, CollectionStats, LinkStream},
@@ -36,7 +37,7 @@ use iroh_bytes::{
         fsm::{self, DecodeError},
         Stats,
     },
-    protocol::{CustomGetRequest, GetRequest, Request, RequestToken},
+    protocol::{CustomGetRequest, GetRequest, RangeSpecSeq, Request, RequestToken},
     provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
@@ -941,6 +942,49 @@ async fn test_size_request_collection() {
         assert_eq!(items.len(), 2);
         assert_eq!(items[&0], last_chunk(&child1));
         assert_eq!(items[&1], last_chunk(&child2));
+        anyhow::Ok(())
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
+}
+
+#[tokio::test]
+async fn test_collection_stat() {
+    let rt = test_runtime();
+    let child1 = make_test_data(123456);
+    let child2 = make_test_data(345678);
+    let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = test_node(db.clone(), addr)
+        .runtime(&rt)
+        .custom_get_handler(Arc::new(CollectionCustomHandler { hash }))
+        .spawn()
+        .await
+        .unwrap();
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        // first 1024 bytes
+        let header = RangeSet2::from(..ChunkNum(1));
+        // last chunk, whatever it is, to verify the size
+        let end = RangeSet2::from(ChunkNum(u64::MAX)..);
+        // combine them
+        let ranges = &header | &end;
+        let request = GetRequest::new(
+            hash,
+            RangeSpecSeq::from_ranges_infinite([RangeSet2::all(), ranges]),
+        )
+        .into();
+        let opts = get_options(peer_id, addrs);
+        let (_collection, items, _stats) = run_get_request(opts, request).await?;
+        // we should get the first <=1024 bytes and the last chunk of each child
+        // so now we know the size and can guess the type by inspecting the header
+        assert_eq!(items.len(), 2);
+        assert_eq!(&items[&0][..1024], &child1[..1024]);
+        assert!(items[&0].ends_with(last_chunk(&child1)));
+        assert_eq!(&items[&1][..1024], &child2[..1024]);
+        assert!(items[&1].ends_with(last_chunk(&child2)));
         anyhow::Ok(())
     })
     .await
