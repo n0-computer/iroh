@@ -45,9 +45,6 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, trace};
 
-use self::get::FailureAction;
-
-mod get;
 mod io_getter;
 mod test;
 
@@ -76,6 +73,17 @@ pub trait Dialer:
     fn pending_count(&self) -> usize;
     /// Check if a peer is being dialed.
     fn is_pending(&self, peer: &PublicKey) -> bool;
+}
+
+/// Signals what should be done with the request when it fails.
+#[derive(Debug)]
+pub enum FailureAction {
+    /// An error ocurred that prevents the request from being retried at all.
+    AbortRequest(anyhow::Error),
+    /// An error occurred that suggests the peer should not be used in general.
+    DropPeer(anyhow::Error),
+    /// An error occurred in which neither the peer nor the request are at fault.
+    RetryLater(anyhow::Error),
 }
 
 /// Future of a get request.
@@ -827,7 +835,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         let fut = async move {
             // TODO(@divma): timeout?
             let res = tokio::select! {
-                _ = cancellation.cancelled() => Err(get::FailureAction::AbortRequest(anyhow::anyhow!("cancelled"))),
+                _ = cancellation.cancelled() => Err(FailureAction::AbortRequest(anyhow::anyhow!("cancelled"))),
                 res = get => res
             };
 
