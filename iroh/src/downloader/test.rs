@@ -1,16 +1,7 @@
 #![cfg(test)]
-// WIP
-#![allow(unused)]
-use std::{
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::time::Duration;
 
-use anyhow::anyhow;
-use iroh_gossip::net::util::Timers;
 use iroh_net::key::SecretKey;
-use parking_lot::RwLock;
 
 use super::*;
 
@@ -33,7 +24,7 @@ impl Downloader {
                 // we want to see the logs of the service
                 let _guard = iroh_test::logging::setup();
 
-                let mut service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+                let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
                 service.run().await
             });
 
@@ -65,8 +56,7 @@ async fn smoke_test() {
     getter.assert_history(&[(kind, peer)]);
 }
 
-/// Tests that two intents produce a single request, and that the requesst is cancelled only when
-/// all intents are cancelled.
+/// Tests that multiple intents produce a single reques
 #[tokio::test]
 async fn deduplication() {
     let dialer = dialer::TestingDialer::default();
@@ -112,17 +102,26 @@ async fn cancellation() {
         Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
-    let kind = DownloadKind::Blob {
+    let kind_1 = DownloadKind::Blob {
         hash: Hash::new([0u8; 32]),
     };
-    let handle_a = downloader.queue(kind.clone(), vec![peer]).await;
-    let handle_b = downloader.queue(kind.clone(), vec![peer]).await;
-    downloader.cancel(handle_a);
+    let handle_a = downloader.queue(kind_1.clone(), vec![peer]).await;
+    let handle_b = downloader.queue(kind_1.clone(), vec![peer]).await;
+    downloader.cancel(handle_a).await;
+
+    // create a request with two intents and cancel them both
+    let kind_2 = DownloadKind::Blob {
+        hash: Hash::new([1u8; 32]),
+    };
+    let handle_c = downloader.queue(kind_2.clone(), vec![peer]).await;
+    let handle_d = downloader.queue(kind_2.clone(), vec![peer]).await;
+    downloader.cancel(handle_c).await;
+    downloader.cancel(handle_d).await;
 
     // wait for the download result to be reported, a was cancelled but b should continue
     handle_b.await.expect("should report success");
-    // verify that the request was sent just once
-    getter.assert_history(&[(kind, peer)]);
+    // verify that the request was sent just once, and that the second request was never sent
+    getter.assert_history(&[(kind_1, peer)]);
 }
 
 /// Test that when the downloader receives a flood of requests, they are scheduled so that the

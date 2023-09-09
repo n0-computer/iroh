@@ -1,14 +1,7 @@
 //! Implementation of [`super::Getter`] used for testing.
 
-use std::{
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
-use anyhow::anyhow;
-use iroh_gossip::net::util::Timers;
-use iroh_net::key::SecretKey;
 use parking_lot::RwLock;
 
 use super::*;

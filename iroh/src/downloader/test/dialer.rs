@@ -6,14 +6,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::anyhow;
-use iroh_gossip::net::util::Timers;
-use iroh_net::key::SecretKey;
 use parking_lot::RwLock;
 
 use super::*;
-
-const DEFAULT_DIAL_DURATION: Duration = Duration::from_millis(300);
 
 /// Dialer for testing that keeps track of the dialing history.
 #[derive(Default, Clone)]
@@ -53,7 +48,7 @@ impl Dialer for TestingDialer {
         // for now assume every dial works
         let dial_duration = inner.dial_duration;
         if inner.dialing.insert(peer_id) {
-            inner.dial_futs.insert((peer_id), dial_duration);
+            inner.dial_futs.insert(peer_id, dial_duration);
         }
     }
 
@@ -69,10 +64,7 @@ impl Dialer for TestingDialer {
 impl futures::Stream for TestingDialer {
     type Item = (PublicKey, anyhow::Result<PublicKey>);
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut inner = self.0.write();
         match inner.dial_futs.poll_expired(cx) {
             Poll::Ready(Some(expired)) => {
