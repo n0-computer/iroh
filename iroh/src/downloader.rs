@@ -64,22 +64,6 @@ const SERVICE_CHANNEL_CAPACITY: usize = 120;
 // Mainly for readability.
 pub type Id = u64;
 
-/// Trait modeling a map of peers that have the hashes we want to download.
-// TODO(@divma): this is probably not needed outside the downloader (not even for testing) so we
-// might as well remove the trait.
-pub trait ProviderMap {
-    /// Iterator of candidates.
-    type CandidateIter<'a>: Iterator<Item = &'a PublicKey>
-    where
-        Self: 'a;
-    /// Get candidates to download this hash.
-    fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter<'_>;
-    /// Register peers for a hash. Should only be done for hashes we care to download.
-    fn add_peers(&mut self, hash: Hash, peers: &[PublicKey]);
-    /// Signal the registry that this hash is no longer of interest.
-    fn remove(&mut self, hash: Hash);
-}
-
 /// Trait modeling a dialer. This allows for IO-less testing.
 pub trait Dialer:
     futures::Stream<Item = (PublicKey, anyhow::Result<Self::Connection>)> + Unpin
@@ -232,20 +216,13 @@ impl Downloader {
         let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
 
         let create_future = move || {
-            let availabiliy_registry = Registry::default();
             let concurrency_limits = ConcurrencyLimits::default();
             let getter = io_getter::IoGetter {
                 store,
                 collection_parser,
             };
 
-            let service = Service::new(
-                getter,
-                availabiliy_registry,
-                dialer,
-                concurrency_limits,
-                msg_rx,
-            );
+            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
 
             service.run()
         };
@@ -404,11 +381,11 @@ enum PeerState {
 type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
 
 #[derive(Debug)]
-struct Service<G: Getter, R: ProviderMap, D: Dialer> {
+struct Service<G: Getter, D: Dialer> {
     /// The getter performs individual requests.
     getter: G,
-    /// Registry to query for peers that we believe have the data we are looking for.
-    availabiliy_registry: R,
+    /// Map to query for peers that we believe have the data we are looking for.
+    providers: ProviderMap,
     /// Dialer to get connections for required peers.
     dialer: D,
     /// Limits to concurrent tasks handled by the service.
@@ -430,17 +407,16 @@ struct Service<G: Getter, R: ProviderMap, D: Dialer> {
     scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
 }
 
-impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G, R, D> {
+impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn new(
         getter: G,
-        availabiliy_registry: R,
         dialer: D,
         concurrency_limits: ConcurrencyLimits,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
         Service {
             getter,
-            availabiliy_registry,
+            providers: ProviderMap::default(),
             dialer,
             concurrency_limits,
             msg_rx,
@@ -519,7 +495,7 @@ impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G
         sender: oneshot::Sender<DownloadResult>,
         peers: Vec<PublicKey>,
     ) {
-        self.availabiliy_registry.add_peers(*kind.hash(), &peers);
+        self.providers.add_peers(*kind.hash(), &peers);
         if let Some(info) = self.current_requests.get_mut(&kind) {
             // this intent maps to a download that already exists, simply register it
             info.intents.insert(id, sender);
@@ -609,7 +585,7 @@ impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G
 
         // first collect suitable candidates
         let mut candidates = self
-            .availabiliy_registry
+            .providers
             .get_candidates(hash)
             .filter_map(|peer| {
                 if let Some(info) = self.peers.get(peer) {
@@ -676,7 +652,7 @@ impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G
     fn handle_peers_have(&mut self, hash: Hash, peers: Vec<PublicKey>) {
         // check if this still needed
         if self.is_needed(hash) {
-            self.availabiliy_registry.add_peers(hash, &peers);
+            self.providers.add_peers(hash, &peers);
         }
     }
 
@@ -774,7 +750,7 @@ impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G
         }
 
         if !self.is_needed(hash) {
-            self.availabiliy_registry.remove(hash)
+            self.providers.remove(hash)
         }
     }
 
@@ -937,16 +913,18 @@ impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G
     }
 }
 
-#[derive(Default)]
-struct Registry {
+/// Map of potential providers for a hash.
+#[derive(Default, Debug)]
+struct ProviderMap {
+    /// Candidates to download a hash.
     candidates: HashMap<Hash, HashSet<PublicKey>>,
 }
 
-struct RegistryIter<'a> {
+struct ProviderIter<'a> {
     inner: Option<std::collections::hash_set::Iter<'a, PublicKey>>,
 }
 
-impl<'a> Iterator for RegistryIter<'a> {
+impl<'a> Iterator for ProviderIter<'a> {
     type Item = &'a PublicKey;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -954,18 +932,19 @@ impl<'a> Iterator for RegistryIter<'a> {
     }
 }
 
-impl ProviderMap for Registry {
-    type CandidateIter<'a> = RegistryIter<'a>;
-
-    fn get_candidates(&self, hash: &Hash) -> Self::CandidateIter<'_> {
+impl ProviderMap {
+    /// Get candidates to download this hash.
+    fn get_candidates(&self, hash: &Hash) -> impl Iterator<Item = &PublicKey> {
         let inner = self.candidates.get(hash).map(|peer_set| peer_set.iter());
-        RegistryIter { inner }
+        ProviderIter { inner }
     }
 
+    /// Register peers for a hash. Should only be done for hashes we care to download.
     fn add_peers(&mut self, hash: Hash, peers: &[PublicKey]) {
         self.candidates.entry(hash).or_default().extend(peers)
     }
 
+    /// Signal the registry that this hash is no longer of interest.
     fn remove(&mut self, hash: Hash) {
         self.candidates.remove(&hash);
     }

@@ -5,7 +5,7 @@
 use super::*;
 
 /// invariants for the service.
-impl<G: Getter<Connection = D::Connection>, R: ProviderMap, D: Dialer> Service<G, R, D> {
+impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// Checks the various invariants the service must maintain
     #[track_caller]
     pub(in crate::downloader) fn check_invariants(&self) {

@@ -17,7 +17,6 @@ use super::*;
 mod test_dialer;
 mod test_getter;
 mod test_invariants;
-mod testing_registry;
 
 impl Downloader {
     fn spawn_for_test(
@@ -27,8 +26,6 @@ impl Downloader {
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
 
-        let availabiliy_registry = Registry::default();
-
         iroh_bytes::util::runtime::Handle::from_current(1)
             .unwrap()
             .local_pool()
@@ -36,13 +33,7 @@ impl Downloader {
                 // we want to see the logs of the service
                 let _guard = iroh_test::logging::setup();
 
-                let mut service = Service::new(
-                    getter,
-                    availabiliy_registry,
-                    dialer,
-                    concurrency_limits,
-                    msg_rx,
-                );
+                let mut service = Service::new(getter, dialer, concurrency_limits, msg_rx);
                 service.run().await
             });
 
@@ -55,7 +46,6 @@ impl Downloader {
 async fn smoke_test() {
     let dialer = test_dialer::TestingDialer::default();
     let getter = test_getter::TestingGetter::default();
-    let availabiliy_registry = Registry::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
     let mut downloader =
@@ -83,7 +73,6 @@ async fn test_deduplication() {
     let getter = test_getter::TestingGetter::default();
     // make request take some time to ensure the intents are received before completion
     getter.set_request_duration(Duration::from_secs(1));
-    let availabiliy_registry = Registry::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
     let mut downloader =
@@ -117,7 +106,6 @@ async fn test_cancellation() {
     let getter = test_getter::TestingGetter::default();
     // make request take some time to ensure cancellations are received on time
     getter.set_request_duration(Duration::from_millis(500));
-    let availabiliy_registry = Registry::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
     let mut downloader =
@@ -146,7 +134,6 @@ async fn test_max_concurrent_requests() {
     let getter = test_getter::TestingGetter::default();
     // make request take some time to ensure concurreny limits are hit
     getter.set_request_duration(Duration::from_millis(500));
-    let availabiliy_registry = Registry::default();
     // set the concurreny limit very low to ensure it's hit
     let concurrency_limits = ConcurrencyLimits {
         max_concurrent_requests: 2,
