@@ -927,7 +927,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
 /// Map of potential providers for a hash.
 #[derive(Default, Debug)]
-struct ProviderMap {
+pub(crate) struct ProviderMap {
     /// Candidates to download a hash.
     candidates: HashMap<Hash, HashSet<PublicKey>>,
 }
