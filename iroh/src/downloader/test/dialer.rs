@@ -1,3 +1,5 @@
+//! Implementation of [`super::Dialer`] used for testing.
+
 use std::{
     sync::Arc,
     task::{Context, Poll},

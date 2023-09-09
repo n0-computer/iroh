@@ -1,3 +1,5 @@
+//! Implementation of [`super::Getter`] used for testing.
+
 use std::{
     sync::Arc,
     task::{Context, Poll},

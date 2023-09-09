@@ -14,14 +14,14 @@ use parking_lot::RwLock;
 
 use super::*;
 
-mod test_dialer;
-mod test_getter;
-mod test_invariants;
+mod dialer;
+mod getter;
+mod invariants;
 
 impl Downloader {
     fn spawn_for_test(
-        dialer: test_dialer::TestingDialer,
-        getter: test_getter::TestingGetter,
+        dialer: dialer::TestingDialer,
+        getter: getter::TestingGetter,
         concurrency_limits: ConcurrencyLimits,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
@@ -44,8 +44,8 @@ impl Downloader {
 /// Tests that receiving a download request and performing it doesn't explode.
 #[tokio::test]
 async fn smoke_test() {
-    let dialer = test_dialer::TestingDialer::default();
-    let getter = test_getter::TestingGetter::default();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
     let mut downloader =
@@ -68,9 +68,9 @@ async fn smoke_test() {
 /// Tests that two intents produce a single request, and that the requesst is cancelled only when
 /// all intents are cancelled.
 #[tokio::test]
-async fn test_deduplication() {
-    let dialer = test_dialer::TestingDialer::default();
-    let getter = test_getter::TestingGetter::default();
+async fn deduplication() {
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
     // make request take some time to ensure the intents are received before completion
     getter.set_request_duration(Duration::from_secs(1));
     let concurrency_limits = ConcurrencyLimits::default();
@@ -101,9 +101,9 @@ async fn test_deduplication() {
 /// Tests that two intents produce a single request, and that the requesst is cancelled only when
 /// all intents are cancelled.
 #[tokio::test]
-async fn test_cancellation() {
-    let dialer = test_dialer::TestingDialer::default();
-    let getter = test_getter::TestingGetter::default();
+async fn cancellation() {
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
     // make request take some time to ensure cancellations are received on time
     getter.set_request_duration(Duration::from_millis(500));
     let concurrency_limits = ConcurrencyLimits::default();
@@ -129,9 +129,9 @@ async fn test_cancellation() {
 /// maximum number of concurrent requests is not exceed.
 /// NOTE: This is internally tested by [`Service::check_invariants`].
 #[tokio::test]
-async fn test_max_concurrent_requests() {
-    let dialer = test_dialer::TestingDialer::default();
-    let getter = test_getter::TestingGetter::default();
+async fn max_concurrent_requests() {
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
     // make request take some time to ensure concurreny limits are hit
     getter.set_request_duration(Duration::from_millis(500));
     // set the concurreny limit very low to ensure it's hit
@@ -166,4 +166,53 @@ async fn test_max_concurrent_requests() {
 
     // verify that the request was sent just once
     getter.assert_history(&expected_history);
+}
+
+/// Test that when the downloader receives a flood of requests, with only one peer to handle them,
+/// the maximum number of requests per peer is still respected.
+/// NOTE: This is internally tested by [`Service::check_invariants`].
+#[tokio::test]
+async fn max_concurrent_requests_per_peer() {
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    // make request take some time to ensure concurreny limits are hit
+    getter.set_request_duration(Duration::from_millis(500));
+    // set the concurreny limit very low to ensure it's hit
+    let concurrency_limits = ConcurrencyLimits {
+        max_concurrent_requests_per_peer: 1,
+        max_concurrent_requests: 10000, // all requests can be performed at the same time
+        ..Default::default()
+    };
+
+    let mut downloader =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+
+    // send the downloads
+    let peer = SecretKey::generate().public();
+    let mut handles = Vec::with_capacity(5);
+    for i in 0..5 {
+        let kind = DownloadKind::Blob {
+            hash: Hash::new([i; 32]),
+        };
+        let h = downloader.queue(kind.clone(), vec![peer]).await;
+        handles.push(h);
+    }
+
+    // only the first
+    // let expected_history = [(
+    //     DownloadKind::Blob {
+    //         hash: Hash::new([0; 32]),
+    //     },
+    //     peer,
+    // )];
+    //
+    // assert!(
+    futures::future::join_all(handles).await;
+    //         .into_iter()
+    //         .all(|r| r.is_ok()),
+    //     "all downloads should succeed"
+    // );
+    //
+    // verify that the request was sent just once
+    // getter.assert_history(&expected_history);
 }
