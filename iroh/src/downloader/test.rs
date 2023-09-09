@@ -56,7 +56,7 @@ async fn smoke_test() {
     getter.assert_history(&[(kind, peer)]);
 }
 
-/// Tests that multiple intents produce a single reques
+/// Tests that multiple intents produce a single request.
 #[tokio::test]
 async fn deduplication() {
     let dialer = dialer::TestingDialer::default();
@@ -88,8 +88,7 @@ async fn deduplication() {
     getter.assert_history(&[(kind, peer)]);
 }
 
-/// Tests that two intents produce a single request, and that the requesst is cancelled only when
-/// all intents are cancelled.
+/// Tests that the requesst is cancelled only when all intents are cancelled.
 #[tokio::test]
 async fn cancellation() {
     let dialer = dialer::TestingDialer::default();
@@ -197,21 +196,5 @@ async fn max_concurrent_requests_per_peer() {
         handles.push(h);
     }
 
-    // only the first
-    // let expected_history = [(
-    //     DownloadKind::Blob {
-    //         hash: Hash::new([0; 32]),
-    //     },
-    //     peer,
-    // )];
-    //
-    // assert!(
     futures::future::join_all(handles).await;
-    //         .into_iter()
-    //         .all(|r| r.is_ok()),
-    //     "all downloads should succeed"
-    // );
-    //
-    // verify that the request was sent just once
-    // getter.assert_history(&expected_history);
 }
