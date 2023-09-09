@@ -120,14 +120,17 @@ impl Default for ConcurrencyLimits {
 }
 
 impl ConcurrencyLimits {
+    /// Checks if the maximum number of concurrent requests has been reached.
     fn at_requests_capacity(&self, active_requests: usize) -> bool {
         active_requests >= self.max_concurrent_requests
     }
 
+    /// Checks if the maximum number of concurrent requests per peer has been reached.
     fn peer_at_request_capacity(&self, active_peer_requests: usize) -> bool {
         active_peer_requests >= self.max_concurrent_requests_per_peer
     }
 
+    /// Checks if the maximum number of connections has been reached.
     fn at_connections_capacity(&self, active_connections: usize) -> bool {
         active_connections >= self.max_open_connections
     }
@@ -237,6 +240,7 @@ impl Downloader {
         rt.local_pool().spawn_pinned(create_future);
         Self { next_id: 0, msg_tx }
     }
+
     /// Queue a download.
     pub async fn queue(&mut self, kind: DownloadKind, peers: Vec<PublicKey>) -> DownloadHandle {
         let id = self.next_id;
