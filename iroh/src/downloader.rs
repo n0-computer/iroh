@@ -45,7 +45,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, trace};
 
-mod io_getter;
+mod get;
 mod test;
 
 /// Delay added to a request when it's first received.
@@ -225,7 +225,7 @@ impl Downloader {
 
         let create_future = move || {
             let concurrency_limits = ConcurrencyLimits::default();
-            let getter = io_getter::IoGetter {
+            let getter = get::IoGetter {
                 store,
                 collection_parser,
             };
