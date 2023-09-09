@@ -16,9 +16,13 @@ use iroh_bytes::{
     util::Hash,
     IROH_BLOCK_SIZE,
 };
+#[cfg(feature = "metrics")]
+use iroh_metrics::{inc, inc_by};
 use tracing::trace;
 
 use crate::get::{get_missing_ranges_blob, get_missing_ranges_collection, BlobInfo};
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
 
 use super::{DownloadKind, FailureAction, GetFut, Getter};
@@ -43,8 +47,35 @@ impl<S: Store, C: CollectionParser> Getter for IoGetter<S, C> {
                 }
             };
 
-            // TODO: use stats for metrics
-            get.await.map(|_stats| ())
+            let res = get.await;
+            match res {
+                Ok(_stats) => {
+                    #[cfg(feature = "metrics")]
+                    {
+                        let Stats {
+                            bytes_written,
+                            bytes_read: _,
+                            elapsed,
+                        } = _stats;
+
+                        inc!(Metrics, downloads_success);
+                        inc_by!(Metrics, download_bytes_total, bytes_written);
+                        inc_by!(Metrics, download_time_total, elapsed.as_millis() as u64);
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    // record metrics according to the error
+                    #[cfg(feature = "metrics")]
+                    {
+                        match &e {
+                            FailureAction::RetryLater(_) => inc!(Metrics, downloads_notfound),
+                            _ => inc!(Metrics, downloads_error),
+                        }
+                    }
+                    Err(e)
+                }
+            }
         };
         fut.boxed_local()
     }
