@@ -1,7 +1,4 @@
 //! Get requests in the context of the [`super::Downloader`].
-// error management here is a nightmare
-
-use std::io;
 
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
@@ -22,6 +19,7 @@ use iroh_bytes::{
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
+use crate::get::{get_missing_ranges_collection, BlobInfo};
 use crate::util::progress::ProgressSliceWriter2;
 
 /// Signals what should be done with the request when it fails.
@@ -392,38 +390,6 @@ async fn get_blob_inner_partial<D: Store>(
     Ok(end)
 }
 
-/// Given a collection of hashes, figure out what is missing
-async fn get_missing_ranges_collection<D: Store>(
-    db: &D,
-    collection: &Vec<Hash>,
-) -> io::Result<Vec<BlobInfo<D>>> {
-    let items = collection.iter().map(|hash| async move {
-        io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
-            // first look for partial
-            trace!("got partial data for {}", hash,);
-            let missing_chunks = get_missing_ranges_blob::<D>(&entry)
-                .await
-                .ok()
-                .unwrap_or_else(RangeSet2::all);
-            BlobInfo::Partial {
-                entry,
-                missing_chunks,
-            }
-        } else if db.get(hash).is_some() {
-            // then look for complete
-            BlobInfo::Complete
-        } else {
-            BlobInfo::Missing
-        })
-    });
-    let mut res = Vec::with_capacity(collection.len());
-    // todo: parallelize maybe?
-    for item in items {
-        res.push(item.await?);
-    }
-    Ok(res)
-}
-
 /// Get a collection
 pub async fn get_collection<D: Store, C: CollectionParser>(
     db: &D,
@@ -570,27 +536,4 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
     Ok(stats)
-}
-
-#[derive(Debug, Clone)]
-enum BlobInfo<D: Store> {
-    // we have the blob completely
-    Complete,
-    // we have the blob partially
-    Partial {
-        entry: D::PartialEntry,
-        missing_chunks: RangeSet2<ChunkNum>,
-    },
-    // we don't have the blob at all
-    Missing,
-}
-
-impl<D: Store> BlobInfo<D> {
-    fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
-        match self {
-            BlobInfo::Complete => RangeSet2::empty(),
-            BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
-            BlobInfo::Missing => RangeSet2::all(),
-        }
-    }
 }
