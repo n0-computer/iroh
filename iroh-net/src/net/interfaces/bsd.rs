@@ -706,6 +706,17 @@ impl Addr {
             _ => None,
         }
     }
+
+    pub fn ip(&self) -> Option<IpAddr> {
+        match self {
+            Addr::Inet4 { ip } => Some(IpAddr::V4(*ip)),
+            Addr::Inet6 { ip, .. } => {
+                // TODO: how to add the zone?
+                Some(IpAddr::V6(*ip))
+            }
+            _ => None,
+        }
+    }
 }
 
 fn roundup(l: usize) -> usize {

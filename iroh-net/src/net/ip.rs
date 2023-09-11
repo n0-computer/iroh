@@ -121,7 +121,7 @@ pub(crate) fn is_private_v6(ip: &Ipv6Addr) -> bool {
     ip.octets()[0] & 0xfe == 0xfc
 }
 
-fn is_link_local(ip: IpAddr) -> bool {
+pub(super) fn is_link_local(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ip.is_link_local(),
         IpAddr::V6(ip) => is_unicast_link_local(ip),
