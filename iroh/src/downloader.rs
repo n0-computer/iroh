@@ -55,7 +55,7 @@ const INITIAL_RETRY_COUNT: u8 = 4;
 /// Duration for which we keep peers connected after they were last useful to us.
 const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
-const SERVICE_CHANNEL_CAPACITY: usize = 120;
+const SERVICE_CHANNEL_CAPACITY: usize = 128;
 
 /// Download identifier.
 // Mainly for readability.
@@ -177,7 +177,7 @@ type DownloadResult = Result<(), ()>;
 #[derive(Debug)]
 pub struct DownloadHandle {
     /// Id used to identify the request in the [`Downloader`].
-    id: u64,
+    id: Id,
     /// Kind of download.
     kind: DownloadKind,
     /// Receiver to retrieve the return value of this download.
