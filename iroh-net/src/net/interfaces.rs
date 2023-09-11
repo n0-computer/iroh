@@ -9,7 +9,7 @@ use std::{collections::HashMap, net::IpAddr};
     target_os = "macos",
     target_os = "ios"
 ))]
-mod bsd;
+pub(super) mod bsd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
 #[cfg(target_os = "windows")]
