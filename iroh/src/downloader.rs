@@ -115,7 +115,7 @@ impl Default for ConcurrencyLimits {
         ConcurrencyLimits {
             max_concurrent_requests: 50,
             max_concurrent_requests_per_peer: 4,
-            max_open_connections: 100,
+            max_open_connections: 25,
         }
     }
 }
@@ -171,8 +171,9 @@ impl DownloadKind {
     }
 }
 
-// TODO(@divma): do we care about failure reason? do we care about success data reporting?
-type DownloadResult = Result<(), ()>;
+// For readability. In the future we might care about some data reporting on a successful download
+// or kind of failure in the error case.
+type DownloadResult = anyhow::Result<()>;
 
 /// Handle to interact with a download request.
 #[derive(Debug)]
@@ -197,7 +198,7 @@ impl std::future::Future for DownloadHandle {
         // from the middle
         match self.receiver.poll_unpin(cx) {
             Ready(Ok(result)) => Ready(result),
-            Ready(Err(_recv_err)) => Ready(Err(())),
+            Ready(Err(recv_err)) => Ready(Err(anyhow::anyhow!("oneshot error: {recv_err}"))),
             Pending => Pending,
         }
     }
@@ -407,7 +408,7 @@ struct Service<G: Getter, D: Dialer> {
     msg_rx: mpsc::Receiver<Message>,
     /// Peers available to use and their relevant information.
     peers: HashMap<PublicKey, ConnectionInfo<D::Connection>>,
-    /// Queue to manage dropping keys.
+    /// Queue to manage dropping peers.
     goodbye_peer_queue: delay_queue::DelayQueue<PublicKey>,
     /// Requests performed for download intents. Two download requests can produce the same
     /// request. This map allows deduplication of efforts.
@@ -709,7 +710,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             ..
         } = info;
 
-        let peer_info = self.peers.get_mut(&peer).expect("peer is connected");
+        let peer_info = self
+            .peers
+            .get_mut(&peer)
+            .expect("peer exists in the mapping");
         peer_info.state = match &peer_info.state {
             PeerState::Busy { active_requests } => {
                 match NonZeroUsize::new(active_requests.get() - 1) {
@@ -736,7 +740,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             Err(FailureAction::AbortRequest(reason)) => {
                 debug!(%peer, ?kind, %reason, "aborting request");
                 for sender in intents.into_values() {
-                    let _ = sender.send(Err(()));
+                    let _ = sender.send(Err(anyhow::anyhow!("request aborted")));
                 }
             }
             Err(FailureAction::DropPeer(reason)) => {
@@ -756,7 +760,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 } else {
                     debug!(%peer, ?kind, %reason, "download failed");
                     for sender in intents.into_values() {
-                        let _ = sender.send(Err(()));
+                        let _ = sender.send(Err(anyhow::anyhow!("download ran out of attempts")));
                     }
                 }
             }
@@ -810,7 +814,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         } else {
             // request can't be retried
             for sender in intents.into_values() {
-                let _ = sender.send(Err(()));
+                let _ = sender.send(Err(anyhow::anyhow!("download ran out of attempts")));
             }
             debug!(?kind, "download ran out of attempts")
         }
@@ -838,7 +842,12 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
         let get = self.getter.get(kind.clone(), conn);
         let fut = async move {
-            // TODO(@divma): timeout?
+            // NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
+            // > at this stage we do not know the size of the download, so the timeout would have
+            // > to be so large that it won't be useful for non-huge downloads. At the same time,
+            // > this means that a super slow peer would block a download from succeeding for a long
+            // > time, while faster peers could be readily available.
+            // As a conclusion, timeouts should be added only after downloads are known to be bounded
             let res = tokio::select! {
                 _ = cancellation.cancelled() => Err(FailureAction::AbortRequest(anyhow::anyhow!("cancelled"))),
                 res = get => res
@@ -874,7 +883,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.scheduled_requests.insert(kind, info);
     }
 
-    /// Gets the [`quinn::Connection`] for a peer if it's connected an has capacity for another
+    /// Gets the [`Dialer::Connection`] for a peer if it's connected and has capacity for another
     /// request. In this case, the count of active requests for the peer is incremented.
     fn get_peer_connection_for_download(&mut self, peer: &PublicKey) -> Option<D::Connection> {
         let info = self.peers.get_mut(peer)?;
