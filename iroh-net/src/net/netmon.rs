@@ -98,8 +98,8 @@ impl Monitor {
         self.actor_tx
             .send(ActorMessage::Unsubscribe(token, s))
             .await?;
-        let res = r.await?;
-        Ok(res)
+        r.await?;
+        Ok(())
     }
 }
 
