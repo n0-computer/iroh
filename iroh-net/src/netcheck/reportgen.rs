@@ -830,7 +830,7 @@ async fn run_probe(
         }
         Probe::Https { ref region, .. } => {
             debug!("sending probe HTTPS");
-            match measure_https_latency(region).await {
+            match measure_https_latency(region, None).await {
                 Ok((latency, ip)) => {
                     result.delay = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
@@ -965,9 +965,7 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
                 return Ok(SocketAddr::new(IpAddr::V4(ip), port));
             }
         }
-        ProbeProto::Https => {
-            anyhow::bail!("not implemented");
-        }
+        ProbeProto::Https => (),
     }
 
     match n.url.host() {
@@ -978,15 +976,20 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
                 if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
                     for addr in addrs {
                         let addr = ip::to_canonical(addr);
-                        if addr.is_ipv4() && proto == ProbeProto::StunIpv4 {
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                        if addr.is_ipv6() && proto == ProbeProto::StunIpv6 {
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                        if proto == ProbeProto::Https {
-                            // For now just return the first one
-                            return Ok(SocketAddr::new(addr, port));
+                        match proto {
+                            ProbeProto::StunIpv4 if addr.is_ipv4() => {
+                                return Ok(SocketAddr::new(addr, port))
+                            }
+                            ProbeProto::StunIpv6 if addr.is_ipv6() => {
+                                return Ok(SocketAddr::new(addr, port));
+                            }
+                            ProbeProto::Https => {
+                                return Ok(SocketAddr::new(addr, port));
+                            }
+                            ProbeProto::Icmp if addr.is_ipv4() => {
+                                return Ok(SocketAddr::new(addr, port));
+                            }
+                            _ => continue,
                         }
                     }
                 }
@@ -995,8 +998,16 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
             .instrument(debug_span!("dns"))
             .await
         }
-        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
-        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
+        Some(url::Host::Ipv4(ip)) => match proto {
+            ProbeProto::StunIpv4 | ProbeProto::Icmp | ProbeProto::Https => {
+                Ok(SocketAddr::new(IpAddr::V4(ip), port))
+            }
+            ProbeProto::StunIpv6 => Err(anyhow!("no IPv6 hostname available")),
+        },
+        Some(url::Host::Ipv6(ip)) => match proto {
+            ProbeProto::StunIpv4 | ProbeProto::Icmp => Err(anyhow!("no IPv4 hostname available")),
+            ProbeProto::StunIpv6 | ProbeProto::Https => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
+        },
         None => Err(anyhow!("no valid hostname available")),
     }
 }
@@ -1026,30 +1037,87 @@ async fn measure_icmp_latency(
     Ok(latency)
 }
 
-async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {
-    anyhow::bail!("not implemented");
-    // TODO:
-    // - needs derphttp::Client
-    // - measurement hooks to measure server processing time
+async fn measure_https_latency(
+    derp_region: &DerpRegion,
+    cert: Option<rustls::Certificate>,
+) -> Result<(Duration, IpAddr)> {
+    let node = {
+        let mut rng = rand::thread_rng();
+        derp_region
+            .nodes
+            .iter()
+            .filter(|n| !n.stun_only)
+            .choose(&mut rng)
+            .context("No https DERP nodes in region")?
+    };
+    let url = node.url.join("/derp/probe")?;
 
-    // metricHTTPSend.Add(1)
-    // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
-    // let dc := derphttp.NewNetcheckClient(c.logf);
-    // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
-    // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
-    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil);
-    // resp, err := hc.Do(req);
+    // TODO: uses threadpool with getaddrinfo for DNS resolution.  other options are:
+    // - enable reqwest's built-in trust-dns support
+    // - hook up our own crate::dns::DNS_RESOLVER
+    // The captive portal check is in the same boat.
+    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    if let Some(cert) = cert {
+        let cert = reqwest::tls::Certificate::from_der(&cert.0)?;
+        builder = builder.add_root_certificate(cert);
+    }
+    let client = builder.build()?;
 
-    // // DERPs should give us a nominal status code, so anything else is probably
-    // // an access denied by a MITM proxy (or at the very least a signal not to
-    // // trust this latency check).
-    // if resp.StatusCode > 299 {
-    //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
-    // }
-    // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
-    // result.End(c.timeNow())
+    let start = Instant::now();
+    let mut response = client.request(reqwest::Method::GET, url).send().await?;
+    let latency = start.elapsed();
+    if response.status().is_success() {
+        // Drain the response body to be nice to the server, up to a limit.
+        const MAX_BODY_SIZE: usize = 8 << 10; // 8 KiB
+        let mut body_size = 0;
+        while let Some(chunk) = response.chunk().await? {
+            body_size += chunk.len();
+            if body_size >= MAX_BODY_SIZE {
+                break;
+            }
+        }
 
-    // // TODO: decide best timing heuristic here.
-    // // Maybe the server should return the tcpinfo_rtt?
-    // return result.ServerProcessing, ip, nil
+        // Only `None` if a different hyper HttpConnector in the request.
+        let remote_ip = response
+            .remote_addr()
+            .context("missing HttpInfo from HttpConnector")?
+            .ip();
+        Ok((latency, remote_ip))
+    } else {
+        Err(anyhow!(
+            "Error response from server: '{}'",
+            response.status().canonical_reason().unwrap_or_default()
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_measure_https_latency() {
+        let _logging_guard = iroh_test::logging::setup();
+        let derper = test_utils::TestDerper::run().await.unwrap();
+        let region = derper.derp_map.regions().next().unwrap();
+
+        let (latency, ip) = measure_https_latency(region, Some(derper.certificate))
+            .await
+            .unwrap();
+
+        assert!(latency > Duration::ZERO);
+
+        let derp_map_ip = {
+            let derp_region = derper.derp_map.regions().next().unwrap();
+            let derp_url = &derp_region.nodes[0].url;
+            derp_url
+                .host_str()
+                .unwrap()
+                .parse::<std::net::IpAddr>()
+                .unwrap()
+        };
+        assert_eq!(ip, derp_map_ip);
+    }
 }

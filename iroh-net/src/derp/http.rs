@@ -16,8 +16,8 @@ pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 
 #[cfg(test)]
-pub(crate) fn make_tls_config() -> TlsConfig {
-    let subject_alt_names = vec!["localhost".to_string()];
+pub(crate) fn make_tls_config() -> (TlsConfig, rustls::Certificate) {
+    let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
 
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
     let rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
@@ -25,16 +25,19 @@ pub(crate) fn make_tls_config() -> TlsConfig {
     let config = rustls::ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(vec![(rustls_certificate)], rustls_key)
+        .with_single_cert(vec![(rustls_certificate.clone())], rustls_key)
         .unwrap();
 
     let config = std::sync::Arc::new(config);
     let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
 
-    TlsConfig {
-        config,
-        acceptor: TlsAcceptor::Manual(acceptor),
-    }
+    (
+        TlsConfig {
+            config,
+            acceptor: TlsAcceptor::Manual(acceptor),
+        },
+        rustls_certificate,
+    )
 }
 
 #[cfg(test)]
@@ -203,7 +206,7 @@ mod tests {
         let b_key = SecretKey::generate();
 
         // create tls_config
-        let tls_config = make_tls_config();
+        let (tls_config, _) = make_tls_config();
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())

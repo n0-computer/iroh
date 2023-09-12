@@ -13,6 +13,7 @@ pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
 mod codec;
+pub mod derper;
 pub mod http;
 mod map;
 mod metrics;

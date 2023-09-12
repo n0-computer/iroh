@@ -231,8 +231,9 @@ struct TlsConfig {
     cert_dir: Option<PathBuf>,
     /// The port on which to serve a response for the captive portal probe over HTTP.
     ///
-    /// The listener is bound to the same IP as specified in the `addr` field. Defaults to 80.
-    /// This field is only read in we are serving the derper over HTTPS. In that case, we must listen for requests for the `/generate_204` over a non-TLS connection.
+    /// The listener is bound to the same IP as specified in the `addr` field. Defaults to
+    /// 80.  This field is only read in we are serving the derper over HTTPS. In that case,
+    /// we must listen for requests for the `/generate_204` over a non-TLS connection.
     captive_portal_port: Option<u16>,
 }
 
@@ -452,7 +453,7 @@ async fn run(
     };
 
     let mut builder = DerpServerBuilder::new(addr)
-        .secret_key(secret_key.map(Into::into))
+        .secret_key(secret_key)
         .mesh_key(mesh_key)
         .headers(headers)
         .tls_config(tls_config.clone())

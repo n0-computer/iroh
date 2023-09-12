@@ -2541,7 +2541,7 @@ pub(crate) mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{test_utils::run_derper, tls, MagicEndpoint};
+    use crate::{test_utils::TestDerper, tls, MagicEndpoint};
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
         quinn_udp::Transmit {
@@ -2779,10 +2779,10 @@ pub(crate) mod tests {
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
 
-        let (derp_map, region, _cleanup) = run_derper().await?;
+        let derper = TestDerper::run().await?;
 
-        let m1 = MagicStack::new(derp_map.clone()).await?;
-        let m2 = MagicStack::new(derp_map.clone()).await?;
+        let m1 = MagicStack::new(derper.derp_map.clone()).await?;
+        let m2 = MagicStack::new(derper.derp_map.clone()).await?;
 
         let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -2872,7 +2872,7 @@ pub(crate) mod tests {
                     println!("[{}] connecting to {}", a_name, b_addr);
                     let conn = a
                         .endpoint
-                        .connect(b_peer_id, &ALPN, region, &[b_addr])
+                        .connect(b_peer_id, &ALPN, derper.region_id, &[b_addr])
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 
@@ -2947,10 +2947,10 @@ pub(crate) mod tests {
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_multithreaded_logging();
         for _ in 0..10 {
-            let (derp_map, _, _cleanup) = run_derper().await?;
+            let derper = TestDerper::run().await?;
             println!("setting up magic stack");
-            let m1 = MagicStack::new(derp_map.clone()).await?;
-            let m2 = MagicStack::new(derp_map.clone()).await?;
+            let m1 = MagicStack::new(derper.derp_map.clone()).await?;
+            let m2 = MagicStack::new(derper.derp_map.clone()).await?;
 
             let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
