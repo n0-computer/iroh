@@ -7,7 +7,6 @@ use super::*;
 
 mod dialer;
 mod getter;
-mod invariants;
 
 impl Downloader {
     fn spawn_for_test(
@@ -88,7 +87,7 @@ async fn deduplication() {
     getter.assert_history(&[(kind, peer)]);
 }
 
-/// Tests that the requesst is cancelled only when all intents are cancelled.
+/// Tests that the request is cancelled only when all intents are cancelled.
 #[tokio::test]
 async fn cancellation() {
     let dialer = dialer::TestingDialer::default();

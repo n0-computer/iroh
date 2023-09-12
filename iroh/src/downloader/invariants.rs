@@ -1,6 +1,6 @@
 //! Invariants for the service.
 
-#![cfg(test)]
+#![cfg(any(test, debug_assertions))]
 
 use super::*;
 
@@ -25,14 +25,23 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         } = &self.concurrency_limits;
 
         // check the total number of active requests to ensure it stays within the limit
-        assert!(self.in_progress_downloads.len() <= *max_concurrent_requests);
+        assert!(
+            self.in_progress_downloads.len() <= *max_concurrent_requests,
+            "max_concurrent_requests exceeded"
+        );
 
         // check that the open and dialing peers don't exceed the connection capacity
-        assert!(self.connections_count() <= *max_open_connections);
+        assert!(
+            self.connections_count() <= *max_open_connections,
+            "max_open_connections exceeded"
+        );
 
         // check the active requests per peer don't exceed the limit
-        for info in self.peers.values() {
-            assert!(info.active_requests() <= *max_concurrent_requests_per_peer)
+        for (peer, info) in self.peers.iter() {
+            assert!(
+                info.active_requests() <= *max_concurrent_requests_per_peer,
+                "max_concurrent_requests_per_peer exceeded for {peer}"
+            )
         }
     }
 
@@ -44,7 +53,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // number of requests
         assert_eq!(
             self.in_progress_downloads.len(),
-            self.current_requests.len()
+            self.current_requests.len(),
+            "current_requests and in_progress_downloads are out of sync"
         );
         // check that the count of requests per peer matches the number of requests that have that
         // peer as active
@@ -56,7 +66,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         for (peer, info) in self.peers.iter() {
             assert_eq!(
                 info.active_requests(),
-                real_count.get(peer).copied().unwrap_or_default()
+                real_count.get(peer).copied().unwrap_or_default(),
+                "missmatched count of active requests for {peer}"
             )
         }
     }
@@ -66,7 +77,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn check_scheduled_requests_consistency(&self) {
         assert_eq!(
             self.scheduled_requests.len(),
-            self.scheduled_request_queue.len()
+            self.scheduled_request_queue.len(),
+            "scheduled_request_queue and scheduled_requests are out of sync"
         );
     }
 
@@ -78,6 +90,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             .values()
             .filter(|info| info.active_requests() == 0)
             .count();
-        assert_eq!(self.goodbye_peer_queue.len(), idle_peers);
+        assert_eq!(
+            self.goodbye_peer_queue.len(),
+            idle_peers,
+            "inconsistent count of idle peers"
+        );
     }
 }

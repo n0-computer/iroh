@@ -46,6 +46,7 @@ use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, trace};
 
 mod get;
+mod invariants;
 mod test;
 
 /// Delay added to a request when it's first received.
@@ -477,7 +478,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     trace!(%peer, "tick: goodbye peer");
                 }
             }
-            #[cfg(test)]
+            #[cfg(any(test, debug_assertions))]
             self.check_invariants();
         }
     }
