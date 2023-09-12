@@ -83,7 +83,7 @@ impl<S: Store, C: CollectionParser> Getter for IoGetter<S, C> {
 
 impl From<quinn::ConnectionError> for FailureAction {
     fn from(value: quinn::ConnectionError) -> Self {
-        // explicit match just to be sure we ar taking everything into account
+        // explicit match just to be sure we are taking everything into account
         match value {
             e @ quinn::ConnectionError::VersionMismatch => {
                 // > The peer doesn't implement any supported version
@@ -107,15 +107,11 @@ impl From<quinn::ConnectionError> for FailureAction {
             }
             e @ quinn::ConnectionError::Reset => {
                 // > The peer is unable to continue processing this connection, usually due to having restarted
-                // TODO(@divma): peer is unavailable but might be available later, maybe retry?
-                FailureAction::DropPeer(e.into())
+                FailureAction::RetryLater(e.into())
             }
             e @ quinn::ConnectionError::TimedOut => {
                 // > Communication with the peer has lapsed for longer than the negotiated idle timeout
-                // TODO(@divma): my understanding is that quinn should be configured to ping often
-                // enough to prevent this. If the peer's connfiguration and our configuration allow
-                // this to happen maybe the peer is not really usable
-                FailureAction::DropPeer(e.into())
+                FailureAction::RetryLater(e.into())
             }
             e @ quinn::ConnectionError::LocallyClosed => {
                 // > The local application closed the connection
@@ -129,9 +125,9 @@ impl From<quinn::ConnectionError> for FailureAction {
 impl From<quinn::ReadError> for FailureAction {
     fn from(value: quinn::ReadError) -> Self {
         match value {
-            quinn::ReadError::Reset(_)
-            | quinn::ReadError::ConnectionLost(_)
-            | quinn::ReadError::UnknownStream
+            e @ quinn::ReadError::Reset(_) => FailureAction::RetryLater(e.into()),
+            quinn::ReadError::ConnectionLost(conn_error) => conn_error.into(),
+            quinn::ReadError::UnknownStream
             | quinn::ReadError::IllegalOrderedRead
             | quinn::ReadError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
@@ -144,10 +140,9 @@ impl From<quinn::ReadError> for FailureAction {
 impl From<quinn::WriteError> for FailureAction {
     fn from(value: quinn::WriteError) -> Self {
         match value {
-            quinn::WriteError::Stopped(_)
-            | quinn::WriteError::ConnectionLost(_)
-            | quinn::WriteError::UnknownStream
-            | quinn::WriteError::ZeroRttRejected => {
+            e @ quinn::WriteError::Stopped(_) => FailureAction::RetryLater(e.into()),
+            quinn::WriteError::ConnectionLost(conn_error) => conn_error.into(),
+            quinn::WriteError::UnknownStream | quinn::WriteError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 FailureAction::DropPeer(value.into())
             }
