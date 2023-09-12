@@ -80,7 +80,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 iroh-metrics = { version = "0.6.0-alpha.1", path = "../iroh-metrics", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+netlink-packet-core = "0.7.0"
 netlink-packet-route = "0.17.0"
+netlink-sys = "0.8.5"
 rtnetlink = "0.13.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
