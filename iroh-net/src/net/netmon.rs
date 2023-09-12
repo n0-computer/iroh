@@ -13,7 +13,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod bsd;
@@ -144,7 +144,6 @@ impl Actor {
             tokio::select! {
                 biased;
                 _ = timer.tick() => {
-                    trace!("tick: {:?}", last_event);
                     if let Some(time_jumped) = last_event.take() {
                         if let Err(err) = self.handle_potential_change(time_jumped).await {
                             warn!("failed to handle network changes: {:?}", err);
@@ -162,7 +161,7 @@ impl Actor {
                 event = self.actor_rx.recv() => match event {
                     Some(msg) => match msg {
                         ActorMessage::NetworkActivity => {
-                            trace!("change");
+                            trace!("network activity detected");
                             last_event.replace(false);
                             timer.reset_immediately();
                         }
@@ -198,25 +197,27 @@ impl Actor {
 
         // No major changes, continue on
         if !time_jumped && old_state == &new_state {
+            debug!("no changes detected");
             return Ok(());
         }
 
         let mut is_major = is_major_change(old_state, &new_state);
-
         // Check for time jumps
         if !is_major && time_jumped {
             is_major = true;
         }
 
+        if is_major {
+            self.interface_state = new_state;
+        }
+
+        debug!("triggering {} callbacks", self.callbacks.len());
         for cb in self.callbacks.values() {
             let cb = cb.clone();
             tokio::task::spawn(async move {
                 cb(is_major).await;
             });
         }
-
-        // info!("old state: {:#?}", self.interface_state);
-        // info!("new state: {:#?}", new_state);
 
         Ok(())
     }

@@ -33,7 +33,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -49,7 +49,7 @@ use crate::{
     disco,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
-    net::ip::LocalAddresses,
+    net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
 };
@@ -917,6 +917,34 @@ struct Actor {
 
 impl Actor {
     async fn run(mut self) -> Result<()> {
+        // Setup network monitoring
+        let monitor = netmon::Monitor::new().await?;
+        let sender = self.msg_sender.clone();
+        let token = monitor
+            .subscribe(move |is_major| {
+                let sender = sender.clone();
+                async move {
+                    info!("link change detected: major? {}", is_major);
+                    // TODO: flush dns
+                    if is_major {
+                        let (s, r) = sync::oneshot::channel();
+                        sender.send(ActorMessage::RebindAll(s)).await.ok();
+                        sender
+                            .send(ActorMessage::ReStun("link-change-major"))
+                            .await
+                            .ok();
+                        r.await.ok();
+                    } else {
+                        sender
+                            .send(ActorMessage::ReStun("link-change-minor"))
+                            .await
+                            .ok();
+                    }
+                }
+                .boxed()
+            })
+            .await?;
+
         // Let the the hearbeat only start a couple seconds later
         let mut endpoint_heartbeat_timer = time::interval_at(
             time::Instant::now() + Duration::from_secs(5),
