@@ -15,6 +15,8 @@ use tokio::{
 };
 use tracing::{debug, info, trace, warn};
 
+#[cfg(target_os = "linux")]
+mod android;
 #[cfg(any(
     target_os = "freebsd",
     target_os = "openbsd",
@@ -23,11 +25,13 @@ use tracing::{debug, info, trace, warn};
     target_os = "ios"
 ))]
 mod bsd;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(target_os = "android")]
+use android as os;
 #[cfg(any(
     target_os = "freebsd",
     target_os = "openbsd",
@@ -36,7 +40,7 @@ mod windows;
     target_os = "ios"
 ))]
 use bsd as os;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(target_os = "linux")]
 use linux as os;
 #[cfg(target_os = "windows")]
 use windows as os;
