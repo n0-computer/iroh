@@ -61,6 +61,11 @@ impl Interface {
         is_up(&self.iface)
     }
 
+    /// The name of the interface.
+    pub fn name(&self) -> &str {
+        &self.iface.name
+    }
+
     /// A list of all ip addresses of this interface.
     pub fn addrs(&self) -> impl Iterator<Item = IpNet> + '_ {
         self.iface
@@ -149,7 +154,7 @@ impl IpNet {
 
 /// Intended to store the state of the machine's network interfaces, routing table, and
 /// other network configuration. For now it's pretty basic.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct State {
     /// Maps from an interface name to the IP addresses configured on that interface.
     pub interface_ips: HashMap<String, Vec<IpNet>>,

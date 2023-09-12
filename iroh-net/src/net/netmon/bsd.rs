@@ -63,14 +63,16 @@ fn contains_interesting_message(msgs: &[WireMessage]) -> bool {
     msgs.iter().any(is_interesting_message)
 }
 
-fn is_interesting_message(msg: &WireMessage) -> bool {
+pub fn is_interesting_message(msg: &WireMessage) -> bool {
     match msg {
         WireMessage::InterfaceMulticastAddr(_) => true,
         WireMessage::Interface(_) => false,
         WireMessage::InterfaceAddr(msg) => {
             if let Some(addr) = msg.addrs.get(libc::RTAX_IFP as usize) {
-                if !is_interesting_interface(addr.name()) {
-                    return false;
+                if let Some(name) = addr.name() {
+                    if !is_interesting_interface(name) {
+                        return false;
+                    }
                 }
             }
             true
@@ -90,16 +92,11 @@ fn is_interesting_message(msg: &WireMessage) -> bool {
     }
 }
 
-fn is_interesting_interface(name: Option<&str>) -> bool {
-    match name {
-        Some(name) => {
-            let base_name = name.trim_end_matches("0123456789");
-            if base_name == "llw" || base_name == "awdl" || base_name == "ipsec" {
-                return false;
-            }
-
-            true
-        }
-        None => true,
+pub(super) fn is_interesting_interface(name: &str) -> bool {
+    let base_name = name.trim_end_matches("0123456789");
+    if base_name == "llw" || base_name == "awdl" || base_name == "ipsec" {
+        return false;
     }
+
+    true
 }
