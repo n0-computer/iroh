@@ -15,11 +15,33 @@ use tokio::{
 };
 use tracing::{debug, info, trace, warn};
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "macos",
+    target_os = "ios"
+))]
 mod bsd;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod linux;
+#[cfg(target_os = "windows")]
+mod windows;
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use bsd::{is_interesting_interface, RouteMonitor};
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "macos",
+    target_os = "ios"
+))]
+use bsd as os;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use linux as os;
+#[cfg(target_os = "windows")]
+use windows as os;
+
+use os::{is_interesting_interface, RouteMonitor};
 
 use super::interfaces::IpNet;
 
@@ -29,6 +51,12 @@ pub struct Monitor {
     /// Task handle for the monitor task.
     handle: JoinHandle<()>,
     actor_tx: mpsc::Sender<ActorMessage>,
+}
+
+impl Drop for Monitor {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 /// How often we execute a check for big jumps in wall time.
@@ -77,12 +105,19 @@ struct Actor {
     /// Latest observed wall time.
     wall_time: Instant,
     /// OS specific monitor.
+    #[allow(dead_code)]
     route_monitor: RouteMonitor,
     handle: JoinHandle<()>,
     actor_rx: mpsc::Receiver<ActorMessage>,
     actor_tx: mpsc::Sender<ActorMessage>,
     callbacks: HashMap<CallbackToken, Arc<Callback>>,
     callback_token: u64,
+}
+
+impl Drop for Actor {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 /// Token to remove a callback

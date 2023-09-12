@@ -920,7 +920,7 @@ impl Actor {
         // Setup network monitoring
         let monitor = netmon::Monitor::new().await?;
         let sender = self.msg_sender.clone();
-        let token = monitor
+        let _token = monitor
             .subscribe(move |is_major| {
                 let sender = sender.clone();
                 async move {
