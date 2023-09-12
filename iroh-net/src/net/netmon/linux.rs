@@ -1,13 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+};
 
 use anyhow::Result;
 use futures::StreamExt;
 use netlink_packet_core::NetlinkPayload;
-use netlink_packet_route::{address::Nla, constants::*, RtnlMessage};
+use netlink_packet_route::{address, constants::*, route, RtnlMessage};
 use netlink_sys::{AsyncSocket, SocketAddr};
 use rtnetlink::new_connection;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
+
+use crate::net::ip::is_link_local;
 
 #[derive(Debug)]
 pub struct Message;
@@ -21,6 +26,7 @@ pub struct RouteMonitor {
 impl Drop for RouteMonitor {
     fn drop(&mut self) {
         self.handle.abort();
+        self.conn_handle.abort();
     }
 }
 
@@ -33,6 +39,14 @@ const fn nl_mgrp(group: u32) -> u32 {
     } else {
         1 << (group - 1)
     }
+}
+macro_rules! get_nla {
+    ($msg:expr, $nla:path) => {
+        $msg.nlas.iter().find_map(|nla| match nla {
+            $nla(n) => Some(n),
+            _ => None,
+        })
+    };
 }
 
 impl RouteMonitor {
@@ -66,32 +80,71 @@ impl RouteMonitor {
                     }
                     NetlinkPayload::InnerMessage(msg) => match msg {
                         RtnlMessage::NewAddress(msg) => {
-                            info!("NEWADDR: {:?}", msg);
+                            trace!("NEWADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
-                            if let Some(addr) = get_addr_from_nlas(&msg.nlas) {
+                            if let Some(addr) = get_nla!(msg, address::Nla::Address) {
                                 if addrs.contains(addr) {
                                     // already cached
                                     continue;
                                 } else {
                                     addrs.insert(addr.clone());
+                                    sender.send(Message).await.ok();
                                 }
                             }
                         }
                         RtnlMessage::DelAddress(msg) => {
-                            info!("DELADDR: {:?}", msg);
+                            trace!("DELADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
-                            if let Some(addr) = get_addr_from_nlas(&msg.nlas) {
+                            if let Some(addr) = get_nla!(msg, address::Nla::Address) {
                                 addrs.remove(addr);
                             }
+                            sender.send(Message).await.ok();
                         }
-                        RtnlMessage::NewRoute(msg) => {
-                            info!("NEWROUTE:: {:?}", msg);
+                        RtnlMessage::NewRoute(msg) | RtnlMessage::DelRoute(msg) => {
+                            trace!("ROUTE:: {:?}", msg);
+
+                            // Ignore the following messages
+                            let table = get_nla!(msg, route::Nla::Table)
+                                .copied()
+                                .unwrap_or_default();
+                            if let Some(dst) = get_nla!(msg, route::Nla::Destination) {
+                                let dst_addr = match dst.len() {
+                                    4 => Some(IpAddr::from(
+                                        TryInto::<[u8; 4]>::try_into(&dst[..]).unwrap(),
+                                    )),
+                                    16 => Some(IpAddr::from(
+                                        TryInto::<[u8; 16]>::try_into(&dst[..]).unwrap(),
+                                    )),
+                                    _ => None,
+                                };
+                                if let Some(dst_addr) = dst_addr {
+                                    if (table == 255 || table == 254)
+                                        && (dst_addr.is_multicast() || is_link_local(dst_addr))
+                                    {
+                                        continue;
+                                    }
+                                }
+                            }
+                            sender.send(Message).await.ok();
                         }
-                        RtnlMessage::DelRoute(msg) => {
-                            info!("DELROUTE: {:?}", msg);
+                        RtnlMessage::NewRule(msg) => {
+                            trace!("NEWRULE: {:?}", msg);
+                            sender.send(Message).await.ok();
                         }
-                        _ => {
-                            info!("unexpected: {:?}", msg);
+                        RtnlMessage::DelRule(msg) => {
+                            trace!("DELRULE: {:?}", msg);
+                            sender.send(Message).await.ok();
+                        }
+                        RtnlMessage::NewLink(msg) => {
+                            trace!("NEWLINK: {:?}", msg);
+                            // ignored atm
+                        }
+                        RtnlMessage::DelLink(msg) => {
+                            trace!("DELLINK: {:?}", msg);
+                            // ignored atm
+                        }
+                        msg => {
+                            trace!("unhandeled: {:?}", msg);
                         }
                     },
                     _ => {
@@ -108,15 +161,6 @@ impl RouteMonitor {
     }
 }
 
-fn get_addr_from_nlas(nlas: &[Nla]) -> Option<&Vec<u8>> {
-    nlas.iter()
-        .filter_map(|a| match a {
-            Nla::Address(addr) => Some(addr),
-            _ => None,
-        })
-        .next()
-}
-
-pub(super) fn is_interesting_interface(name: &str) -> bool {
-    todo!()
+pub(super) fn is_interesting_interface(_name: &str) -> bool {
+    true
 }
