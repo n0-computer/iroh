@@ -21,6 +21,6 @@ impl RouteMonitor {
     }
 }
 
-pub(super) fn is_interesting_interface(name: &str) -> bool {
-    todo!()
+pub(super) fn is_interesting_interface(_name: &str) -> bool {
+    true
 }

@@ -15,7 +15,7 @@ use tokio::{
 };
 use tracing::{debug, info, trace, warn};
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "android")]
 mod android;
 #[cfg(any(
     target_os = "freebsd",
