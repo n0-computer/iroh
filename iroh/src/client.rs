@@ -141,9 +141,11 @@ where
 /// Data reader for a single blob.
 ///
 /// Implements [`AsyncRead`].
+#[derive(derive_more::Debug)]
 pub struct BlobReader {
     size: u64,
     is_complete: bool,
+    #[debug("StreamReader")]
     stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
 }
 impl BlobReader {
