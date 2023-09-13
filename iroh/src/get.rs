@@ -105,7 +105,7 @@ pub async fn get_blob<D: BaoStore>(
     anyhow::Ok(stats)
 }
 
-async fn get_missing_ranges_blob<D: PartialMap>(
+pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
     entry: &D::PartialEntry,
 ) -> anyhow::Result<RangeSet2<ChunkNum>> {
     use tracing::trace as log;
@@ -249,7 +249,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
 }
 
 /// Given a collection of hashes, figure out what is missing
-async fn get_missing_ranges_collection<D: BaoStore>(
+pub(crate) async fn get_missing_ranges_collection<D: BaoStore>(
     db: &D,
     collection: &Vec<Hash>,
 ) -> io::Result<Vec<BlobInfo<D>>> {
@@ -408,7 +408,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
 }
 
 #[derive(Debug, Clone)]
-enum BlobInfo<D: BaoStore> {
+pub(crate) enum BlobInfo<D: BaoStore> {
     // we have the blob completely
     Complete,
     // we have the blob partially
@@ -421,7 +421,7 @@ enum BlobInfo<D: BaoStore> {
 }
 
 impl<D: BaoStore> BlobInfo<D> {
-    fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
+    pub fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
         match self {
             BlobInfo::Complete => RangeSet2::empty(),
             BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
