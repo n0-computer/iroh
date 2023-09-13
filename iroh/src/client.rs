@@ -3,22 +3,28 @@
 //! TODO: Contains only iroh sync related methods. Add other methods.
 
 use std::collections::HashMap;
+use std::io;
+use std::pin::Pin;
 use std::result::Result as StdResult;
+use std::task::{Context, Poll};
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
+use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, ConnectionInfoRequest,
-    ConnectionInfoResponse, ConnectionsRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
-    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
-    ProviderService, ShareMode, StatsGetRequest,
+    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, BytesGetResponse,
+    ConnectionInfoRequest, ConnectionInfoResponse, ConnectionsRequest, CounterStats,
+    DocCreateRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
+    DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
+    DocSubscribeRequest, DocTicket, ProviderService, ShareMode, StatsGetRequest,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
@@ -102,10 +108,14 @@ where
     /// Get the bytes for a hash.
     ///
     /// Note: This reads the full blob into memory.
-    // TODO: add get_reader for streaming gets
     pub async fn get_bytes(&self, hash: Hash) -> Result<Bytes> {
-        let res = self.rpc.rpc(BytesGetRequest { hash }).await??;
-        Ok(res.data)
+        let mut stream = self.get_bytes_stream(hash).await?;
+        stream.read_to_end().await
+    }
+
+    /// Get the bytes for a hash.
+    pub async fn get_bytes_stream(&self, hash: Hash) -> Result<BlobReader> {
+        BlobReader::from_rpc(&self.rpc, hash).await
     }
 
     /// Get statistics of the running node.
@@ -125,6 +135,74 @@ where
         let ConnectionInfoResponse { conn_info } =
             self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
         Ok(conn_info)
+    }
+}
+
+/// Data reader for a single blob.
+///
+/// Implements [`AsyncRead`].
+pub struct BlobReader {
+    size: u64,
+    is_complete: bool,
+    stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
+}
+impl BlobReader {
+    fn new(size: u64, is_complete: bool, stream: BoxStream<'static, io::Result<Bytes>>) -> Self {
+        Self {
+            size,
+            is_complete,
+            stream: StreamReader::new(stream),
+        }
+    }
+
+    async fn from_rpc<C: ServiceConnection<ProviderService>>(
+        rpc: &RpcClient<ProviderService, C>,
+        hash: Hash,
+    ) -> anyhow::Result<Self> {
+        let stream = rpc.server_streaming(BytesGetRequest { hash }).await?;
+        let mut stream = flatten(stream);
+
+        let (size, is_complete) = match stream.next().await {
+            Some(Ok(BytesGetResponse::Entry { size, is_complete })) => (size, is_complete),
+            Some(Err(err)) => return Err(err),
+            None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
+        };
+
+        let stream = stream.map(|item| match item {
+            Ok(BytesGetResponse::Data { chunk }) => Ok(chunk),
+            Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
+            Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
+        });
+        Ok(Self::new(size, is_complete, stream.boxed()))
+    }
+
+    /// Total size of this blob.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// Whether this blob has been downloaded completely.
+    ///
+    /// Returns false for partial blobs for which some chunks are missing.
+    pub fn is_complete(&self) -> bool {
+        self.is_complete
+    }
+
+    /// Read all bytes of the blob.
+    pub async fn read_to_end(&mut self) -> anyhow::Result<Bytes> {
+        let mut buf = Vec::with_capacity(self.size() as usize);
+        AsyncReadExt::read_to_end(self, &mut buf).await?;
+        Ok(buf.into())
+    }
+}
+
+impl AsyncRead for BlobReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buf)
     }
 }
 
@@ -164,10 +242,14 @@ where
     }
 
     /// Get the contents of an entry as a byte array.
-    // TODO: add get_content_reader
     pub async fn get_content_bytes(&self, hash: Hash) -> Result<Bytes> {
-        let bytes = self.rpc.rpc(BytesGetRequest { hash }).await??;
-        Ok(bytes.data)
+        let mut stream = BlobReader::from_rpc(&self.rpc, hash).await?;
+        stream.read_to_end().await
+    }
+
+    /// Get the contents of an entry as a [`BlobReader`].
+    pub async fn get_content_reader(&self, hash: Hash) -> Result<BlobReader> {
+        BlobReader::from_rpc(&self.rpc, hash).await
     }
 
     /// Get the latest entry for a key and author.
