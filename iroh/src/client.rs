@@ -197,7 +197,7 @@ where
     pub async fn read_to_bytes(&self, hash: Hash) -> Result<Bytes> {
         BlobReader::from_rpc(&self.rpc, hash)
             .await?
-            .read_to_end()
+            .read_to_bytes()
             .await
     }
 
@@ -321,9 +321,9 @@ impl BlobReader {
     }
 
     /// Read all bytes of the blob.
-    pub async fn read_to_end(&mut self) -> anyhow::Result<Bytes> {
+    pub async fn read_to_bytes(&mut self) -> anyhow::Result<Bytes> {
         let mut buf = Vec::with_capacity(self.size() as usize);
-        AsyncReadExt::read_to_end(self, &mut buf).await?;
+        self.read_to_end(&mut buf).await?;
         Ok(buf.into())
     }
 }
@@ -379,10 +379,10 @@ where
     }
 
     /// Read all content of an [`Entry`] into a buffer.
-    pub async fn read_to_end(&self, entry: &Entry) -> Result<Bytes> {
+    pub async fn read_to_bytes(&self, entry: &Entry) -> Result<Bytes> {
         BlobReader::from_rpc(&self.rpc, entry.content_hash())
             .await?
-            .read_to_end()
+            .read_to_bytes()
             .await
     }
 

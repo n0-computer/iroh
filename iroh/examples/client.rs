@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = doc.get_many(GetFilter::All).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        let content = doc.read_to_end(&entry).await?;
+        let content = doc.read_to_bytes(&entry).await?;
         println!("  content {}", String::from_utf8(content.to_vec())?)
     }
 

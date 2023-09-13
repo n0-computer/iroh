@@ -314,7 +314,7 @@ async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<
     println!("{}", fmt_entry(entry));
     if content {
         if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
-            match doc.read_to_end(entry).await {
+            match doc.read_to_bytes(entry).await {
                 Ok(content) => match String::from_utf8(content.into()) {
                     Ok(s) => println!("{s}"),
                     Err(_err) => println!("<invalid UTF-8>"),
