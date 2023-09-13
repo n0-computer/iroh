@@ -1119,7 +1119,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
 
     async fn status(self, _: NodeStatusRequest) -> NodeStatusResponse {
         NodeStatusResponse {
-            peer_id: Box::new(self.inner.secret_key.public()),
+            node_id: Box::new(self.inner.secret_key.public()),
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
@@ -1466,8 +1466,8 @@ mod tests {
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node.ticket(hash).await.unwrap();
-        println!("addrs: {:?}", ticket.peer().endpoints);
-        assert!(!ticket.peer().endpoints.is_empty());
+        println!("addrs: {:?}", ticket.node_addr().endpoints);
+        assert!(!ticket.node_addr().endpoints.is_empty());
     }
 
     #[cfg(feature = "mem-db")]

@@ -259,7 +259,7 @@ impl RpcMsg<ProviderService> for NodeStatusRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusResponse {
     /// The peer id of the node
-    pub peer_id: Box<PublicKey>,
+    pub node_id: Box<PublicKey>,
     /// The addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node

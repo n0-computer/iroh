@@ -355,7 +355,7 @@ impl NodeCommands {
             Self::Status => {
                 let response = iroh.node.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node public key: {}", response.peer_id);
+                println!("Node public key: {}", response.node_id);
                 println!("Version: {}", response.version);
             }
         }
@@ -464,7 +464,7 @@ impl BlobCommands {
                 }
                 let (peer, token, hash, recursive) = if let Some(ticket) = ticket.as_ref() {
                     (
-                        ticket.peer().clone(),
+                        ticket.node_addr().clone(),
                         ticket.token(),
                         ticket.hash(),
                         ticket.recursive(),

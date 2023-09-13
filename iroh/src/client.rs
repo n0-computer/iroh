@@ -182,7 +182,9 @@ impl<C> BlobsClient<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    /// Read a single blob as a streaming [`BlobReader`].
+    /// Stream the contents of a a single blob.
+    ///
+    /// Returns a [`BlobReader`], which can report the size of the blob before reading it.
     pub async fn read(&self, hash: Hash) -> Result<BlobReader> {
         BlobReader::from_rpc(&self.rpc, hash).await
     }
@@ -192,7 +194,7 @@ where
     /// This allocates a buffer for the full blob. Use only if you know that the blob you're
     /// reading is small. If not sure, use [`Self::read`] and check the size with
     /// [`BlobReader::size`] before calling [`BlobReader::read_to_end`].
-    pub async fn read_to_end(&self, hash: Hash) -> Result<Bytes> {
+    pub async fn read_to_bytes(&self, hash: Hash) -> Result<Bytes> {
         BlobReader::from_rpc(&self.rpc, hash)
             .await?
             .read_to_end()

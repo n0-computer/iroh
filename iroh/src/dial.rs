@@ -4,14 +4,13 @@
 //! with an empty address list.
 
 use std::fmt::{self, Display};
-use std::net::SocketAddr;
 use std::str::FromStr;
 
 use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
-use iroh_net::key::{PublicKey, SecretKey};
+use iroh_net::key::{SecretKey};
 use iroh_net::NodeAddr;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +106,7 @@ impl Ticket {
     }
 
     /// The [`NodeAddr`] of the provider for this ticket.
-    pub fn peer(&self) -> &NodeAddr {
+    pub fn node_addr(&self) -> &NodeAddr {
         &self.peer
     }
 
@@ -124,21 +123,6 @@ impl Ticket {
     /// True if the ticket is for a collection and should retrieve all blobs in it.
     pub fn recursive(&self) -> bool {
         self.recursive
-    }
-
-    /// Get the socket addresses where the provider might be reachable.
-    pub fn addrs(&self) -> &[SocketAddr] {
-        &self.peer.endpoints[..]
-    }
-
-    /// Get the DERP region where the provider might be reachable.
-    pub fn derp_region(&self) -> Option<u16> {
-        self.peer.derp_region
-    }
-
-    /// Get the node ID of the provider.
-    pub fn node_id(&self) -> &PublicKey {
-        &self.peer.node_id
     }
 
     /// Set recursive to for this ticket
