@@ -4,11 +4,10 @@ use tracing::{trace, warn};
 
 use crate::net::{interfaces::bsd::WireMessage, ip::is_link_local};
 
-#[derive(Debug)]
-pub struct Message;
+use super::actor::NetworkMessage;
 
 #[derive(Debug)]
-pub struct RouteMonitor {
+pub(super) struct RouteMonitor {
     handle: JoinHandle<()>,
 }
 
@@ -19,7 +18,7 @@ impl Drop for RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub async fn new(sender: flume::Sender<Message>) -> Result<Self> {
+    pub(super) async fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
         let socket = socket2::Socket::new(libc::AF_ROUTE.into(), socket2::Type::RAW, None)?;
         socket.set_nonblocking(true)?;
         let socket_std: std::os::unix::net::UnixStream = socket.into();
@@ -40,7 +39,7 @@ impl RouteMonitor {
                         ) {
                             Ok(msgs) => {
                                 if contains_interesting_message(&msgs) {
-                                    sender.send_async(Message).await.ok();
+                                    sender.send_async(NetworkMessage::Change).await.ok();
                                 }
                             }
                             Err(err) => {
@@ -63,7 +62,7 @@ fn contains_interesting_message(msgs: &[WireMessage]) -> bool {
     msgs.iter().any(is_interesting_message)
 }
 
-pub fn is_interesting_message(msg: &WireMessage) -> bool {
+pub(super) fn is_interesting_message(msg: &WireMessage) -> bool {
     match msg {
         WireMessage::InterfaceMulticastAddr(_) => true,
         WireMessage::Interface(_) => false,

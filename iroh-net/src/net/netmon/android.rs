@@ -1,13 +1,12 @@
 use anyhow::Result;
 
-#[derive(Debug)]
-pub struct Message;
+use super::actor::NetworkMessage;
 
 #[derive(Debug)]
-pub struct RouteMonitor {}
+pub(super) struct RouteMonitor {}
 
 impl RouteMonitor {
-    pub async fn new(_sender: flume::Sender<Message>) -> Result<Self> {
+    pub(super) async fn new(_sender: flume::Sender<NetworkMessage>) -> Result<Self> {
         // Very sad monitor. Android doesn't allow us to do this
 
         Ok(RouteMonitor {})

@@ -10,31 +10,30 @@ use windows::Win32::{
     },
 };
 
-#[derive(Debug)]
-pub struct Message;
+use super::actor::NetworkMessage;
 
 #[derive(Debug)]
-pub struct RouteMonitor {
+pub(super) struct RouteMonitor {
     #[allow(dead_code)]
     cb_handler: CallbackHandler,
 }
 
 impl RouteMonitor {
-    pub async fn new(sender: flume::Sender<Message>) -> Result<Self> {
+    pub(super) async fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
         // Register two callbacks with the windows api
         let mut cb_handler = CallbackHandler::default();
 
         // 1. Unicast Address Changes
         let s = sender.clone();
         cb_handler.register_unicast_address_change_callback(Box::new(move || {
-            if let Err(err) = s.send(Message) {
+            if let Err(err) = s.send(NetworkMessage::Change) {
                 warn!("unable to send: unicast change notification: {:?}", err);
             }
         }))?;
 
         // 2. Route Changes
         cb_handler.register_route_change_callback(Box::new(move || {
-            if let Err(err) = sender.send(Message) {
+            if let Err(err) = sender.send(NetworkMessage::Change) {
                 warn!("unable to send: route change notification: {:?}", err);
             }
         }))?;
