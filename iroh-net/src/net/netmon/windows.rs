@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use libc::c_void;
 use tracing::{debug, warn};
 use windows::Win32::{
     Foundation::{BOOLEAN, HANDLE as Handle},
-    NetworkManagement::IpHelper::{MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW},
+    NetworkManagement::IpHelper::{
+        MIB_IPFORWARD_ROW2, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
+    },
 };
 
 #[derive(Debug)]
@@ -32,7 +34,7 @@ impl RouteMonitor {
 
         // 2. Route Changes
         cb_handler.register_route_change_callback(Box::new(move || {
-            if let Err(err) = s.send(Message) {
+            if let Err(err) = sender.send(Message) {
                 warn!("unable to send: route change notification: {:?}", err);
             }
         }))?;
@@ -45,16 +47,17 @@ pub(super) fn is_interesting_interface(_name: &str) -> bool {
     true
 }
 
+/// Manages callbacks registered with the win32 networking API.
 #[derive(derive_more::Debug, Default)]
 struct CallbackHandler {
     /// Stores the callbacks and `Handle`s for unicast.
     // `Handle` is not hashable, so store the underlying `isize`.
     #[debug("HashMap<isize, UnicastCallback")]
-    unicast_callbacks: HashMap<isize, UnicastCallback>,
+    unicast_callbacks: HashMap<isize, Arc<UnicastCallback>>,
     /// Stores the callbacks and `Handle`s for route.
     // `Handle` is not hashable, so store the underlying `isize`.
     #[debug("HashMap<isize, RouteCallback")]
-    route_callbacks: HashMap<isize, RouteCallback>,
+    route_callbacks: HashMap<isize, Arc<RouteCallback>>,
 }
 
 impl Drop for CallbackHandler {
@@ -95,12 +98,13 @@ impl CallbackHandler {
     ) -> Result<UnicastCallbackHandle> {
         debug!("registering unicast callback");
         let mut handle = Handle::default();
+        let cb = Arc::new(cb);
         unsafe {
             windows::Win32::NetworkManagement::IpHelper::NotifyUnicastIpAddressChange(
                 windows::Win32::Networking::WinSock::AF_UNSPEC,
                 Some(unicast_change_callback),
-                Some(cb as *const _ as *const c_void), // context
-                BOOLEAN::from(false),                  // initial notification,
+                Some(Arc::as_ptr(&cb) as *const c_void), // context
+                BOOLEAN::from(false),                    // initial notification,
                 &mut handle,
             )?;
         }
@@ -127,12 +131,13 @@ impl CallbackHandler {
     fn register_route_change_callback(&mut self, cb: RouteCallback) -> Result<RouteCallbackHandle> {
         debug!("registering route change callback");
         let mut handle = Handle::default();
+        let cb = Arc::new(cb);
         unsafe {
             windows::Win32::NetworkManagement::IpHelper::NotifyRouteChange2(
                 windows::Win32::Networking::WinSock::AF_UNSPEC,
                 Some(route_change_callback),
-                Some(cb as *const _ as *const c_void), // context
-                BOOLEAN::from(false),                  // initial notification,
+                Arc::as_ptr(&cb) as *const c_void, // context
+                BOOLEAN::from(false),              // initial notification,
                 &mut handle,
             )?;
         }
@@ -156,40 +161,28 @@ impl CallbackHandler {
 
 unsafe extern "system" fn unicast_change_callback(
     callercontext: *const c_void,
-    row: *const MIB_UNICASTIPADDRESS_ROW,
-    notificationtype: MIB_NOTIFICATION_TYPE,
+    _row: *const MIB_UNICASTIPADDRESS_ROW,
+    _notificationtype: MIB_NOTIFICATION_TYPE,
 ) {
-    println!(
-        "unicast_change_callback: {:?}, {:?}, {:?}",
-        callercontext, row, notificationtype
-    );
     if callercontext.is_null() {
         // Nothing we can do
         return;
     }
     let callercontext = callercontext as *const UnicastCallback;
-    println!("got caller context pointer");
     let cb = &*callercontext;
-    println!("calling cb");
     cb();
 }
 
 unsafe extern "system" fn route_change_callback(
     callercontext: *const c_void,
-    row: *const MIB_IPFORWARD_ROW2,
-    notificationtype: MIB_NOTIFICATION_TYPE,
+    _row: *const MIB_IPFORWARD_ROW2,
+    _notificationtype: MIB_NOTIFICATION_TYPE,
 ) {
-    println!(
-        "unicast_change_callback: {:?}, {:?}, {:?}",
-        callercontext, row, notificationtype
-    );
     if callercontext.is_null() {
         // Nothing we can do
         return;
     }
     let callercontext = callercontext as *const RouteCallback;
-    println!("got caller context pointer");
     let cb = &*callercontext;
-    println!("calling cb");
     cb();
 }

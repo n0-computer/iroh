@@ -142,7 +142,7 @@ impl Actor {
         let interface_state = State::new().await;
         let wall_time = Instant::now();
 
-        let (s, mut r) = flume::bounded(16);
+        let (s, r) = flume::bounded(16);
         let route_monitor = RouteMonitor::new(s).await?;
         let (actor_tx, actor_rx) = mpsc::channel(16);
 
@@ -353,6 +353,6 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
     }
 }
