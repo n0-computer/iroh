@@ -31,7 +31,11 @@ pub struct NodeAddr {
 
 impl NodeAddr {
     /// Create a new [`NodeAddr`] from its parts.
-    pub fn from_parts(node_id: PublicKey, derp_region: Option<u16>, endpoints: Vec<SocketAddr>) -> Self {
+    pub fn from_parts(
+        node_id: PublicKey,
+        derp_region: Option<u16>,
+        endpoints: Vec<SocketAddr>,
+    ) -> Self {
         Self {
             node_id,
             derp_region,
