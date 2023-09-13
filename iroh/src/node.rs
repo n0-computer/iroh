@@ -35,7 +35,7 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_io::{AsyncSliceReader};
+use iroh_io::AsyncSliceReader;
 use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
