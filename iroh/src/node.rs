@@ -35,7 +35,7 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
+use iroh_io::{AsyncSliceReader};
 use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
@@ -904,6 +904,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             {
                 use crate::collection::{Blob, Collection};
                 use crate::util::io::pathbuf_from_name;
+                use iroh_io::AsyncSliceReaderExt;
                 trace!("exporting collection {} to {}", hash, path.display());
                 tokio::fs::create_dir_all(&path).await?;
                 let collection = db.get(&hash).context("collection not there")?;
