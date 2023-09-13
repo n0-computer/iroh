@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tokio::{io::AsyncReadExt, sync::mpsc, task::JoinHandle};
+use tokio::{io::AsyncReadExt, task::JoinHandle};
 use tracing::{trace, warn};
 
 use crate::net::{interfaces::bsd::WireMessage, ip::is_link_local};
@@ -19,7 +19,7 @@ impl Drop for RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub async fn new(sender: mpsc::Sender<Message>) -> Result<Self> {
+    pub async fn new(sender: flume::Sender<Message>) -> Result<Self> {
         let socket = socket2::Socket::new(libc::AF_ROUTE.into(), socket2::Type::RAW, None)?;
         socket.set_nonblocking(true)?;
         let socket_std: std::os::unix::net::UnixStream = socket.into();
@@ -40,7 +40,7 @@ impl RouteMonitor {
                         ) {
                             Ok(msgs) => {
                                 if contains_interesting_message(&msgs) {
-                                    sender.send(Message).await.ok();
+                                    sender.send_async(Message).await.ok();
                                 }
                             }
                             Err(err) => {

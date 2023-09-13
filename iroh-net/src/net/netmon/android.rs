@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub struct Message;
@@ -8,7 +7,7 @@ pub struct Message;
 pub struct RouteMonitor {}
 
 impl RouteMonitor {
-    pub async fn new(_sender: mpsc::Sender<Message>) -> Result<Self> {
+    pub async fn new(_sender: flume::Sender<Message>) -> Result<Self> {
         // Very sad monitor. Android doesn't allow us to do this
 
         Ok(RouteMonitor {})
