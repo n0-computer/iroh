@@ -48,6 +48,8 @@ pub struct Iroh<C> {
     pub blobs: BlobsClient<C>,
     /// Client for docs operations.
     pub docs: DocsClient<C>,
+    /// Client for author operations.
+    pub authors: AuthorsClient<C>,
 }
 
 impl<C> Iroh<C>
@@ -59,7 +61,8 @@ where
         Self {
             node: NodeClient { rpc: rpc.clone() },
             blobs: BlobsClient { rpc: rpc.clone() },
-            docs: DocsClient { rpc },
+            docs: DocsClient { rpc: rpc.clone() },
+            authors: AuthorsClient { rpc },
         }
     }
 }
@@ -121,18 +124,6 @@ impl<C> DocsClient<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    /// Create a new document author.
-    pub async fn create_author(&self) -> Result<AuthorId> {
-        let res = self.rpc.rpc(AuthorCreateRequest).await??;
-        Ok(res.author_id)
-    }
-
-    /// List document authors for which we have a secret key.
-    pub async fn list_authors(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
-        let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| res.author_id))
-    }
-
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocCreateRequest {}).await??;
@@ -169,6 +160,29 @@ where
             rpc: self.rpc.clone(),
         };
         Ok(Some(doc))
+    }
+}
+
+/// Iroh authors client.
+#[derive(Debug, Clone)]
+pub struct AuthorsClient<C> {
+    rpc: RpcClient<ProviderService, C>,
+}
+
+impl<C> AuthorsClient<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    /// Create a new document author.
+    pub async fn create(&self) -> Result<AuthorId> {
+        let res = self.rpc.rpc(AuthorCreateRequest).await??;
+        Ok(res.author_id)
+    }
+
+    /// List document authors for which we have a secret key.
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
+        let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
+        Ok(flatten(stream).map_ok(|res| res.author_id))
     }
 }
 

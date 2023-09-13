@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     let client = node.client();
     let doc = client.docs.create().await?;
-    let author = client.docs.create_author().await?;
+    let author = client.authors.create().await?;
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;

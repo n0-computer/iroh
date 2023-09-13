@@ -270,7 +270,7 @@ impl AuthorCommands {
                 println!("Active author is now {}", fmt_short(author.as_bytes()));
             }
             Self::List => {
-                let mut stream = iroh.docs.list_authors().await?;
+                let mut stream = iroh.authors.list().await?;
                 while let Some(author_id) = stream.try_next().await? {
                     println!("{}", author_id);
                 }
@@ -280,7 +280,7 @@ impl AuthorCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let author_id = iroh.docs.create_author().await?;
+                let author_id = iroh.authors.create().await?;
                 println!("{}", author_id);
 
                 if switch {

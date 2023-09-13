@@ -71,7 +71,7 @@ async fn sync_full_basic() -> Result<()> {
     // node1: create doc and ticket
     let (ticket, doc1) = {
         let iroh = &clients[0];
-        let author = iroh.docs.create_author().await?;
+        let author = iroh.authors.create().await?;
         let doc = iroh.docs.create().await?;
         let key = b"k1";
         let value = b"v1";
@@ -84,7 +84,7 @@ async fn sync_full_basic() -> Result<()> {
     // node2: join in
     let _doc2 = {
         let iroh = &clients[1];
-        let author = iroh.docs.create_author().await?;
+        let author = iroh.authors.create().await?;
         let doc = iroh.docs.import(ticket.clone()).await?;
 
         // wait for remote insert on doc2
@@ -155,7 +155,7 @@ async fn sync_subscribe_stop() -> Result<()> {
     let client = node.client();
 
     let doc = client.docs.create().await?;
-    let author = client.docs.create_author().await?;
+    let author = client.authors.create().await?;
     doc.start_sync(vec![]).await?;
 
     let status = doc.status().await?;
