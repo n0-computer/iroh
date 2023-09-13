@@ -616,7 +616,7 @@ fn test_provide_get_loop_single(
         .iter()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
-    let peer = ticket.peer().to_string();
+    let peer = ticket.peer().node_id.to_string();
     let region = ticket
         .derp_region()
         .context("should have derp region in ticket")?

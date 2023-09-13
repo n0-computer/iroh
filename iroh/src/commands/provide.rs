@@ -12,7 +12,7 @@ use iroh::{
     client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
     node::{Node, StaticTokenAuthHandler},
-    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
+    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, key::SecretKey};
@@ -62,7 +62,7 @@ pub async fn run(
     let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), store, rt, key, opts).await?;
-    let controller = provider.controller();
+    let client = provider.client();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
     }
@@ -88,9 +88,7 @@ pub async fn run(
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let stream = controller
-                    .server_streaming(ProvideRequest { path, in_place })
-                    .await?;
+                let stream = client.blobs.add_from_path(path, in_place).await?;
                 match aggregate_add_response(stream).await {
                     Ok((hash, entries)) => {
                         print_add_response(hash, entries);

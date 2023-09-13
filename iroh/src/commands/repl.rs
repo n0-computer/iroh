@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use iroh::client::quic::RpcClient;
+use iroh::client::quic::Iroh;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
@@ -10,7 +10,7 @@ use crate::{
     config::{ConsoleEnv, ConsolePaths},
 };
 
-pub async fn run(client: RpcClient, env: ConsoleEnv) -> Result<()> {
+pub async fn run(iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
     let mut from_repl = Repl::spawn(env.clone());
@@ -19,7 +19,7 @@ pub async fn run(client: RpcClient, env: ConsoleEnv) -> Result<()> {
         tokio::select! {
             biased;
             _ = tokio::signal::ctrl_c() => {},
-            res = cmd.run(client.clone(), env.clone()) => {
+            res = cmd.run(&iroh, env.clone()) => {
                 if let Err(err) = res {
                     println!("{} {:?}", "Error:".red().bold(), err)
                 }

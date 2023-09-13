@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::task::{Context, Poll};
@@ -12,6 +13,8 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
+use iroh_bytes::baomap::ValidateProgress;
+use iroh_bytes::provider::AddProgress;
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
@@ -20,11 +23,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, BytesGetResponse,
-    ConnectionInfoRequest, ConnectionInfoResponse, ConnectionsRequest, CounterStats,
-    DocCreateRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
-    DocSubscribeRequest, DocTicket, ProviderService, ShareMode, StatsGetRequest,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobGetRequest,
+    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
+    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadResponse,
+    BlobValidateRequest, BytesGetRequest, ConnectionInfoResponse, CounterStats, DocCreateRequest,
+    DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest,
+    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
+    DocTicket, GetProgress, NodeConnectionInfoRequest, NodeConnectionsRequest, NodeShutdownRequest,
+    NodeStatsRequest, NodeStatusRequest, ProviderService, ShareMode, StatusResponse,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
@@ -35,7 +41,12 @@ pub mod quic;
 /// Iroh client
 #[derive(Debug, Clone)]
 pub struct Iroh<C> {
-    rpc: RpcClient<ProviderService, C>,
+    /// Client for node operations.
+    pub node: NodeClient<C>,
+    /// Client for blobs operations.
+    pub blobs: BlobsClient<C>,
+    /// Client for docs operations.
+    pub docs: DocsClient<C>,
 }
 
 impl<C> Iroh<C>
@@ -44,9 +55,71 @@ where
 {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
     pub fn new(rpc: RpcClient<ProviderService, C>) -> Self {
-        Self { rpc }
+        Self {
+            node: NodeClient { rpc: rpc.clone() },
+            blobs: BlobsClient { rpc: rpc.clone() },
+            docs: DocsClient { rpc },
+        }
+    }
+}
+
+/// Iroh node client.
+#[derive(Debug, Clone)]
+pub struct NodeClient<C> {
+    rpc: RpcClient<ProviderService, C>,
+}
+
+impl<C> NodeClient<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    /// Get statistics of the running node.
+    pub async fn stats(&self) -> Result<HashMap<String, CounterStats>> {
+        let res = self.rpc.rpc(NodeStatsRequest {}).await??;
+        Ok(res.stats)
     }
 
+    /// Get information about the different connections we have made
+    pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
+        let stream = self.rpc.server_streaming(NodeConnectionsRequest {}).await?;
+        Ok(flatten(stream).map_ok(|res| res.conn_info))
+    }
+
+    /// Get connection information about a node
+    pub async fn connection_info(&self, node_id: PublicKey) -> Result<Option<ConnectionInfo>> {
+        let ConnectionInfoResponse { conn_info } = self
+            .rpc
+            .rpc(NodeConnectionInfoRequest { node_id })
+            .await??;
+        Ok(conn_info)
+    }
+
+    /// Get status information about a node
+    pub async fn status(&self) -> Result<StatusResponse> {
+        let response = self.rpc.rpc(NodeStatusRequest).await?;
+        Ok(response)
+    }
+
+    /// Shutdown the node.
+    ///
+    /// If `force` is true, the node will be killed instantly without waiting for things to
+    /// shutdown gracefully.
+    pub async fn shutdown(&self, force: bool) -> Result<()> {
+        self.rpc.rpc(NodeShutdownRequest { force }).await?;
+        Ok(())
+    }
+}
+
+/// Iroh docs client.
+#[derive(Debug, Clone)]
+pub struct DocsClient<C> {
+    rpc: RpcClient<ProviderService, C>,
+}
+
+impl<C> DocsClient<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
     /// Create a new document author.
     pub async fn create_author(&self) -> Result<AuthorId> {
         let res = self.rpc.rpc(AuthorCreateRequest).await??;
@@ -60,7 +133,7 @@ where
     }
 
     /// Create a new document.
-    pub async fn create_doc(&self) -> Result<Doc<C>> {
+    pub async fn create(&self) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocCreateRequest {}).await??;
         let doc = Doc {
             id: res.id,
@@ -70,7 +143,7 @@ where
     }
 
     /// Import a document from a ticket and join all peers in the ticket.
-    pub async fn import_doc(&self, ticket: DocTicket) -> Result<Doc<C>> {
+    pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
         let doc = Doc {
             id: res.doc_id,
@@ -80,21 +153,21 @@ where
     }
 
     /// List all documents.
-    pub async fn list_docs(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
         let stream = self.rpc.server_streaming(DocListRequest {}).await?;
         Ok(flatten(stream).map_ok(|res| res.id))
     }
 
     /// Get a [`Doc`] client for a single document. Return an error if the document cannot be found.
-    pub async fn get_doc(&self, id: NamespaceId) -> Result<Doc<C>> {
-        match self.try_get_doc(id).await? {
+    pub async fn get(&self, id: NamespaceId) -> Result<Doc<C>> {
+        match self.try_get(id).await? {
             Some(doc) => Ok(doc),
             None => Err(anyhow!("Document not found")),
         }
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
-    pub async fn try_get_doc(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+    pub async fn try_get(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
         if let Err(_err) = self.rpc.rpc(DocInfoRequest { doc_id: id }).await? {
             return Ok(None);
         }
@@ -104,37 +177,99 @@ where
         };
         Ok(Some(doc))
     }
+}
 
-    /// Get the bytes for a hash.
-    ///
-    /// Note: This reads the full blob into memory.
-    pub async fn get_bytes(&self, hash: Hash) -> Result<Bytes> {
-        let mut stream = self.get_bytes_stream(hash).await?;
-        stream.read_to_end().await
-    }
+/// Iroh blobs client.
+#[derive(Debug, Clone)]
+pub struct BlobsClient<C> {
+    rpc: RpcClient<ProviderService, C>,
+}
 
-    /// Get the bytes for a hash.
-    pub async fn get_bytes_stream(&self, hash: Hash) -> Result<BlobReader> {
+impl<C> BlobsClient<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    /// Read a single blob as a streaming [`BlobReader`].
+    pub async fn read(&self, hash: Hash) -> Result<BlobReader> {
         BlobReader::from_rpc(&self.rpc, hash).await
     }
 
-    /// Get statistics of the running node.
-    pub async fn stats(&self) -> Result<HashMap<String, CounterStats>> {
-        let res = self.rpc.rpc(StatsGetRequest {}).await??;
-        Ok(res.stats)
+    /// Read all bytes of single blob.
+    ///
+    /// This allocates a buffer for the full blob. Use only if you know that the blob you're
+    /// reading is small. If not sure, use [Self::reader] and check the size with
+    /// [`BlobReader::size`] before calling [`BlobReader::read_to_end`].
+    pub async fn read_to_end(&self, hash: Hash) -> Result<Bytes> {
+        BlobReader::from_rpc(&self.rpc, hash)
+            .await?
+            .read_to_end()
+            .await
     }
 
-    /// Get information about the different connections we have made
-    pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
-        let stream = self.rpc.server_streaming(ConnectionsRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| res.conn_info))
+    /// Import a blob from a filesystem path.
+    ///
+    /// `path` should be an absolute path valid for the file system on which
+    /// the node runs.
+    /// If `in_place` is true, Iroh will assume that the data will not change and will share it in
+    /// place without copying to the Iroh data directory.
+    pub async fn add_from_path(
+        &self,
+        path: PathBuf,
+        in_place: bool,
+    ) -> Result<impl Stream<Item = Result<AddProgress>>> {
+        let stream = self
+            .rpc
+            .server_streaming(BlobAddPathRequest { path, in_place })
+            .await?;
+        Ok(stream.map_err(anyhow::Error::from))
     }
 
-    /// Get connection information about a node
-    pub async fn connection_info(&self, node_id: PublicKey) -> Result<Option<ConnectionInfo>> {
-        let ConnectionInfoResponse { conn_info } =
-            self.rpc.rpc(ConnectionInfoRequest { node_id }).await??;
-        Ok(conn_info)
+    /// Validate hashes on the running node.
+    ///
+    /// If `repair` is true, repair the store by removing invalid data.
+    pub async fn validate(
+        &self,
+        repair: bool,
+    ) -> Result<impl Stream<Item = Result<ValidateProgress>>> {
+        let stream = self
+            .rpc
+            .server_streaming(BlobValidateRequest { repair })
+            .await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// Download a blob from another node and add it to the local database.
+    pub async fn get(
+        &self,
+        req: BlobGetRequest,
+    ) -> Result<impl Stream<Item = Result<GetProgress>>> {
+        let stream = self.rpc.server_streaming(req).await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// List all complete blobs.
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobListResponse>>> {
+        let stream = self.rpc.server_streaming(BlobListRequest).await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// List all incomplete (partial) blobs.
+    pub async fn list_incomplete(
+        &self,
+    ) -> Result<impl Stream<Item = Result<BlobListIncompleteResponse>>> {
+        let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// List all collections.
+    pub async fn list_collections(
+        &self,
+    ) -> Result<impl Stream<Item = Result<BlobListCollectionsResponse>>> {
+        let stream = self
+            .rpc
+            .server_streaming(BlobListCollectionsRequest)
+            .await?;
+        Ok(stream.map_err(anyhow::Error::from))
     }
 }
 
@@ -165,13 +300,13 @@ impl BlobReader {
         let mut stream = flatten(stream);
 
         let (size, is_complete) = match stream.next().await {
-            Some(Ok(BytesGetResponse::Entry { size, is_complete })) => (size, is_complete),
+            Some(Ok(BlobReadResponse::Entry { size, is_complete })) => (size, is_complete),
             Some(Err(err)) => return Err(err),
             None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
         };
 
         let stream = stream.map(|item| match item {
-            Ok(BytesGetResponse::Data { chunk }) => Ok(chunk),
+            Ok(BlobReadResponse::Data { chunk }) => Ok(chunk),
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
@@ -243,15 +378,17 @@ where
         Ok(res.entry.content_hash())
     }
 
-    /// Get the contents of an entry as a byte array.
-    pub async fn get_content_bytes(&self, hash: Hash) -> Result<Bytes> {
-        let mut stream = BlobReader::from_rpc(&self.rpc, hash).await?;
-        stream.read_to_end().await
+    /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
+    pub async fn read(&self, entry: &Entry) -> Result<BlobReader> {
+        BlobReader::from_rpc(&self.rpc, entry.content_hash()).await
     }
 
-    /// Get the contents of an entry as a [`BlobReader`].
-    pub async fn get_content_reader(&self, hash: Hash) -> Result<BlobReader> {
-        BlobReader::from_rpc(&self.rpc, hash).await
+    /// Read all content of an [`Entry`] into a buffer.
+    pub async fn read_to_end(&self, entry: &Entry) -> Result<Bytes> {
+        BlobReader::from_rpc(&self.rpc, entry.content_hash())
+            .await?
+            .read_to_end()
+            .await
     }
 
     /// Get the latest entry for a key and author.

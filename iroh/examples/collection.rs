@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     let ticket = node.ticket(hash).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
-    println!("node PeerID:     {}", ticket.peer());
+    println!("node PeerID:     {}", ticket.node_id());
     println!("node listening addresses:");
     for addr in ticket.addrs() {
         println!("\t{:?}", addr);

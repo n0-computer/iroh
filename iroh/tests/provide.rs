@@ -146,11 +146,10 @@ async fn empty_files() -> Result<()> {
 /// Create new get options with the given peer id and addresses, using a
 /// randomly generated secret key.
 fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+    let peer = iroh_net::NodeAddr::new(peer_id, Some(1), addrs);
     iroh::dial::Options {
         secret_key: SecretKey::generate(),
-        peer_id,
-        addrs,
-        derp_region: Some(1),
+        peer,
         keylog: false,
         derp_map: Some(iroh_net::defaults::default_derp_map()),
     }

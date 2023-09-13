@@ -12,6 +12,7 @@ use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
 use iroh_net::key::{PublicKey, SecretKey};
+use iroh_net::NodeAddr;
 use serde::{Deserialize, Serialize};
 
 /// Options for the client
@@ -19,16 +20,12 @@ use serde::{Deserialize, Serialize};
 pub struct Options {
     /// The secret key of the node
     pub secret_key: SecretKey,
-    /// The addresses to connect to
-    pub addrs: Vec<SocketAddr>,
-    /// The peer id to dial
-    pub peer_id: PublicKey,
+    /// The peer to connect to.
+    pub peer: NodeAddr,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
     /// The configuration of the derp services
     pub derp_map: Option<DerpMap>,
-    /// The DERP region of the node
-    pub derp_region: Option<u16>,
 }
 
 /// Create a new endpoint and dial a peer, returning the connection
@@ -47,10 +44,10 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = endpoint.bind(0).await?;
     endpoint
         .connect(
-            opts.peer_id,
+            opts.peer.node_id,
             &iroh_bytes::protocol::ALPN,
-            opts.derp_region,
-            &opts.addrs,
+            opts.peer.derp_region,
+            &opts.peer.endpoints,
         )
         .await
         .context("failed to connect to provider")
@@ -62,47 +59,40 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
 /// and [`FromStr`] implementations serialize to base32.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
+    /// The provider to get a file from.
+    peer: NodeAddr,
     /// The hash to retrieve.
     hash: Hash,
-    /// The peer ID identifying the provider.
-    peer: PublicKey,
     /// Optional Request token.
     token: Option<RequestToken>,
-    /// The socket addresses the provider is listening on.
-    ///
-    /// This will never be empty.
-    addrs: Vec<SocketAddr>,
     /// True to treat the hash as a collection and retrieve all blobs in it.
     recursive: bool,
-    /// DERP region of the provider
-    derp_region: Option<u16>,
 }
 
 impl Ticket {
     /// Creates a new ticket.
     pub fn new(
+        peer: NodeAddr,
         hash: Hash,
-        peer: PublicKey,
-        addrs: Vec<SocketAddr>,
         token: Option<RequestToken>,
         recursive: bool,
-        derp_region: Option<u16>,
     ) -> Result<Self> {
-        ensure!(!addrs.is_empty(), "addrs list can not be empty");
+        ensure!(!peer.endpoints.is_empty(), "addrs list can not be empty");
         Ok(Self {
             hash,
             peer,
-            addrs,
             token,
             recursive,
-            derp_region,
         })
     }
 
     /// Deserializes from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let slf: Ticket = postcard::from_bytes(bytes)?;
-        ensure!(!slf.addrs.is_empty(), "Invalid address list in ticket");
+        ensure!(
+            !slf.peer.endpoints.is_empty(),
+            "Invalid address list in ticket"
+        );
         Ok(slf)
     }
 
@@ -116,9 +106,9 @@ impl Ticket {
         self.hash
     }
 
-    /// The [`PublicKey`] of the provider for this ticket.
-    pub fn peer(&self) -> PublicKey {
-        self.peer
+    /// The [`NodeAddr`] of the provider for this ticket.
+    pub fn peer(&self) -> &NodeAddr {
+        &self.peer
     }
 
     /// The [`RequestToken`] for this ticket.
@@ -136,53 +126,43 @@ impl Ticket {
         self.recursive
     }
 
+    /// Get the socket addresses where the provider might be reachable.
+    pub fn addrs(&self) -> &[SocketAddr] {
+        &self.peer.endpoints[..]
+    }
+
+    /// Get the DERP region where the provider might be reachable.
+    pub fn derp_region(&self) -> Option<u16> {
+        self.peer.derp_region
+    }
+
+    /// Get the node ID of the provider.
+    pub fn node_id(&self) -> &PublicKey {
+        &self.peer.node_id
+    }
+
     /// Set recursive to for this ticket
     pub fn with_recursive(self, recursive: bool) -> Self {
         Self { recursive, ..self }
     }
 
-    /// The addresses on which the provider can be reached.
-    ///
-    /// This is guaranteed to be non-empty.
-    pub fn addrs(&self) -> &[SocketAddr] {
-        &self.addrs
-    }
-
-    /// DERP region of the provider
-    pub fn derp_region(&self) -> Option<u16> {
-        self.derp_region
-    }
-
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(
-        self,
-    ) -> (
-        Hash,
-        PublicKey,
-        Vec<SocketAddr>,
-        Option<RequestToken>,
-        bool,
-        Option<u16>,
-    ) {
+    pub fn into_parts(self) -> (NodeAddr, Hash, Option<RequestToken>, bool) {
         let Ticket {
-            hash,
             peer,
+            hash,
             token,
-            addrs,
             recursive,
-            derp_region,
         } = self;
-        (hash, peer, addrs, token, recursive, derp_region)
+        (peer, hash, token, recursive)
     }
 
     /// Convert this ticket into a [`Options`], adding the given secret key.
     pub fn as_get_options(&self, secret_key: SecretKey, derp_map: Option<DerpMap>) -> Options {
         Options {
-            peer_id: self.peer,
-            addrs: self.addrs.clone(),
+            peer: self.peer.clone(),
             secret_key,
             keylog: true,
-            derp_region: self.derp_region,
             derp_map,
         }
     }
@@ -225,11 +205,9 @@ mod tests {
         let derp_region = Some(0);
         let ticket = Ticket {
             hash,
-            peer,
-            addrs: vec![addr],
+            peer: NodeAddr::new(peer, derp_region, vec![addr]),
             token: Some(token),
             recursive: true,
-            derp_region,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");
