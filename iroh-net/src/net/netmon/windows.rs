@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use libc::c_void;
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 use windows::Win32::{
     Foundation::{BOOLEAN, HANDLE as Handle},
     NetworkManagement::IpHelper::{
@@ -96,7 +96,7 @@ impl CallbackHandler {
         &mut self,
         cb: UnicastCallback,
     ) -> Result<UnicastCallbackHandle> {
-        debug!("registering unicast callback");
+        trace!("registering unicast callback");
         let mut handle = Handle::default();
         let cb = Arc::new(cb);
         unsafe {
@@ -118,7 +118,7 @@ impl CallbackHandler {
         &mut self,
         handle: UnicastCallbackHandle,
     ) -> Result<()> {
-        debug!("unregistering unicast callback");
+        trace!("unregistering unicast callback");
         if self.unicast_callbacks.remove(&handle.0 .0).is_some() {
             unsafe {
                 windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0)?;
@@ -129,7 +129,7 @@ impl CallbackHandler {
     }
 
     fn register_route_change_callback(&mut self, cb: RouteCallback) -> Result<RouteCallbackHandle> {
-        debug!("registering route change callback");
+        trace!("registering route change callback");
         let mut handle = Handle::default();
         let cb = Arc::new(cb);
         unsafe {
@@ -148,7 +148,7 @@ impl CallbackHandler {
     }
 
     fn unregister_route_change_callback(&mut self, handle: RouteCallbackHandle) -> Result<()> {
-        debug!("unregistering route callback");
+        trace!("unregistering route callback");
         if self.route_callbacks.remove(&handle.0 .0).is_some() {
             unsafe {
                 windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0)?;
