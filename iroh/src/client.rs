@@ -164,7 +164,7 @@ impl BlobReader {
 
         let (size, is_complete) = match stream.next().await {
             Some(Ok(BytesGetResponse::Entry { size, is_complete })) => (size, is_complete),
-            Some(Err(err)) => return Err(err.into()),
+            Some(Err(err)) => return Err(err),
             None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
         };
 
