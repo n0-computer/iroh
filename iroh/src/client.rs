@@ -159,16 +159,8 @@ where
         Ok(flatten(stream).map_ok(|res| res.id))
     }
 
-    /// Get a [`Doc`] client for a single document. Return an error if the document cannot be found.
-    pub async fn get(&self, id: NamespaceId) -> Result<Doc<C>> {
-        match self.try_get(id).await? {
-            Some(doc) => Ok(doc),
-            None => Err(anyhow!("Document not found")),
-        }
-    }
-
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
-    pub async fn try_get(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+    pub async fn get(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
         if let Err(_err) = self.rpc.rpc(DocInfoRequest { doc_id: id }).await? {
             return Ok(None);
         }

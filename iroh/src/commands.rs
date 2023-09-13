@@ -253,7 +253,7 @@ impl FullCommands {
                         rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
-                            peer: NodeAddr::new(peer, region, addrs),
+                            peer: NodeAddr::from_parts(peer, region, addrs),
                             keylog,
                             derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
@@ -471,7 +471,7 @@ impl BlobCommands {
                     )
                 } else {
                     (
-                        NodeAddr::new(peer.unwrap(), derp_region, addr),
+                        NodeAddr::from_parts(peer.unwrap(), derp_region, addr),
                         token.as_ref(),
                         hash.unwrap(),
                         recursive.unwrap_or_default(),

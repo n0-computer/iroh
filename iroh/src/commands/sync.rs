@@ -164,7 +164,7 @@ impl DocCommands {
                 }
             }
             Self::Share { doc, mode } => {
-                let doc = iroh.docs.get(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env.doc(doc)?).await?;
                 let ticket = doc.share(mode).await?;
                 println!("{}", ticket);
             }
@@ -174,7 +174,7 @@ impl DocCommands {
                 key,
                 value,
             } => {
-                let doc = iroh.docs.get(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env.doc(doc)?).await?;
                 let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
@@ -188,7 +188,7 @@ impl DocCommands {
                 author,
                 content,
             } => {
-                let doc = iroh.docs.get(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env.doc(doc)?).await?;
                 let key = key.as_bytes().to_vec();
                 let filter = match (author, prefix) {
                     (None, false) => GetFilter::Key(key),
@@ -215,7 +215,7 @@ impl DocCommands {
                 prefix,
                 author,
             } => {
-                let doc = iroh.docs.get(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env.doc(doc)?).await?;
                 let filter = GetFilter::author_prefix(author, prefix);
 
                 let mut stream = doc.get_many(filter).await?;
@@ -224,7 +224,7 @@ impl DocCommands {
                 }
             }
             Self::Watch { doc } => {
-                let doc = iroh.docs.get(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env.doc(doc)?).await?;
                 let mut stream = doc.subscribe().await?;
                 while let Some(event) = stream.next().await {
                     let event = event?;
@@ -253,6 +253,13 @@ impl DocCommands {
         }
         Ok(())
     }
+}
+
+async fn get_doc(iroh: &Iroh, id: NamespaceId) -> anyhow::Result<Doc> {
+    iroh.docs
+        .get(id)
+        .await?
+        .ok_or_else(|| anyhow!("Document not found"))
 }
 
 impl AuthorCommands {
@@ -307,7 +314,7 @@ async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<
     println!("{}", fmt_entry(entry));
     if content {
         if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
-            match doc.read_to_end(&entry).await {
+            match doc.read_to_end(entry).await {
                 Ok(content) => match String::from_utf8(content.into()) {
                     Ok(s) => println!("{s}"),
                     Err(_err) => println!("<invalid UTF-8>"),

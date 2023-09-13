@@ -205,7 +205,7 @@ mod tests {
         let derp_region = Some(0);
         let ticket = Ticket {
             hash,
-            peer: NodeAddr::new(peer, derp_region, vec![addr]),
+            peer: NodeAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
             recursive: true,
         };

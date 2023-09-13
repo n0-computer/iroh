@@ -19,7 +19,7 @@ pub async fn run(iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         tokio::select! {
             biased;
             _ = tokio::signal::ctrl_c() => {},
-            res = cmd.run(&iroh, env.clone()) => {
+            res = cmd.run(iroh, env.clone()) => {
                 if let Err(err) = res {
                     println!("{} {:?}", "Error:".red().bold(), err)
                 }

@@ -31,7 +31,7 @@ pub struct NodeAddr {
 
 impl NodeAddr {
     /// Create a new [`NodeAddr`] from its parts.
-    pub fn new(node_id: PublicKey, derp_region: Option<u16>, endpoints: Vec<SocketAddr>) -> Self {
+    pub fn from_parts(node_id: PublicKey, derp_region: Option<u16>, endpoints: Vec<SocketAddr>) -> Self {
         Self {
             node_id,
             derp_region,
@@ -311,7 +311,7 @@ impl MagicEndpoint {
         let addrs = self.local_endpoints().await?;
         let derp = self.my_derp().await;
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::new(self.peer_id(), derp, addrs))
+        Ok(NodeAddr::from_parts(self.peer_id(), derp, addrs))
     }
 
     /// Get information on all the nodes we have connection information about.
