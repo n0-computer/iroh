@@ -23,7 +23,6 @@ use iroh_bytes::baomap::{
     ExportMode, Map, MapEntry, ReadableStore, Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
-use iroh_bytes::get::Stats;
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
@@ -58,13 +57,13 @@ use tracing::{debug, error, info, trace, warn};
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobGetRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadResponse, BlobValidateRequest, BytesGetRequest, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
-    ProviderService, ShareLocation,
+    BlobAddPathRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
+    BlobListRequest, BlobListResponse, BlobReadResponse, BlobValidateRequest, BytesGetRequest,
+    DownloadLocation, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderResponse, ProviderService,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -775,7 +774,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         self.inner.rt.clone()
     }
 
-    fn list_blobs(
+    fn blob_list(
         self,
         _msg: BlobListRequest,
     ) -> impl Stream<Item = BlobListResponse> + Send + 'static {
@@ -794,7 +793,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn list_incomplete_blobs(
+    fn blob_list_incomplete(
         self,
         _msg: BlobListIncompleteRequest,
     ) -> impl Stream<Item = BlobListIncompleteResponse> + Send + 'static {
@@ -819,7 +818,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn list_collections(
+    fn blob_list_collections(
         self,
         _msg: BlobListCollectionsRequest,
     ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
@@ -850,7 +849,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
 
     /// Invoke validate on the database and stream out the result
-    fn validate(
+    fn blob_validate(
         self,
         _msg: BlobValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
@@ -865,37 +864,19 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    fn provide(self, msg: BlobAddPathRequest) -> impl Stream<Item = AddProgress> {
+    fn blob_add_from_path(self, msg: BlobAddPathRequest) -> impl Stream<Item = AddProgress> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
-            if let Err(e) = self.provide0(msg, tx).await {
+            if let Err(e) = self.blob_add_from_path0(msg, tx).await {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
         });
         rx.into_stream()
     }
 
-    async fn get(
-        self,
-        conn: quinn::Connection,
-        hash: Hash,
-        recursive: bool,
-        sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
-    ) -> anyhow::Result<Stats> {
-        crate::get::get(
-            &self.inner.db,
-            &self.collection_parser,
-            conn,
-            hash,
-            recursive,
-            sender,
-        )
-        .await
-    }
-
-    async fn export(
+    async fn blob_export(
         self,
         out: String,
         hash: Hash,
@@ -959,9 +940,9 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         anyhow::Ok(())
     }
 
-    async fn share0(
+    async fn blob_download0(
         self,
-        msg: BlobGetRequest,
+        msg: BlobDownloadRequest,
         progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
@@ -980,9 +961,21 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         progress.send(GetProgress::Connected).await?;
         let progress2 = progress.clone();
         let progress3 = progress.clone();
+        let db = self.inner.db.clone();
+        let collection_parser = self.collection_parser.clone();
+        let download = local.spawn_pinned(move || async move {
+            crate::get::get(
+                &db,
+                &collection_parser,
+                conn,
+                hash,
+                msg.recursive,
+                progress2,
+            )
+            .await
+        });
+
         let this = self.clone();
-        let download =
-            local.spawn_pinned(move || self.get(conn, msg.hash, msg.recursive, progress2));
         let _export = local.spawn_pinned(move || async move {
             let stats = download.await.unwrap()?;
             progress
@@ -992,9 +985,9 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     elapsed: stats.elapsed,
                 })
                 .await?;
-            if let ShareLocation::External { path, in_place } = msg.out {
+            if let DownloadLocation::External { path, in_place } = msg.out {
                 if let Err(cause) = this
-                    .export(path, hash, msg.recursive, in_place, progress3)
+                    .blob_export(path, hash, msg.recursive, in_place, progress3)
                     .await
                 {
                     progress.send(GetProgress::Abort(cause.into())).await?;
@@ -1006,11 +999,11 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         Ok(())
     }
 
-    fn share(self, msg: BlobGetRequest) -> impl Stream<Item = GetProgress> {
+    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = GetProgress> {
         async move {
             let (sender, receiver) = flume::bounded(1024);
             let sender = FlumeProgressSender::new(sender);
-            if let Err(cause) = self.share0(msg, sender.clone()).await {
+            if let Err(cause) = self.blob_download0(msg, sender.clone()).await {
                 sender.send(GetProgress::Abort(cause.into())).await.unwrap();
             };
             receiver.into_stream()
@@ -1019,7 +1012,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
 
     #[cfg(feature = "iroh-collection")]
-    async fn provide0(
+    async fn blob_add_from_path0(
         self,
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
@@ -1097,7 +1090,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
 
     #[cfg(not(feature = "iroh-collection"))]
-    async fn provide0(
+    async fn blob_add_from_path0(
         self,
         _msg: BlobAddPathRequest,
         _progress: flume::Sender<AddProgress>,
@@ -1105,7 +1098,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         anyhow::bail!("collections not supported");
     }
 
-    async fn stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
+    async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
         let res = Ok(NodeStatsResponse {
             stats: crate::metrics::get_metrics()?,
@@ -1117,7 +1110,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         res
     }
 
-    async fn status(self, _: NodeStatusRequest) -> NodeStatusResponse {
+    async fn node_status(self, _: NodeStatusRequest) -> NodeStatusResponse {
         NodeStatusResponse {
             node_id: Box::new(self.inner.secret_key.public()),
             listen_addrs: self
@@ -1128,7 +1121,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
-    async fn shutdown(self, request: NodeShutdownRequest) {
+    async fn node_shutdown(self, request: NodeShutdownRequest) {
         if request.force {
             info!("hard shutdown requested");
             std::process::exit(0);
@@ -1138,7 +1131,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             self.inner.cancel_token.cancel();
         }
     }
-    fn watch(self, _: NodeWatchRequest) -> impl Stream<Item = NodeWatchResponse> {
+
+    fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = NodeWatchResponse> {
         futures::stream::unfold((), |()| async move {
             tokio::time::sleep(HEALTH_POLL_WAIT).await;
             Some((
@@ -1150,7 +1144,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn bytes_get(
+    fn blob_read(
         self,
         req: BytesGetRequest,
     ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
@@ -1194,7 +1188,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         rx.into_stream()
     }
 
-    fn connections(
+    fn node_connections(
         self,
         _: NodeConnectionsRequest,
     ) -> impl Stream<Item = RpcResult<NodeConnectionsResponse>> + Send + 'static {
@@ -1218,7 +1212,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         rx.into_stream()
     }
 
-    async fn connection_info(
+    async fn node_connection_info(
         self,
         req: NodeConnectionInfoRequest,
     ) -> RpcResult<NodeConnectionInfoResponse> {
@@ -1244,29 +1238,47 @@ fn handle_rpc_request<
         use ProviderRequest::*;
         debug!("handling rpc request: {}", std::any::type_name::<E>());
         match msg {
+            NodeWatch(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::node_watch)
+                    .await
+            }
+            NodeStatus(msg) => chan.rpc(msg, handler, RpcHandler::node_status).await,
+            NodeShutdown(msg) => chan.rpc(msg, handler, RpcHandler::node_shutdown).await,
+            NodeStats(msg) => chan.rpc(msg, handler, RpcHandler::node_stats).await,
+            NodeConnections(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::node_connections)
+                    .await
+            }
+            NodeConnectionInfo(msg) => {
+                chan.rpc(msg, handler, RpcHandler::node_connection_info)
+                    .await
+            }
             BlobList(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_blobs)
+                chan.server_streaming(msg, handler, RpcHandler::blob_list)
                     .await
             }
             BlobListIncomplete(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_incomplete_blobs)
+                chan.server_streaming(msg, handler, RpcHandler::blob_list_incomplete)
                     .await
             }
             BlobListCollections(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_collections)
+                chan.server_streaming(msg, handler, RpcHandler::blob_list_collections)
                     .await
             }
             BlobAddPath(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::provide)
+                chan.server_streaming(msg, handler, RpcHandler::blob_add_from_path)
                     .await
             }
-            BlobGet(msg) => chan.server_streaming(msg, handler, RpcHandler::share).await,
-            NodeWatch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
-            NodeStatus(msg) => chan.rpc(msg, handler, RpcHandler::status).await,
-            NodeShutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
-            NodeStats(msg) => chan.rpc(msg, handler, RpcHandler::stats).await,
+            BlobDownload(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_download)
+                    .await
+            }
             BlobValidate(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::validate)
+                chan.server_streaming(msg, handler, RpcHandler::blob_validate)
+                    .await
+            }
+            BlobRead(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_read)
                     .await
             }
             AuthorList(msg) => {
@@ -1350,15 +1362,6 @@ fn handle_rpc_request<
                     async move { handler.inner.sync.doc_subscribe(req).await }.flatten_stream()
                 })
                 .await
-            }
-            NodeConnections(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::connections)
-                    .await
-            }
-            NodeConnectionInfo(msg) => chan.rpc(msg, handler, RpcHandler::connection_info).await,
-            BlobRead(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::bytes_get)
-                    .await
             }
         }
     });

@@ -62,7 +62,7 @@ impl ServerStreamingMsg<ProviderService> for BlobAddPathRequest {
 
 /// A request to the node to download and share the data specified by the hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobGetRequest {
+pub struct BlobDownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
     /// If this flag is true, the hash is assumed to be a collection and all
@@ -74,12 +74,12 @@ pub struct BlobGetRequest {
     /// the download request.
     pub token: Option<RequestToken>,
     /// This field contains the location to store the data at.
-    pub out: ShareLocation,
+    pub out: DownloadLocation,
 }
 
 /// Location to store a downloaded blob at.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ShareLocation {
+pub enum DownloadLocation {
     /// Store in the node's blob storage directory.
     Internal,
     /// Store at the provided path.
@@ -96,11 +96,11 @@ pub enum ShareLocation {
     },
 }
 
-impl Msg<ProviderService> for BlobGetRequest {
+impl Msg<ProviderService> for BlobDownloadRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for BlobGetRequest {
+impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
     type Response = GetProgress;
 }
 
@@ -680,7 +680,7 @@ pub enum ProviderRequest {
 
     BlobRead(BytesGetRequest),
     BlobAddPath(BlobAddPathRequest),
-    BlobGet(BlobGetRequest),
+    BlobDownload(BlobDownloadRequest),
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
@@ -716,7 +716,7 @@ pub enum ProviderResponse {
 
     BlobRead(RpcResult<BlobReadResponse>),
     BlobAddPath(AddProgress),
-    BlobGet(GetProgress),
+    BlobDownload(GetProgress),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),

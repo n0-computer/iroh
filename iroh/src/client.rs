@@ -23,7 +23,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobGetRequest,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDownloadRequest,
     BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
     BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadResponse,
     BlobValidateRequest, BytesGetRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
@@ -234,9 +234,9 @@ where
     }
 
     /// Download a blob from another node and add it to the local database.
-    pub async fn get(
+    pub async fn download(
         &self,
-        req: BlobGetRequest,
+        req: BlobDownloadRequest,
     ) -> Result<impl Stream<Item = Result<GetProgress>>> {
         let stream = self.rpc.server_streaming(req).await?;
         Ok(stream.map_err(anyhow::Error::from))

@@ -9,7 +9,7 @@ use indicatif::{
 };
 use iroh::{
     collection::{Collection, IrohCollectionParser},
-    rpc_protocol::{BlobGetRequest, ShareLocation},
+    rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
 use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress};
@@ -91,12 +91,12 @@ impl GetInteractive {
         let mut stream = provider
             .client()
             .blobs
-            .get(BlobGetRequest {
+            .download(BlobDownloadRequest {
                 hash: self.hash,
                 recursive: !self.single,
                 peer: self.opts.peer,
                 token: self.token,
-                out: ShareLocation::External {
+                out: DownloadLocation::External {
                     path: out,
                     in_place: true,
                 },

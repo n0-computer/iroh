@@ -392,7 +392,7 @@ pub enum BlobCommands {
     ///
     /// In addition to downloading the data, you can also specify an optional output directory
     /// where the data will be exported to after it has been downloaded.
-    Share {
+    Download {
         /// Hash to get, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         hash: Option<Hash>,
@@ -445,7 +445,7 @@ pub enum BlobCommands {
 impl BlobCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::Share {
+            Self::Download {
                 hash,
                 recursive,
                 peer,
@@ -462,35 +462,30 @@ impl BlobCommands {
                     tracing::info!("output path is {} -> {}", out.display(), absolute.display());
                     *out = absolute;
                 }
-                let (peer, token, hash, recursive) = if let Some(ticket) = ticket.as_ref() {
-                    (
-                        ticket.node_addr().clone(),
-                        ticket.token(),
-                        ticket.hash(),
-                        ticket.recursive(),
-                    )
+                let (peer, hash, token, recursive) = if let Some(ticket) = ticket {
+                    ticket.into_parts()
                 } else {
                     (
                         NodeAddr::from_parts(peer.unwrap(), derp_region, addr),
-                        token.as_ref(),
                         hash.unwrap(),
+                        token,
                         recursive.unwrap_or_default(),
                     )
                 };
                 let out = match out {
-                    None => ShareLocation::Internal,
-                    Some(path) => ShareLocation::External {
+                    None => DownloadLocation::Internal,
+                    Some(path) => DownloadLocation::External {
                         path: path.display().to_string(),
                         in_place,
                     },
                 };
                 let mut stream = iroh
                     .blobs
-                    .get(BlobGetRequest {
+                    .download(BlobDownloadRequest {
                         hash,
                         recursive,
                         peer,
-                        token: token.cloned(),
+                        token,
                         out,
                     })
                     .await?;
