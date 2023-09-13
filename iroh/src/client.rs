@@ -207,7 +207,7 @@ where
     ///
     /// This allocates a buffer for the full blob. Use only if you know that the blob you're
     /// reading is small. If not sure, use [`Self::read`] and check the size with
-    /// [`BlobReader::size`] before calling [`BlobReader::read_to_end`].
+    /// [`BlobReader::size`] before calling [`BlobReader::read_to_bytes`].
     pub async fn read_to_bytes(&self, hash: Hash) -> Result<Bytes> {
         BlobReader::from_rpc(&self.rpc, hash)
             .await?
