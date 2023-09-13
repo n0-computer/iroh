@@ -31,7 +31,7 @@ mod linux;
 mod windows;
 
 #[cfg(target_os = "android")]
-use android as os;
+use self::android as os;
 #[cfg(any(
     target_os = "freebsd",
     target_os = "openbsd",
@@ -39,11 +39,11 @@ use android as os;
     target_os = "macos",
     target_os = "ios"
 ))]
-use bsd as os;
+use self::bsd as os;
 #[cfg(target_os = "linux")]
-use linux as os;
+use self::linux as os;
 #[cfg(target_os = "windows")]
-use windows as os;
+use self::windows as os;
 
 use os::{is_interesting_interface, RouteMonitor};
 
@@ -142,13 +142,13 @@ impl Actor {
         let interface_state = State::new().await;
         let wall_time = Instant::now();
 
-        let (s, mut r) = mpsc::channel(16);
+        let (s, mut r) = flume::bounded(16);
         let route_monitor = RouteMonitor::new(s).await?;
         let (actor_tx, actor_rx) = mpsc::channel(16);
 
         let sender = actor_tx.clone();
         let handle = tokio::task::spawn(async move {
-            while let Some(_msg) = r.recv().await {
+            while let Ok(_msg) = r.recv_async().await {
                 sender
                     .send(ActorMessage::NetworkActivity)
                     .await
@@ -353,6 +353,6 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     }
 }
