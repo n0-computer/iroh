@@ -19,8 +19,9 @@ impl RouteMonitor {
         let cb_handler = CallbackHandler::default();
 
         // 1. Unicast Address Changes
-        cb_handler.register_unicast_address_change_callback(Box::new(|| {
-            if let Err(err) = sender.blocking_send(Message) {
+        let s = sender.clone();
+        cb_handler.register_unicast_address_change_callback(Box::new(move || {
+            if let Err(err) = s.blocking_send(Message) {
                 warn!("unable to send: unicast change notification", err);
             }
         }));
@@ -60,10 +61,12 @@ impl Drop for CallbackHandler {
 
 struct UnicastCallbackHandle(Handle);
 
+type UnicastCallback = Box<dyn Fn() + Send + Sync + 'static>;
+
 impl CallbackHandler {
     fn register_unicast_address_change_callback(
         &mut self,
-        cb: Box<dyn Fn()>,
+        cb: UnicastCallback,
     ) -> Result<UnicastCallbackHandle> {
         let mut handle = Handle::default();
 
@@ -105,6 +108,6 @@ unsafe extern "system" fn unicast_change_callback(
         return;
     }
 
-    let cb: Box<dyn Fn()> = &*callercontext;
+    let cb: UnicastCallback = &*callercontext;
     cb();
 }
