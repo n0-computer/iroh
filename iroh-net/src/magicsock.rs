@@ -47,6 +47,7 @@ use crate::{
     config::{self, DERP_MAGIC_IP},
     derp::{DerpMap, DerpRegion},
     disco,
+    dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
     net::{ip::LocalAddresses, netmon},
@@ -925,7 +926,10 @@ impl Actor {
                 let sender = sender.clone();
                 async move {
                     info!("link change detected: major? {}", is_major);
-                    // TODO: flush dns
+
+                    // Clear DNS cache
+                    DNS_RESOLVER.clear_cache();
+
                     if is_major {
                         let (s, r) = sync::oneshot::channel();
                         sender.send(ActorMessage::RebindAll(s)).await.ok();
