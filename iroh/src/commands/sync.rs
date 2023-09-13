@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
@@ -125,7 +125,7 @@ pub enum AuthorCommands {
 }
 
 impl DocCommands {
-    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { id: doc } => {
                 env.set_doc(doc)?;
@@ -164,7 +164,7 @@ impl DocCommands {
                 }
             }
             Self::Share { doc, mode } => {
-                let doc = get_doc(iroh, env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let ticket = doc.share(mode).await?;
                 println!("{}", ticket);
             }
@@ -174,7 +174,7 @@ impl DocCommands {
                 key,
                 value,
             } => {
-                let doc = get_doc(iroh, env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
@@ -188,7 +188,7 @@ impl DocCommands {
                 author,
                 content,
             } => {
-                let doc = get_doc(iroh, env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
                 let filter = match (author, prefix) {
                     (None, false) => GetFilter::Key(key),
@@ -215,7 +215,7 @@ impl DocCommands {
                 prefix,
                 author,
             } => {
-                let doc = get_doc(iroh, env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let filter = GetFilter::author_prefix(author, prefix);
 
                 let mut stream = doc.get_many(filter).await?;
@@ -224,7 +224,7 @@ impl DocCommands {
                 }
             }
             Self::Watch { doc } => {
-                let doc = get_doc(iroh, env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let mut stream = doc.subscribe().await?;
                 while let Some(event) = stream.next().await {
                     let event = event?;
@@ -255,15 +255,15 @@ impl DocCommands {
     }
 }
 
-async fn get_doc(iroh: &Iroh, id: NamespaceId) -> anyhow::Result<Doc> {
+async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
     iroh.docs
-        .get(id)
+        .get(env.doc(id)?)
         .await?
-        .ok_or_else(|| anyhow!("Document not found"))
+        .context("Document not found")
 }
 
 impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { author } => {
                 env.set_author(author)?;

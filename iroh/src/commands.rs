@@ -81,12 +81,12 @@ impl Cli {
             Commands::Console => {
                 let iroh = iroh::client::quic::connect(self.rpc_args.rpc_port).await?;
                 let env = ConsoleEnv::for_console()?;
-                repl::run(&iroh, env).await
+                repl::run(&iroh, &env).await
             }
             Commands::Rpc(command) => {
                 let iroh = iroh::client::quic::connect(self.rpc_args.rpc_port).await?;
                 let env = ConsoleEnv::for_cli()?;
-                command.run(&iroh, env).await
+                command.run(&iroh, &env).await
             }
             Commands::Full(command) => {
                 let FullArgs {
@@ -364,7 +364,7 @@ impl NodeCommands {
 }
 
 impl RpcCommands {
-    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Node { command } => command.run(iroh).await,
             Self::Blob { command } => command.run(iroh).await,

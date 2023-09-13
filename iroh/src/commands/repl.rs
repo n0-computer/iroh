@@ -10,7 +10,7 @@ use crate::{
     config::{ConsoleEnv, ConsolePaths},
 };
 
-pub async fn run(iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
+pub async fn run(iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
     let mut from_repl = Repl::spawn(env.clone());
@@ -19,7 +19,7 @@ pub async fn run(iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
         tokio::select! {
             biased;
             _ = tokio::signal::ctrl_c() => {},
-            res = cmd.run(iroh, env.clone()) => {
+            res = cmd.run(iroh, env) => {
                 if let Err(err) = res {
                     println!("{} {:?}", "Error:".red().bold(), err)
                 }
