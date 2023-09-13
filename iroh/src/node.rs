@@ -60,10 +60,11 @@ use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobGetRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadResponse, BlobValidateRequest, BytesGetRequest, ConnectionInfoResponse,
-    ConnectionsResponse, NodeConnectionInfoRequest, NodeConnectionsRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, ShareLocation, StatsGetResponse, StatusResponse,
+    BlobReadResponse, BlobValidateRequest, BytesGetRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService, ShareLocation,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -1104,9 +1105,9 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         anyhow::bail!("collections not supported");
     }
 
-    async fn stats(self, _req: NodeStatsRequest) -> RpcResult<StatsGetResponse> {
+    async fn stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
-        let res = Ok(StatsGetResponse {
+        let res = Ok(NodeStatsResponse {
             stats: crate::metrics::get_metrics()?,
         });
 
@@ -1116,8 +1117,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         res
     }
 
-    async fn status(self, _: NodeStatusRequest) -> StatusResponse {
-        StatusResponse {
+    async fn status(self, _: NodeStatusRequest) -> NodeStatusResponse {
+        NodeStatusResponse {
             peer_id: Box::new(self.inner.secret_key.public()),
             listen_addrs: self
                 .inner
@@ -1196,7 +1197,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     fn connections(
         self,
         _: NodeConnectionsRequest,
-    ) -> impl Stream<Item = RpcResult<ConnectionsResponse>> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<NodeConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         self.rt().local_pool().spawn_pinned(|| async move {
@@ -1204,7 +1205,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 Ok(mut conn_infos) => {
                     conn_infos.sort_by_key(|n| n.public_key.to_string());
                     for conn_info in conn_infos {
-                        tx.send_async(Ok(ConnectionsResponse { conn_info }))
+                        tx.send_async(Ok(NodeConnectionsResponse { conn_info }))
                             .await
                             .ok();
                     }
@@ -1220,10 +1221,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     async fn connection_info(
         self,
         req: NodeConnectionInfoRequest,
-    ) -> RpcResult<ConnectionInfoResponse> {
+    ) -> RpcResult<NodeConnectionInfoResponse> {
         let NodeConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id).await?;
-        Ok(ConnectionInfoResponse { conn_info })
+        Ok(NodeConnectionInfoResponse { conn_info })
     }
 }
 

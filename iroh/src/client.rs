@@ -26,11 +26,12 @@ use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobGetRequest,
     BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
     BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadResponse,
-    BlobValidateRequest, BytesGetRequest, ConnectionInfoResponse, CounterStats, DocCreateRequest,
-    DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest,
-    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
-    DocTicket, GetProgress, NodeConnectionInfoRequest, NodeConnectionsRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatusRequest, ProviderService, ShareMode, StatusResponse,
+    BlobValidateRequest, BytesGetRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
+    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
+    GetProgress, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
+    ShareMode,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
 
@@ -87,7 +88,7 @@ where
 
     /// Get connection information about a node
     pub async fn connection_info(&self, node_id: PublicKey) -> Result<Option<ConnectionInfo>> {
-        let ConnectionInfoResponse { conn_info } = self
+        let NodeConnectionInfoResponse { conn_info } = self
             .rpc
             .rpc(NodeConnectionInfoRequest { node_id })
             .await??;
@@ -95,7 +96,7 @@ where
     }
 
     /// Get status information about a node
-    pub async fn status(&self) -> Result<StatusResponse> {
+    pub async fn status(&self) -> Result<NodeStatusResponse> {
         let response = self.rpc.rpc(NodeStatusRequest).await?;
         Ok(response)
     }
@@ -197,7 +198,7 @@ where
     /// Read all bytes of single blob.
     ///
     /// This allocates a buffer for the full blob. Use only if you know that the blob you're
-    /// reading is small. If not sure, use [Self::reader] and check the size with
+    /// reading is small. If not sure, use [`Self::read`] and check the size with
     /// [`BlobReader::size`] before calling [`BlobReader::read_to_end`].
     pub async fn read_to_end(&self, hash: Hash) -> Result<Bytes> {
         BlobReader::from_rpc(&self.rpc, hash)

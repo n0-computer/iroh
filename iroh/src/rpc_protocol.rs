@@ -38,7 +38,7 @@ pub type KeyBytes = [u8; 32];
 
 /// A request to the node to provide the data at the given path
 ///
-/// Will produce a stream of [`ProvideProgress`] messages.
+/// Will produce a stream of [`AddProgress`] messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobAddPathRequest {
     /// The path to the data to provide.
@@ -203,7 +203,7 @@ pub struct NodeConnectionsRequest;
 
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsResponse {
+pub struct NodeConnectionsResponse {
     /// Information about a connection
     pub conn_info: ConnectionInfo,
 }
@@ -213,7 +213,7 @@ impl Msg<ProviderService> for NodeConnectionsRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for NodeConnectionsRequest {
-    type Response = RpcResult<ConnectionsResponse>;
+    type Response = RpcResult<NodeConnectionsResponse>;
 }
 
 /// Get connection information about a specific node
@@ -225,13 +225,13 @@ pub struct NodeConnectionInfoRequest {
 
 /// A response to a connection request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionInfoResponse {
+pub struct NodeConnectionInfoResponse {
     /// Information about a connection to a node
     pub conn_info: Option<ConnectionInfo>,
 }
 
 impl RpcMsg<ProviderService> for NodeConnectionInfoRequest {
-    type Response = RpcResult<ConnectionInfoResponse>;
+    type Response = RpcResult<NodeConnectionInfoResponse>;
 }
 
 /// A request to shutdown the node
@@ -247,17 +247,17 @@ impl RpcMsg<ProviderService> for NodeShutdownRequest {
 
 /// A request to get information about the identity of the node
 ///
-/// See [`StatusResponse`] for the response.
+/// See [`NodeStatusResponse`] for the response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusRequest;
 
 impl RpcMsg<ProviderService> for NodeStatusRequest {
-    type Response = StatusResponse;
+    type Response = NodeStatusResponse;
 }
 
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StatusResponse {
+pub struct NodeStatusResponse {
     /// The peer id of the node
     pub peer_id: Box<PublicKey>,
     /// The addresses of the node
@@ -644,7 +644,7 @@ pub enum BlobReadResponse {
 pub struct NodeStatsRequest {}
 
 impl RpcMsg<ProviderService> for NodeStatsRequest {
-    type Response = RpcResult<StatsGetResponse>;
+    type Response = RpcResult<NodeStatsResponse>;
 }
 
 /// Counter stats
@@ -656,9 +656,9 @@ pub struct CounterStats {
     pub description: String,
 }
 
-/// Response to [`StatsGetRequest`]
+/// Response to [`NodeStatsRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StatsGetResponse {
+pub struct NodeStatsResponse {
     /// Map of statistics
     pub stats: HashMap<String, CounterStats>,
 }
@@ -707,10 +707,10 @@ pub enum ProviderRequest {
 #[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
-    NodeStatus(StatusResponse),
-    NodeStats(RpcResult<StatsGetResponse>),
-    NodeConnections(RpcResult<ConnectionsResponse>),
-    NodeConnectionInfo(RpcResult<ConnectionInfoResponse>),
+    NodeStatus(NodeStatusResponse),
+    NodeStats(RpcResult<NodeStatsResponse>),
+    NodeConnections(RpcResult<NodeConnectionsResponse>),
+    NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
     NodeShutdown(()),
     NodeWatch(NodeWatchResponse),
 
