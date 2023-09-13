@@ -175,6 +175,8 @@ impl FromStr for Ticket {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
     use bao_tree::blake3;
 
     use super::*;
