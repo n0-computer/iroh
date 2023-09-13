@@ -615,15 +615,29 @@ pub struct BytesGetRequest {
     pub hash: Hash,
 }
 
-impl RpcMsg<ProviderService> for BytesGetRequest {
+impl Msg<ProviderService> for BytesGetRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for BytesGetRequest {
     type Response = RpcResult<BytesGetResponse>;
 }
 
 /// Response to [`BytesGetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BytesGetResponse {
-    /// The blob data
-    pub data: Bytes,
+pub enum BytesGetResponse {
+    /// The entry header.
+    Entry {
+        /// The size of the blob
+        size: u64,
+        /// Wether the blob is complete
+        is_complete: bool,
+    },
+    /// Chunks of entry data.
+    Data {
+        /// The data chunk
+        chunk: Bytes,
+    },
 }
 
 /// Get stats for the running Iroh node

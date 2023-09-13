@@ -27,7 +27,7 @@ use iroh_bytes::get::Stats;
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::ShareProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{RpcError, RpcResult};
+use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{CustomGetHandler, ProvideProgress, RequestAuthorizationHandler},
@@ -35,7 +35,7 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_io::AsyncSliceReaderExt;
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
@@ -78,6 +78,11 @@ pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
+
+/// Chunk size for getting blobs over RPC
+const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
+/// Channel cap for getting blobs over RPC
+const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
 
 /// Builder for the [`Node`].
 ///
@@ -1141,29 +1146,48 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    // TODO: streaming
-    async fn bytes_get(self, req: BytesGetRequest) -> RpcResult<BytesGetResponse> {
-        let entry = self
-            .inner
-            .db
-            .get(&req.hash)
-            .ok_or_else(|| RpcError::from(anyhow!("not found")))?;
-        // TODO: size limit
-        // TODO: streaming
-        let data = self.inner.rt.local_pool().spawn_pinned(|| async move {
-            let data = entry
-                .data_reader()
-                .await
-                .map_err(anyhow::Error::from)?
-                .read_to_end()
-                .await
-                .map_err(anyhow::Error::from)?;
-            Result::<_, anyhow::Error>::Ok(data)
+    fn bytes_get(
+        self,
+        req: BytesGetRequest,
+    ) -> impl Stream<Item = RpcResult<BytesGetResponse>> + Send + 'static {
+        let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
+        let entry = self.inner.db.get(&req.hash);
+        self.inner.rt.local_pool().spawn_pinned(move || async move {
+            if let Err(err) = read_loop(entry, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
+                tx.send_async(RpcResult::Err(err.into())).await.ok();
+            }
         });
-        let data = data
-            .await
-            .map_err(|_err| anyhow::anyhow!("task failed to complete"))??;
-        Ok(BytesGetResponse { data })
+
+        async fn read_loop<M: Map>(
+            entry: Option<impl MapEntry<M>>,
+            tx: flume::Sender<RpcResult<BytesGetResponse>>,
+            chunk_size: usize,
+        ) -> anyhow::Result<()> {
+            let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
+            let size = entry.size();
+            tx.send_async(Ok(BytesGetResponse::Entry {
+                size,
+                is_complete: entry.is_complete(),
+            }))
+            .await?;
+            let mut reader = entry.data_reader().await?;
+            let mut offset = 0u64;
+            loop {
+                let chunk = reader.read_at(offset, chunk_size).await?;
+                let len = chunk.len();
+                if !chunk.is_empty() {
+                    tx.send_async(Ok(BytesGetResponse::Data { chunk })).await?;
+                }
+                if len < chunk_size {
+                    break;
+                } else {
+                    offset += len as u64;
+                }
+            }
+            Ok(())
+        }
+
+        rx.into_stream()
     }
 
     fn connections(
@@ -1329,8 +1353,10 @@ fn handle_rpc_request<
                     .await
             }
             ConnectionInfo(msg) => chan.rpc(msg, handler, RpcHandler::connection_info).await,
-            // TODO: make streaming
-            BytesGet(msg) => chan.rpc(msg, handler, RpcHandler::bytes_get).await,
+            BytesGet(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::bytes_get)
+                    .await
+            }
         }
     });
 }
