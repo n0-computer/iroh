@@ -40,7 +40,12 @@ pub(super) enum NetworkMessage {
 }
 
 /// How often we execute a check for big jumps in wall time.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 const POLL_WALL_TIME_INTERVAL: Duration = Duration::from_secs(15);
+/// Set background polling time to 1h to effectively disable it on mobile,
+/// to avoid increased battery usage. Sleep detection won't work this way there.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+const POLL_WALL_TIME_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const MON_CHAN_CAPACITY: usize = 16;
 const ACTOR_CHAN_CAPACITY: usize = 16;
 
@@ -233,8 +238,8 @@ fn prefixes_major_equal(a: impl Iterator<Item = IpNet>, b: impl Iterator<Item = 
         true
     }
 
-    let a = a.filter(|p| is_interesting(p));
-    let b = b.filter(|p| is_interesting(p));
+    let a = a.filter(is_interesting);
+    let b = b.filter(is_interesting);
 
     for (a, b) in a.zip(b) {
         if a != b {
