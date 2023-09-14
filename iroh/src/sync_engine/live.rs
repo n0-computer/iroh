@@ -7,7 +7,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::downloader::{DownloadKind, Downloader};
+use crate::downloader::{DownloadKind, Downloader, PeerRole};
 use anyhow::{anyhow, bail, Result};
 use flume::r#async::RecvStream;
 use futures::{
@@ -841,7 +841,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 if matches!(entry_status, EntryStatus::NotFound) {
                     let handle = self
                         .downloader
-                        .queue(DownloadKind::Blob { hash }, vec![from])
+                        .queue(
+                            DownloadKind::Blob { hash },
+                            vec![(from, PeerRole::Candidate).into()],
+                        )
                         .await;
                     let fut = async move {
                         // NOTE: this ignores the result for now, simply keeping the option

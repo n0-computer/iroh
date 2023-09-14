@@ -1,6 +1,7 @@
 //! Implementation of [`super::Dialer`] used for testing.
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
