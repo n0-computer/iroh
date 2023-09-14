@@ -164,11 +164,7 @@ impl Actor {
             return Ok(());
         }
 
-        let mut is_major = is_major_change(old_state, &new_state);
-        // Check for time jumps
-        if !is_major && time_jumped {
-            is_major = true;
-        }
+        let is_major = is_major_change(old_state, &new_state) || time_jumped;
 
         if is_major {
             self.interface_state = new_state;
