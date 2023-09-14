@@ -37,7 +37,7 @@ use tokio::{
 };
 use tracing::{debug, error, warn};
 
-pub use iroh_sync::sync::ContentStatus;
+pub use iroh_sync::ContentStatus;
 
 const CHANNEL_CAP: usize = 8;
 
@@ -105,6 +105,8 @@ impl FromStr for PeerSource {
 pub enum Op {
     /// A new entry was inserted into the document.
     Put(SignedEntry),
+    /// A peer now has content available for a hash.
+    ContentReady(Hash),
 }
 
 #[derive(Debug)]
@@ -475,7 +477,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // new gossip message
                 Some(event) = self.gossip_events.next() => {
                     let (topic, event) = event?;
-                    if let Err(err) = self.on_gossip_event(topic, event) {
+                    if let Err(err) = self.on_gossip_event(topic, event).await {
                         error!("Failed to process gossip event: {err:?}");
                     }
                 },
@@ -505,6 +507,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             let event = LiveEvent::ContentReady { hash };
                             notify_all(subs, event).await;
                         }
+
+                        // Inform our neighbors that we have new content ready.
+                        let op = Op::ContentReady(hash);
+                        let message = postcard::to_stdvec(&op)?.into();
+                        self.gossip.broadcast_neighbors(topic, message).await?;
                     }
 
                 }
@@ -789,6 +796,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             *msg.delivered_from.as_bytes(),
                             ContentStatus::Missing,
                         )?
+                    }
+                    Op::ContentReady(hash) => {
+                        // Inform the downloader that we now know that this peer has the content
+                        // for this hash.
+                        self.downloader.peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()]).await;
                     }
                 }
             }
