@@ -211,21 +211,14 @@ fn is_major_change(s1: &State, s2: &State) -> bool {
         return true;
     }
 
-    for (iname, i) in &s1.interface {
-        let Some(ips) = s1.interface_ips.get(iname) else {
-            // inconsistent dataset, ignore
-            continue;
-        };
+    for (iname, i) in &s1.interfaces {
         if !is_interesting_interface(i.name()) {
             continue;
         }
-        let Some(i2) = s2.interface.get(iname) else {
+        let Some(i2) = s2.interfaces.get(iname) else {
             return true;
         };
-        let Some(ips2) = s2.interface_ips.get(iname) else {
-            return true;
-        };
-        if i != i2 || !prefixes_major_equal(ips, ips2) {
+        if i != i2 || !prefixes_major_equal(i.addrs(), i2.addrs()) {
             return true;
         }
     }
@@ -235,7 +228,7 @@ fn is_major_change(s1: &State, s2: &State) -> bool {
 
 /// Checks wheter `a` and `b` are equal after ignoring uninteresting
 /// things, like link-local, loopback and multicast addresses.
-fn prefixes_major_equal(a: &[IpNet], b: &[IpNet]) -> bool {
+fn prefixes_major_equal(a: impl Iterator<Item = IpNet>, b: impl Iterator<Item = IpNet>) -> bool {
     fn is_interesting(p: &IpNet) -> bool {
         let a = p.addr();
         if is_link_local(a) || a.is_loopback() || a.is_multicast() {
@@ -244,8 +237,8 @@ fn prefixes_major_equal(a: &[IpNet], b: &[IpNet]) -> bool {
         true
     }
 
-    let a = a.iter().filter(|p| is_interesting(p));
-    let b = b.iter().filter(|p| is_interesting(p));
+    let a = a.filter(|p| is_interesting(p));
+    let b = b.filter(|p| is_interesting(p));
 
     for (a, b) in a.zip(b) {
         if a != b {

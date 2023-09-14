@@ -156,10 +156,8 @@ impl IpNet {
 /// other network configuration. For now it's pretty basic.
 #[derive(Debug, PartialEq, Eq)]
 pub struct State {
-    /// Maps from an interface name to the IP addresses configured on that interface.
-    pub interface_ips: HashMap<String, Vec<IpNet>>,
-    /// List of available interfaces, identified by name.
-    pub interface: HashMap<String, Interface>,
+    /// Maps from an interface name interface.
+    pub interfaces: HashMap<String, Interface>,
 
     /// Whether this machine has an IPv6 Global or Unique Local Address
     /// which might provide connectivity.
@@ -191,8 +189,7 @@ impl State {
     ///
     /// It does not set the returned `State.is_expensive`. The caller can populate that.
     pub async fn new() -> Self {
-        let mut interface_ips = HashMap::new();
-        let mut interface = HashMap::new();
+        let mut interfaces = HashMap::new();
         let mut have_v6 = false;
         let mut have_v4 = false;
 
@@ -213,15 +210,13 @@ impl State {
                 }
             }
 
-            interface.insert(name.clone(), ni);
-            interface_ips.insert(name, pfxs);
+            interfaces.insert(name, ni);
         }
 
         let default_route_interface = default_route_interface().await;
 
         State {
-            interface_ips,
-            interface,
+            interfaces,
             have_v4,
             have_v6,
             is_expensive: false,
@@ -245,17 +240,7 @@ impl State {
         let fake = Interface::fake();
         let ifname = fake.iface.name.clone();
         Self {
-            interface_ips: [(
-                ifname.clone(),
-                fake.iface
-                    .ipv4
-                    .iter()
-                    .map(|net| IpNet::V4(net.clone()))
-                    .collect(),
-            )]
-            .into_iter()
-            .collect(),
-            interface: [(ifname.clone(), fake)].into_iter().collect(),
+            interfaces: [(ifname.clone(), fake)].into_iter().collect(),
             have_v6: false,
             have_v4: true,
             is_expensive: false,
@@ -270,50 +255,10 @@ impl State {
         self.pac.is_some()
     }
 
-    /// Reports whether this state and `s2` are equal, considering only interfaces in `self`
-    /// for which `use_interface` returns `true`, and considering only IPs for those interfaces
-    /// for which `use_ip` returns `true`.
-    pub fn equal_filtered<F, G>(&self, s2: &Self, use_interface: F, use_ip: G) -> bool
-    where
-        F: Fn(&Interface, &[IpNet]) -> bool,
-        G: Fn(IpAddr) -> bool,
-    {
-        if self.have_v6 != s2.have_v6
-            || self.have_v4 != s2.have_v4
-            || self.is_expensive != s2.is_expensive
-            || self.default_route_interface != s2.default_route_interface
-            || self.http_proxy != s2.http_proxy
-            || self.pac != s2.pac
-        {
-            return false;
-        }
-        for (iname, i) in &self.interface {
-            if let Some(ips) = self.interface_ips.get(iname) {
-                if !use_interface(i, ips) {
-                    continue;
-                }
-                let i2 = s2.interface.get(iname);
-                if i2.is_none() {
-                    return false;
-                }
-                let i2 = i2.unwrap();
-                let ips2 = s2.interface_ips.get(iname);
-                if ips2.is_some() {
-                    return false;
-                }
-                let ips2 = ips2.unwrap();
-                if i != i2 || !prefixes_equal_filtered(ips, ips2, &use_ip) {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
     /// Reports whether any interface has the provided IP address.
     pub fn has_ip(&self, ip: &IpAddr) -> bool {
-        for pv in self.interface_ips.values() {
-            for p in pv {
+        for pv in self.interfaces.values() {
+            for p in pv.addrs() {
                 match (p, ip) {
                     (IpNet::V4(a), IpAddr::V4(b)) => {
                         if &a.addr == b {
@@ -336,27 +281,6 @@ impl State {
     pub fn any_interface_up(&self) -> bool {
         self.have_v4 || self.have_v6
     }
-}
-
-fn prefixes_equal_filtered<F>(a: &[IpNet], b: &[IpNet], use_ip: F) -> bool
-where
-    F: Fn(IpAddr) -> bool,
-{
-    if a.len() != b.len() {
-        return false;
-    }
-    for (a, b) in a.iter().zip(b.iter()) {
-        let use_a = use_ip(a.addr());
-        let use_b = use_ip(b.addr());
-        if use_a != use_b {
-            return false;
-        }
-        if use_a && a.addr() != b.addr() {
-            return false;
-        }
-    }
-
-    true
 }
 
 /// Reports whether ip is a usable IPv4 address which could
