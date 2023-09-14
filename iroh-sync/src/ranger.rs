@@ -8,6 +8,8 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ContentStatus;
+
 /// Store entries that can be fingerprinted and put into ranges.
 pub trait RangeEntry: Debug + Clone + PartialOrd {
     /// The key for this entry, to be used in ranges.
@@ -126,7 +128,7 @@ pub struct RangeItem<E: RangeEntry> {
     ))]
     pub range: Range<E::Key>,
     #[serde(bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>"))]
-    pub values: Vec<E>,
+    pub values: Vec<(E, ContentStatus)>,
     /// If false, requests to send local items in the range.
     /// Otherwise not.
     pub have_local: bool,
@@ -155,7 +157,7 @@ impl<E: RangeEntry> MessagePart<E> {
         matches!(self, MessagePart::RangeItem(_))
     }
 
-    pub fn values(&self) -> Option<&[E]> {
+    pub fn values(&self) -> Option<&[(E, ContentStatus)]> {
         match self {
             MessagePart::RangeFingerprint(_) => None,
             MessagePart::RangeItem(RangeItem { values, .. }) => Some(values),
@@ -269,13 +271,15 @@ where
     /// `validate_cb` is called before an entry received from the remote is inserted into the store.
     /// It must return true if the entry is valid and should be stored, and false otherwise
     /// (which means the entry will be dropped and not stored).
-    pub fn process_message<F>(
+    pub fn process_message<F, F2>(
         &mut self,
         message: Message<E>,
         validate_cb: F,
+        content_status_cb: F2,
     ) -> Result<Option<Message<E>>, S::Error>
     where
-        F: Fn(&S, &E) -> bool,
+        F: Fn(&S, &E, ContentStatus) -> bool,
+        F2: Fn(&S, &E) -> ContentStatus,
     {
         let mut out = Vec::new();
 
@@ -308,7 +312,10 @@ where
                         .get_range(range.clone())?
                         .filter_map(|existing| match existing {
                             Ok(existing) => {
-                                if !values.iter().any(|entry| existing.key() == entry.key()) {
+                                if !values
+                                    .iter()
+                                    .any(|(entry, _)| existing.key() == entry.key())
+                                {
                                     Some(Ok(existing))
                                 } else {
                                     None
@@ -316,13 +323,19 @@ where
                             }
                             Err(err) => Some(Err(err)),
                         })
+                        .map(|entry| {
+                            entry.map(|entry| {
+                                let content_status = content_status_cb(&self.store, &entry);
+                                (entry, content_status)
+                            })
+                        })
                         .collect::<Result<_, _>>()?,
                 )
             };
 
             // Store incoming values
-            for entry in values {
-                if validate_cb(&self.store, &entry) {
+            for (entry, content_status) in values {
+                if validate_cb(&self.store, &entry, content_status) {
                     self.store.put(entry)?;
                 }
             }
@@ -355,9 +368,16 @@ where
                 .get_range(range.clone())?
                 .collect::<Result<_, _>>()?;
             if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
+                let values = local_values
+                    .into_iter()
+                    .map(|entry| {
+                        let content_status = content_status_cb(&self.store, &entry);
+                        (entry, content_status)
+                    })
+                    .collect::<Vec<_>>();
                 out.push(MessagePart::RangeItem(RangeItem {
                     range,
-                    values: local_values,
+                    values,
                     have_local: false,
                 }));
             } else {
@@ -443,7 +463,15 @@ where
                             fingerprint,
                         }));
                     } else {
-                        let values = chunk.into_iter().collect::<Result<_, _>>()?;
+                        let values = chunk
+                            .into_iter()
+                            .map(|entry| {
+                                entry.map(|entry| {
+                                    let content_status = content_status_cb(&self.store, &entry);
+                                    (entry, content_status)
+                                })
+                            })
+                            .collect::<Result<_, _>>()?;
                         out.push(MessagePart::RangeItem(RangeItem {
                             range,
                             values,
@@ -843,14 +871,14 @@ mod tests {
 
         let validate_alice: ValidateCb<&str, i32> = Box::new({
             let alice_validate_set = alice_validate_set.clone();
-            move |_, e| {
+            move |_, e, _| {
                 alice_validate_set.borrow_mut().push(*e);
                 false
             }
         });
         let validate_bob: ValidateCb<&str, i32> = Box::new({
             let bob_validate_set = bob_validate_set.clone();
-            move |_, e| {
+            move |_, e, _| {
                 bob_validate_set.borrow_mut().push(*e);
                 false
             }
@@ -974,15 +1002,15 @@ mod tests {
         }
     }
 
-    type ValidateCb<K, V> = Box<dyn Fn(&SimpleStore<K, V>, &(K, V)) -> bool>;
+    type ValidateCb<K, V> = Box<dyn Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool>;
 
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
         V: Debug + Clone + PartialOrd,
     {
-        let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _| true);
-        let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _| true);
+        let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
+        let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
     }
 
@@ -995,8 +1023,8 @@ mod tests {
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
         V: Debug + Clone + PartialOrd,
-        F1: Fn(&SimpleStore<K, V>, &(K, V)) -> bool,
-        F2: Fn(&SimpleStore<K, V>, &(K, V)) -> bool,
+        F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
+        F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
         let mut expected_set_alice = BTreeMap::new();
         let mut expected_set_bob = BTreeMap::new();
@@ -1038,7 +1066,7 @@ mod tests {
         for msg in &res.alice_to_bob {
             for part in &msg.parts {
                 if let Some(values) = part.values() {
-                    for e in values {
+                    for (e, _) in values {
                         assert!(
                             alice_sent.insert(e.key(), e).is_none(),
                             "alice: duplicate {:?}",
@@ -1053,7 +1081,7 @@ mod tests {
         for msg in &res.bob_to_alice {
             for part in &msg.parts {
                 if let Some(values) = part.values() {
-                    for e in values {
+                    for (e, _) in values {
                         assert!(
                             bob_sent.insert(e.key(), e).is_none(),
                             "bob: duplicate {:?}",
@@ -1077,8 +1105,8 @@ mod tests {
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
         V: Debug + Clone + PartialOrd,
-        F1: Fn(&SimpleStore<K, V>, &(K, V)) -> bool,
-        F2: Fn(&SimpleStore<K, V>, &(K, V)) -> bool,
+        F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
+        F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
         let mut alice_to_bob = Vec::new();
         let mut bob_to_alice = Vec::new();
@@ -1091,9 +1119,14 @@ mod tests {
             rounds += 1;
             alice_to_bob.push(msg.clone());
 
-            if let Some(msg) = bob.process_message(msg, &bob_validate_cb).unwrap() {
+            if let Some(msg) = bob
+                .process_message(msg, &bob_validate_cb, |_, _| ContentStatus::Complete)
+                .unwrap()
+            {
                 bob_to_alice.push(msg.clone());
-                next_to_bob = alice.process_message(msg, &alice_validate_cb).unwrap();
+                next_to_bob = alice
+                    .process_message(msg, &alice_validate_cb, |_, _| ContentStatus::Complete)
+                    .unwrap();
             }
         }
         SyncResult {
