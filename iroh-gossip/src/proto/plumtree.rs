@@ -41,8 +41,8 @@ impl MessageId {
 pub enum InEvent<PI> {
     /// A [`Message`] was received from the peer.
     RecvMessage(PI, Message),
-    /// Broadcast the contained payload.
-    Broadcast(Bytes),
+    /// Broadcast the contained payload to the full swarm.
+    Broadcast(Bytes, Scope),
     /// A timer has expired.
     TimerExpired(Timer),
     /// New member `PI` has joined the topic.
@@ -81,13 +81,29 @@ pub enum Timer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event<PI> {
     /// A new gossip message was received.
-    Received(
-        /// The content of the gossip message.
-        Bytes,
-        /// The peer that we received the gossip message from. Note that this is not the peer that
-        /// originally broadcasted the message, but the peer before us in the gossiping path.
-        PI,
-    ),
+    Received(GossipEvent<PI>),
+}
+
+#[derive(Clone, derive_more::Debug, PartialEq, Eq, Ord, PartialOrd)]
+pub struct GossipEvent<PI> {
+    /// The content of the gossip message.
+    #[debug("<{}b>", content.len())]
+    pub content: Bytes,
+    /// The peer that we received the gossip message from. Note that this is not the peer that
+    /// originally broadcasted the message, but the peer before us in the gossiping path.
+    pub delivered_from: PI,
+    /// The broadcast scope of the message
+    pub scope: Scope,
+}
+
+impl<PI> GossipEvent<PI> {
+    fn from_message(message: &Gossip, from: PI) -> Self {
+        Self {
+            content: message.content.clone(),
+            scope: message.scope,
+            delivered_from: from,
+        }
+    }
 }
 
 /// Number of delivery hops a message has taken.
@@ -128,6 +144,17 @@ pub struct Gossip {
     /// Message contents.
     #[debug("<{}b>", content.len())]
     content: Bytes,
+    /// Scope to publish to
+    scope: Scope,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Copy)]
+/// The broadcast scope of a gossip message.
+pub enum Scope {
+    /// The message is broadcast to all peers in the swarm.
+    Swarm,
+    /// The message is broadcast only to the immediate neighbors of a peer.
+    Neighbors,
 }
 
 impl Gossip {
@@ -137,6 +164,7 @@ impl Gossip {
             id: self.id,
             content: self.content,
             round: self.round.next(),
+            scope: self.scope,
         }
     }
 
@@ -337,7 +365,7 @@ impl<PI: PeerIdentity> State<PI> {
         }
         match event {
             InEvent::RecvMessage(from, message) => self.handle_message(from, message, now, io),
-            InEvent::Broadcast(data) => self.do_broadcast(data, now, io),
+            InEvent::Broadcast(data, scope) => self.broadcast(data, scope, now, io),
             InEvent::NeighborUp(peer) => self.on_neighbor_up(peer),
             InEvent::NeighborDown(peer) => self.on_neighbor_down(peer),
             InEvent::TimerExpired(timer) => match timer {
@@ -383,23 +411,28 @@ impl<PI: PeerIdentity> State<PI> {
     ///
     /// Will be pushed in full to eager peers.
     /// Pushing the message id to the lazy peers is delayed by a timer.
-    fn do_broadcast(&mut self, data: Bytes, now: Instant, io: &mut impl IO<PI>) {
-        let id = MessageId::from_content(&data);
+    fn broadcast(&mut self, content: Bytes, scope: Scope, now: Instant, io: &mut impl IO<PI>) {
+        let id = MessageId::from_content(&content);
         let message = Gossip {
             id,
             round: Round(0),
-            content: data,
+            content,
+            scope,
         };
-        self.received_messages
-            .insert(id, (), now + self.config.message_id_retention);
-        self.cache.insert(
-            id,
-            message.clone(),
-            now + self.config.message_cache_retention,
-        );
         let me = self.me;
+        // TODO: Do we want to lazy push neighbor messages as well?
+        if let Scope::Swarm = scope {
+            self.received_messages
+                .insert(id, (), now + self.config.message_id_retention);
+            self.cache.insert(
+                id,
+                message.clone(),
+                now + self.config.message_cache_retention,
+            );
+            self.lazy_push(message.clone(), &me, io);
+        }
+
         self.eager_push(message.clone(), &me, io);
-        self.lazy_push(message, &me, io);
     }
 
     /// Handle receiving a [`Message::Gossip`].
@@ -422,41 +455,41 @@ impl<PI: PeerIdentity> State<PI> {
             io.push(OutEvent::SendMessage(sender, Message::Prune));
         // otherwise store the message, emit to application and forward to peers
         } else {
-            // insert the message in the list of received messages
-            self.received_messages
-                .insert(message.id, (), now + self.config.message_id_retention);
+            if let Scope::Swarm = message.scope {
+                // insert the message in the list of received messages
+                self.received_messages.insert(
+                    message.id,
+                    (),
+                    now + self.config.message_id_retention,
+                );
+                // increase the round for forwarding the message, and add to cache
+                // to reply to Graft messages later
+                // TODO: add callback/event to application to get missing messages that were received before?
+                let message = message.clone().next_round();
 
-            // increase the round for forwarding the message, and add to cache
-            // to reply to Graft messages later
-            // TODO: use an LRU cache for self.cache
-            // TODO: add callback/event to application to get missing messages that were received before?
-            let message = message.next_round();
-            self.cache.insert(
-                message.id,
-                message.clone(),
-                now + self.config.message_cache_retention,
-            );
-
-            // push the message to our peers
-            self.eager_push(message.clone(), &sender, io);
-            self.lazy_push(message.clone(), &sender, io);
-
-            // cleanup places where we track missing messages
-            self.graft_timer_scheduled.remove(&message.id);
-            let previous_ihaves = self.missing_messages.remove(&message.id);
-            // do the optimization step from the paper
-            if let Some(previous_ihaves) = previous_ihaves {
-                self.optimize_tree(&sender, &message, previous_ihaves, io);
+                self.cache.insert(
+                    message.id,
+                    message.clone(),
+                    now + self.config.message_cache_retention,
+                );
+                // push the message to our peers
+                self.eager_push(message.clone(), &sender, io);
+                self.lazy_push(message.clone(), &sender, io);
+                // cleanup places where we track missing messages
+                self.graft_timer_scheduled.remove(&message.id);
+                let previous_ihaves = self.missing_messages.remove(&message.id);
+                // do the optimization step from the paper
+                if let Some(previous_ihaves) = previous_ihaves {
+                    self.optimize_tree(&sender, &message, previous_ihaves, io);
+                }
+                self.stats.max_last_delivery_hop =
+                    self.stats.max_last_delivery_hop.max(message.round.0);
             }
 
             // emit event to application
             io.push(OutEvent::EmitEvent(Event::Received(
-                message.content,
-                sender,
+                GossipEvent::from_message(&message, sender),
             )));
-
-            self.stats.max_last_delivery_hop =
-                self.stats.max_last_delivery_hop.max(message.round.0);
         }
     }
 
@@ -676,6 +709,7 @@ mod test {
                 id,
                 round: Round(6),
                 content: content.clone(),
+                scope: Scope::Swarm,
             }),
         );
         state.handle(event, now, &mut io);
@@ -687,7 +721,11 @@ mod test {
                 config.dispatch_timeout,
                 Timer::DispatchLazyPush,
             ));
-            io.push(OutEvent::EmitEvent(Event::Received(content, 3)));
+            io.push(OutEvent::EmitEvent(Event::Received(GossipEvent {
+                content,
+                delivered_from: 3,
+                scope: Scope::Swarm,
+            })));
             io
         };
         assert_eq!(io, expected);
@@ -715,6 +753,7 @@ mod test {
                 id,
                 round: Round(9),
                 content: content.clone(),
+                scope: Scope::Swarm,
             }),
         );
         state.handle(event, now, &mut io);
@@ -730,7 +769,11 @@ mod test {
                 }),
             ));
             io.push(OutEvent::SendMessage(3, Message::Prune));
-            io.push(OutEvent::EmitEvent(Event::Received(content, 3)));
+            io.push(OutEvent::EmitEvent(Event::Received(GossipEvent {
+                content,
+                delivered_from: 3,
+                scope: Scope::Swarm,
+            })));
             io
         };
         assert_eq!(io, expected);
@@ -748,6 +791,7 @@ mod test {
             content: content.clone(),
             round: Round(1),
             id: MessageId::from_content(&content),
+            scope: Scope::Swarm,
         });
         let mut io = VecDeque::new();
         state.handle(InEvent::RecvMessage(2, message), now, &mut io);
@@ -761,7 +805,11 @@ mod test {
                 config.dispatch_timeout,
                 Timer::DispatchLazyPush,
             ));
-            io.push(OutEvent::EmitEvent(Event::Received(content, 2)));
+            io.push(OutEvent::EmitEvent(Event::Received(GossipEvent {
+                content,
+                delivered_from: 2,
+                scope: Scope::Swarm,
+            })));
             io
         };
         assert_eq!(io, expected);
@@ -772,6 +820,7 @@ mod test {
             content,
             round: Round(1),
             id: MessageId::from_content(b"foo"),
+            scope: Scope::Swarm,
         });
         let mut io = VecDeque::new();
         state.handle(InEvent::RecvMessage(2, message), now, &mut io);
@@ -789,6 +838,7 @@ mod test {
             content: content.clone(),
             round: Round(1),
             id: MessageId::from_content(&content),
+            scope: Scope::Swarm,
         });
         let mut io = VecDeque::new();
         state.handle(InEvent::RecvMessage(2, message), now, &mut io);

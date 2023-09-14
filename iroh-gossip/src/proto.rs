@@ -58,6 +58,7 @@ pub mod util;
 #[cfg(test)]
 mod tests;
 
+pub use plumtree::Scope;
 pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId};
 pub use topic::{Command, Config, Event, IO};
 
@@ -106,7 +107,7 @@ mod test {
             assert_synchronous_active, report_round_distribution, sort, Network, Simulator,
             SimulatorConfig,
         },
-        TopicId,
+        Scope, TopicId,
     };
 
     #[test]
@@ -215,10 +216,14 @@ mod test {
         assert!(assert_synchronous_active(&network));
 
         // now broadcast a first message
-        network.command(1, t, Command::Broadcast(b"hi1".to_vec().into()));
+        network.command(
+            1,
+            t,
+            Command::Broadcast(b"hi1".to_vec().into(), Scope::Swarm),
+        );
         network.ticks(broadcast_ticks);
         let events = network.events();
-        let received = events.filter(|x| matches!(x, (_, _, Event::Received(_, _))));
+        let received = events.filter(|x| matches!(x, (_, _, Event::Received(_))));
         // message should be received by two other nodes
         assert_eq!(received.count(), 2);
         assert!(assert_synchronous_active(&network));
@@ -230,10 +235,14 @@ mod test {
         report_round_distribution(&network);
 
         // now broadcast again
-        network.command(1, t, Command::Broadcast(b"hi2".to_vec().into()));
+        network.command(
+            1,
+            t,
+            Command::Broadcast(b"hi2".to_vec().into(), Scope::Swarm),
+        );
         network.ticks(broadcast_ticks);
         let events = network.events();
-        let received = events.filter(|x| matches!(x, (_, _, Event::Received(_, _))));
+        let received = events.filter(|x| matches!(x, (_, _, Event::Received(_))));
         // message should be received by all 5 other nodes
         assert_eq!(received.count(), 5);
         assert!(assert_synchronous_active(&network));

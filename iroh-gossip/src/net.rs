@@ -20,7 +20,7 @@ use tokio::{
 use tracing::{debug, trace, warn};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, TopicId};
+use crate::proto::{self, Scope, TopicId};
 
 pub mod util;
 
@@ -154,13 +154,26 @@ impl Gossip {
         Ok(())
     }
 
-    /// Broadcast a message on a topic.
+    /// Broadcast a message on a topic to all peers in the swarm.
     ///
     /// This does not join the topic automatically, so you have to call [Self::join] yourself
     /// for messages to be broadcast to peers.
     pub async fn broadcast(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.send(ToActor::Broadcast(topic, message, tx)).await?;
+        self.send(ToActor::Broadcast(topic, message, Scope::Swarm, tx))
+            .await?;
+        rx.await??;
+        Ok(())
+    }
+
+    /// Broadcast a message on a topic to the immediate neigborrs.
+    ///
+    /// This does not join the topic automatically, so you have to call [Self::join] yourself
+    /// for messages to be broadcast to peers.
+    pub async fn broadcast_neighbors(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.send(ToActor::Broadcast(topic, message, Scope::Neighbors, tx))
+            .await?;
         rx.await??;
         Ok(())
     }
@@ -296,7 +309,7 @@ enum ToActor {
     /// Leave a topic, send disconnect messages and drop all state.
     Quit(TopicId),
     /// Broadcast a message on a topic.
-    Broadcast(TopicId, Bytes, oneshot::Sender<anyhow::Result<()>>),
+    Broadcast(TopicId, Bytes, Scope, oneshot::Sender<anyhow::Result<()>>),
     /// Subscribe to a topic. Return oneshot which resolves to a broadcast receiver for events on a
     /// topic.
     Subscribe(
@@ -316,8 +329,12 @@ impl fmt::Debug for ToActor {
             }
             ToActor::Join(topic, peers, _reply) => write!(f, "Join({topic:?}, {peers:?})"),
             ToActor::Quit(topic) => write!(f, "Quit({topic:?})"),
-            ToActor::Broadcast(topic, message, _reply) => {
-                write!(f, "Broadcast({topic:?}, bytes<{}>)", message.len())
+            ToActor::Broadcast(topic, message, scope, _reply) => {
+                write!(
+                    f,
+                    "Broadcast({topic:?}, {scope:?}, bytes<{}>)",
+                    message.len()
+                )
             }
             ToActor::Subscribe(topic, _reply) => write!(f, "Subscribe({topic:?})"),
             ToActor::SubscribeAll(_reply) => write!(f, "SubscribeAll"),
@@ -460,9 +477,12 @@ impl Actor {
                     .await?;
                 self.subscribers_topic.remove(&topic_id);
             }
-            ToActor::Broadcast(topic_id, message, reply) => {
-                self.handle_in_event(InEvent::Command(topic_id, Command::Broadcast(message)), now)
-                    .await?;
+            ToActor::Broadcast(topic_id, message, scope, reply) => {
+                self.handle_in_event(
+                    InEvent::Command(topic_id, Command::Broadcast(message, scope)),
+                    now,
+                )
+                .await?;
                 reply.send(Ok(())).ok();
             }
             ToActor::Subscribe(topic_id, reply) => {
@@ -716,8 +736,8 @@ mod test {
             loop {
                 let ev = stream2.recv().await.unwrap();
                 info!("go2 event: {ev:?}");
-                if let Event::Received(msg, _prev_peer) = ev {
-                    recv.push(msg);
+                if let Event::Received(msg) = ev {
+                    recv.push(msg.content);
                 }
                 if recv.len() == len {
                     return recv;
@@ -731,8 +751,8 @@ mod test {
             loop {
                 let ev = stream3.recv().await.unwrap();
                 info!("go3 event: {ev:?}");
-                if let Event::Received(msg, _prev_peer) = ev {
-                    recv.push(msg);
+                if let Event::Received(msg) = ev {
+                    recv.push(msg.content);
                 }
                 if recv.len() == len {
                     return recv;

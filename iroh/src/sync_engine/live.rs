@@ -784,12 +784,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         };
         match event {
             // We received a gossip message. Try to insert it into our replica.
-            Event::Received(data, prev_peer) => {
-                let op: Op = postcard::from_bytes(&data)?;
+            Event::Received(msg) => {
+                let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
                     Op::Put(entry) => {
-                        debug!(peer = ?prev_peer, topic = ?topic, "received entry via gossip");
-                        replica.insert_remote_entry(entry, *prev_peer.as_bytes())?
+                        debug!(peer = ?msg.delivered_from, topic = ?topic, "received entry via gossip");
+                        replica.insert_remote_entry(entry, *msg.delivered_from.as_bytes())?
                     }
                 }
             }
