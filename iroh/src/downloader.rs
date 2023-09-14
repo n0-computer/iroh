@@ -940,17 +940,20 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         remaining_retries: u8,
         next_peer: Option<PeerInfo>,
         intents: HashMap<Id, oneshot::Sender<DownloadResult>>,
-        is_retry: bool
+        is_retry: bool,
     ) {
         // this is simply INITIAL_REQUEST_DELAY * attempt_num where attempt_num (as an ordinal
         // number) is maxed at INITIAL_RETRY_COUNT
         let delay = match (is_retry, next_peer) {
             // The next peer has the Provider role, which means we assume it can provide the hash.
             // Thus, start the download immediately.
-            (false, Some(PeerInfo {
-                role: PeerRole::Provider,
-                ..
-            })) => std::time::Duration::ZERO,
+            (
+                false,
+                Some(PeerInfo {
+                    role: PeerRole::Provider,
+                    ..
+                }),
+            ) => std::time::Duration::ZERO,
             // We either have no next peer yet or the next peer only has the Candidate role, thus
             // delay the request.
             _ => {

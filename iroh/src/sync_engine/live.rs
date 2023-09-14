@@ -800,7 +800,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content
                         // for this hash.
-                        self.downloader.peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()]).await;
+                        self.downloader
+                            .peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()])
+                            .await;
                     }
                 }
             }
