@@ -852,10 +852,15 @@ enum ActorMessage {
         derp_region: u16,
         endpoint_id: usize,
     },
-    SendDiscoMessage {
+    SendPing {
         dst: SendAddr,
         dst_key: PublicKey,
-        msg: disco::Message,
+        tx_id: stun::TransactionId,
+    },
+    SendCallMeMaybe {
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::CallMeMaybe,
     },
     AddKnownAddr(NodeAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
@@ -1053,7 +1058,19 @@ impl Actor {
                 self.set_preferred_port(port).await;
                 let _ = s.send(());
             }
-            ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
+            ActorMessage::SendPing {
+                dst,
+                dst_key,
+                tx_id,
+            } => {
+                let msg = disco::Message::Ping(disco::Ping {
+                    tx_id,
+                    node_key: self.inner.public_key(),
+                });
+                let _res = self.send_disco_message(dst, dst_key, msg).await;
+            }
+            ActorMessage::SendCallMeMaybe { dst, dst_key, msg } => {
+                let msg = disco::Message::CallMeMaybe(msg);
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
             ActorMessage::AddKnownAddr(addr, s) => {
@@ -1156,7 +1173,6 @@ impl Actor {
                 info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
-                    msock_public_key: self.inner.public_key(),
                     public_key: dm.src,
                     derp_region: Some(region_id),
                 });
@@ -1766,13 +1782,13 @@ impl Actor {
         } else {
             let public_key = *endpoint.public_key();
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
-            let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
+            let msg = disco::CallMeMaybe { my_number: eps };
 
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
                 warn!("sending call me maybe to {public_key:?}");
                 if let Err(err) = msg_sender
-                    .send(ActorMessage::SendDiscoMessage {
+                    .send(ActorMessage::SendCallMeMaybe {
                         dst: SendAddr::Derp(derp_region),
                         dst_key: public_key,
                         msg,
@@ -2059,7 +2075,6 @@ impl Actor {
                     );
                     self.peer_map.insert_endpoint(EndpointOptions {
                         msock_sender: self.inner.actor_sender.clone(),
-                        msock_public_key: self.inner.public_key(),
                         public_key: sender,
                         derp_region: src.derp_region(),
                     });
@@ -2209,7 +2224,6 @@ impl Actor {
             );
             self.peer_map.insert_endpoint(EndpointOptions {
                 msock_sender: self.inner.actor_sender.clone(),
-                msock_public_key: self.inner.public_key(),
                 public_key: n.key,
                 derp_region: n.derp,
             });

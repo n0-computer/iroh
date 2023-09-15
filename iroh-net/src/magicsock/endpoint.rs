@@ -53,8 +53,6 @@ pub(super) struct Endpoint {
     conn_sender: mpsc::Sender<ActorMessage>,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
-    /// Public key for this node/connection.
-    conn_public_key: PublicKey,
     /// Peer public key (for UDP + DERP)
     pub(super) public_key: PublicKey,
     /// Last time we pinged all endpoints
@@ -93,7 +91,6 @@ pub struct PendingCliPing {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) msock_sender: mpsc::Sender<ActorMessage>,
-    pub(super) msock_public_key: PublicKey,
     pub(super) public_key: PublicKey,
     pub(super) derp_region: Option<u16>,
 }
@@ -111,7 +108,6 @@ impl Endpoint {
             id,
             conn_sender: options.msock_sender,
             quic_mapped_addr,
-            conn_public_key: options.msock_public_key,
             public_key: options.public_key,
             last_full_ping: None,
             derp_region: options.derp_region,
@@ -404,13 +400,10 @@ impl Endpoint {
         if let Some(pub_key) = public_key {
             sent = self
                 .conn_sender
-                .send(ActorMessage::SendDiscoMessage {
+                .send(ActorMessage::SendPing {
                     dst: ep,
                     dst_key: pub_key,
-                    msg: disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        node_key: self.conn_public_key,
-                    }),
+                    tx_id,
                 })
                 .await
                 .map(|_| true)
@@ -1350,7 +1343,6 @@ mod tests {
                     id: 0,
                     conn_sender: send,
                     quic_mapped_addr: QuicMappedAddr::generate(),
-                    conn_public_key: key.public(),
                     public_key: key.public(),
                     last_full_ping: None,
                     derp_region: Some(0),
@@ -1397,7 +1389,6 @@ mod tests {
                 id: 1,
                 conn_sender: send,
                 quic_mapped_addr: QuicMappedAddr::generate(),
-                conn_public_key: key.public(),
                 public_key: key.public(),
                 last_full_ping: None,
                 derp_region: Some(0),
@@ -1424,7 +1415,6 @@ mod tests {
                 id: 2,
                 conn_sender: send,
                 quic_mapped_addr: QuicMappedAddr::generate(),
-                conn_public_key: key.public(),
                 public_key: key.public(),
                 last_full_ping: None,
                 derp_region: Some(0),
@@ -1488,7 +1478,6 @@ mod tests {
                     id: 3,
                     conn_sender: send,
                     quic_mapped_addr: QuicMappedAddr::generate(),
-                    conn_public_key: key.public(),
                     public_key: key.public(),
                     last_full_ping: None,
                     derp_region: Some(0),
