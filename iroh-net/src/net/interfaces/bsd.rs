@@ -154,7 +154,16 @@ fn fetch_routing_table() -> Option<Vec<u8>> {
 #[cfg(any(target_os = "macos", target_os = "ios",))]
 fn parse_routing_table(rib: &[u8]) -> Option<Vec<RouteMessage>> {
     match parse_rib(libc::NET_RT_IFLIST2, rib) {
-        Ok(res) => Some(res),
+        Ok(res) => {
+            let res = res
+                .into_iter()
+                .filter_map(|m| match m {
+                    WireMessage::Route(r) => Some(r),
+                    _ => None,
+                })
+                .collect();
+            Some(res)
+        }
         Err(err) => {
             warn!("parse_rib failed: {:?}", err);
             None
@@ -194,6 +203,14 @@ struct WireFormat {
     typ: MessageType,
 }
 
+#[derive(Debug)]
+pub enum WireMessage {
+    Route(RouteMessage),
+    Interface(InterfaceMessage),
+    InterfaceAddr(InterfaceAddrMessage),
+    InterfaceMulticastAddr(InterfaceMulticastAddrMessage),
+}
+
 impl WireFormat {
     #[cfg(any(
         target_os = "freebsd",
@@ -201,7 +218,7 @@ impl WireFormat {
         target_os = "macos",
         target_os = "ios"
     ))]
-    fn parse(&self, _typ: RIBType, data: &[u8]) -> Result<Option<RouteMessage>, RouteError> {
+    fn parse(&self, _typ: RIBType, data: &[u8]) -> Result<Option<WireMessage>, RouteError> {
         match self.typ {
             MessageType::Route => {
                 if data.len() < self.body_off {
@@ -232,16 +249,85 @@ impl WireFormat {
                     m.error = Some(std::io::Error::from_raw_os_error(errno as _));
                 }
 
-                Ok(Some(m))
+                Ok(Some(WireMessage::Route(m)))
             }
             MessageType::Interface => {
-                todo!()
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+
+                let attrs = u32::from_ne_bytes(data[4..8].try_into().unwrap());
+                if attrs as libc::c_int & libc::RTA_IFP == 0 {
+                    return Ok(None);
+                }
+                let addr = parse_link_addr(&data[self.body_off..])?;
+                let name = addr.name().map(|s| s.to_string());
+                let m = InterfaceMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()) as _,
+                    index: u16::from_ne_bytes(data[12..14].try_into().unwrap()) as _,
+                    ext_off: self.ext_off,
+                    addr_rtax_ifp: addr,
+                    name,
+                };
+
+                Ok(Some(WireMessage::Interface(m)))
             }
             MessageType::InterfaceAddr => {
-                todo!()
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+
+                #[cfg(target_arch = "netbsd")]
+                let index = u16::from_ne_bytes(data[16..18].try_into().unwrap());
+                #[cfg(not(target_arch = "netbsd"))]
+                let index = u16::from_ne_bytes(data[12..14].try_into().unwrap());
+
+                let addrs = parse_addrs(
+                    u32::from_ne_bytes(data[4..8].try_into().unwrap()) as _,
+                    parse_kernel_inet_addr,
+                    &data[self.body_off..],
+                )?;
+
+                let m = InterfaceAddrMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()) as _,
+                    index: index as _,
+                    addrs,
+                };
+                Ok(Some(WireMessage::InterfaceAddr(m)))
             }
             MessageType::InterfaceMulticastAddr => {
-                todo!()
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+                let addrs = parse_addrs(
+                    u32::from_ne_bytes(data[4..8].try_into().unwrap()) as _,
+                    parse_kernel_inet_addr,
+                    &data[self.body_off..],
+                )?;
+                let m = InterfaceMulticastAddrMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()) as _,
+                    index: u16::from_ne_bytes(data[12..14].try_into().unwrap()) as _,
+                    addrs,
+                };
+                Ok(Some(WireMessage::InterfaceMulticastAddr(m)))
             }
         }
     }
@@ -270,7 +356,7 @@ struct RoutingStack {
 }
 
 /// Parses b as a routing information base and returns a list of routing messages.
-fn parse_rib(typ: RIBType, data: &[u8]) -> Result<Vec<RouteMessage>, RouteError> {
+pub fn parse_rib(typ: RIBType, data: &[u8]) -> Result<Vec<WireMessage>, RouteError> {
     if !is_valid_rib_type(typ) {
         return Err(RouteError::InvalidRibType(typ));
     }
@@ -340,7 +426,7 @@ fn parse_rib(typ: RIBType, data: &[u8]) -> Result<Vec<RouteMessage>, RouteError>
 ///  Seq           = <must be specified>
 ///  Addrs         = <must be specified>
 #[derive(Debug)]
-struct RouteMessage {
+pub struct RouteMessage {
     /// message version
     pub version: isize,
     /// message type
@@ -360,6 +446,55 @@ struct RouteMessage {
     // offset of header extension
     ext_off: usize,
     // raw:  []byte // raw message
+}
+
+/// An interface message.
+#[derive(Debug)]
+pub struct InterfaceMessage {
+    /// Message version
+    pub version: isize,
+    /// Message type
+    pub r#type: isize,
+    // Interface flags
+    pub flags: isize,
+    // interface index
+    pub index: isize,
+    /// Interface name
+    pub name: Option<String>,
+    /// Addresses
+    pub addr_rtax_ifp: Addr,
+    /// Offset of header extension
+    pub ext_off: usize,
+}
+
+/// An interface address message.
+#[derive(Debug)]
+pub struct InterfaceAddrMessage {
+    /// Message version
+    pub version: isize,
+    /// Message type
+    pub r#type: isize,
+    /// Interface flags
+    pub flags: isize,
+    /// Interface index
+    pub index: isize,
+    /// Addresses
+    pub addrs: Vec<Addr>,
+}
+
+/// Interface multicast address message.
+#[derive(Debug)]
+pub struct InterfaceMulticastAddrMessage {
+    /// message version
+    pub version: isize,
+    /// message type
+    pub r#type: isize,
+    /// interface flags
+    pub flags: isize,
+    /// interface index
+    pub index: isize,
+    /// addresses
+    pub addrs: Vec<Addr>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -457,7 +592,7 @@ mod macos {
 type RIBType = i32;
 
 #[derive(Debug, thiserror::Error)]
-enum RouteError {
+pub enum RouteError {
     #[error("message mismatch")]
     MessageMismatch,
     #[error("message too short")]
@@ -533,7 +668,7 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
 
 /// Represents an address associated with packet routing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Addr {
+pub enum Addr {
     /// Represents a link-layer address.
     Link {
         /// interface index when attached
@@ -562,6 +697,24 @@ impl Addr {
             Addr::Inet4 { .. } => libc::AF_INET,
             Addr::Inet6 { .. } => libc::AF_INET6,
             Addr::Default { af, .. } => *af,
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Addr::Link { name, .. } => name.as_ref().map(|s| s.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn ip(&self) -> Option<IpAddr> {
+        match self {
+            Addr::Inet4 { ip } => Some(IpAddr::V4(*ip)),
+            Addr::Inet6 { ip, .. } => {
+                // TODO: how to add the zone?
+                Some(IpAddr::V6(*ip))
+            }
+            _ => None,
         }
     }
 }
