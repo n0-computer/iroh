@@ -1312,7 +1312,7 @@ impl Actor {
                 );
 
                 match ep.get_send_addrs().await {
-                    Ok((Some(udp_addr), Some(derp_region))) => {
+                    (Some(udp_addr), Some(derp_region)) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
                         self.send_derp(derp_region, public_key, Self::split_packets(transmits));
 
@@ -1320,22 +1320,16 @@ impl Actor {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
-                    Ok((None, Some(derp_region))) => {
+                    (None, Some(derp_region)) => {
                         self.send_derp(derp_region, public_key, Self::split_packets(transmits));
                     }
-                    Ok((Some(udp_addr), None)) => {
+                    (Some(udp_addr), None) => {
                         if let Err(err) = self.send_raw(udp_addr, transmits).await {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
-                    Ok((None, None)) => {
+                    (None, None) => {
                         warn!("no UDP or DERP addr")
-                    }
-                    Err(err) => {
-                        warn!(
-                            "failed to send messages to {}: {:?}",
-                            current_destination, err
-                        );
                     }
                 }
             }
