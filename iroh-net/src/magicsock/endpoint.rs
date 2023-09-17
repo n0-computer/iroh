@@ -13,8 +13,8 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    config, disco, key::PublicKey, magicsock::Timer, net::ip::is_unicast_link_local, stun,
-    util::derp_only_mode,
+    config, disco, key::PublicKey, magic_endpoint::NodeAddr, magicsock::Timer,
+    net::ip::is_unicast_link_local, stun, util::derp_only_mode,
 };
 
 use super::{
@@ -540,7 +540,7 @@ impl Endpoint {
         }
     }
 
-    pub fn update_from_node(&mut self, n: &config::Node) {
+    pub fn update_from_node_addr(&mut self, n: &NodeAddr) {
         if self.best_addr.is_none() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status
