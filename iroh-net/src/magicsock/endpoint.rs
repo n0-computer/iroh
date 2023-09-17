@@ -544,21 +544,21 @@ impl Endpoint {
         if self.best_addr.is_none() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status
-            if self.derp_region.is_none() && n.derp.is_some() {
+            if self.derp_region.is_none() && n.derp_region.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.derp_region.is_some() && n.derp.is_none() {
+            } else if self.derp_region.is_some() && n.derp_region.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
 
-        if n.derp.is_some() {
+        if n.derp_region.is_some() {
             debug!(
                 "Changing derp region for {:?} from {:?} to {:?}",
-                self.public_key, self.derp_region, n.derp
+                self.public_key, self.derp_region, n.derp_region
             );
-            self.derp_region = n.derp;
+            self.derp_region = n.derp_region;
         }
 
         for st in self.endpoint_state.values_mut() {

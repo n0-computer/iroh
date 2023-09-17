@@ -2235,12 +2235,15 @@ impl Actor {
 
     #[instrument(skip_all)]
     fn add_known_addr(&mut self, addr: NodeAddr) {
+        let NodeAddr {
+            node_id: key,
+            derp_region,
+            endpoints,
+        } = addr;
         let n = config::Node {
-            name: None,
-            addresses: addr.endpoints.iter().map(|e| e.ip()).collect(),
-            endpoints: addr.endpoints.clone(),
-            key: addr.node_id,
-            derp: addr.derp_region,
+            endpoints,
+            key,
+            derp_region,
         };
 
         if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
@@ -2251,7 +2254,7 @@ impl Actor {
             self.peer_map.insert_endpoint(EndpointOptions {
                 msock_sender: self.inner.actor_sender.clone(),
                 public_key: n.key,
-                derp_region: n.derp,
+                derp_region: n.derp_region,
             });
         }
 
