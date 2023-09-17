@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     hash::Hash,
-    io,
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
@@ -72,9 +71,6 @@ pub(super) struct Endpoint {
     /// Any outstanding "tailscale ping" commands running
     pending_cli_pings: Vec<PendingCliPing>,
 
-    /// Whether the node has expired.
-    expired: bool,
-
     sent_ping: HashMap<stun::TransactionId, SentPing>,
 
     /// Last time this endpoint was used.
@@ -118,7 +114,6 @@ impl Endpoint {
             endpoint_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            expired: false,
             last_active: Instant::now(),
         }
     }
@@ -304,12 +299,6 @@ impl Endpoint {
     where
         F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
-        if self.expired {
-            res.err = Some("endpoint expired".to_string());
-            cb(res);
-            return;
-        }
-
         self.pending_cli_pings.push(PendingCliPing {
             res,
             cb: Box::new(cb),
@@ -963,11 +952,7 @@ impl Endpoint {
         }
     }
 
-    pub(crate) async fn get_send_addrs(&mut self) -> io::Result<(Option<SocketAddr>, Option<u16>)> {
-        if self.expired {
-            return Err(io::Error::new(io::ErrorKind::Other, "endpoint expired"));
-        }
-
+    pub(crate) async fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>) {
         let now = Instant::now();
         self.last_active = now;
         let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
@@ -979,7 +964,7 @@ impl Endpoint {
 
         debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_region);
 
-        Ok((udp_addr, derp_region))
+        (udp_addr, derp_region)
     }
 
     fn is_best_addr_valid(&self, instant: Instant) -> bool {
@@ -1355,7 +1340,6 @@ mod tests {
                     endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
-                    expired: false,
                     sent_ping: HashMap::new(),
                     last_active: now,
                 },
@@ -1398,7 +1382,6 @@ mod tests {
                 endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
-                expired: false,
                 sent_ping: HashMap::new(),
                 last_active: now,
             }
@@ -1424,7 +1407,6 @@ mod tests {
                 endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
-                expired: false,
                 sent_ping: HashMap::new(),
                 last_active: now,
             }
@@ -1490,7 +1472,6 @@ mod tests {
                     endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
-                    expired: false,
                     sent_ping: HashMap::new(),
                     last_active: now,
                 },
