@@ -18,11 +18,9 @@ use crate::{
 
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
 
-/// Address information for a node.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NodeAddr {
-    /// The node's public key.
-    pub node_id: PublicKey,
+/// Addressing information to connect to a peer.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AddrInfo {
     /// The node's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where this node might be reached directly.
@@ -394,16 +392,15 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     pub async fn add_known_addrs(
         &self,
-        node_id: PublicKey,
+        peer: PublicKey,
         derp_region: Option<u16>,
         endpoints: &[SocketAddr],
     ) -> Result<()> {
-        let addr = NodeAddr {
-            node_id,
+        let info = AddrInfo {
             derp_region,
             endpoints: endpoints.to_vec(),
         };
-        self.msock.add_known_addr(addr).await?;
+        self.msock.add_known_addr(peer, info).await?;
         Ok(())
     }
 

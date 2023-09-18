@@ -50,7 +50,7 @@ use crate::{
     disco,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::NodeAddr,
+    magic_endpoint::AddrInfo,
     net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
@@ -597,13 +597,13 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub async fn add_known_addr(&self, addr: NodeAddr) -> Result<()> {
-        let (s, r) = sync::oneshot::channel();
+    pub async fn add_known_addr(&self, peer: PublicKey, info: AddrInfo) -> Result<()> {
+        let (tx, rx) = sync::oneshot::channel();
         self.inner
             .actor_sender
-            .send(ActorMessage::AddKnownAddr(addr, s))
+            .send(ActorMessage::AddKnownAddr { peer, info, tx })
             .await?;
-        r.await?;
+        rx.await?;
         Ok(())
     }
 
@@ -887,7 +887,14 @@ enum ActorMessage {
         dst_key: PublicKey,
         msg: disco::CallMeMaybe,
     },
-    AddKnownAddr(NodeAddr, sync::oneshot::Sender<()>),
+    AddKnownAddr {
+        /// Peer for which the connection info will be added.
+        peer: PublicKey,
+        /// Addressing information for the peer.
+        info: AddrInfo,
+        /// TODO(@divma): I have no idea what this is
+        tx: sync::oneshot::Sender<()>,
+    },
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
 }
@@ -1140,9 +1147,9 @@ impl Actor {
                 let msg = disco::Message::CallMeMaybe(msg);
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
-            ActorMessage::AddKnownAddr(addr, s) => {
-                self.add_known_addr(addr);
-                s.send(()).unwrap();
+            ActorMessage::AddKnownAddr { peer, info, tx } => {
+                self.add_known_addr(peer, info);
+                tx.send(()).unwrap();
             }
             ActorMessage::ReceiveDerp(read_result) => {
                 let passthroughs = self.process_derp_read_result(read_result).await;
@@ -2269,9 +2276,9 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, info: NodeAddr) {
+    fn add_known_addr(&mut self, peer: PublicKey, info: AddrInfo) {
         self.peer_map
-            .add_known_addr(info, self.inner.actor_sender.clone())
+            .add_known_addr(peer, info, self.inner.actor_sender.clone())
     }
 
     /// Returns the current IPv4 listener's port number.
@@ -2779,12 +2786,12 @@ pub(crate) mod tests {
                 if i == my_idx {
                     continue;
                 }
-                let addr = NodeAddr {
-                    endpoints: new_eps.iter().map(|ep| ep.addr).collect(),
-                    node_id: me.public(),
+                let peer = me.public();
+                let info = AddrInfo {
                     derp_region: Some(1),
+                    endpoints: new_eps.iter().map(|ep| ep.addr).collect(),
                 };
-                let _ = m.endpoint.magic_sock().add_known_addr(addr).await;
+                let _ = m.endpoint.magic_sock().add_known_addr(peer, info).await;
             }
         }
 

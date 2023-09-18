@@ -14,7 +14,7 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    config, disco, key::PublicKey, magic_endpoint::NodeAddr, magicsock::Timer,
+    config, disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
     net::ip::is_unicast_link_local, stun, util::derp_only_mode,
 };
 
@@ -159,7 +159,7 @@ impl Endpoint {
     }
 
     /// Return the addressing information of the endpoint
-    pub fn addr_info(&self) -> NodeAddr {
+    pub fn addr_info(&self) -> (PublicKey, AddrInfo) {
         let endpoints = self
             .endpoint_state
             .keys()
@@ -171,11 +171,11 @@ impl Endpoint {
                 }
             })
             .collect();
-        NodeAddr {
-            node_id: self.public_key,
+        let addr_info = AddrInfo {
             derp_region: self.derp_region,
             endpoints,
-        }
+        };
+        (self.public_key, addr_info)
     }
 
     /// Returns the derp region of this endpoint
@@ -561,7 +561,7 @@ impl Endpoint {
         }
     }
 
-    pub fn update_from_node_addr(&mut self, n: &NodeAddr) {
+    pub fn update_from_node_addr(&mut self, n: &AddrInfo) {
         if self.best_addr.is_none() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status
@@ -1033,9 +1033,9 @@ pub(super) struct PeerMap {
     next_id: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize, derive_more::Deref)]
+#[derive(Debug, Serialize, Deserialize, derive_more::Deref, PartialEq, Eq)]
 pub(super) struct KnownPeers {
-    peers: Vec<NodeAddr>,
+    peers: HashMap<PublicKey, AddrInfo>,
 }
 
 impl PeerMap {
@@ -1045,14 +1045,15 @@ impl PeerMap {
             .values()
             .map(|endpoint| endpoint.addr_info())
             .collect();
+
         KnownPeers { peers }
     }
 
     pub fn from_known_peers(peers: KnownPeers, msock_sender: mpsc::Sender<ActorMessage>) -> Self {
         let mut peer_map = Self::default();
         // inneficient but relies on proven logic
-        for addr in peers.peers.into_iter() {
-            peer_map.add_known_addr(addr, msock_sender.clone());
+        for (peer, info) in peers.peers.into_iter() {
+            peer_map.add_known_addr(peer, info, msock_sender.clone());
         }
         peer_map
     }
@@ -1066,23 +1067,28 @@ impl PeerMap {
         Ok(Self::from_known_peers(peers, msock_sender))
     }
 
-    pub fn add_known_addr(&mut self, info: NodeAddr, msock_sender: mpsc::Sender<ActorMessage>) {
-        if self.endpoint_for_node_key(&info.node_id).is_none() {
+    pub fn add_known_addr(
+        &mut self,
+        peer_id: PublicKey,
+        addr_info: AddrInfo,
+        msock_sender: mpsc::Sender<ActorMessage>,
+    ) {
+        if self.endpoint_for_node_key(&peer_id).is_none() {
             info!(
-                peer = ?info.node_id,
+                peer = ?peer_id,
                 "inserting peer's endpoint in PeerMap"
             );
             self.insert_endpoint(Options {
                 msock_sender,
-                public_key: info.node_id,
-                derp_region: info.derp_region,
+                public_key: peer_id,
+                derp_region: addr_info.derp_region,
             });
         }
 
-        if let Some(ep) = self.endpoint_for_node_key_mut(&info.node_id) {
-            ep.update_from_node_addr(&info);
+        if let Some(ep) = self.endpoint_for_node_key_mut(&peer_id) {
+            ep.update_from_node_addr(&addr_info);
             let id = ep.id;
-            for endpoint in &info.endpoints {
+            for endpoint in &addr_info.endpoints {
                 self.set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
         }
@@ -1376,6 +1382,8 @@ impl AddrLatency {
 
 #[cfg(test)]
 mod tests {
+    use std::env::temp_dir;
+
     use super::*;
     use crate::key::SecretKey;
 
@@ -1624,5 +1632,51 @@ mod tests {
         let mut got = peer_map.endpoint_infos();
         got.sort_by_key(|p| p.id);
         assert_eq!(expect, got);
+    }
+
+    /// Test persisting and loading of known peers.
+    #[test]
+    fn load_save_peer_data() {
+        let mut peer_map = PeerMap::default();
+        let (tx, _rx) = mpsc::channel(1);
+
+        let peer_a = SecretKey::generate().public();
+        let peer_b = SecretKey::generate().public();
+        let peer_c = SecretKey::generate().public();
+
+        let region_x = Some(1);
+        let region_y = Some(2);
+
+        fn addr(port: u16) -> SocketAddr {
+            (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port).into()
+        }
+
+        let endpoints_a = vec![addr(4000), addr(4001)];
+        let endpoints_b = vec![];
+        let endpoints_c = vec![addr(5000)];
+
+        let info_a = AddrInfo {
+            derp_region: region_x,
+            endpoints: endpoints_a,
+        };
+        let info_b = AddrInfo {
+            derp_region: region_y,
+            endpoints: endpoints_b,
+        };
+        let info_c = AddrInfo {
+            derp_region: None,
+            endpoints: endpoints_c,
+        };
+
+        peer_map.add_known_addr(peer_a, info_a, tx.clone());
+        peer_map.add_known_addr(peer_b, info_b, tx.clone());
+        peer_map.add_known_addr(peer_c, info_c, tx.clone());
+
+        let path = temp_dir().join("peers.postcard");
+        peer_map.save_to_file(&path).unwrap();
+
+        let loaded = PeerMap::load_from_file(&path, tx).unwrap();
+        // compare the peer maps via their known peers
+        assert_eq!(peer_map.known_peers(), loaded.known_peers());
     }
 }
