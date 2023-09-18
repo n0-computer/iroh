@@ -94,6 +94,8 @@ pub struct GossipEvent<PI> {
     pub delivered_from: PI,
     /// The broadcast scope of the message
     pub scope: Scope,
+    /// The distance in hops that the message travelled from the original author.
+    pub distance: u16,
 }
 
 impl<PI> GossipEvent<PI> {
@@ -102,6 +104,7 @@ impl<PI> GossipEvent<PI> {
             content: message.content.clone(),
             scope: message.scope,
             delivered_from: from,
+            distance: message.round.0,
         }
     }
 }
@@ -725,6 +728,7 @@ mod test {
                 content,
                 delivered_from: 3,
                 scope: Scope::Swarm,
+                distance: 6,
             })));
             io
         };
@@ -773,6 +777,7 @@ mod test {
                 content,
                 delivered_from: 3,
                 scope: Scope::Swarm,
+                distance: 9,
             })));
             io
         };
@@ -809,6 +814,7 @@ mod test {
                 content,
                 delivered_from: 2,
                 scope: Scope::Swarm,
+                distance: 1,
             })));
             io
         };
