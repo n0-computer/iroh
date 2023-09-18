@@ -1057,6 +1057,15 @@ impl PeerMap {
         peer_map
     }
 
+    pub fn load_from_file(
+        path: &Path,
+        msock_sender: mpsc::Sender<ActorMessage>,
+    ) -> anyhow::Result<Self> {
+        let contents = std::fs::read(path)?;
+        let peers: KnownPeers = postcard::from_bytes(&contents)?;
+        Ok(Self::from_known_peers(peers, msock_sender))
+    }
+
     pub fn add_known_addr(&mut self, info: NodeAddr, msock_sender: mpsc::Sender<ActorMessage>) {
         if self.endpoint_for_node_key(&info.node_id).is_none() {
             info!(
@@ -1178,12 +1187,12 @@ impl PeerMap {
         self.by_ip_port.insert(*ipp, id);
     }
 
-    pub(super) fn save_to_file(&self, path: &Path) -> anyhow::Result<()> {
+    pub(super) fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         let known_peers = self.known_peers();
         let count = known_peers.len();
         let serialized = postcard::to_stdvec(&known_peers)?;
         std::fs::write(path, &serialized)?;
-        Ok(())
+        Ok(count)
     }
 
     // TODO: When do we want to remove endpoints?

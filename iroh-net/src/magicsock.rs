@@ -406,6 +406,23 @@ impl MagicSock {
             .instrument(info_span!("derp.actor")),
         );
 
+        // load the peer data
+        let peer_map = if let Some(path) = peers_path.as_ref() {
+            match PeerMap::load_from_file(path, actor_sender.clone()) {
+                Ok(peer_map) => {
+                    let count = peer_map.node_count();
+                    debug!(count, "loaded peer map");
+                    peer_map
+                }
+                Err(e) => {
+                    debug!(%e, "failed to load peer map: using default");
+                    PeerMap::default()
+                }
+            }
+        } else {
+            PeerMap::default()
+        };
+
         let inner2 = inner.clone();
         let main_actor_task = tokio::task::spawn(
             async move {
@@ -425,7 +442,7 @@ impl MagicSock {
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     disco_info: HashMap::new(),
-                    peer_map: Default::default(),
+                    peer_map,
                     peers_path,
                     port_mapper,
                     pconn4,
@@ -1061,8 +1078,7 @@ impl Actor {
                 }
                 if let Some(path) = self.peers_path.as_ref() {
                     match self.peer_map.save_to_file(path) {
-                        Ok(()) => {
-                            let count = self.peer_map.node_count();
+                        Ok(count) => {
                             debug!(count, "known peers persisted")
                         }
                         Err(e) => error!(%e, "failed to persist known peers"),
