@@ -19,12 +19,28 @@ use crate::{
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
 
 /// Addressing information to connect to a peer.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Eq)]
 pub struct AddrInfo {
     /// The node's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where this node might be reached directly.
     pub endpoints: Vec<SocketAddr>,
+}
+
+impl PartialEq for AddrInfo {
+    fn eq(&self, other: &Self) -> bool {
+        if self.derp_region != other.derp_region {
+            return false;
+        }
+        if self.endpoints.len() != other.endpoints.len() {
+            return false;
+        }
+        let mut self_eps = self.endpoints.clone();
+        self_eps.sort();
+        let mut others_eps = self.endpoints.clone();
+        others_eps.sort();
+        self_eps == others_eps
+    }
 }
 
 /// Builder for [`MagicEndpoint`]
