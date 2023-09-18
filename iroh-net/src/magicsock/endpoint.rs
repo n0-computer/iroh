@@ -18,7 +18,8 @@ use crate::{
 };
 
 use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr,
+    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr,
+    SendAddr,
 };
 
 /// How long we wait for a pong reply before assuming it's never coming.
@@ -1032,7 +1033,63 @@ pub(super) struct PeerMap {
     next_id: usize,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct KnownPeers {
+    peers: Vec<NodeAddr>,
+}
+
 impl PeerMap {
+    pub fn known_peers(&self) -> KnownPeers {
+        let peers = self
+            .by_id
+            .values()
+            .map(|endpoint| endpoint.addr_info())
+            .collect();
+        KnownPeers { peers }
+    }
+
+    pub fn from_known_peers(peers: KnownPeers) -> Self {
+        let mut peer_map = Self::default();
+        // inneficient but relies on proven logic
+        for addr in peers.peers.into_iter() {
+            peer_map.add_known_addr(addr);
+        }
+        peer_map
+    }
+
+    pub fn add_known_addr(&mut self, addr_info: NodeAddr) {
+        let NodeAddr {
+            node_id: key,
+            derp_region,
+            endpoints,
+        } = addr_info;
+        let n = config::Node {
+            endpoints,
+            key,
+            derp_region,
+        };
+
+        if self.endpoint_for_node_key(&n.key).is_none() {
+            info!(
+                peer = ?n.key,
+                "inserting peer's endpoint in PeerMap"
+            );
+            self.insert_endpoint(Options {
+                msock_sender: todo!(),
+                public_key: n.key,
+                derp_region: n.derp_region,
+            });
+        }
+
+        if let Some(ep) = self.endpoint_for_node_key_mut(&n.key) {
+            ep.update_from_node(&n);
+            let id = ep.id;
+            for endpoint in &n.endpoints {
+                self.set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
+            }
+        }
+    }
+
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
         self.by_id.len()

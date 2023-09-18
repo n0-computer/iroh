@@ -4,6 +4,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
 
 /// Adress information for a node.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NodeAddr {
     /// The node's public key.
     pub node_id: PublicKey,
