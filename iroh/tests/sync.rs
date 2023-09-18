@@ -146,11 +146,20 @@ async fn sync_full_basic() -> Result<()> {
         // wait for remote insert on doc2
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::SyncFinished(_)));
+        assert!(
+            matches!(event, LiveEvent::SyncFinished(_)),
+            "expected SyncFinished but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
 
         assert_latest(&doc, b"k1", b"v1").await;
 
@@ -164,9 +173,15 @@ async fn sync_full_basic() -> Result<()> {
 
         // wait for remote insert on doc1
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
 
         assert_latest(&doc1, key, value).await;
         doc
@@ -180,15 +195,30 @@ async fn sync_full_basic() -> Result<()> {
         // wait for 2 remote inserts
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::SyncFinished(_)));
+        assert!(
+            matches!(event, LiveEvent::SyncFinished(_)),
+            "expected SyncFinished but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
 
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;
