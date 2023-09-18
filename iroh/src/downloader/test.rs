@@ -218,6 +218,7 @@ async fn max_concurrent_requests_per_peer() {
 #[tokio::test]
 async fn peer_role_provider() {
     let dialer = dialer::TestingDialer::default();
+    dialer.set_dial_duration(Duration::from_millis(100));
     let getter = getter::TestingGetter::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
@@ -246,7 +247,7 @@ async fn peer_role_provider() {
     // safe enough to assume that test runtime is not longer than the delay of 500ms.
     assert!(
         now.elapsed() < INITIAL_REQUEST_DELAY,
-        "now initial delay was added to fetching from a provider"
+        "no initial delay was added to fetching from a provider"
     );
     getter.assert_history(&[(kind, peer_provider)]);
     dialer.assert_history(&[peer_provider]);
