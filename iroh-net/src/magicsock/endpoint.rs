@@ -1197,7 +1197,7 @@ impl PeerMap {
         let known_peers = self.known_peers();
         let count = known_peers.len();
         let serialized = postcard::to_stdvec(&known_peers)?;
-        std::fs::write(path, &serialized)?;
+        std::fs::write(path, serialized)?;
         Ok(count)
     }
 
