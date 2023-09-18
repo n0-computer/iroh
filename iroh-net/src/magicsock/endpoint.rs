@@ -18,8 +18,7 @@ use crate::{
 };
 
 use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr,
-    SendAddr,
+    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr,
 };
 
 /// How long we wait for a pong reply before assuming it's never coming.
@@ -1048,43 +1047,32 @@ impl PeerMap {
         KnownPeers { peers }
     }
 
-    pub fn from_known_peers(peers: KnownPeers) -> Self {
+    pub fn from_known_peers(peers: KnownPeers, msock_sender: mpsc::Sender<ActorMessage>) -> Self {
         let mut peer_map = Self::default();
         // inneficient but relies on proven logic
         for addr in peers.peers.into_iter() {
-            peer_map.add_known_addr(addr);
+            peer_map.add_known_addr(addr, msock_sender.clone());
         }
         peer_map
     }
 
-    pub fn add_known_addr(&mut self, addr_info: NodeAddr) {
-        let NodeAddr {
-            node_id: key,
-            derp_region,
-            endpoints,
-        } = addr_info;
-        let n = config::Node {
-            endpoints,
-            key,
-            derp_region,
-        };
-
-        if self.endpoint_for_node_key(&n.key).is_none() {
+    pub fn add_known_addr(&mut self, info: NodeAddr, msock_sender: mpsc::Sender<ActorMessage>) {
+        if self.endpoint_for_node_key(&info.node_id).is_none() {
             info!(
-                peer = ?n.key,
+                peer = ?info.node_id,
                 "inserting peer's endpoint in PeerMap"
             );
             self.insert_endpoint(Options {
-                msock_sender: todo!(),
-                public_key: n.key,
-                derp_region: n.derp_region,
+                msock_sender,
+                public_key: info.node_id,
+                derp_region: info.derp_region,
             });
         }
 
-        if let Some(ep) = self.endpoint_for_node_key_mut(&n.key) {
-            ep.update_from_node(&n);
+        if let Some(ep) = self.endpoint_for_node_key_mut(&info.node_id) {
+            ep.update_from_node_addr(&info);
             let id = ep.id;
-            for endpoint in &n.endpoints {
+            for endpoint in &info.endpoints {
                 self.set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
         }

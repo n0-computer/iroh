@@ -2244,27 +2244,9 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, n: NodeAddr) {
-        if self.peer_map.endpoint_for_node_key(&n.node_id).is_none() {
-            info!(
-                peer = ?n.node_id,
-                "inserting peer's endpoint in PeerMap"
-            );
-            self.peer_map.insert_endpoint(EndpointOptions {
-                msock_sender: self.inner.actor_sender.clone(),
-                public_key: n.node_id,
-                derp_region: n.derp_region,
-            });
-        }
-
-        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.node_id) {
-            ep.update_from_node_addr(&n);
-            let id = ep.id;
-            for endpoint in &n.endpoints {
-                self.peer_map
-                    .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
-            }
-        }
+    fn add_known_addr(&mut self, info: NodeAddr) {
+        self.peer_map
+            .add_known_addr(info, self.inner.actor_sender.clone())
     }
 
     /// Returns the current IPv4 listener's port number.
