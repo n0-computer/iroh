@@ -246,7 +246,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.7.0"
+version = "0.8.0-rc0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cccf4c7997cfc5b2b9d63c22d2aa4d59bc4b8905f8332c4bb2ec2b1c92179210"
 dependencies = [
  "bytes",
  "futures",
@@ -3449,9 +3451,9 @@ dependencies = [
 
 [[package]]
 name = "range-collections"
-version = "0.4.1"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9242e3fdeb51584ea4295232d89c29cfc919f5b70660d02ee32edacb075c2469"
+checksum = "c67999deb5392c414c4c5027b8f0fbcb4b940d215241637e39c9ababfe013746"
 dependencies = [
  "binary-merge",
  "inplace-vec-builder",
