@@ -121,7 +121,7 @@ async fn sync_simple() -> Result<()> {
 async fn sync_full_basic() -> Result<()> {
     setup_logging();
     let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 2).await?;
+    let nodes = spawn_nodes(rt, 3).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // node1: create doc and ticket
