@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
     net::{IpAddr, SocketAddr},
+    path::Path,
     time::Duration,
 };
 
@@ -1032,7 +1033,7 @@ pub(super) struct PeerMap {
     next_id: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, derive_more::Deref)]
 pub(super) struct KnownPeers {
     peers: Vec<NodeAddr>,
 }
@@ -1175,6 +1176,14 @@ impl PeerMap {
     pub(super) fn set_endpoint_for_ip_port(&mut self, ipp: &SendAddr, id: usize) {
         trace!("insert ip -> id: {:?} -> {}", ipp, id);
         self.by_ip_port.insert(*ipp, id);
+    }
+
+    pub(super) fn save_to_file(&self, path: &Path) -> anyhow::Result<()> {
+        let known_peers = self.known_peers();
+        let count = known_peers.len();
+        let serialized = postcard::to_stdvec(&known_peers)?;
+        std::fs::write(path, &serialized)?;
+        Ok(())
     }
 
     // TODO: When do we want to remove endpoints?

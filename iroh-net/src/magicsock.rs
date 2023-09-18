@@ -1059,6 +1059,15 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
+                if let Some(path) = self.peers_path.as_ref() {
+                    match self.peer_map.save_to_file(path) {
+                        Ok(()) => {
+                            let count = self.peer_map.node_count();
+                            debug!(count, "known peers persisted")
+                        }
+                        Err(e) => error!(%e, "failed to persist known peers"),
+                    }
+                }
                 self.port_mapper.deactivate();
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
