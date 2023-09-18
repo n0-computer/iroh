@@ -180,7 +180,7 @@ async fn sync_full_basic() -> Result<()> {
         let event = events.try_next().await?.unwrap();
         assert!(
             matches!(event, LiveEvent::ContentReady { .. }),
-            "expected InsertRemote but got {event:?}"
+            "expected ContentReady but got {event:?}"
         );
 
         assert_latest(&doc1, key, value).await;
