@@ -1,6 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
@@ -38,6 +38,8 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
+    /// Path for known peers. See [`MagicEndpointBuilder::peers_path`].
+    peers_path: Option<PathBuf>,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -50,6 +52,7 @@ impl Default for MagicEndpointBuilder {
             concurrent_connections: Default::default(),
             keylog: Default::default(),
             callbacks: Default::default(),
+            peers_path: None,
         }
     }
 }
@@ -151,6 +154,14 @@ impl MagicEndpointBuilder {
         on_net_info: Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>,
     ) -> Self {
         self.callbacks.on_net_info = Some(on_net_info);
+        self
+    }
+
+    /// Optionally set the path where peer info should be stored.
+    ///
+    /// If the file exists, it will be used to populate an initial set of peers.
+    pub fn peers_path(mut self, path: PathBuf) -> Self {
+        self.peers_path = Some(path);
         self
     }
 
