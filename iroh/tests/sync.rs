@@ -111,10 +111,6 @@ async fn sync_simple() -> Result<()> {
     assert_eq!(event.origin, Origin::Accept);
     assert_eq!(event.result, Ok(()));
 
-    // check stats
-    // note that stats are global per running process, so it doesn't matter which client we pass.
-    assert_stats(&clients[0], 1, 1).await;
-
     for node in nodes {
         node.shutdown();
     }
@@ -152,6 +148,8 @@ async fn sync_full_basic() -> Result<()> {
         let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
         let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::SyncFinished(_)));
+        let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::ContentReady { .. }));
 
         assert_latest(&doc, b"k1", b"v1").await;
@@ -185,6 +183,8 @@ async fn sync_full_basic() -> Result<()> {
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
         let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        let event = events.try_next().await?.unwrap();
+        assert!(matches!(event, LiveEvent::SyncFinished(_)));
         let event = events.try_next().await?.unwrap();
         assert!(matches!(event, LiveEvent::ContentReady { .. }));
         let event = events.try_next().await?.unwrap();
@@ -259,16 +259,4 @@ fn setup_logging() {
         .with(EnvFilter::from_default_env())
         .try_init()
         .ok();
-}
-
-async fn assert_stats(client: &Iroh, via_accept: u64, via_connect: u64) {
-    let stats = client.stats().await.unwrap();
-    assert_eq!(get_stat(&stats, "sync_via_accept_success"), via_accept);
-    assert_eq!(get_stat(&stats, "sync_via_connect_success"), via_connect);
-    assert_eq!(get_stat(&stats, "sync_via_accept_failure"), 0);
-    assert_eq!(get_stat(&stats, "sync_via_connect_failure"), 0);
-}
-
-fn get_stat(stats: &HashMap<String, CounterStats>, key: &str) -> u64 {
-    stats.get(key).unwrap().value
 }

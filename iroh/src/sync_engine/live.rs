@@ -669,13 +669,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     ) {
         match res {
             Ok((namespace, peer)) => {
-                debug!(?peer, ?namespace, "sync done (via accept)");
                 self.on_sync_finished(namespace, peer, Origin::Accept, Ok(()))
                     .await;
             }
             Err(err) => {
                 if let (Some(peer), Some(namespace)) = (err.peer(), err.namespace()) {
-                    debug!(?peer, ?namespace, "sync failed (via accept): {err:?}");
                     self.on_sync_finished(
                         namespace,
                         peer,
