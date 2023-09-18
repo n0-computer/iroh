@@ -121,7 +121,7 @@ impl From<VerifyingKey> for PublicKey {
 
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.as_bytes()[..10]);
+        let mut text = data_encoding::BASE32_NOPAD.encode(self.as_bytes());
         text.make_ascii_lowercase();
         write!(f, "PublicKey({text})")
     }
