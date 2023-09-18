@@ -1,15 +1,15 @@
 #![cfg(feature = "mem-db")]
 
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 
 use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryStreamExt};
 use iroh::{
-    client::mem::Doc,
+    client::mem::{Doc, Iroh},
     collection::IrohCollectionParser,
     node::{Builder, Node},
-    rpc_protocol::ShareMode,
-    sync_engine::LiveEvent,
+    rpc_protocol::{CounterStats, ShareMode},
+    sync_engine::{LiveEvent, Origin, SyncReason},
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -61,11 +61,71 @@ async fn spawn_nodes(
     Ok(nodes)
 }
 
+/// This tests the simplest scenario: A node connects to another node, and performs sync.
+#[tokio::test]
+async fn sync_simple() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let nodes = spawn_nodes(rt, 2).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    // create doc on node0
+    let (ticket, doc0) = {
+        let iroh = &clients[0];
+        let author = iroh.create_author().await?;
+        let doc = iroh.create_doc().await?;
+        doc.set_bytes(author, b"k1".to_vec(), b"v1".to_vec())
+            .await?;
+        assert_latest(&doc, b"k1", b"v1").await;
+        let ticket = doc.share(ShareMode::Write).await?;
+        (ticket, doc)
+    };
+
+    let mut events0 = doc0.subscribe().await?;
+
+    // node1: join in
+    let iroh = &clients[1];
+    let doc = iroh.import_doc(ticket.clone()).await?;
+    let mut events = doc.subscribe().await?;
+    let event = events.try_next().await?.unwrap();
+    assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+    let event = events.try_next().await?.unwrap();
+    let LiveEvent::SyncFinished(event) = event else {
+        panic!("expected LiveEvent::SyncFinished, but got {event:?}");
+    };
+    assert_eq!(event.namespace, doc.id());
+    assert_eq!(event.peer, nodes[0].peer_id());
+    assert_eq!(event.origin, Origin::Connect(SyncReason::DirectJoin));
+    assert_eq!(event.result, Ok(()));
+    let event = events.try_next().await?.unwrap();
+    assert!(matches!(event, LiveEvent::ContentReady { .. }));
+    assert_latest(&doc, b"k1", b"v1").await;
+
+    // check sync event on node0
+    let event = events0.try_next().await?.unwrap();
+    let LiveEvent::SyncFinished(event) = event else {
+        panic!("expected LiveEvent::SyncFinished, but got {event:?}");
+    };
+    assert_eq!(event.namespace, doc0.id());
+    assert_eq!(event.peer, nodes[1].peer_id());
+    assert_eq!(event.origin, Origin::Accept);
+    assert_eq!(event.result, Ok(()));
+
+    // check stats
+    // note that stats are global per running process, so it doesn't matter which client we pass.
+    assert_stats(&clients[0], 1, 1).await;
+
+    for node in nodes {
+        node.shutdown();
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn sync_full_basic() -> Result<()> {
     setup_logging();
     let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 3).await?;
+    let nodes = spawn_nodes(rt, 2).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // node1: create doc and ticket
@@ -114,7 +174,7 @@ async fn sync_full_basic() -> Result<()> {
         doc
     };
 
-    //  node 3 joins & imports the doc from peer 1
+    // node 3 joins & imports the doc from peer 1
     let _doc3 = {
         let iroh = &clients[2];
         let doc = iroh.import_doc(ticket).await?;
@@ -199,4 +259,16 @@ fn setup_logging() {
         .with(EnvFilter::from_default_env())
         .try_init()
         .ok();
+}
+
+async fn assert_stats(client: &Iroh, via_accept: u64, via_connect: u64) {
+    let stats = client.stats().await.unwrap();
+    assert_eq!(get_stat(&stats, "sync_via_accept_success"), via_accept);
+    assert_eq!(get_stat(&stats, "sync_via_connect_success"), via_connect);
+    assert_eq!(get_stat(&stats, "sync_via_accept_failure"), 0);
+    assert_eq!(get_stat(&stats, "sync_via_connect_failure"), 0);
+}
+
+fn get_stat(stats: &HashMap<String, CounterStats>, key: &str) -> u64 {
+    stats.get(key).unwrap().value
 }

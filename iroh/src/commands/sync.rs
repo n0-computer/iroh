@@ -247,6 +247,9 @@ impl DocCommands {
                         LiveEvent::ContentReady { hash } => {
                             println!("content ready: {}", fmt_short(hash.as_bytes()))
                         }
+                        LiveEvent::SyncFinished(details) => {
+                            println!("sync finished: {details:?}")
+                        }
                     }
                 }
             }

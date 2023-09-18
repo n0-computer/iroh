@@ -547,6 +547,8 @@ where
     }
 }
 
+// TODO: Restructure this code to not take all these arguments.
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
     connecting: quinn::Connecting,
     alpn: String,

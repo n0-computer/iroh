@@ -4,6 +4,7 @@ use std::{
     net::SocketAddr,
     str::FromStr,
     sync::{atomic::AtomicU64, Arc},
+    time::SystemTime,
 };
 
 use crate::downloader::{DownloadKind, Downloader};
@@ -24,7 +25,7 @@ use iroh_gossip::{
 };
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use iroh_sync::{
-    net::{connect_and_sync, handle_connection},
+    net::{connect_and_sync, handle_connection, AcceptOutcome, SyncError},
     store,
     sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
 };
@@ -33,7 +34,7 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinError,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 const CHANNEL_CAP: usize = 8;
 
@@ -107,7 +108,7 @@ pub enum Op {
 enum SyncState {
     Running,
     Finished,
-    Failed(anyhow::Error),
+    Failed,
 }
 
 /// Sync status for a document
@@ -151,10 +152,10 @@ enum ToActor<S: store::Store> {
     HandleConnection {
         conn: quinn::Connecting,
     },
-    RequestSync {
+    AcceptSyncRequest {
         namespace: NamespaceId,
         peer: PublicKey,
-        reply: sync::oneshot::Sender<Option<Replica<S::Instance>>>,
+        reply: sync::oneshot::Sender<AcceptOutcome<S>>,
     },
 }
 
@@ -194,6 +195,8 @@ pub enum LiveEvent {
         /// The content hash of the newly available entry content
         hash: Hash,
     },
+    /// A set-reconciliation sync finished.
+    SyncFinished(SyncEvent),
 }
 
 /// Availability status of an entry's content bytes
@@ -357,12 +360,12 @@ struct Actor<S: store::Store, B: baomap::Store> {
     bao_store: B,
     downloader: Downloader,
 
-    replicas: HashMap<TopicId, Replica<S::Instance>>,
+    replicas: HashMap<NamespaceId, Replica<S::Instance>>,
     replicas_subscription: futures::stream::SelectAll<
         flume::r#async::RecvStream<'static, (InsertOrigin, SignedEntry)>,
     >,
-    subscription: BoxStream<'static, Result<(TopicId, Event)>>,
-    sync_state: HashMap<(TopicId, PublicKey), SyncState>,
+    gossip_subscription: BoxStream<'static, Result<(TopicId, Event)>>,
+    sync_state: HashMap<(NamespaceId, PublicKey), SyncState>,
 
     to_actor_rx: mpsc::Receiver<ToActor<S>>,
     /// Send messages to self.
@@ -370,14 +373,19 @@ struct Actor<S: store::Store, B: baomap::Store> {
     /// Only clone into newly spawned tasks.
     to_actor_tx: mpsc::Sender<ToActor<S>>,
 
-    pending_syncs: FuturesUnordered<BoxFuture<'static, (TopicId, PublicKey, Result<()>)>>,
-    pending_incoming_syncs: FuturesUnordered<BoxFuture<'static, Result<(NamespaceId, PublicKey)>>>,
-    pending_joins: FuturesUnordered<BoxFuture<'static, (TopicId, Result<()>)>>,
+    #[allow(clippy::type_complexity)]
+    running_sync_connect:
+        FuturesUnordered<BoxFuture<'static, (NamespaceId, PublicKey, SyncReason, Result<()>)>>,
+    running_sync_accept: FuturesUnordered<
+        BoxFuture<'static, std::result::Result<(NamespaceId, PublicKey), SyncError>>,
+    >,
 
-    event_subscriptions: HashMap<TopicId, HashMap<u64, OnLiveEventCallback>>,
+    pending_joins: FuturesUnordered<BoxFuture<'static, (NamespaceId, Result<()>)>>,
+
+    event_subscriptions: HashMap<NamespaceId, HashMap<u64, OnLiveEventCallback>>,
     event_removal_id: AtomicU64,
 
-    pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(TopicId, Hash)>>>,
+    pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
 }
 
 /// Token needed to remove inserted callbacks.
@@ -403,12 +411,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             to_actor_rx,
             to_actor_tx,
             sync_state: Default::default(),
-            pending_syncs: Default::default(),
-            pending_incoming_syncs: Default::default(),
+            running_sync_connect: Default::default(),
+            running_sync_accept: Default::default(),
             pending_joins: Default::default(),
             replicas: Default::default(),
             replicas_subscription: Default::default(),
-            subscription: sub,
+            gossip_subscription: sub,
             event_subscriptions: Default::default(),
             event_removal_id: Default::default(),
             pending_downloads: Default::default(),
@@ -427,32 +435,38 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             self.shutdown().await?;
                             break;
                         }
-                        Some(ToActor::StartSync { replica, peers }) => self.start_sync(replica, peers).await?,
-                        Some(ToActor::StopSync { namespace }) => self.stop_sync(&namespace).await?,
-                        Some(ToActor::JoinPeers { namespace, peers }) => self.join_gossip_and_start_initial_sync(&namespace, peers).await?,
+                        Some(ToActor::StartSync { replica, peers }) => {
+                            self.start_sync(replica, peers).await?;
+                        },
+                        Some(ToActor::StopSync { namespace }) => {
+                            self.stop_sync(namespace).await?;
+                        }
+                        Some(ToActor::JoinPeers { namespace, peers }) => {
+                            self.join_peers(namespace, peers).await?;
+                        },
                         Some(ToActor::Subscribe { namespace, cb, s }) => {
-                            let result = self.subscribe(&namespace, cb).await;
+                            let result = self.subscribe(namespace, cb).await;
                             s.send(result).ok();
                         },
                         Some(ToActor::Unsubscribe { namespace, token, s }) => {
-                            let result = self.unsubscribe(&namespace, token).await;
+                            let result = self.unsubscribe(namespace, token).await;
                             s.send(result).ok();
                         },
                         Some(ToActor::Status { namespace , s }) => {
-                            let result = self.status(&namespace).await;
+                            let result = self.status(namespace).await;
                             s.send(result).ok();
                         },
                         Some(ToActor::HandleConnection { conn }) => {
                              self.handle_connection(conn).await;
                         },
-                        Some(ToActor::RequestSync { namespace, peer: _, reply }) => {
-                            let maybe_replica = self.replicas.get(&namespace.into()).cloned();
-                            reply.send(maybe_replica).ok();
+                        Some(ToActor::AcceptSyncRequest { namespace, peer, reply }) => {
+                            let outcome = self.accept_sync_request(namespace, peer);
+                            reply.send(outcome).ok();
                         },
                     };
                 }
                 // new gossip message
-                Some(event) = self.subscription.next() => {
+                Some(event) = self.gossip_subscription.next() => {
                     let (topic, event) = event?;
                     if let Err(err) = self.on_gossip_event(topic, event) {
                         error!("Failed to process gossip event: {err:?}");
@@ -463,32 +477,24 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         error!("Failed to process replica event: {err:?}");
                     }
                 }
-                Some((topic, peer, res)) = self.pending_syncs.next() => {
-                    self.on_sync_finished(topic, peer, res);
+                Some((namespace, peer, reason, res)) = self.running_sync_connect.next() => {
+                    self.on_sync_via_connect_finished(namespace, peer, reason, res).await;
 
                 }
-                Some(res) = self.pending_incoming_syncs.next() => {
-                    match res {
-                        Ok((namespace, peer)) => {
-                           let topic: TopicId = namespace.into();
-                           self.sync_state.insert((topic, peer), SyncState::Finished);
-                        },
-                        Err(err) => {
-
-                        }
-                    }
+                Some(res) = self.running_sync_accept.next() => {
+                    self.on_sync_via_accept_finished(res).await;
                 }
-                Some((topic, res)) = self.pending_joins.next() => {
+                Some((namespace, res)) = self.pending_joins.next() => {
                     if let Err(err) = res {
-                        error!("failed to join {topic:?}: {err:?}");
+                        error!("failed to join gossip for {namespace:?}: {err:?}");
                     } else {
-                        info!("joined sync topic {topic:?}");
+                        debug!("joined gossip for {namespace:?}");
                     }
                     // TODO: maintain some join state
                 }
                 Some(res) = self.pending_downloads.next() => {
-                    if let Some((topic, hash)) = res {
-                        if let Some(subs) = self.event_subscriptions.get_mut(&topic) {
+                    if let Some((namespace, hash)) = res {
+                        if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
                             let event = LiveEvent::ContentReady { hash };
                             notify_all(subs, event).await;
                         }
@@ -500,46 +506,47 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
-    fn sync_with_peer(&mut self, topic: TopicId, peer: PublicKey) {
-        let Some(replica) = self.replicas.get(&topic) else {
+    fn sync_with_peer(&mut self, namespace: NamespaceId, peer: PublicKey, reason: SyncReason) {
+        let Some(replica) = self.replicas.get(&namespace) else {
             return;
         };
         // Check if we synced and only start sync if not yet synced
         // sync_with_peer is triggered on NeighborUp events, so might trigger repeatedly for the
         // same peers.
         // TODO: Track finished time and potentially re-run sync
-        if let Some(_state) = self.sync_state.get(&(topic, peer)) {
+        if let Some(_state) = self.sync_state.get(&(namespace, peer)) {
             return;
         };
-        self.sync_state.insert((topic, peer), SyncState::Running);
+        debug!(?peer, ?namespace, "start sync (reason: {reason:?})");
+        self.sync_state
+            .insert((namespace, peer), SyncState::Running);
         let task = {
             let endpoint = self.endpoint.clone();
             let replica = replica.clone();
             async move {
                 // TODO: Make sure that the peer is dialable.
                 let res = connect_and_sync::<S>(&endpoint, &replica, peer, None, &[]).await;
-                (topic, peer, res)
+                (namespace, peer, reason, res)
             }
             .boxed()
         };
-        self.pending_syncs.push(task);
+        self.running_sync_connect.push(task);
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for (topic, _replica) in self.replicas.drain() {
-            self.event_subscriptions.remove(&topic);
-            self.gossip.quit(topic).await?;
+        for (namespace, _replica) in self.replicas.drain() {
+            self.event_subscriptions.remove(&namespace);
+            self.gossip.quit(namespace.into()).await?;
         }
 
         Ok(())
     }
 
-    async fn status(&mut self, namespace: &NamespaceId) -> Option<LiveStatus> {
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if self.replicas.contains_key(&topic) {
+    async fn status(&mut self, namespace: NamespaceId) -> Option<LiveStatus> {
+        if self.replicas.contains_key(&namespace) {
             let subscriptions = self
                 .event_subscriptions
-                .get(&topic)
+                .get(&namespace)
                 .map(|map| map.len() as u64)
                 .unwrap_or_default();
             Some(LiveStatus {
@@ -553,12 +560,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
     async fn subscribe(
         &mut self,
-        namespace: &NamespaceId,
+        namespace: NamespaceId,
         cb: OnLiveEventCallback,
     ) -> anyhow::Result<RemovalToken> {
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if self.replicas.contains_key(&topic) {
-            let subs = self.event_subscriptions.entry(topic).or_default();
+        if self.replicas.contains_key(&namespace) {
+            let subs = self.event_subscriptions.entry(namespace).or_default();
             let removal_id = self
                 .event_removal_id
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -571,9 +577,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     /// Returns `true` if a callback was found and removed
-    async fn unsubscribe(&mut self, namespace: &NamespaceId, token: RemovalToken) -> bool {
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if let Some(subs) = self.event_subscriptions.get_mut(&topic) {
+    async fn unsubscribe(&mut self, namespace: NamespaceId, token: RemovalToken) -> bool {
+        if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
             let res = subs.remove(&token.0).is_some();
             return res;
         }
@@ -581,21 +586,19 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         false
     }
 
-    async fn stop_sync(&mut self, namespace: &NamespaceId) -> anyhow::Result<()> {
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if let Some(_replica) = self.replicas.remove(&topic) {
-            self.event_subscriptions.remove(&topic);
-            self.gossip.quit(topic).await?;
+    async fn stop_sync(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
+        if let Some(_replica) = self.replicas.remove(&namespace) {
+            self.event_subscriptions.remove(&namespace);
+            self.gossip.quit(namespace.into()).await?;
         }
         Ok(())
     }
 
-    async fn join_gossip_and_start_initial_sync(
+    async fn join_peers(
         &mut self,
-        namespace: &NamespaceId,
+        namespace: NamespaceId,
         peers: Vec<PeerSource>,
     ) -> anyhow::Result<()> {
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
         let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.peer_id).collect();
 
         // add addresses of initial peers to our endpoint address book
@@ -614,9 +617,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             let peer_ids = peer_ids.clone();
             let gossip = self.gossip.clone();
             async move {
-                match gossip.join(topic, peer_ids).await {
-                    Err(err) => (topic, Err(err)),
-                    Ok(fut) => (topic, fut.await),
+                match gossip.join(namespace.into(), peer_ids).await {
+                    Err(err) => (namespace, Err(err)),
+                    Ok(fut) => (namespace, fut.await),
                 }
             }
             .boxed()
@@ -624,8 +627,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // trigger initial sync with initial peers
         for peer in peer_ids {
-            debug!(peer = ?peer, topic = ?topic, "start sync (reason: explicit join with peer)");
-            self.sync_with_peer(topic, peer);
+            self.sync_with_peer(namespace, peer, SyncReason::DirectJoin);
         }
         Ok(())
     }
@@ -636,8 +638,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         peers: Vec<PeerSource>,
     ) -> Result<()> {
         let namespace = replica.namespace();
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        if let std::collections::hash_map::Entry::Vacant(e) = self.replicas.entry(topic) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.replicas.entry(namespace) {
             // setup replica insert notifications.
             let events = replica
                 .subscribe()
@@ -646,23 +647,79 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             e.insert(replica);
         }
 
-        self.join_gossip_and_start_initial_sync(&namespace, peers)
-            .await?;
+        self.join_peers(namespace, peers).await?;
 
         Ok(())
     }
 
-    fn on_sync_finished(&mut self, topic: TopicId, peer: PublicKey, res: Result<()>) {
-        let state = match res {
+    async fn on_sync_via_connect_finished(
+        &mut self,
+        namespace: NamespaceId,
+        peer: PublicKey,
+        reason: SyncReason,
+        result: Result<()>,
+    ) {
+        self.on_sync_finished(namespace, peer, Origin::Connect(reason), result)
+            .await;
+    }
+
+    async fn on_sync_via_accept_finished(
+        &mut self,
+        res: std::result::Result<(NamespaceId, PublicKey), SyncError>,
+    ) {
+        match res {
+            Ok((namespace, peer)) => {
+                debug!(?peer, ?namespace, "sync done (via accept)");
+                self.on_sync_finished(namespace, peer, Origin::Accept, Ok(()))
+                    .await;
+            }
+            Err(err) => {
+                if let (Some(peer), Some(namespace)) = (err.peer(), err.namespace()) {
+                    debug!(?peer, ?namespace, "sync failed (via accept): {err:?}");
+                    self.on_sync_finished(
+                        namespace,
+                        peer,
+                        Origin::Accept,
+                        Err(anyhow::Error::from(err)),
+                    )
+                    .await;
+                } else {
+                    debug!("sync failed (via accept): {err:?}");
+                }
+            }
+        }
+    }
+
+    async fn on_sync_finished(
+        &mut self,
+        namespace: NamespaceId,
+        peer: PublicKey,
+        origin: Origin,
+        result: anyhow::Result<()>,
+    ) {
+        debug!(?peer, ?namespace, "sync done (via {origin:?}): {result:?}");
+        let state = match result {
             Ok(_) => SyncState::Finished,
-            Err(err) => SyncState::Failed(err),
+            Err(_) => SyncState::Failed,
         };
-        self.sync_state.insert((topic, peer), state);
+        self.sync_state.insert((namespace, peer), state);
+        let event = SyncEvent {
+            namespace,
+            peer,
+            origin,
+            result: result.map_err(|err| format!("{err:?}")),
+            finished: SystemTime::now(),
+        };
+        let subs = self.event_subscriptions.get_mut(&event.namespace);
+        if let Some(subs) = subs {
+            notify_all(subs, LiveEvent::SyncFinished(event)).await;
+        }
     }
 
     fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
-        let Some(replica) = self.replicas.get(&topic) else {
-            return Err(anyhow!("Missing doc for {topic:?}"));
+        let namespace: NamespaceId = topic.as_bytes().into();
+        let Some(replica) = self.replicas.get(&namespace) else {
+            return Err(anyhow!("Missing doc for {namespace:?}"));
         };
         match event {
             // We received a gossip message. Try to insert it into our replica.
@@ -679,8 +736,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             // [Self::sync_with_peer] will check to not resync with peers synced previously in the
             // same session. TODO: Maybe this is too broad and leads to too many sync requests.
             Event::NeighborUp(peer) => {
-                debug!(peer = ?peer, topic = ?topic, "start sync (reason: new neighbor)");
-                self.sync_with_peer(topic, peer);
+                self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
             }
             _ => {}
         }
@@ -692,8 +748,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         origin: InsertOrigin,
         signed_entry: SignedEntry,
     ) -> Result<()> {
-        let topic = TopicId::from_bytes(signed_entry.entry().namespace().into());
-        let subs = self.event_subscriptions.get_mut(&topic);
+        let namespace = signed_entry.namespace();
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        let subs = self.event_subscriptions.get_mut(&namespace);
         match origin {
             InsertOrigin::Local => {
                 let entry = signed_entry.entry().clone();
@@ -728,7 +785,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     let fut = async move {
                         // NOTE: this ignores the result for now, simply keeping the option
                         let res = handle.await.ok();
-                        res.map(|_| (topic, hash))
+                        res.map(|_| (namespace, hash))
                     }
                     .boxed();
                     self.pending_downloads.push(fut);
@@ -756,21 +813,75 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             async move {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 to_actor_tx
-                    .send(ToActor::RequestSync {
+                    .send(ToActor::AcceptSyncRequest {
                         namespace,
                         peer,
                         reply: reply_tx,
                     })
                     .await
-                    .ok()?;
-                reply_rx.await.ok().flatten()
+                    .ok();
+                reply_rx.await.map_err(anyhow::Error::from)
             }
             .boxed()
         };
         let fut =
             async move { handle_connection::<S, _, _>(conn, request_replica_cb).await }.boxed();
-        self.pending_incoming_syncs.push(fut);
+        self.running_sync_accept.push(fut);
     }
+
+    pub fn accept_sync_request(
+        &mut self,
+        namespace: NamespaceId,
+        peer: PublicKey,
+    ) -> AcceptOutcome<S> {
+        let Some(replica) = self.replicas.get(&namespace).cloned() else {
+            return AcceptOutcome::NotAvailable;
+        };
+        let state = self.sync_state.get(&(namespace, peer));
+        match state {
+            None | Some(SyncState::Failed | SyncState::Finished) => {
+                self.sync_state
+                    .insert((namespace, peer), SyncState::Running);
+                AcceptOutcome::Accept(replica.clone())
+            }
+            Some(SyncState::Running) => AcceptOutcome::AlreadySyncing,
+        }
+    }
+}
+
+/// Outcome of a sync operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncEvent {
+    /// Namespace that was synced
+    pub namespace: NamespaceId,
+    /// Peer we synced with
+    pub peer: PublicKey,
+    /// Origin of the sync exchange
+    pub origin: Origin,
+    /// Timestamp when the sync finished
+    pub finished: SystemTime,
+    /// Result of the sync operation
+    pub result: std::result::Result<(), String>,
+    // TODO: Track time a sync took
+    // duration: Duration,
+}
+
+/// Why we started a sync request
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub enum SyncReason {
+    /// Direct join request via API
+    DirectJoin,
+    /// Peer showed up as new neighbor in the gossip swarm
+    NewNeighbor,
+}
+
+/// Why we performed a sync exchange
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub enum Origin {
+    /// We initiated the exchange
+    Connect(SyncReason),
+    /// A peer connected to us and we accepted the exchange
+    Accept,
 }
 
 async fn notify_all(subs: &mut HashMap<u64, OnLiveEventCallback>, event: LiveEvent) {

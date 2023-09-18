@@ -8,9 +8,12 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
-use tracing::{debug, trace};
+use tracing::trace;
 
-use crate::{store, NamespaceId, Replica};
+use crate::{
+    net::{AcceptOutcome, SyncError},
+    store, NamespaceId, Replica,
+};
 
 #[derive(Debug, Default)]
 struct SyncCodec;
@@ -135,69 +138,87 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
 pub(super) async fn run_bob<S, R, W, F, Fut>(
     writer: &mut W,
     reader: &mut R,
-    request_sync_cb: F,
+    accept_cb: F,
     other_peer_id: PublicKey,
-) -> Result<NamespaceId>
+) -> std::result::Result<NamespaceId, SyncError>
 where
     S: store::Store,
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
     F: Fn(NamespaceId, PublicKey) -> Fut,
-    Fut: Future<Output = Option<Replica<S::Instance>>>,
+    Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
 {
-    let other_peer_id_bytes = *other_peer_id.as_bytes();
-    let mut reader = FramedRead::new(reader, SyncCodec);
-    let mut writer = FramedWrite::new(writer, SyncCodec);
+    let mut state = BobState::<S>::new(other_peer_id);
+    state
+        .run(writer, reader, accept_cb)
+        .await
+        .map_err(|err| SyncError::sync(state.peer, state.namespace(), err))
+}
 
-    let mut replica = None;
+struct BobState<S: store::Store> {
+    replica: Option<Replica<S::Instance>>,
+    peer: PublicKey,
+}
 
-    while let Some(msg) = reader.next().await {
-        match msg? {
-            Message::Init { namespace, message } => {
-                ensure!(replica.is_none(), "double init message");
-
-                match request_sync_cb(namespace, other_peer_id).await {
-                    Some(r) => {
-                        debug!("run_bob: process initial message for {}", namespace);
-                        if let Some(msg) = r
-                            .sync_process_message(message, other_peer_id_bytes)
-                            .map_err(Into::into)?
-                        {
-                            trace!("bob -> alice: {:#?}", msg);
-                            writer.send(Message::Sync(msg)).await?;
-                        } else {
-                            break;
-                        }
-                        replica = Some(r);
-                    }
-                    None => {
-                        bail!("unable to synchronize unknown namespace: {}", namespace);
-                    }
-                }
-            }
-            Message::Sync(msg) => match replica {
-                Some(ref replica) => {
-                    if let Some(msg) = replica
-                        .sync_process_message(msg, other_peer_id_bytes)
-                        .map_err(Into::into)?
-                    {
-                        trace!("bob -> alice: {:#?}", msg);
-                        writer.send(Message::Sync(msg)).await?;
-                    } else {
-                        break;
-                    }
-                }
-                None => {
-                    bail!("unexpected sync message without init");
-                }
-            },
+impl<S: store::Store> BobState<S> {
+    pub fn new(peer: PublicKey) -> Self {
+        Self {
+            peer,
+            replica: None,
         }
     }
 
-    let namespace = replica
-        .ok_or_else(|| anyhow!("Connection lost before initial message received"))?
-        .namespace();
-    Ok(namespace)
+    async fn run<R, W, F, Fut>(&mut self, writer: W, reader: R, accept_cb: F) -> Result<NamespaceId>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+        F: Fn(NamespaceId, PublicKey) -> Fut,
+        Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
+    {
+        let mut reader = FramedRead::new(reader, SyncCodec);
+        let mut writer = FramedWrite::new(writer, SyncCodec);
+        while let Some(msg) = reader.next().await {
+            let next = match (msg?, self.replica.as_ref()) {
+                (Message::Init { namespace, message }, None) => {
+                    let replica = match accept_cb(namespace, self.peer).await? {
+                        AcceptOutcome::Accept(replica) => replica,
+                        AcceptOutcome::NotAvailable => {
+                            bail!("abort sync: {namespace:?} not available")
+                        }
+                        AcceptOutcome::AlreadySyncing => {
+                            bail!("abort sync: {namespace:?} already syncing")
+                        }
+                    };
+                    trace!(?namespace, peer = ?self.peer, "run_bob: recv initial message {message:#?}");
+                    let next = replica.sync_process_message(message, *self.peer.as_bytes());
+                    self.replica = Some(replica);
+                    next
+                }
+                (Message::Sync(msg), Some(replica)) => {
+                    trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv {msg:#?}");
+                    replica.sync_process_message(msg, *self.peer.as_bytes())
+                }
+                (Message::Init { .. }, Some(_)) => bail!("double init message"),
+                (Message::Sync(_), None) => bail!("unexpected sync message before init"),
+            };
+            match next.map_err(Into::into)? {
+                Some(msg) => {
+                    trace!(namespace = ?self.namespace(), peer = ?self.peer, "run_bob: send {msg:#?}");
+                    writer.send(Message::Sync(msg)).await?;
+                }
+                None => break,
+            }
+        }
+
+        trace!(namespace = ?self.namespace().unwrap(), peer = ?self.peer, "run_bob: finished");
+
+        self.namespace()
+            .ok_or_else(|| anyhow!("Stream closed before init message"))
+    }
+
+    fn namespace(&self) -> Option<NamespaceId> {
+        self.replica.as_ref().map(|r| r.namespace()).to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -272,11 +293,15 @@ mod tests {
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
         let bob_replica_store_task = bob_replica_store.clone();
         let bob_task = tokio::task::spawn(async move {
-            run_bob::<store::memory::Store, _, _>(
+            run_bob::<store::memory::Store, _, _, _, _>(
                 &mut bob_writer,
                 &mut bob_reader,
                 |namespace, _| {
-                    futures::future::ready(bob_replica_store_task.open_replica(&namespace))
+                    futures::future::ready(
+                        bob_replica_store_task
+                            .open_replica(&namespace)
+                            .map(Into::into),
+                    )
                 },
                 alice_peer_id,
             )
@@ -473,10 +498,12 @@ mod tests {
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
         let bob_store = bob_store.clone();
         let bob_task = tokio::task::spawn(async move {
-            run_bob::<S, _, _>(
+            run_bob::<S, _, _, _, _>(
                 &mut bob_writer,
                 &mut bob_reader,
-                |namespace, _| futures::future::ready(bob_store.open_replica(&namespace)),
+                |namespace, _| {
+                    futures::future::ready(bob_store.open_replica(&namespace).map(Into::into))
+                },
                 alice_node_pubkey,
             )
             .await
