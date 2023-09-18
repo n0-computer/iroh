@@ -23,6 +23,7 @@ use std::{
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
@@ -143,6 +144,9 @@ pub struct Options {
 
     /// Callbacks to emit on various socket events
     pub callbacks: Callbacks,
+
+    /// Path to store known peers.
+    pub peers_path: Option<std::path::PathBuf>,
 }
 
 /// Contains options for `MagicSock::listen`.
@@ -169,6 +173,7 @@ impl Default for Options {
             secret_key: SecretKey::generate(),
             derp_map: Default::default(),
             callbacks: Default::default(),
+            peers_path: None,
         }
     }
 }
@@ -332,6 +337,7 @@ impl MagicSock {
                     on_derp_active,
                     on_net_info,
                 },
+            peers_path,
         } = opts;
 
         let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
@@ -420,6 +426,7 @@ impl MagicSock {
                     net_info_last: None,
                     disco_info: HashMap::new(),
                     peer_map: Default::default(),
+                    peers_path,
                     port_mapper,
                     pconn4,
                     pconn6,
@@ -897,7 +904,10 @@ struct Actor {
     /// The state for an active DiscoKey.
     disco_info: HashMap<PublicKey, DiscoInfo>,
     /// Tracks the networkmap node entity for each peer discovery key.
+    /// TODO: update docs.
     peer_map: PeerMap,
+    /// Path where connection info from [`Self::peer_map`] is persisted.
+    peers_path: Option<PathBuf>,
 
     // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
