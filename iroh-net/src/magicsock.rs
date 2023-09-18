@@ -2244,32 +2244,21 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, addr: NodeAddr) {
-        let NodeAddr {
-            node_id: key,
-            derp_region,
-            endpoints,
-        } = addr;
-        let n = config::Node {
-            endpoints,
-            key,
-            derp_region,
-        };
-
-        if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
+    fn add_known_addr(&mut self, n: NodeAddr) {
+        if self.peer_map.endpoint_for_node_key(&n.node_id).is_none() {
             info!(
-                peer = ?n.key,
+                peer = ?n.node_id,
                 "inserting peer's endpoint in PeerMap"
             );
             self.peer_map.insert_endpoint(EndpointOptions {
                 msock_sender: self.inner.actor_sender.clone(),
-                public_key: n.key,
+                public_key: n.node_id,
                 derp_region: n.derp_region,
             });
         }
 
-        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.key) {
-            ep.update_from_node(&n);
+        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.node_id) {
+            ep.update_from_node_addr(&n);
             let id = ep.id;
             for endpoint in &n.endpoints {
                 self.peer_map

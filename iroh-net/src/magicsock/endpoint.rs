@@ -561,7 +561,7 @@ impl Endpoint {
         }
     }
 
-    pub fn update_from_node(&mut self, n: &config::Node) {
+    pub fn update_from_node_addr(&mut self, n: &NodeAddr) {
         if self.best_addr.is_none() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status

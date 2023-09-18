@@ -18,7 +18,7 @@ use crate::{
 
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
 
-/// Adress information for a node.
+/// Address information for a node.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeAddr {
     /// The node's public key.
