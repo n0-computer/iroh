@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
@@ -16,7 +18,9 @@ const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
     /// Set the active document (only works within the Iroh console).
-    Switch { id: NamespaceId },
+    Switch {
+        id: NamespaceId,
+    },
     /// Create a new document.
     New {
         /// Switch to the created document (only in the Iroh console).
@@ -82,6 +86,10 @@ pub enum DocCommands {
         /// Also print the content for each entry (but only if smaller than 1MB and valid UTf-8)
         #[clap(short, long)]
         content: bool,
+    },
+    Save {
+        key: String,
+        path: PathBuf,
     },
     /// List all keys in a document.
     #[clap(alias = "ls")]
@@ -208,6 +216,21 @@ impl DocCommands {
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     print_entry(&doc, &entry, content).await?;
+                }
+            }
+            Self::Save { key, path } => {
+                let doc = iroh.get_doc(env.doc(None)?).await?;
+                let key = key.as_bytes().to_vec();
+                let filter = GetFilter::Key(key);
+
+                let mut stream = doc.get_many(filter).await?;
+                while let Some(entry) = stream.try_next().await? {
+                    match doc.get_content_bytes(entry.content_hash()).await {
+                        Ok(content) => {
+                            std::fs::write(path.clone(), content).unwrap();
+                        }
+                        Err(err) => println!("<failed to get content: {err}>"),
+                    }
                 }
             }
             Self::Keys {
