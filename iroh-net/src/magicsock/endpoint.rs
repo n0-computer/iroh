@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     hash::Hash,
-    io,
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
@@ -53,8 +52,6 @@ pub(super) struct Endpoint {
     conn_sender: mpsc::Sender<ActorMessage>,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
-    /// Public key for this node/connection.
-    conn_public_key: PublicKey,
     /// Peer public key (for UDP + DERP)
     pub(super) public_key: PublicKey,
     /// Last time we pinged all endpoints
@@ -74,9 +71,6 @@ pub(super) struct Endpoint {
     /// Any outstanding "tailscale ping" commands running
     pending_cli_pings: Vec<PendingCliPing>,
 
-    /// Whether the node has expired.
-    expired: bool,
-
     sent_ping: HashMap<stun::TransactionId, SentPing>,
 
     /// Last time this endpoint was used.
@@ -93,7 +87,6 @@ pub struct PendingCliPing {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) msock_sender: mpsc::Sender<ActorMessage>,
-    pub(super) msock_public_key: PublicKey,
     pub(super) public_key: PublicKey,
     pub(super) derp_region: Option<u16>,
 }
@@ -111,7 +104,6 @@ impl Endpoint {
             id,
             conn_sender: options.msock_sender,
             quic_mapped_addr,
-            conn_public_key: options.msock_public_key,
             public_key: options.public_key,
             last_full_ping: None,
             derp_region: options.derp_region,
@@ -122,7 +114,6 @@ impl Endpoint {
             endpoint_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            expired: false,
             last_active: Instant::now(),
         }
     }
@@ -308,12 +299,6 @@ impl Endpoint {
     where
         F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
-        if self.expired {
-            res.err = Some("endpoint expired".to_string());
-            cb(res);
-            return;
-        }
-
         self.pending_cli_pings.push(PendingCliPing {
             res,
             cb: Box::new(cb),
@@ -404,13 +389,10 @@ impl Endpoint {
         if let Some(pub_key) = public_key {
             sent = self
                 .conn_sender
-                .send(ActorMessage::SendDiscoMessage {
+                .send(ActorMessage::SendPing {
                     dst: ep,
                     dst_key: pub_key,
-                    msg: disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        node_key: self.conn_public_key,
-                    }),
+                    tx_id,
                 })
                 .await
                 .map(|_| true)
@@ -970,11 +952,7 @@ impl Endpoint {
         }
     }
 
-    pub(crate) async fn get_send_addrs(&mut self) -> io::Result<(Option<SocketAddr>, Option<u16>)> {
-        if self.expired {
-            return Err(io::Error::new(io::ErrorKind::Other, "endpoint expired"));
-        }
-
+    pub(crate) async fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>) {
         let now = Instant::now();
         self.last_active = now;
         let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
@@ -986,7 +964,7 @@ impl Endpoint {
 
         debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_region);
 
-        Ok((udp_addr, derp_region))
+        (udp_addr, derp_region)
     }
 
     fn is_best_addr_valid(&self, instant: Instant) -> bool {
@@ -1350,7 +1328,6 @@ mod tests {
                     id: 0,
                     conn_sender: send,
                     quic_mapped_addr: QuicMappedAddr::generate(),
-                    conn_public_key: key.public(),
                     public_key: key.public(),
                     last_full_ping: None,
                     derp_region: Some(0),
@@ -1363,7 +1340,6 @@ mod tests {
                     endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
-                    expired: false,
                     sent_ping: HashMap::new(),
                     last_active: now,
                 },
@@ -1397,7 +1373,6 @@ mod tests {
                 id: 1,
                 conn_sender: send,
                 quic_mapped_addr: QuicMappedAddr::generate(),
-                conn_public_key: key.public(),
                 public_key: key.public(),
                 last_full_ping: None,
                 derp_region: Some(0),
@@ -1407,7 +1382,6 @@ mod tests {
                 endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
-                expired: false,
                 sent_ping: HashMap::new(),
                 last_active: now,
             }
@@ -1424,7 +1398,6 @@ mod tests {
                 id: 2,
                 conn_sender: send,
                 quic_mapped_addr: QuicMappedAddr::generate(),
-                conn_public_key: key.public(),
                 public_key: key.public(),
                 last_full_ping: None,
                 derp_region: Some(0),
@@ -1434,7 +1407,6 @@ mod tests {
                 endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
-                expired: false,
                 sent_ping: HashMap::new(),
                 last_active: now,
             }
@@ -1488,7 +1460,6 @@ mod tests {
                     id: 3,
                     conn_sender: send,
                     quic_mapped_addr: QuicMappedAddr::generate(),
-                    conn_public_key: key.public(),
                     public_key: key.public(),
                     last_full_ping: None,
                     derp_region: Some(0),
@@ -1501,7 +1472,6 @@ mod tests {
                     endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
-                    expired: false,
                     sent_ping: HashMap::new(),
                     last_active: now,
                 },

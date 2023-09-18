@@ -38,11 +38,11 @@ Bytes, Distributed.
 </div>
 <br/>
 
-Iroh is a protocol for syncing & moving bytes. Bytes of any size, on any device. At it's core, it's a peer-2-peer network built on a _magic socket_ that establishes [QUIC](https://en.wikipedia.org/wiki/QUIC) connections between peers. Peers request and provide _blobs_ of opaque bytes that are incrementally verified by their BLAKE3 hash during transfer.
+Iroh is a protocol for syncing & moving bytes. Bytes of any size, on any device. At its core, it's a peer-2-peer network built on a _magic socket_ that establishes [QUIC](https://en.wikipedia.org/wiki/QUIC) connections between peers. Peers request and provide _blobs_ of opaque bytes that are incrementally verified by their BLAKE3 hash during transfer.
 
 ## Using Iroh
 
-Iroh is delivered as a Rust library and a CLI. Run `cargo build` to build the `iroh` CLI. To use iroh in your project, check out https://iroh.computer/install to get started.
+Iroh is delivered as a Rust library and a CLI. Run `cargo build` to build the `iroh` CLI. To use iroh in your project, check out https://iroh.computer/docs/install to get started.
 
 ### As a library
 Disable default features when using `iroh` as a library:

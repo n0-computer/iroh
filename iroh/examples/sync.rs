@@ -18,7 +18,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    download::Downloader,
+    downloader::Downloader,
     sync_engine::{LiveEvent, PeerSource, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
@@ -218,7 +218,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> storage directory: {storage_path:?}");
 
     // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
-    let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
+    let rt = iroh_bytes::util::runtime::Handle::from_current(num_cpus::get())?;
 
     // create a doc store for the iroh-sync docs
     let author = Author::from_bytes(&secret_key.to_bytes());
@@ -230,8 +230,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
 
+    let collection_parser = iroh::collection::IrohCollectionParser;
+
     // create the live syncer
-    let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
+    let downloader =
+        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),

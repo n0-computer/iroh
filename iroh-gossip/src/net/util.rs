@@ -81,16 +81,17 @@ pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Conne
 
 /// Dial peers and maintain a queue of pending dials
 ///
-/// This wraps a [MagicEndpoint], connects to peers through the endpoint, stores
+/// This wraps a [`MagicEndpoint`], connects to peers through the endpoint, stores
 /// the pending connect futures and emits finished connect results.
 ///
-/// TODO: Move to iroh-net
+// TODO: Move to iroh-net
 #[derive(Debug)]
 pub struct Dialer {
     endpoint: MagicEndpoint,
     pending: FuturesUnordered<DialFuture>,
     pending_peers: HashMap<PublicKey, CancellationToken>,
 }
+
 impl Dialer {
     /// Create a new dialer for a [`MagicEndpoint`]
     pub fn new(endpoint: MagicEndpoint) -> Self {
@@ -137,7 +138,7 @@ impl Dialer {
     }
 
     /// Wait for the next dial operation to complete
-    pub async fn next(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
+    pub async fn next_conn(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
         match self.pending_peers.is_empty() {
             false => {
                 let (peer_id, res) = self.pending.next().await.unwrap();
@@ -145,6 +146,25 @@ impl Dialer {
                 (peer_id, res)
             }
             true => futures::future::pending().await,
+        }
+    }
+
+    /// Number of pending connections to be opened.
+    pub fn pending_count(&self) -> usize {
+        self.pending_peers.len()
+    }
+}
+
+impl futures::Stream for Dialer {
+    type Item = (PublicKey, anyhow::Result<quinn::Connection>);
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        match self.pending.poll_next_unpin(cx) {
+            std::task::Poll::Ready(res) if res.is_some() => std::task::Poll::Ready(res),
+            _ => std::task::Poll::Pending,
         }
     }
 }

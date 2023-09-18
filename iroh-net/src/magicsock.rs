@@ -33,7 +33,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -47,9 +47,10 @@ use crate::{
     config::{self, DERP_MAGIC_IP},
     derp::{DerpMap, DerpRegion},
     disco,
+    dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
-    net::ip::LocalAddresses,
+    net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
 };
@@ -852,10 +853,15 @@ enum ActorMessage {
         derp_region: u16,
         endpoint_id: usize,
     },
-    SendDiscoMessage {
+    SendPing {
         dst: SendAddr,
         dst_key: PublicKey,
-        msg: disco::Message,
+        tx_id: stun::TransactionId,
+    },
+    SendCallMeMaybe {
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::CallMeMaybe,
     },
     AddKnownAddr(NodeAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
@@ -912,6 +918,37 @@ struct Actor {
 
 impl Actor {
     async fn run(mut self) -> Result<()> {
+        // Setup network monitoring
+        let monitor = netmon::Monitor::new().await?;
+        let sender = self.msg_sender.clone();
+        let _token = monitor
+            .subscribe(move |is_major| {
+                let sender = sender.clone();
+                async move {
+                    info!("link change detected: major? {}", is_major);
+
+                    // Clear DNS cache
+                    DNS_RESOLVER.clear_cache();
+
+                    if is_major {
+                        let (s, r) = sync::oneshot::channel();
+                        sender.send(ActorMessage::RebindAll(s)).await.ok();
+                        sender
+                            .send(ActorMessage::ReStun("link-change-major"))
+                            .await
+                            .ok();
+                        r.await.ok();
+                    } else {
+                        sender
+                            .send(ActorMessage::ReStun("link-change-minor"))
+                            .await
+                            .ok();
+                    }
+                }
+                .boxed()
+            })
+            .await?;
+
         // Let the the hearbeat only start a couple seconds later
         let mut endpoint_heartbeat_timer = time::interval_at(
             time::Instant::now() + Duration::from_secs(5),
@@ -1053,7 +1090,19 @@ impl Actor {
                 self.set_preferred_port(port).await;
                 let _ = s.send(());
             }
-            ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
+            ActorMessage::SendPing {
+                dst,
+                dst_key,
+                tx_id,
+            } => {
+                let msg = disco::Message::Ping(disco::Ping {
+                    tx_id,
+                    node_key: self.inner.public_key(),
+                });
+                let _res = self.send_disco_message(dst, dst_key, msg).await;
+            }
+            ActorMessage::SendCallMeMaybe { dst, dst_key, msg } => {
+                let msg = disco::Message::CallMeMaybe(msg);
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
             ActorMessage::AddKnownAddr(addr, s) => {
@@ -1156,7 +1205,6 @@ impl Actor {
                 info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
-                    msock_public_key: self.inner.public_key(),
                     public_key: dm.src,
                     derp_region: Some(region_id),
                 });
@@ -1264,7 +1312,7 @@ impl Actor {
                 );
 
                 match ep.get_send_addrs().await {
-                    Ok((Some(udp_addr), Some(derp_region))) => {
+                    (Some(udp_addr), Some(derp_region)) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
                         self.send_derp(derp_region, public_key, Self::split_packets(transmits));
 
@@ -1272,22 +1320,16 @@ impl Actor {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
-                    Ok((None, Some(derp_region))) => {
+                    (None, Some(derp_region)) => {
                         self.send_derp(derp_region, public_key, Self::split_packets(transmits));
                     }
-                    Ok((Some(udp_addr), None)) => {
+                    (Some(udp_addr), None) => {
                         if let Err(err) = self.send_raw(udp_addr, transmits).await {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
-                    Ok((None, None)) => {
+                    (None, None) => {
                         warn!("no UDP or DERP addr")
-                    }
-                    Err(err) => {
-                        warn!(
-                            "failed to send messages to {}: {:?}",
-                            current_destination, err
-                        );
                     }
                 }
             }
@@ -1766,13 +1808,13 @@ impl Actor {
         } else {
             let public_key = *endpoint.public_key();
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
-            let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
+            let msg = disco::CallMeMaybe { my_number: eps };
 
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
                 warn!("sending call me maybe to {public_key:?}");
                 if let Err(err) = msg_sender
-                    .send(ActorMessage::SendDiscoMessage {
+                    .send(ActorMessage::SendCallMeMaybe {
                         dst: SendAddr::Derp(derp_region),
                         dst_key: public_key,
                         msg,
@@ -2059,7 +2101,6 @@ impl Actor {
                     );
                     self.peer_map.insert_endpoint(EndpointOptions {
                         msock_sender: self.inner.actor_sender.clone(),
-                        msock_public_key: self.inner.public_key(),
                         public_key: sender,
                         derp_region: src.derp_region(),
                     });
@@ -2209,7 +2250,6 @@ impl Actor {
             );
             self.peer_map.insert_endpoint(EndpointOptions {
                 msock_sender: self.inner.actor_sender.clone(),
-                msock_public_key: self.inner.public_key(),
                 public_key: n.key,
                 derp_region: n.derp,
             });
