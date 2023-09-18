@@ -1216,7 +1216,7 @@ fn compute_outboard(
         bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
     let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
     tracing::trace!(%hash, "done");
-    let ob = ob.into_inner();
+    let ob = ob.into_inner_with_prefix();
     let ob = if ob.len() > 8 { Some(ob) } else { None };
     Ok((hash.into(), ob))
 }

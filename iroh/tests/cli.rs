@@ -240,6 +240,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     let ticket = match_provide_output(&provider, count)?;
     // first test - empty work dir
     {
+        println!("first test - empty work dir");
         let get = make_get_cmd(&ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -251,6 +252,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     // second test - full work dir
     {
+        println!("second test - full work dir");
         copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         let get = make_get_cmd(&ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
@@ -263,6 +265,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     // third test - partial work dir - remove some large files
     {
+        println!("third test - partial work dir - remove some large files");
         copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         make_partial(&tgt_work_dir, |_hash, size| {
             if size == 100000 {
@@ -282,6 +285,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     // fourth test - partial work dir - truncate some large files
     {
+        println!("fourth test - partial work dir - truncate some large files");
         copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         make_partial(tgt_work_dir, |_hash, size| {
             if size == 100000 {
@@ -294,7 +298,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["69.79 KiB"]);
+        assert_eq!(matches, vec!["65.98 KiB"]);
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
@@ -472,8 +476,8 @@ fn make_provider_in(
         ],
     )
     // .stderr_null()
-    .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
-    .env("RUST_LOG", "info")
+    // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
+    // .env("RUST_LOG", "iroh_bytes=debug,iroh_net=warn,iroh=debug,warn")
     .env("IROH_DATA_DIR", iroh_data_dir);
 
     let provider = match input {
