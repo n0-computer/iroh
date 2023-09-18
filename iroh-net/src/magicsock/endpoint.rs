@@ -13,8 +13,8 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    config, disco, key::PublicKey, magicsock::Timer, net::ip::is_unicast_link_local, stun,
-    util::derp_only_mode,
+    config, disco, key::PublicKey, magic_endpoint::NodeAddr, magicsock::Timer,
+    net::ip::is_unicast_link_local, stun, util::derp_only_mode,
 };
 
 use super::{
@@ -154,6 +154,26 @@ impl Endpoint {
             addrs,
             conn_type,
             latency,
+        }
+    }
+
+    /// Return the addressing information of the endpoint
+    pub fn addr_info(&self) -> NodeAddr {
+        let endpoints = self
+            .endpoint_state
+            .keys()
+            .filter_map(|send_addr| {
+                if let SendAddr::Udp(socket_addr) = send_addr {
+                    Some(*socket_addr)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        NodeAddr {
+            node_id: self.public_key,
+            derp_region: self.derp_region,
+            endpoints,
         }
     }
 
