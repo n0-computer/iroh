@@ -248,8 +248,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // into to the connection handler task for incoming connections.
     let state = Arc::new(State {
         gossip: gossip.clone(),
-        docs: docs.clone(),
         bytes: IrohBytesHandlers::new(rt.clone(), db.clone()),
+        sync: live_sync.clone(),
     });
 
     // spawn our endpoint loop that forwards incoming connections
@@ -285,7 +285,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             let matcher = watch.lock().await;
             if let Some(matcher) = &*matcher {
                 match event.event {
-                    LiveEvent::ContentReady { .. } => {}
+                    LiveEvent::ContentReady { .. } | LiveEvent::SyncFinished { .. } => {}
                     LiveEvent::InsertLocal { entry } | LiveEvent::InsertRemote { entry, .. } => {
                         let key = entry.id().key();
                         if key.starts_with(matcher.as_bytes()) {
@@ -765,13 +765,16 @@ impl FromStr for Cmd {
 }
 
 #[derive(Debug)]
-struct State {
+struct State<S: store::Store> {
     gossip: Gossip,
-    docs: iroh_sync::store::fs::Store,
     bytes: IrohBytesHandlers,
+    sync: SyncEngine<S>,
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, state: Arc<State>) -> anyhow::Result<()> {
+async fn endpoint_loop<S: store::Store>(
+    endpoint: MagicEndpoint,
+    state: Arc<State<S>>,
+) -> anyhow::Result<()> {
     while let Some(conn) = endpoint.accept().await {
         let state = state.clone();
         tokio::spawn(async move {
@@ -783,12 +786,15 @@ async fn endpoint_loop(endpoint: MagicEndpoint, state: Arc<State>) -> anyhow::Re
     Ok(())
 }
 
-async fn handle_connection(mut conn: quinn::Connecting, state: Arc<State>) -> anyhow::Result<()> {
+async fn handle_connection<S: store::Store>(
+    mut conn: quinn::Connecting,
+    state: Arc<State<S>>,
+) -> anyhow::Result<()> {
     let alpn = get_alpn(&mut conn).await?;
     println!("> incoming connection with alpn {alpn}");
     match alpn.as_bytes() {
         GOSSIP_ALPN => state.gossip.handle_connection(conn.await?).await,
-        SYNC_ALPN => iroh_sync::net::handle_connection(conn, state.docs.clone()).await,
+        SYNC_ALPN => state.sync.handle_connection(conn).await,
         alpn if alpn == iroh_bytes::protocol::ALPN => state.bytes.handle_connection(conn).await,
         _ => bail!("ignoring connection: unsupported ALPN protocol"),
     }

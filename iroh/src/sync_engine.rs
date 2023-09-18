@@ -108,4 +108,9 @@ impl<S: Store> SyncEngine<S> {
             .get_author(id)?
             .ok_or_else(|| anyhow!("author not found"))
     }
+
+    /// Handle an incoming iroh-sync connection.
+    pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
+        self.live.handle_connection(conn).await
+    }
 }

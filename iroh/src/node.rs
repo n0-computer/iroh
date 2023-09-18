@@ -66,7 +66,7 @@ use crate::rpc_protocol::{
     StatusRequest, StatusResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
     WatchResponse,
 };
-use crate::sync_engine::{LiveSync, SyncEngine, SYNC_ALPN};
+use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -520,7 +520,7 @@ where
                     let collection_parser = collection_parser.clone();
                     let custom_get_handler = custom_get_handler.clone();
                     let auth_handler = auth_handler.clone();
-                    let sync = handler.inner.sync.live.clone();
+                    let sync = handler.inner.sync.clone();
                     rt.main().spawn(async move {
                         if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, collection_parser, custom_get_handler, auth_handler).await {
                             warn!("Handling incoming connection ended with error: {err}");
@@ -554,7 +554,7 @@ async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
     alpn: String,
     node: Arc<NodeInner<D, S>>,
     gossip: Gossip,
-    sync: LiveSync<S>,
+    sync: SyncEngine<S>,
     collection_parser: C,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
