@@ -24,13 +24,13 @@ use iroh_gossip::{
 };
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use iroh_sync::{
-    net::connect_and_sync,
+    net::{connect_and_sync, handle_connection},
     store,
     sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::{self, mpsc},
+    sync::{self, mpsc, oneshot},
     task::JoinError,
 };
 use tracing::{debug, error, info, warn};
@@ -148,6 +148,14 @@ enum ToActor<S: store::Store> {
         token: RemovalToken,
         s: sync::oneshot::Sender<bool>,
     },
+    HandleConnection {
+        conn: quinn::Connecting,
+    },
+    RequestSync {
+        namespace: NamespaceId,
+        peer: PublicKey,
+        reply: sync::oneshot::Sender<Option<Replica<S::Instance>>>,
+    },
 }
 
 /// Whether to keep a live event callback active.
@@ -233,7 +241,14 @@ impl<S: store::Store> LiveSync<S> {
         downloader: Downloader,
     ) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
-        let mut actor = Actor::new(endpoint, gossip, bao_store, downloader, to_actor_rx);
+        let mut actor = Actor::new(
+            endpoint,
+            gossip,
+            bao_store,
+            downloader,
+            to_actor_rx,
+            to_actor_tx.clone(),
+        );
         let task = rt.main().spawn(async move {
             if let Err(err) = actor.run().await {
                 error!("live sync failed: {err:?}");
@@ -325,6 +340,14 @@ impl<S: store::Store> LiveSync<S> {
         let status = r.await?;
         Ok(status)
     }
+
+    /// Handle an incoming iroh-sync connection.
+    pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
+        self.to_actor_tx
+            .send(ToActor::<S>::HandleConnection { conn })
+            .await?;
+        Ok(())
+    }
 }
 
 // Currently peers might double-sync in both directions.
@@ -342,8 +365,13 @@ struct Actor<S: store::Store, B: baomap::Store> {
     sync_state: HashMap<(TopicId, PublicKey), SyncState>,
 
     to_actor_rx: mpsc::Receiver<ToActor<S>>,
+    /// Send messages to self.
+    /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
+    /// Only clone into newly spawned tasks.
+    to_actor_tx: mpsc::Sender<ToActor<S>>,
 
     pending_syncs: FuturesUnordered<BoxFuture<'static, (TopicId, PublicKey, Result<()>)>>,
+    pending_incoming_syncs: FuturesUnordered<BoxFuture<'static, Result<(NamespaceId, PublicKey)>>>,
     pending_joins: FuturesUnordered<BoxFuture<'static, (TopicId, Result<()>)>>,
 
     event_subscriptions: HashMap<TopicId, HashMap<u64, OnLiveEventCallback>>,
@@ -363,6 +391,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         bao_store: B,
         downloader: Downloader,
         to_actor_rx: mpsc::Receiver<ToActor<S>>,
+        to_actor_tx: mpsc::Sender<ToActor<S>>,
     ) -> Self {
         let sub = gossip.clone().subscribe_all().boxed();
 
@@ -372,8 +401,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             bao_store,
             downloader,
             to_actor_rx,
+            to_actor_tx,
             sync_state: Default::default(),
             pending_syncs: Default::default(),
+            pending_incoming_syncs: Default::default(),
             pending_joins: Default::default(),
             replicas: Default::default(),
             replicas_subscription: Default::default(),
@@ -411,7 +442,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             let result = self.status(&namespace).await;
                             s.send(result).ok();
                         },
-                    }
+                        Some(ToActor::HandleConnection { conn }) => {
+                             self.handle_connection(conn).await;
+                        },
+                        Some(ToActor::RequestSync { namespace, peer: _, reply }) => {
+                            let maybe_replica = self.replicas.get(&namespace.into()).cloned();
+                            reply.send(maybe_replica).ok();
+                        },
+                    };
                 }
                 // new gossip message
                 Some(event) = self.subscription.next() => {
@@ -428,6 +466,17 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 Some((topic, peer, res)) = self.pending_syncs.next() => {
                     self.on_sync_finished(topic, peer, res);
 
+                }
+                Some(res) = self.pending_incoming_syncs.next() => {
+                    match res {
+                        Ok((namespace, peer)) => {
+                           let topic: TopicId = namespace.into();
+                           self.sync_state.insert((topic, peer), SyncState::Finished);
+                        },
+                        Err(err) => {
+
+                        }
+                    }
                 }
                 Some((topic, res)) = self.pending_joins.next() => {
                     if let Err(err) = res {
@@ -467,10 +516,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             let endpoint = self.endpoint.clone();
             let replica = replica.clone();
             async move {
-                debug!("init sync with {peer}");
                 // TODO: Make sure that the peer is dialable.
                 let res = connect_and_sync::<S>(&endpoint, &replica, peer, None, &[]).await;
-                debug!("synced with {peer}: {res:?}");
                 (topic, peer, res)
             }
             .boxed()
@@ -577,6 +624,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // trigger initial sync with initial peers
         for peer in peer_ids {
+            debug!(peer = ?peer, topic = ?topic, "start sync (reason: explicit join with peer)");
             self.sync_with_peer(topic, peer);
         }
         Ok(())
@@ -631,7 +679,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             // [Self::sync_with_peer] will check to not resync with peers synced previously in the
             // same session. TODO: Maybe this is too broad and leads to too many sync requests.
             Event::NeighborUp(peer) => {
-                debug!(peer = ?peer, "new neighbor, init sync");
+                debug!(peer = ?peer, topic = ?topic, "start sync (reason: new neighbor)");
                 self.sync_with_peer(topic, peer);
             }
             _ => {}
@@ -699,6 +747,29 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         }
 
         Ok(())
+    }
+
+    pub async fn handle_connection(&mut self, conn: quinn::Connecting) {
+        let to_actor_tx = self.to_actor_tx.clone();
+        let request_replica_cb = move |namespace, peer| {
+            let to_actor_tx = to_actor_tx.clone();
+            async move {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                to_actor_tx
+                    .send(ToActor::RequestSync {
+                        namespace,
+                        peer,
+                        reply: reply_tx,
+                    })
+                    .await
+                    .ok()?;
+                reply_rx.await.ok().flatten()
+            }
+            .boxed()
+        };
+        let fut =
+            async move { handle_connection::<S, _, _>(conn, request_replica_cb).await }.boxed();
+        self.pending_incoming_syncs.push(fut);
     }
 }
 

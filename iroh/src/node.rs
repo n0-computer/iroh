@@ -66,7 +66,7 @@ use crate::rpc_protocol::{
     StatusRequest, StatusResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
     WatchResponse,
 };
-use crate::sync_engine::{SyncEngine, SYNC_ALPN};
+use crate::sync_engine::{LiveSync, SyncEngine, SYNC_ALPN};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -520,8 +520,9 @@ where
                     let collection_parser = collection_parser.clone();
                     let custom_get_handler = custom_get_handler.clone();
                     let auth_handler = auth_handler.clone();
+                    let sync = handler.inner.sync.live.clone();
                     rt.main().spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, collection_parser, custom_get_handler, auth_handler).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, collection_parser, custom_get_handler, auth_handler).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -551,13 +552,14 @@ async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
     alpn: String,
     node: Arc<NodeInner<D, S>>,
     gossip: Gossip,
+    sync: LiveSync<S>,
     collection_parser: C,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => iroh_sync::net::handle_connection(connecting, node.sync.store.clone()).await?,
+        SYNC_ALPN => sync.handle_connection(connecting).await?,
         alpn if alpn == iroh_bytes::protocol::ALPN => {
             iroh_bytes::provider::handle_connection(
                 connecting,

@@ -1,4 +1,6 @@
-use anyhow::{bail, ensure, Result};
+use std::future::Future;
+
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::SinkExt;
 use iroh_net::key::PublicKey;
@@ -130,13 +132,20 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
 }
 
 /// Runs the receiver side of the sync protocol.
-pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+pub(super) async fn run_bob<S, R, W, F, Fut>(
     writer: &mut W,
     reader: &mut R,
-    replica_store: S,
+    request_sync_cb: F,
     other_peer_id: PublicKey,
-) -> Result<()> {
-    let other_peer_id = *other_peer_id.as_bytes();
+) -> Result<NamespaceId>
+where
+    S: store::Store,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    F: Fn(NamespaceId, PublicKey) -> Fut,
+    Fut: Future<Output = Option<Replica<S::Instance>>>,
+{
+    let other_peer_id_bytes = *other_peer_id.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
 
@@ -147,11 +156,11 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
             Message::Init { namespace, message } => {
                 ensure!(replica.is_none(), "double init message");
 
-                match replica_store.open_replica(&namespace)? {
+                match request_sync_cb(namespace, other_peer_id).await {
                     Some(r) => {
                         debug!("run_bob: process initial message for {}", namespace);
                         if let Some(msg) = r
-                            .sync_process_message(message, other_peer_id)
+                            .sync_process_message(message, other_peer_id_bytes)
                             .map_err(Into::into)?
                         {
                             trace!("bob -> alice: {:#?}", msg);
@@ -169,7 +178,7 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
                     if let Some(msg) = replica
-                        .sync_process_message(msg, other_peer_id)
+                        .sync_process_message(msg, other_peer_id_bytes)
                         .map_err(Into::into)?
                     {
                         trace!("bob -> alice: {:#?}", msg);
@@ -185,7 +194,10 @@ pub(super) async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite
         }
     }
 
-    Ok(())
+    let namespace = replica
+        .ok_or_else(|| anyhow!("Connection lost before initial message received"))?
+        .namespace();
+    Ok(namespace)
 }
 
 #[cfg(test)]
@@ -263,7 +275,9 @@ mod tests {
             run_bob::<store::memory::Store, _, _>(
                 &mut bob_writer,
                 &mut bob_reader,
-                bob_replica_store_task,
+                |namespace, _| {
+                    futures::future::ready(bob_replica_store_task.open_replica(&namespace))
+                },
                 alice_peer_id,
             )
             .await
@@ -462,7 +476,7 @@ mod tests {
             run_bob::<S, _, _>(
                 &mut bob_writer,
                 &mut bob_reader,
-                bob_store,
+                |namespace, _| futures::future::ready(bob_store.open_replica(&namespace)),
                 alice_node_pubkey,
             )
             .await
