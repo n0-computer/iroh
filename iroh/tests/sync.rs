@@ -1,14 +1,14 @@
 #![cfg(feature = "mem-db")]
 
-use std::{net::SocketAddr};
+use std::net::SocketAddr;
 
 use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryStreamExt};
 use iroh::{
-    client::mem::{Doc},
+    client::mem::Doc,
     collection::IrohCollectionParser,
     node::{Builder, Node},
-    rpc_protocol::{ShareMode},
+    rpc_protocol::ShareMode,
     sync_engine::{LiveEvent, Origin, SyncReason},
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
