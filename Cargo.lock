@@ -250,7 +250,6 @@ version = "0.7.0"
 dependencies = [
  "bytes",
  "futures",
- "hex",
  "iroh-blake3",
  "iroh-io",
  "positioned-io",

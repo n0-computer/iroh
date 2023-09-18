@@ -41,17 +41,18 @@ pub fn validate_bao<F: Fn(u64)>(
     outboard: Bytes,
     progress: F,
 ) -> result::Result<(), BaoValidationError> {
-    let hash = blake3::Hash::from(hash);
-    let outboard =
-        bao_tree::io::outboard::PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, &outboard)?;
+    todo!();
+    // let hash = blake3::Hash::from(hash);
+    // let outboard =
+    //     bao_tree::io::outboard::PreOrderMemOutboard::new(hash, BaoTree::new(IROH_BLOCK_SIZE), &outboard)?;
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
-    encode_ranges_validated(
-        data_reader,
-        outboard,
-        &RangeSet2::all(),
-        DevNull(0, progress),
-    )?;
+    // encode_ranges_validated(
+    //     data_reader,
+    //     outboard,
+    //     &RangeSet2::all(),
+    //     DevNull(0, progress),
+    // )?;
     Ok(())
 }
 

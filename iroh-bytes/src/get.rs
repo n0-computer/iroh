@@ -687,7 +687,7 @@ pub mod fsm {
         }
 
         /// The geometry of the tree we are currently reading.
-        pub fn tree(&self) -> &bao_tree::BaoTree {
+        pub fn tree(&self) -> bao_tree::BaoTree {
             self.stream.tree()
         }
 

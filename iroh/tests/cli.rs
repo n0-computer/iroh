@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, io};
@@ -470,9 +471,9 @@ fn make_provider_in(
             rpc_port.unwrap_or("disabled"),
         ],
     )
-    .stderr_null()
-    // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
-    .env("RUST_LOG", "debug")
+    // .stderr_null()
+    .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
+    .env("RUST_LOG", "info")
     .env("IROH_DATA_DIR", iroh_data_dir);
 
     let provider = match input {
