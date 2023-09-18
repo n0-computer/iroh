@@ -422,6 +422,21 @@ impl MagicEndpoint {
         Ok(())
     }
 
+    /// Get addressing information of this [`MagicEndpoint`].
+    pub async fn my_addr_info(&self) -> Result<AddrInfo> {
+        let endpoints = self
+            .local_endpoints()
+            .await?
+            .iter()
+            .map(|ep| ep.addr)
+            .collect();
+        let derp_region = self.my_derp().await;
+        Ok(AddrInfo {
+            derp_region,
+            endpoints,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn magic_sock(&self) -> &MagicSock {
         &self.msock

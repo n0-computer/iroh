@@ -1,18 +1,14 @@
 //! Networking for the `iroh-gossip` protocol
 
-use std::{
-    collections::HashMap, fmt, future::Future, net::SocketAddr, sync::Arc, task::Poll,
-    time::Instant,
-};
-
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
+use iroh_net::magic_endpoint::AddrInfo as IrohInfo;
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, fmt, future::Future, sync::Arc, task::Poll, time::Instant};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
@@ -253,32 +249,6 @@ impl Future for JoinTopicFut {
     }
 }
 
-/// Addressing information for peers.
-///
-/// This struct is serialized and transmitted to peers in `Join` and `ForwardJoin` messages.
-/// It contains the information needed by `iroh-net` to connect to peers.
-///
-/// TODO: Replace with type from iroh-net
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct IrohInfo {
-    addrs: Vec<SocketAddr>,
-    derp_region: Option<u16>,
-}
-
-impl IrohInfo {
-    async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
-        Ok(Self {
-            addrs: endpoint
-                .local_endpoints()
-                .await?
-                .iter()
-                .map(|ep| ep.addr)
-                .collect(),
-            derp_region: endpoint.my_derp().await,
-        })
-    }
-}
-
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
 #[derive(Debug)]
 enum ConnOrigin {
@@ -370,7 +340,7 @@ impl Actor {
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
-                    let info = IrohInfo::from_endpoint(&self.endpoint).await?;
+                    let info = self.endpoint.my_addr_info().await?;
                     let peer_data = postcard::to_stdvec(&info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
                 }
@@ -537,9 +507,13 @@ impl Actor {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
+                        let IrohInfo {
+                            derp_region,
+                            endpoints,
+                        } = info;
                         if let Err(err) = self
                             .endpoint
-                            .add_known_addrs(peer, info.derp_region, &info.addrs)
+                            .add_known_addrs(peer, derp_region, &endpoints)
                             .await
                         {
                             debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
