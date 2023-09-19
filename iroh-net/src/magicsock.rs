@@ -82,6 +82,9 @@ const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How often to save peer data.
+const SAVE_PEERS_INTERVAL: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum CurrentPortFate {
     Keep,
@@ -407,20 +410,21 @@ impl MagicSock {
         );
 
         // load the peer data
-        let peer_map = if let Some(path) = peers_path.as_ref() {
-            match PeerMap::load_from_file(path, actor_sender.clone()) {
-                Ok(peer_map) => {
-                    let count = peer_map.node_count();
-                    debug!(count, "loaded peer map");
-                    peer_map
-                }
-                Err(e) => {
-                    debug!(%e, "failed to load peer map: using default");
-                    PeerMap::default()
+        let peer_map = match peers_path.as_ref() {
+            Some(path) if path.exists() => {
+                match PeerMap::load_from_file(path, actor_sender.clone()) {
+                    Ok(peer_map) => {
+                        let count = peer_map.node_count();
+                        debug!(count, "loaded peer map");
+                        peer_map
+                    }
+                    Err(e) => {
+                        debug!(%e, "failed to load peer map: using default");
+                        PeerMap::default()
+                    }
                 }
             }
-        } else {
-            PeerMap::default()
+            _ => PeerMap::default(),
         };
 
         let inner2 = inner.clone();
@@ -990,6 +994,14 @@ impl Actor {
         );
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
+        let mut save_peers_timer = if self.peers_path.is_some() {
+            tokio::time::interval_at(
+                time::Instant::now() + SAVE_PEERS_INTERVAL,
+                SAVE_PEERS_INTERVAL,
+            )
+        } else {
+            tokio::time::interval(Duration::MAX)
+        };
 
         loop {
             tokio::select! {
@@ -1046,6 +1058,13 @@ impl Actor {
                     trace!("tick: endpoints update receiver {:?}", reason);
                     if let Some(reason) = reason {
                         self.update_endpoints(reason).await;
+                    }
+                }
+                _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
+                    let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
+                    match self.peer_map.save_to_file(path) {
+                        Ok(count) => debug!(count, "peers persisted"),
+                        Err(e) => error!(%e, "failed to persist known peers"),
                     }
                 }
                 else => {
