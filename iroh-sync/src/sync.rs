@@ -110,6 +110,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         }
     }
 
+    /// Remove the subscription.
+    pub fn unsubscribe(&self) -> bool {
+        self.on_insert_sender.write().take().is_some()
+    }
+
     /// Insert a new record at the given key.
     ///
     /// The entry will by signed by the provided `author`.

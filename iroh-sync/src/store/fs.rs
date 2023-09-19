@@ -130,6 +130,12 @@ impl super::Store for Store {
         Ok(Some(replica))
     }
 
+    fn close_replica(&self, namespace_id: &NamespaceId) {
+        if let Some(replica) = self.replicas.write().remove(namespace_id) {
+            replica.unsubscribe();
+        }
+    }
+
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;

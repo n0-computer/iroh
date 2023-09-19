@@ -44,6 +44,12 @@ impl super::Store for Store {
         Ok(replicas.get(namespace).cloned())
     }
 
+    fn close_replica(&self, namespace_id: &NamespaceId) {
+        if let Some(replica) = self.replicas.read().get(namespace_id) {
+            replica.unsubscribe();
+        }
+    }
+
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
         // TODO: avoid collect?
         Ok(self

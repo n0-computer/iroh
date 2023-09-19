@@ -2,8 +2,6 @@
 //!
 //! [`iroh_sync::Replica`] is also called documents here.
 
-use std::{collections::HashSet, sync::Arc};
-
 use anyhow::anyhow;
 use iroh_bytes::{baomap::Store as BaoStore, util::runtime::Handle};
 use iroh_gossip::net::Gossip;
@@ -12,7 +10,6 @@ use iroh_sync::{
     store::Store,
     sync::{Author, AuthorId, NamespaceId, Replica},
 };
-use parking_lot::RwLock;
 
 use crate::downloader::Downloader;
 
@@ -32,7 +29,6 @@ pub struct SyncEngine<S: Store> {
     pub(crate) store: S,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) live: LiveSync<S>,
-    active: Arc<RwLock<HashSet<NamespaceId>>>,
 }
 
 impl<S: Store> SyncEngine<S> {
@@ -52,13 +48,19 @@ impl<S: Store> SyncEngine<S> {
         bao_store: B,
         downloader: Downloader,
     ) -> Self {
-        let live = LiveSync::spawn(rt.clone(), endpoint.clone(), gossip, bao_store, downloader);
+        let live = LiveSync::spawn(
+            rt.clone(),
+            endpoint.clone(),
+            store.clone(),
+            gossip,
+            bao_store,
+            downloader,
+        );
         Self {
             live,
             store,
             rt,
             endpoint,
-            active: Default::default(),
         }
     }
 
@@ -71,20 +73,12 @@ impl<S: Store> SyncEngine<S> {
         namespace: NamespaceId,
         peers: Vec<PeerSource>,
     ) -> anyhow::Result<()> {
-        if !self.active.read().contains(&namespace) {
-            let replica = self.get_replica(&namespace)?;
-            self.live.start_sync(replica, peers).await?;
-            self.active.write().insert(namespace);
-        } else if !peers.is_empty() {
-            self.live.join_peers(namespace, peers).await?;
-        }
+        self.live.start_sync(namespace, peers).await?;
         Ok(())
     }
 
     /// Stop syncing a document.
     pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
-        let replica = self.get_replica(&namespace)?;
-        self.active.write().remove(&replica.namespace());
         self.live.stop_sync(namespace).await?;
         Ok(())
     }

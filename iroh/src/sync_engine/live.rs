@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     net::SocketAddr,
     str::FromStr,
@@ -9,6 +9,7 @@ use std::{
 
 use crate::downloader::{DownloadKind, Downloader};
 use anyhow::{anyhow, bail, Result};
+use flume::r#async::RecvStream;
 use futures::{
     future::{BoxFuture, Shared},
     stream::{BoxStream, FuturesUnordered, StreamExt},
@@ -127,8 +128,9 @@ enum ToActor<S: store::Store> {
         s: sync::oneshot::Sender<Option<LiveStatus>>,
     },
     StartSync {
-        replica: Replica<S::Instance>,
+        namespace: NamespaceId,
         peers: Vec<PeerSource>,
+        reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     JoinPeers {
         namespace: NamespaceId,
@@ -239,6 +241,7 @@ impl<S: store::Store> LiveSync<S> {
     pub fn spawn<B: baomap::Store>(
         rt: Handle,
         endpoint: MagicEndpoint,
+        replica_store: S,
         gossip: Gossip,
         bao_store: B,
         downloader: Downloader,
@@ -249,6 +252,7 @@ impl<S: store::Store> LiveSync<S> {
             gossip,
             bao_store,
             downloader,
+            replica_store,
             to_actor_rx,
             to_actor_tx.clone(),
         );
@@ -273,14 +277,16 @@ impl<S: store::Store> LiveSync<S> {
 
     /// Start to sync a document with a set of peers, also joining the gossip swarm for that
     /// document.
-    pub async fn start_sync(
-        &self,
-        replica: Replica<S::Instance>,
-        peers: Vec<PeerSource>,
-    ) -> Result<()> {
+    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
         self.to_actor_tx
-            .send(ToActor::<S>::StartSync { replica, peers })
+            .send(ToActor::<S>::StartSync {
+                namespace,
+                peers,
+                reply,
+            })
             .await?;
+        reply_rx.await??;
         Ok(())
     }
 
@@ -359,32 +365,44 @@ struct Actor<S: store::Store, B: baomap::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
+    replica_store: S,
 
-    replicas: HashMap<NamespaceId, Replica<S::Instance>>,
-    replicas_subscription: futures::stream::SelectAll<
-        flume::r#async::RecvStream<'static, (InsertOrigin, SignedEntry)>,
-    >,
-    gossip_subscription: BoxStream<'static, Result<(TopicId, Event)>>,
+    /// Set of replicas for which we subscribed to replica events.
+    subscribed_replicas: HashSet<NamespaceId>,
+    /// Set of replicas that are actively syncing.
+    syncing_replicas: HashSet<NamespaceId>,
+
+    /// Events from replicas.
+    replica_events: futures::stream::SelectAll<RecvStream<'static, (InsertOrigin, SignedEntry)>>,
+    /// Events from gossip.
+    gossip_events: BoxStream<'static, Result<(TopicId, Event)>>,
+    /// Last state of sync for a replica with a peer.
     sync_state: HashMap<(NamespaceId, PublicKey), SyncState>,
-
+    /// Receiver for actor messages.
     to_actor_rx: mpsc::Receiver<ToActor<S>>,
     /// Send messages to self.
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
     /// Only clone into newly spawned tasks.
     to_actor_tx: mpsc::Sender<ToActor<S>>,
 
+    /// Running sync futures (from connect).
     #[allow(clippy::type_complexity)]
     running_sync_connect:
         FuturesUnordered<BoxFuture<'static, (NamespaceId, PublicKey, SyncReason, Result<()>)>>,
+    /// Running sync futures (from accept).
     running_sync_accept: FuturesUnordered<
         BoxFuture<'static, std::result::Result<(NamespaceId, PublicKey), SyncError>>,
     >,
 
+    /// Running gossip join futures.
     pending_joins: FuturesUnordered<BoxFuture<'static, (NamespaceId, Result<()>)>>,
 
+    /// External subscriptions to replica events.
     event_subscriptions: HashMap<NamespaceId, HashMap<u64, OnLiveEventCallback>>,
+    /// Next [`RemovalToken`] for external replica event subscriptions.
     event_removal_id: AtomicU64,
 
+    /// Runnning download futures.
     pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
 }
 
@@ -398,25 +416,28 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         gossip: Gossip,
         bao_store: B,
         downloader: Downloader,
+        replica_store: S,
         to_actor_rx: mpsc::Receiver<ToActor<S>>,
         to_actor_tx: mpsc::Sender<ToActor<S>>,
     ) -> Self {
-        let sub = gossip.clone().subscribe_all().boxed();
+        let gossip_events = gossip.clone().subscribe_all().boxed();
 
         Self {
             gossip,
             endpoint,
             bao_store,
             downloader,
+            replica_store,
+            syncing_replicas: Default::default(),
+            subscribed_replicas: Default::default(),
             to_actor_rx,
             to_actor_tx,
             sync_state: Default::default(),
             running_sync_connect: Default::default(),
             running_sync_accept: Default::default(),
             pending_joins: Default::default(),
-            replicas: Default::default(),
-            replicas_subscription: Default::default(),
-            gossip_subscription: sub,
+            replica_events: Default::default(),
+            gossip_events,
             event_subscriptions: Default::default(),
             event_removal_id: Default::default(),
             pending_downloads: Default::default(),
@@ -435,8 +456,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             self.shutdown().await?;
                             break;
                         }
-                        Some(ToActor::StartSync { replica, peers }) => {
-                            self.start_sync(replica, peers).await?;
+                        Some(ToActor::StartSync { namespace, peers, reply }) => {
+                            let res = self.start_sync(namespace, peers).await;
+                            reply.send(res).ok();
                         },
                         Some(ToActor::StopSync { namespace }) => {
                             self.stop_sync(namespace).await?;
@@ -466,13 +488,13 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     };
                 }
                 // new gossip message
-                Some(event) = self.gossip_subscription.next() => {
+                Some(event) = self.gossip_events.next() => {
                     let (topic, event) = event?;
                     if let Err(err) = self.on_gossip_event(topic, event) {
                         error!("Failed to process gossip event: {err:?}");
                     }
                 },
-                Some((origin, entry))  = self.replicas_subscription.next() => {
+                Some((origin, entry))  = self.replica_events.next() => {
                     if let Err(err) = self.on_replica_event(origin, entry).await {
                         error!("Failed to process replica event: {err:?}");
                     }
@@ -506,8 +528,16 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
+    fn get_replica_if_syncing(&self, namespace: &NamespaceId) -> Option<Replica<S::Instance>> {
+        if !self.syncing_replicas.contains(namespace) {
+            None
+        } else {
+            self.replica_store.open_replica(namespace).ok().flatten()
+        }
+    }
+
     fn sync_with_peer(&mut self, namespace: NamespaceId, peer: PublicKey, reason: SyncReason) {
-        let Some(replica) = self.replicas.get(&namespace) else {
+        let Some(replica) = self.get_replica_if_syncing(&namespace) else {
             return;
         };
         // Check if we synced and only start sync if not yet synced
@@ -534,28 +564,68 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for (namespace, _replica) in self.replicas.drain() {
-            self.event_subscriptions.remove(&namespace);
+        for namespace in self.subscribed_replicas.drain() {
+            self.syncing_replicas.remove(&namespace);
             self.gossip.quit(namespace.into()).await?;
+            self.event_subscriptions.remove(&namespace);
+            self.replica_store.close_replica(&namespace);
         }
-
         Ok(())
     }
 
     async fn status(&mut self, namespace: NamespaceId) -> Option<LiveStatus> {
-        if self.replicas.contains_key(&namespace) {
-            let subscriptions = self
-                .event_subscriptions
-                .get(&namespace)
-                .map(|map| map.len() as u64)
-                .unwrap_or_default();
-            Some(LiveStatus {
-                active: true,
-                subscriptions,
-            })
-        } else {
-            None
+        let exists = self
+            .replica_store
+            .open_replica(&namespace)
+            .ok()
+            .flatten()
+            .is_some();
+        if !exists {
+            return None;
         }
+        let active = self.syncing_replicas.contains(&namespace);
+        let subscriptions = self
+            .event_subscriptions
+            .get(&namespace)
+            .map(|map| map.len() as u64)
+            .unwrap_or(0);
+        self.maybe_close_replica(namespace);
+        Some(LiveStatus {
+            active,
+            subscriptions,
+        })
+    }
+
+    async fn start_sync(&mut self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
+        self.ensure_subscription(namespace)?;
+        self.syncing_replicas.insert(namespace);
+        self.join_peers(namespace, peers).await?;
+        Ok(())
+    }
+
+    fn ensure_subscription(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
+        if !self.subscribed_replicas.contains(&namespace) {
+            let Some(replica) = self.replica_store.open_replica(&namespace)? else {
+                bail!("Replica not found");
+            };
+            let events = replica
+                .subscribe()
+                .ok_or_else(|| anyhow::anyhow!("trying to subscribe twice to the same replica"))?;
+            self.replica_events.push(events.into_stream());
+            self.subscribed_replicas.insert(namespace);
+        }
+        Ok(())
+    }
+
+    fn maybe_close_replica(&mut self, namespace: NamespaceId) {
+        if !self.subscribed_replicas.contains(&namespace)
+            || self.syncing_replicas.contains(&namespace)
+            || self.event_subscriptions.contains_key(&namespace)
+        {
+            return;
+        }
+        self.replica_store.close_replica(&namespace);
+        self.subscribed_replicas.remove(&namespace);
     }
 
     async fn subscribe(
@@ -563,23 +633,23 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         cb: OnLiveEventCallback,
     ) -> anyhow::Result<RemovalToken> {
-        if self.replicas.contains_key(&namespace) {
-            let subs = self.event_subscriptions.entry(namespace).or_default();
-            let removal_id = self
-                .event_removal_id
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            subs.insert(removal_id, cb);
-            let token = RemovalToken(removal_id);
-            Ok(token)
-        } else {
-            bail!("cannot subscribe to unknown replica: {}", namespace);
-        }
+        self.ensure_subscription(namespace)?;
+        let subs = self.event_subscriptions.entry(namespace).or_default();
+        let removal_id = self
+            .event_removal_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        subs.insert(removal_id, cb);
+        Ok(RemovalToken(removal_id))
     }
 
     /// Returns `true` if a callback was found and removed
     async fn unsubscribe(&mut self, namespace: NamespaceId, token: RemovalToken) -> bool {
         if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
             let res = subs.remove(&token.0).is_some();
+            if subs.is_empty() {
+                self.event_subscriptions.remove(&namespace);
+            }
+            self.maybe_close_replica(namespace);
             return res;
         }
 
@@ -587,9 +657,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn stop_sync(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
-        if let Some(_replica) = self.replicas.remove(&namespace) {
-            self.event_subscriptions.remove(&namespace);
+        if self.syncing_replicas.remove(&namespace) {
             self.gossip.quit(namespace.into()).await?;
+            self.maybe_close_replica(namespace);
         }
         Ok(())
     }
@@ -629,26 +699,6 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         for peer in peer_ids {
             self.sync_with_peer(namespace, peer, SyncReason::DirectJoin);
         }
-        Ok(())
-    }
-
-    async fn start_sync(
-        &mut self,
-        replica: Replica<S::Instance>,
-        peers: Vec<PeerSource>,
-    ) -> Result<()> {
-        let namespace = replica.namespace();
-        if let std::collections::hash_map::Entry::Vacant(e) = self.replicas.entry(namespace) {
-            // setup replica insert notifications.
-            let events = replica
-                .subscribe()
-                .ok_or_else(|| anyhow::anyhow!("trying to subscribe twice to the same replica"))?;
-            self.replicas_subscription.push(events.into_stream());
-            e.insert(replica);
-        }
-
-        self.join_peers(namespace, peers).await?;
-
         Ok(())
     }
 
@@ -716,8 +766,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
     fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
         let namespace: NamespaceId = topic.as_bytes().into();
-        let Some(replica) = self.replicas.get(&namespace) else {
-            return Err(anyhow!("Missing doc for {namespace:?}"));
+        let Some(replica) = self.get_replica_if_syncing(&namespace) else {
+            return Err(anyhow!("Doc {namespace:?} is not active"));
         };
         match event {
             // We received a gossip message. Try to insert it into our replica.
@@ -832,7 +882,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         peer: PublicKey,
     ) -> AcceptOutcome<S> {
-        let Some(replica) = self.replicas.get(&namespace).cloned() else {
+        let Some(replica) = self.get_replica_if_syncing(&namespace) else {
             return AcceptOutcome::NotAvailable;
         };
         let state = self.sync_state.get(&(namespace, peer));
