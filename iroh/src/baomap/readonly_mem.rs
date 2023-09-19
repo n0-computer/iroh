@@ -23,8 +23,9 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{
-        self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
-        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
+        self, range_collections::RangeSet2, EntryStatus, ExportMode, Format, ImportMode,
+        ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore,
+        ValidateProgress,
     },
     util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
@@ -230,7 +231,7 @@ impl ReadableStore for Store {
         Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 

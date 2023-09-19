@@ -121,13 +121,15 @@
 //!
 //! Once the download is complete, the partial data and partial outboard files are renamed
 //! to the final partial data and partial outboard files.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
+use anyhow::Context;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkNum};
@@ -135,12 +137,15 @@ use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
-use futures::{Future, FutureExt};
+use futures::stream::LocalBoxStream;
+use futures::{Future, FutureExt, StreamExt};
+use genawaiter::rc::{Co, Gen};
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
-    self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-    PartialMapEntry, ReadableStore, ValidateProgress,
+    self, EntryStatus, ExportMode, Format, GcMarkEvent, ImportMode, ImportProgress, Map, MapEntry,
+    PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
 };
+use iroh_bytes::collection::CollectionParser;
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
@@ -632,7 +637,7 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static> {
         unimplemented!()
     }
 

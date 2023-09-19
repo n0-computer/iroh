@@ -19,6 +19,7 @@ data-encoding = "2.3.3"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
+genawaiter = "0.99.1"
 hex = "0.4.3"
 iroh-io = { version = "0.2.2" }
 multibase = "0.9.1"

@@ -1,16 +1,23 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{io, path::PathBuf};
+use std::{collections::BTreeSet, io, path::PathBuf};
 
 use crate::{
+    collection::CollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
         RpcError,
     },
     Hash,
 };
+use anyhow::Context;
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
-use futures::future::BoxFuture;
+use futures::{
+    future::{self, BoxFuture, LocalBoxFuture},
+    stream::{self, LocalBoxStream},
+    Future, FutureExt, StreamExt,
+};
+use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
@@ -18,6 +25,20 @@ use tokio::sync::mpsc;
 
 pub use bao_tree;
 pub use range_collections;
+
+/// A format identifier
+///
+/// Should we make this an u64 and use https://github.com/multiformats/multicodec/blob/master/table.csv?
+///
+/// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
+/// able to use for iroh collections would be 2 bytes varint encoded or something...
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Format {
+    /// Hash refers to a blob
+    Blob,
+    /// Hash refers to an iroh collection (format here?)
+    Collection,
+}
 
 /// The availability status of an entry in a store.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -140,7 +161,7 @@ pub trait ReadableStore: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// existing roots must be present in memory.
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static>;
     /// Validate the database
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
 
@@ -186,6 +207,163 @@ pub trait Store: ReadableStore + PartialMap {
     ///
     /// It is a special case of `import` that does not use the file system.
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>>;
+
+    /// Traverse all roots recursively and mark them as live.
+    ///
+    /// Poll this stream to completion to perform a full gc mark phase.
+    ///
+    /// Not polling this stream to completion is dangerous, since it might lead
+    /// to some live data being missed.
+    /// 
+    /// The implementation of this method should do the minimum amount of work
+    /// to determine the live set. Actual deletion of garbage should be done
+    /// in the gc_sweep phase.
+    fn gc_mark<'a>(
+        &'a self,
+        cp: impl CollectionParser + 'a,
+        extra_roots: impl Iterator<Item = io::Result<(Hash, Format)>> + 'a,
+    ) -> LocalBoxStream<'a, GcMarkEvent> {
+        Gen::new(|co| async move {
+            if let Err(e) = gc_task(self, cp, extra_roots, &co).await {
+                co.yield_(GcMarkEvent::Error(e)).await;
+            }
+        })
+        .boxed_local()
+    }
+
+    /// Remove all blobs that are not marked as live.
+    ///
+    /// Poll this stream to completion to perform a full gc sweep. Not polling this stream
+    /// to completion just means that some garbage will remain in the database.
+    ///
+    /// Sweeping might take long, but it can safely be done in the background.
+    fn gc_sweep(&self) -> LocalBoxStream<'_, GcSweepEvent> {
+        let blobs = self.blobs();
+        Gen::new(|co| async move {
+            let mut count = 0;
+            for hash in blobs {
+                if !self.is_live(&hash) {
+                    if let Err(e) = self.delete(&hash).await {
+                        co.yield_(GcSweepEvent::Error(e.into())).await;
+                    }
+                    count += 1;
+                }
+            }
+            co.yield_(GcSweepEvent::CustomInfo(format!("deleted {} blobs", count)))
+                .await;
+        })
+        .boxed_local()
+    }
+
+    /// Add the given hashes to the live set.
+    ///
+    /// This is used by the gc mark phase to mark roots as live.
+    fn add_live<'a>(&'a self, live: impl IntoIterator<Item = Hash> + 'a) {
+        let _ = live;
+    }
+
+    /// True if the given hash is live.
+    fn is_live(&self, hash: &Hash) -> bool {
+        let _ = hash;
+        true
+    }
+
+    /// physically delete the given hash from the store.
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        let _ = hash;
+        async move { Ok(()) }.boxed()
+    }
+}
+
+/// Implementation of the gc method.
+async fn gc_task<'a>(
+    store: &'a impl Store,
+    cp: impl CollectionParser + 'a,
+    extra_roots: impl Iterator<Item = io::Result<(Hash, Format)>> + 'a,
+    co: &Co<GcMarkEvent>,
+) -> anyhow::Result<()> {
+    let mut roots = BTreeSet::new();
+    macro_rules! info {
+        ($($arg:tt)*) => {
+            co.yield_(GcMarkEvent::CustomInfo(format!($($arg)*))).await;
+        };
+    }
+    macro_rules! warn {
+        ($($arg:tt)*) => {
+            co.yield_(GcMarkEvent::CustomWarning(format!($($arg)*), None)).await;
+        };
+    }
+    info!("traversing roots");
+    for item in store.roots() {
+        roots.insert(item);
+    }
+    info!("traversing extra roots");
+    for item in extra_roots {
+        roots.insert(item?);
+    }
+    let mut current = roots.into_iter().collect::<Vec<_>>();
+    let mut live: BTreeSet<Hash> = BTreeSet::new();
+    // process all current. Since we don't have nested collections, this will
+    // terminate after 1 iteration.
+    while !current.is_empty() {
+        for (hash, format) in std::mem::take(&mut current) {
+            if live.insert(hash) && format == Format::Collection {
+                let Some(entry) = store.get(&hash) else {
+                    warn!("gc: {} not found", hash);
+                    continue;
+                };
+                if !entry.is_complete() {
+                    warn!("gc: {} is partial", hash);
+                    continue;
+                }
+                let Ok(reader) = entry.data_reader().await else {
+                    warn!("gc: {} creating data reader failed", hash);
+                    continue;
+                };
+                let Ok((mut iter, stats)) = cp.parse(0, reader).await else {
+                    warn!("gc: {} parse failed", hash);
+                    continue;
+                };
+                info!("parsed collection {} {:?}", hash, stats);
+                loop {
+                    let item = match iter.next().await {
+                        Ok(Some(item)) => item,
+                        Ok(None) => break,
+                        Err(_err) => {
+                            warn!("gc: {} parse failed", hash);
+                            break;
+                        }
+                    };
+                    // if format != raw we would have to recurse here by adding this to current
+                    live.insert(item);
+                }
+            }
+        }
+    }
+    store.add_live(live);
+    Ok(())
+}
+
+/// An event related to GC
+#[derive(Debug)]
+pub enum GcMarkEvent {
+    /// A custom event (info)
+    CustomInfo(String),
+    /// A custom non critical error
+    CustomWarning(String, Option<anyhow::Error>),
+    /// An unrecoverable error during GC
+    Error(anyhow::Error),
+}
+
+/// An event related to GC
+#[derive(Debug)]
+pub enum GcSweepEvent {
+    /// A custom event (info)
+    CustomInfo(String),
+    /// A custom non critical error
+    CustomWarning(String, Option<anyhow::Error>),
+    /// An unrecoverable error during GC
+    Error(anyhow::Error),
 }
 
 /// Progress messages for an import operation

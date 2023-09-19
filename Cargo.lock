@@ -2004,6 +2004,7 @@ dependencies = [
  "derive_more",
  "flume",
  "futures",
+ "genawaiter",
  "hex",
  "http-body",
  "iroh-io",

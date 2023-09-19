@@ -26,6 +26,7 @@ use iroh_bytes::baomap;
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
+use iroh_bytes::baomap::Format;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
 use iroh_bytes::baomap::PartialMap;
@@ -335,7 +336,7 @@ impl ReadableStore for Store {
         )
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 

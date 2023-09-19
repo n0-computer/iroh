@@ -821,7 +821,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
         let roots = db.roots();
-        futures::stream::iter(roots).filter_map(move |hash| {
+        futures::stream::iter(roots).filter_map(move |(hash, _format)| {
             let db = db.clone();
             let local = local.clone();
             let cp = self.collection_parser.clone();
