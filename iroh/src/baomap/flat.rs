@@ -126,8 +126,7 @@ use std::fmt;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock, Mutex};
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
@@ -163,7 +162,7 @@ struct State {
     // data, cached for all complete entries that are small enough
     data: BTreeMap<Hash, Bytes>,
     // in memory tracking of live set
-    live: BTreeMap<Hash, Instant>,
+    live: BTreeSet<Hash>,
     // temp pins
     temp: BTreeMap<Cid, u64>,
     // roots
@@ -335,6 +334,19 @@ impl PartialMap for Store {
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
         let mut state = self.0.state.write().unwrap();
+        // this protects the entry from being deleted until the next mark phase
+        //
+        // example: a collection containing this hash is temp pinned, but
+        // we did not have the collection at the time of the mark phase.
+        //
+        // now we get the collection and it's child between the mark and the sweep
+        // phase. the child is not in the live set and will be deleted.
+        //
+        // this prevents this from happening until the live set is cleared at the
+        // beginning of the next mark phase, at which point this hash is normally
+        // reachable.
+        tracing::info!("protecting partial hash {}", hash);
+        state.live.insert(hash);
         let entry = state.partial.entry(hash).or_insert_with(|| {
             let uuid = rand::thread_rng().gen::<[u8; 16]>();
             PartialEntryData::new(size, uuid)
@@ -350,31 +362,13 @@ impl PartialMap for Store {
     }
 
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
-        let hash = entry.hash.into();
-        let data_path = self.0.options.owned_data_path(&hash);
-        async move {
-            let size = entry.size;
-            let temp_data_path = entry.data_path;
-            let temp_outboard_path = entry.outboard_path;
-            // for a short time we will have neither partial nor complete
-            self.0.state.write().unwrap().partial.remove(&hash);
-            tokio::fs::rename(temp_data_path, &data_path).await?;
-            let outboard = if tokio::fs::try_exists(&temp_outboard_path).await? {
-                let outboard_path = self.0.options.owned_outboard_path(&hash);
-                tokio::fs::rename(temp_outboard_path, &outboard_path).await?;
-                Some(tokio::fs::read(&outboard_path).await?.into())
-            } else {
-                None
-            };
-            let mut state = self.0.state.write().unwrap();
-            let entry = state.complete.entry(hash).or_default();
-            entry.union_with(CompleteEntry::new_default(size))?;
-            if let Some(outboard) = outboard {
-                state.outboard.insert(hash, outboard);
-            }
-            Ok(())
-        }
-        .boxed()
+        let this = self.clone();
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.insert_complete_sync(entry))
+            .map(flatten_to_io)
+            .boxed()
     }
 }
 
@@ -384,7 +378,6 @@ struct Options {
     partial_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
-    live_timeout: Duration,
     rt: tokio::runtime::Handle,
 }
 
@@ -417,6 +410,11 @@ impl Options {
 struct Inner {
     options: Options,
     state: RwLock<State>,
+    // mutex for async access to complete files
+    //
+    // complete files are never written to. They come into existence when a partial
+    // entry is completed, and are deleted as a whole.
+    complete_io_mutex: Mutex<()>,
 }
 
 /// Flat file database implementation.
@@ -712,18 +710,13 @@ impl baomap::Store for Store {
     }
 
     fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
-        let now = Instant::now();
         let mut state = self.0.state.write().unwrap();
-        state.live.extend(elements.into_iter().map(|h| (h, now)));
+        state.live.extend(elements);
     }
 
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
-        if let Some(last_seen) = state.live.get(hash) {
-            last_seen.elapsed() < self.0.options.live_timeout
-        } else {
-            false
-        }
+        state.live.contains(hash)
     }
 
     fn set_root(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
@@ -738,60 +731,14 @@ impl baomap::Store for Store {
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
-        let mut data = None;
-        let mut outboard = None;
-        let mut partial_data = None;
-        let mut partial_outboard = None;
-        let mut state = self.0.state.write().unwrap();
-        if let Some(entry) = state.complete.remove(hash) {
-            if entry.owned_data {
-                data = Some(self.owned_data_path(hash));
-            }
-            if needs_outboard(entry.size) {
-                outboard = Some(self.owned_outboard_path(hash));
-            }
-        }
-        if let Some(partial) = state.partial.remove(hash) {
-            partial_data = Some(self.0.options.partial_data_path(*hash, &partial.uuid));
-            if needs_outboard(partial.size) {
-                partial_outboard = Some(self.0.options.partial_outboard_path(*hash, &partial.uuid));
-            }
-        }
-        state.outboard.remove(hash);
-        state.data.remove(hash);
-        drop(state);
-        // TODO: there is a race condition if we have just decided to delete a file,
-        // and somebody adds it again before the deletion is complete.
-        //
-        // we could take a lock here and hold it until the deletion is complete.
-        // ideally it would be a per-hash lock.
-        //
-        // for the partial files this is not a problem, since a new one will have a new uuid.
-        async move {
-            if let Some(data) = data {
-                if let Err(cause) = tokio::fs::remove_file(data).await {
-                    tracing::warn!("failed to delete data file: {}", cause);
-                }
-            }
-            if let Some(outboard) = outboard {
-                if let Err(cause) = tokio::fs::remove_file(outboard).await {
-                    tracing::warn!("failed to delete outboard file: {}", cause);
-                }
-            }
-            if let Some(partial_data) = partial_data {
-                if let Err(cause) = tokio::fs::remove_file(partial_data).await {
-                    tracing::warn!("failed to delete partial data file: {}", cause);
-                }
-            }
-            if let Some(partial_outboard) = partial_outboard {
-                if let Err(cause) = tokio::fs::remove_file(partial_outboard).await {
-                    tracing::warn!("failed to delete partial outboard file: {}", cause);
-                }
-            }
-
-            Ok(())
-        }
-        .boxed()
+        let this = self.clone();
+        let hash = *hash;
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.delete_sync(hash))
+            .map(flatten_to_io)
+            .boxed()
     }
 
     fn temp_pin(&self, cid: Cid) -> PinnedCid {
@@ -853,6 +800,7 @@ impl Store {
                 "path is not a file or symlink",
             ));
         }
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::Found {
             id,
@@ -917,10 +865,12 @@ impl Store {
         if let Some(outboard) = outboard {
             state.outboard.insert(hash, outboard.into());
         }
+        drop(complete_io_guard);
         Ok((cid, size))
     }
 
     fn import_bytes_sync(&self, data: Bytes, format: Format) -> io::Result<PinnedCid> {
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();
         use baomap::Store;
@@ -939,7 +889,94 @@ impl Store {
         if size < self.0.options.inline_threshold {
             state.data.insert(hash, data.to_vec().into());
         }
+        drop(complete_io_guard);
         Ok(cid)
+    }
+
+    fn delete_sync(&self, hash: Hash) -> io::Result<()> {
+        let mut data = None;
+        let mut outboard = None;
+        let mut external = None;
+        let mut partial_data = None;
+        let mut partial_outboard = None;
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
+        let mut state = self.0.state.write().unwrap();
+        if let Some(entry) = state.complete.remove(&hash) {
+            if entry.owned_data {
+                data = Some(self.owned_data_path(&hash));
+            }
+            if needs_outboard(entry.size) {
+                outboard = Some(self.owned_outboard_path(&hash));
+            }
+            if !entry.external.is_empty() {
+                external = Some(self.0.options.paths_path(hash));
+            }
+        }
+        if let Some(partial) = state.partial.remove(&hash) {
+            partial_data = Some(self.0.options.partial_data_path(hash, &partial.uuid));
+            if needs_outboard(partial.size) {
+                partial_outboard = Some(self.0.options.partial_outboard_path(hash, &partial.uuid));
+            }
+        }
+        state.outboard.remove(&hash);
+        state.data.remove(&hash);
+        drop(state);
+        if let Some(data) = data {
+            if let Err(cause) = std::fs::remove_file(data) {
+                tracing::warn!("failed to delete data file: {}", cause);
+            }
+        }
+        if let Some(external) = external {
+            if let Err(cause) = std::fs::remove_file(external) {
+                tracing::warn!("failed to delete partial outboard file: {}", cause);
+            }
+        }
+        if let Some(outboard) = outboard {
+            if let Err(cause) = std::fs::remove_file(outboard) {
+                tracing::warn!("failed to delete outboard file: {}", cause);
+            }
+        }
+        drop(complete_io_guard);
+        // deleting the partial data and outboard files can happen at any time.
+        // there is no race condition since these are unique names.
+        if let Some(partial_data) = partial_data {
+            if let Err(cause) = std::fs::remove_file(partial_data) {
+                tracing::warn!("failed to delete partial data file: {}", cause);
+            }
+        }
+        if let Some(partial_outboard) = partial_outboard {
+            if let Err(cause) = std::fs::remove_file(partial_outboard) {
+                tracing::warn!("failed to delete partial outboard file: {}", cause);
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_complete_sync(&self, entry: PartialEntry) -> io::Result<()> {
+        let hash = entry.hash.into();
+        let data_path = self.0.options.owned_data_path(&hash);
+        let size = entry.size;
+        let temp_data_path = entry.data_path;
+        let temp_outboard_path = entry.outboard_path;
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
+        // for a short time we will have neither partial nor complete
+        self.0.state.write().unwrap().partial.remove(&hash);
+        std::fs::rename(temp_data_path, &data_path)?;
+        let outboard = if temp_outboard_path.exists() {
+            let outboard_path = self.0.options.owned_outboard_path(&hash);
+            std::fs::rename(temp_outboard_path, &outboard_path)?;
+            Some(std::fs::read(&outboard_path)?.into())
+        } else {
+            None
+        };
+        let mut state = self.0.state.write().unwrap();
+        let entry = state.complete.entry(hash).or_default();
+        entry.union_with(CompleteEntry::new_default(size))?;
+        if let Some(outboard) = outboard {
+            state.outboard.insert(hash, outboard);
+        }
+        drop(complete_io_guard);
+        Ok(())
     }
 
     fn export_sync(
@@ -1280,9 +1317,9 @@ impl Store {
                 partial_path,
                 move_threshold: 1024 * 128,
                 inline_threshold: 1024 * 16,
-                live_timeout: Duration::from_secs(120),
                 rt: rt.main().clone(),
             },
+            complete_io_mutex: Mutex::new(()),
         })))
     }
 
