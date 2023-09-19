@@ -134,7 +134,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
     // build our magic endpoint and the gossip protocol
-    let (endpoint, gossip, initial_endpoints) = {
+    let (endpoint, gossip) = {
         // init a cell that will hold our gossip handle to be used in endpoint callbacks
         let gossip_cell: OnceCell<Gossip> = OnceCell::new();
         // init a channel that will emit once the initial endpoints of our local node are discovered
@@ -173,7 +173,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
         // pass our initial endpoints to the gossip protocol so that they can be announced to peers
         gossip.update_endpoints(&initial_endpoints)?;
-        (endpoint, gossip, initial_endpoints)
+        (endpoint, gossip)
     };
     println!("> our peer id: {}", endpoint.peer_id());
 
