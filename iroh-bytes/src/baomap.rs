@@ -242,6 +242,11 @@ pub trait Store: ReadableStore + PartialMap {
         .boxed_local()
     }
 
+    /// Clear the live set.
+    fn clear_live(&self) {
+        let _ = self;
+    }
+
     /// Add the given hashes to the live set.
     ///
     /// This is used by the gc mark phase to mark roots as live.
@@ -356,6 +361,7 @@ async fn gc_mark_task<'a>(
     extra_roots: impl IntoIterator<Item = io::Result<Cid>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
+    store.clear_live();
     let mut roots = BTreeSet::new();
     macro_rules! info {
         ($($arg:tt)*) => {
@@ -368,16 +374,20 @@ async fn gc_mark_task<'a>(
         };
     }
     info!("traversing roots");
-    for (_name, cid) in store.roots() {
+    for (name, cid) in store.roots() {
+        info!("adding root {:?} {:?}", name, cid);
         roots.insert(cid);
     }
     info!("traversing temp roots");
     for cid in store.temp_pins() {
+        info!("adding temp pin {:?}", cid);
         roots.insert(cid);
     }
     info!("traversing extra roots");
     for cid in extra_roots {
-        roots.insert(cid?);
+        let cid = cid?;
+        info!("adding extra root {:?}", cid);
+        roots.insert(cid);
     }
     let mut current = roots.into_iter().collect::<Vec<_>>();
     let mut live: BTreeSet<Hash> = BTreeSet::new();

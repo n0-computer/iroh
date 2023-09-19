@@ -31,6 +31,7 @@ const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
 pub mod add;
+pub mod delete;
 pub mod doctor;
 pub mod get;
 pub mod list;
@@ -442,6 +443,9 @@ pub enum BlobCommands {
     },
     /// List availble content on the node.
     #[clap(subcommand)]
+    Delete(self::delete::Commands),
+    /// List availble content on the node.
+    #[clap(subcommand)]
     List(self::list::Commands),
     /// Validate hashes on the running node.
     Validate {
@@ -510,6 +514,7 @@ impl BlobCommands {
                 Ok(())
             }
             Self::List(cmd) => cmd.run(client).await,
+            Self::Delete(cmd) => cmd.run(client).await,
             Self::Validate { repair } => self::validate::run(client, repair).await,
             Self::Add { path, in_place } => self::add::run(client, path, in_place).await,
         }

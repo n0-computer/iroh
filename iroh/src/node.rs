@@ -61,11 +61,10 @@ use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BytesGetRequest, BytesGetResponse, ConnectionInfoRequest, ConnectionInfoResponse,
     ConnectionsRequest, ConnectionsResponse, ListBlobsRequest, ListBlobsResponse,
-    ListCollectionsRequest, ListCollectionsResponse, ListIncompleteBlobsRequest,
-    ListIncompleteBlobsResponse, ProvideRequest, ProviderRequest, ProviderResponse,
-    ProviderService, ShareRequest, ShutdownRequest, StatsGetRequest, StatsGetResponse,
-    StatusRequest, StatusResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    ListIncompleteBlobsRequest, ListIncompleteBlobsResponse, ListRootsRequest, ListRootsResponse,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, SetRootRequest,
+    ShareRequest, ShutdownRequest, StatsGetRequest, StatsGetResponse, StatusRequest,
+    StatusResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -815,34 +814,21 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn list_collections(
+    fn list_roots(
         self,
-        _msg: ListCollectionsRequest,
-    ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
-        let db = self.inner.db.clone();
-        let local = self.inner.rt.local_pool().clone();
-        let roots = db.roots();
-        futures::stream::iter(roots).filter_map(move |(_name, (hash, _format))| {
-            let db = db.clone();
-            let local = local.clone();
-            let cp = self.collection_parser.clone();
-            async move {
-                let entry = db.get(&hash)?;
-                let stats = local
-                    .spawn_pinned(|| async move {
-                        let reader = entry.data_reader().await.ok()?;
-                        let (_collection, stats) = cp.parse(0, reader).await.ok()?;
-                        Some(stats)
-                    })
-                    .await
-                    .ok()??;
-                Some(ListCollectionsResponse {
-                    hash,
-                    total_blobs_count: stats.num_blobs,
-                    total_blobs_size: stats.total_blob_size,
-                })
-            }
+        _msg: ListRootsRequest,
+    ) -> impl Stream<Item = ListRootsResponse> + Send + 'static {
+        let roots = self.inner.db.roots();
+        futures::stream::iter(roots).filter_map(move |(name, (hash, format))| async move {
+            Some(ListRootsResponse { name, hash, format })
         })
+    }
+
+    fn set_root(self, msg: SetRootRequest) -> impl Future<Output = RpcResult<()>> {
+        async move {
+            self.inner.db.set_root(&msg.name, msg.value).await?;
+            Ok(())
+        }
     }
 
     /// Invoke validate on the database and stream out the result
@@ -1291,9 +1277,10 @@ fn handle_rpc_request<
                     .await
             }
             ListCollections(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_collections)
+                chan.server_streaming(msg, handler, RpcHandler::list_roots)
                     .await
             }
+            SetRoot(msg) => chan.rpc(msg, handler, RpcHandler::set_root).await,
             Provide(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await

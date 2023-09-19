@@ -126,7 +126,7 @@ use std::fmt;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
@@ -709,18 +709,13 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
-        let mut state = self.0.state.write().unwrap();
-        state.live.extend(elements);
-    }
-
-    fn is_live(&self, hash: &Hash) -> bool {
-        let state = self.0.state.read().unwrap();
-        state.live.contains(hash)
-    }
-
     fn set_root(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
-        tracing::info!("set_root {:?} {:?}", name, value);
+        let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
+            format!("\"{}\"", text)
+        } else {
+            hex::encode(&name)
+        };
+        tracing::info!("set_root {} {:?}", name_debug, value);
         let mut state = self.0.state.write().unwrap();
         if let Some(item) = value {
             state.roots.insert(name.to_vec().into(), item);
@@ -730,7 +725,29 @@ impl baomap::Store for Store {
         async move { Ok(()) }.boxed()
     }
 
+    fn temp_pin(&self, cid: Cid) -> PinnedCid {
+        PinnedCid::new(cid, Some(self.0.clone()))
+    }
+
+    fn clear_live(&self) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.clear();
+    }
+
+    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.extend(elements);
+    }
+
+    fn is_live(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        let res = state.live.contains(hash);
+        println!("is_live: {:?} {} {}", hash, state.live.len(), res);
+        res
+    }
+
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        println!("delete: {:?}", hash);
         let this = self.clone();
         let hash = *hash;
         self.0
@@ -739,10 +756,6 @@ impl baomap::Store for Store {
             .spawn_blocking(move || this.delete_sync(hash))
             .map(flatten_to_io)
             .boxed()
-    }
-
-    fn temp_pin(&self, cid: Cid) -> PinnedCid {
-        PinnedCid::new(cid, Some(self.0.clone()))
     }
 }
 

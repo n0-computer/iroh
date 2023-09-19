@@ -4,7 +4,9 @@ use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
     client::quic::RpcClient,
-    rpc_protocol::{ListBlobsRequest, ListCollectionsRequest, ListIncompleteBlobsRequest},
+    rpc_protocol::{
+        ListBlobsRequest, ListIncompleteBlobsRequest, ListRootsRequest, ListRootsResponse,
+    },
 };
 
 #[derive(Subcommand, Debug, Clone)]
@@ -13,8 +15,8 @@ pub enum Commands {
     Blobs,
     /// List the available blobs on the running provider.
     IncompleteBlobs,
-    /// List the available collections on the running provider.
-    Collections,
+    /// List the available roots on the running provider.
+    Roots,
 }
 
 impl Commands {
@@ -34,23 +36,16 @@ impl Commands {
                     println!("{} {}", item.hash, item.size);
                 }
             }
-            Commands::Collections => {
-                let mut response = client.server_streaming(ListCollectionsRequest).await?;
-                while let Some(collection) = response.next().await {
-                    let collection = collection?;
-                    let total_blobs_count = collection.total_blobs_count.unwrap_or_default();
-                    let total_blobs_size = collection.total_blobs_size.unwrap_or_default();
-                    println!(
-                        "{}: {} {} ({})",
-                        collection.hash,
-                        total_blobs_count,
-                        if total_blobs_count > 1 {
-                            "blobs"
-                        } else {
-                            "blob"
-                        },
-                        HumanBytes(total_blobs_size),
-                    );
+            Commands::Roots => {
+                let mut response = client.server_streaming(ListRootsRequest).await?;
+                while let Some(item) = response.next().await {
+                    let ListRootsResponse { name, hash, format } = item?;
+                    let name = if let Ok(text) = std::str::from_utf8(&name) {
+                        format!("\"{}\"", text)
+                    } else {
+                        hex::encode(&name)
+                    };
+                    println!("{}: {} {:?}", name, hash, format,);
                 }
             }
         }

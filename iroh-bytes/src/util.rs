@@ -19,7 +19,7 @@ pub mod runtime;
 ///
 /// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
 /// able to use for iroh collections would be 2 bytes varint encoded or something...
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Format {
     /// Hash refers to a blob
     Blob,

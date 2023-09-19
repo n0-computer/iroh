@@ -11,7 +11,12 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
+use iroh_bytes::{
+    protocol::RequestToken,
+    provider::ShareProgress,
+    util::{Cid, Format},
+    Hash,
+};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 
@@ -162,29 +167,40 @@ impl ServerStreamingMsg<ProviderService> for ListIncompleteBlobsRequest {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListCollectionsRequest;
+pub struct ListRootsRequest;
 
 /// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListCollectionsResponse {
-    /// Hash of the collection
+pub struct ListRootsResponse {
+    /// Name of the root
+    pub name: Bytes,
+    /// Hash of the root
     pub hash: Hash,
-    /// Number of children in the collection
-    ///
-    /// This is an optional field, because the data is not always available.
-    pub total_blobs_count: Option<u64>,
-    /// Total size of the raw data referred to by all links
-    ///
-    /// This is an optional field, because the data is not always available.
-    pub total_blobs_size: Option<u64>,
+    /// Format of the root
+    pub format: Format,
 }
 
-impl Msg<ProviderService> for ListCollectionsRequest {
+impl Msg<ProviderService> for ListRootsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ListCollectionsRequest {
-    type Response = ListCollectionsResponse;
+impl ServerStreamingMsg<ProviderService> for ListRootsRequest {
+    type Response = ListRootsResponse;
+}
+
+/// List all collections
+///
+/// Lists all collections that have been explicitly added to the database.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetRootRequest {
+    /// Name of the root
+    pub name: Bytes,
+    /// Hash of the root
+    pub value: Option<Cid>,
+}
+
+impl RpcMsg<ProviderService> for SetRootRequest {
+    type Response = RpcResult<()>;
 }
 
 /// A request to get the version of the node
@@ -676,7 +692,8 @@ pub enum ProviderRequest {
     Version(VersionRequest),
     ListBlobs(ListBlobsRequest),
     ListIncompleteBlobs(ListIncompleteBlobsRequest),
-    ListCollections(ListCollectionsRequest),
+    ListCollections(ListRootsRequest),
+    SetRoot(SetRootRequest),
     Provide(ProvideRequest),
     Share(ShareRequest),
     Status(StatusRequest),
@@ -717,7 +734,7 @@ pub enum ProviderResponse {
     Version(VersionResponse),
     ListBlobs(ListBlobsResponse),
     ListIncompleteBlobs(ListIncompleteBlobsResponse),
-    ListCollections(ListCollectionsResponse),
+    ListCollections(ListRootsResponse),
     Provide(ProvideProgress),
     Share(ShareProgress),
     Status(StatusResponse),
@@ -746,6 +763,7 @@ pub enum ProviderResponse {
     BytesGet(RpcResult<BytesGetResponse>),
 
     Stats(RpcResult<StatsGetResponse>),
+    SetRoot(RpcResult<()>),
 }
 
 impl Service for ProviderService {
