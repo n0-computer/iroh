@@ -1193,6 +1193,7 @@ impl PeerMap {
         self.by_ip_port.insert(*ipp, id);
     }
 
+    /// Saves the known peer info to the given path, returning the number of peers persisted.
     pub(super) fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         let known_peers = self.known_peers();
         let count = known_peers.len();
