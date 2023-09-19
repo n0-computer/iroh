@@ -274,7 +274,7 @@ impl IrohInfo {
 impl From<NodeAddr> for IrohInfo {
     fn from(value: NodeAddr) -> Self {
         Self {
-            addrs: value.endpoints,
+            addrs: value.direct_addrs,
             derp_region: value.derp_region,
         }
     }

@@ -26,7 +26,7 @@ pub struct NodeAddr {
     /// The node's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where this node might be reached directly.
-    pub endpoints: Vec<SocketAddr>,
+    pub direct_addrs: Vec<SocketAddr>,
 }
 
 impl NodeAddr {
@@ -35,19 +35,19 @@ impl NodeAddr {
         Self {
             node_id,
             derp_region: None,
-            endpoints: vec![],
+            direct_addrs: vec![],
         }
     }
     /// Create a new [`NodeAddr`] from its parts.
     pub fn from_parts(
         node_id: PublicKey,
         derp_region: Option<u16>,
-        endpoints: Vec<SocketAddr>,
+        direct_addrs: Vec<SocketAddr>,
     ) -> Self {
         Self {
             node_id,
             derp_region,
-            endpoints,
+            direct_addrs,
         }
     }
 
@@ -58,8 +58,8 @@ impl NodeAddr {
     }
 
     /// Add a list of direct endpoints.
-    pub fn with_endpoints(mut self, endpoints: &[SocketAddr]) -> Self {
-        self.endpoints.extend_from_slice(endpoints);
+    pub fn with_direct_addrs(mut self, addrs: &[SocketAddr]) -> Self {
+        self.direct_addrs.extend_from_slice(addrs);
         self
     }
 }
@@ -379,7 +379,7 @@ impl MagicEndpoint {
 
         let quic_mapped_addr = self.msock.get_mapping_addr(&addr.node_id).await;
         let Some(quic_mapped_addr) = quic_mapped_addr else {
-            return Err(match (addr.endpoints.is_empty(), addr.derp_region) {
+            return Err(match (addr.direct_addrs.is_empty(), addr.derp_region) {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {node_id:?}")
                 }

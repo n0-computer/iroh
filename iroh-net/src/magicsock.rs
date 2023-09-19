@@ -2763,7 +2763,7 @@ pub(crate) mod tests {
                     continue;
                 }
                 let addr = NodeAddr {
-                    endpoints: new_eps.iter().map(|ep| ep.addr).collect(),
+                    direct_addrs: new_eps.iter().map(|ep| ep.addr).collect(),
                     node_id: me.public(),
                     derp_region: Some(1),
                 };

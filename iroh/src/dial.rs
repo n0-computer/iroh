@@ -71,7 +71,7 @@ impl Ticket {
         token: Option<RequestToken>,
         recursive: bool,
     ) -> Result<Self> {
-        ensure!(!peer.endpoints.is_empty(), "addrs list can not be empty");
+        ensure!(!peer.direct_addrs.is_empty(), "addrs list can not be empty");
         Ok(Self {
             hash,
             peer,
@@ -84,7 +84,7 @@ impl Ticket {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let slf: Ticket = postcard::from_bytes(bytes)?;
         ensure!(
-            !slf.peer.endpoints.is_empty(),
+            !slf.peer.direct_addrs.is_empty(),
             "Invalid address list in ticket"
         );
         Ok(slf)

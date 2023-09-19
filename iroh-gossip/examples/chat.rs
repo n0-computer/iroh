@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{collections::HashMap, fmt, str::FromStr, sync::Arc};
 
 use anyhow::{bail, Context};
 use bytes::Bytes;
@@ -154,17 +154,17 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
     // join the gossip topic by connecting to known peers, if any
+    let node_ids = peers.iter().map(|p| p.node_id).collect();
     if peers.is_empty() {
         println!("> waiting for peers to join us...");
     } else {
         println!("> trying to connect to {} peers...", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
-        for peer in &peers {
+        for peer in peers {
             endpoint.add_known_addr(peer).await?;
         }
     };
-    let peer_ids = peers.iter().map(|p| p.peer_id).collect();
-    gossip.join(topic, peer_ids).await?.await?;
+    gossip.join(topic, node_ids).await?.await?;
     println!("> connected!");
 
     // broadcast our name, if set
