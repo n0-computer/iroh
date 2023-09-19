@@ -613,7 +613,7 @@ fn test_provide_get_loop_single(
     let ticket = Ticket::from_str(&ticket).unwrap();
     let addrs = ticket
         .node_addr()
-        .endpoints
+        .direct_addrs
         .iter()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
