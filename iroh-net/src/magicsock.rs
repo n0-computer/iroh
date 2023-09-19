@@ -896,7 +896,7 @@ enum ActorMessage {
         peer: PublicKey,
         /// Addressing information for the peer.
         info: AddrInfo,
-        /// TODO(@divma): I have no idea what this is
+        /// Channel to inform when the operation has finished.
         tx: sync::oneshot::Sender<()>,
     },
     ReceiveDerp(DerpReadResult),
@@ -932,7 +932,6 @@ struct Actor {
     /// The state for an active DiscoKey.
     disco_info: HashMap<PublicKey, DiscoInfo>,
     /// Tracks the networkmap node entity for each peer discovery key.
-    /// TODO: update docs.
     peer_map: PeerMap,
     /// Path where connection info from [`Self::peer_map`] is persisted.
     peers_path: Option<PathBuf>,

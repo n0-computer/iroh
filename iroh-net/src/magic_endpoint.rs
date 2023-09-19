@@ -53,7 +53,7 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
-    /// Path for known peers. See [`MagicEndpointBuilder::peers_path`].
+    /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
 }
 
