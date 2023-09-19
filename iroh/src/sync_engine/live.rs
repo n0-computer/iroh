@@ -367,8 +367,8 @@ struct Actor<S: store::Store, B: baomap::Store> {
     downloader: Downloader,
     replica_store: S,
 
-    /// Set of replicas for which we subscribed to replica events.
-    subscribed_replicas: HashSet<NamespaceId>,
+    /// Set of replicas that we opened for sync or event subscriptions.
+    open_replicas: HashSet<NamespaceId>,
     /// Set of replicas that are actively syncing.
     syncing_replicas: HashSet<NamespaceId>,
 
@@ -376,8 +376,10 @@ struct Actor<S: store::Store, B: baomap::Store> {
     replica_events: futures::stream::SelectAll<RecvStream<'static, (InsertOrigin, SignedEntry)>>,
     /// Events from gossip.
     gossip_events: BoxStream<'static, Result<(TopicId, Event)>>,
+
     /// Last state of sync for a replica with a peer.
     sync_state: HashMap<(NamespaceId, PublicKey), SyncState>,
+
     /// Receiver for actor messages.
     to_actor_rx: mpsc::Receiver<ToActor<S>>,
     /// Send messages to self.
@@ -393,7 +395,8 @@ struct Actor<S: store::Store, B: baomap::Store> {
     running_sync_accept: FuturesUnordered<
         BoxFuture<'static, std::result::Result<(NamespaceId, PublicKey), SyncError>>,
     >,
-
+    /// Runnning download futures.
+    pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
     /// Running gossip join futures.
     pending_joins: FuturesUnordered<BoxFuture<'static, (NamespaceId, Result<()>)>>,
 
@@ -401,9 +404,6 @@ struct Actor<S: store::Store, B: baomap::Store> {
     event_subscriptions: HashMap<NamespaceId, HashMap<u64, OnLiveEventCallback>>,
     /// Next [`RemovalToken`] for external replica event subscriptions.
     event_removal_id: AtomicU64,
-
-    /// Runnning download futures.
-    pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
 }
 
 /// Token needed to remove inserted callbacks.
@@ -429,7 +429,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             downloader,
             replica_store,
             syncing_replicas: Default::default(),
-            subscribed_replicas: Default::default(),
+            open_replicas: Default::default(),
             to_actor_rx,
             to_actor_tx,
             sync_state: Default::default(),
@@ -532,7 +532,13 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         if !self.syncing_replicas.contains(namespace) {
             None
         } else {
-            self.replica_store.open_replica(namespace).ok().flatten()
+            match self.replica_store.open_replica(namespace) {
+                Ok(replica) => replica,
+                Err(err) => {
+                    warn!("Failed to get previously opened replica from the store: {err:?}");
+                    None
+                }
+            }
         }
     }
 
@@ -564,7 +570,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for namespace in self.subscribed_replicas.drain() {
+        for namespace in self.open_replicas.drain() {
             self.syncing_replicas.remove(&namespace);
             self.gossip.quit(namespace.into()).await?;
             self.event_subscriptions.remove(&namespace);
@@ -604,7 +610,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     fn ensure_subscription(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
-        if !self.subscribed_replicas.contains(&namespace) {
+        if !self.open_replicas.contains(&namespace) {
             let Some(replica) = self.replica_store.open_replica(&namespace)? else {
                 bail!("Replica not found");
             };
@@ -612,20 +618,27 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 .subscribe()
                 .ok_or_else(|| anyhow::anyhow!("trying to subscribe twice to the same replica"))?;
             self.replica_events.push(events.into_stream());
-            self.subscribed_replicas.insert(namespace);
+            self.open_replicas.insert(namespace);
         }
         Ok(())
     }
 
+    /// Close a replica if we don't need it anymore.
+    ///
+    /// This closes only if both of the following conditions are met:
+    /// * The replica is not in the set of actively synced replicas
+    /// * There are no external event subscriptions for this replica
+    ///
+    /// Closing a replica will remove all event subscriptions.
     fn maybe_close_replica(&mut self, namespace: NamespaceId) {
-        if !self.subscribed_replicas.contains(&namespace)
+        if !self.open_replicas.contains(&namespace)
             || self.syncing_replicas.contains(&namespace)
             || self.event_subscriptions.contains_key(&namespace)
         {
             return;
         }
         self.replica_store.close_replica(&namespace);
-        self.subscribed_replicas.remove(&namespace);
+        self.open_replicas.remove(&namespace);
     }
 
     async fn subscribe(
