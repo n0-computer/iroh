@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
+use futures::StreamExt;
 use iroh::{
     baomap::flat,
     client::quic::RPC_ALPN,
@@ -14,7 +15,11 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
+use iroh_bytes::{
+    baomap::{GcMarkEvent, GcSweepEvent, Store as BaoStore},
+    protocol::RequestToken,
+    util::runtime,
+};
 use iroh_net::{derp::DerpMap, key::SecretKey};
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
@@ -108,6 +113,45 @@ pub async fn run(
         )
     };
 
+    let db2 = db.clone();
+    let gc_task = rt.local_pool().spawn_pinned(|| async move {
+        'outer: loop {
+            tracing::info!("Starting GC mark phase");
+            let mut stream = db2.gc_mark(IrohCollectionParser, None);
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcMarkEvent::CustomInfo(text) => {
+                        tracing::info!("{}", text);
+                    }
+                    GcMarkEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcMarkEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+            tracing::info!("Starting GC sweep phase");
+            let mut stream = db2.gc_sweep();
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcSweepEvent::CustomInfo(text) => {
+                        tracing::info!("{}", text);
+                    }
+                    GcSweepEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcSweepEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    });
+
     let provider2 = provider.clone();
     tokio::select! {
         biased;
@@ -119,6 +163,9 @@ pub async fn run(
             res?;
         }
     }
+
+    gc_task.abort();
+    drop(gc_task);
 
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)

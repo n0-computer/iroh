@@ -27,7 +27,7 @@ use iroh_bytes::get::Stats;
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::ShareProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::RpcResult;
+use iroh_bytes::util::{Format, RpcResult};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{CustomGetHandler, ProvideProgress, RequestAuthorizationHandler},
@@ -50,6 +50,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
+use rand::Rng;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -821,7 +822,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
         let roots = db.roots();
-        futures::stream::iter(roots).filter_map(move |(hash, _format)| {
+        futures::stream::iter(roots).filter_map(move |(_name, (hash, _format))| {
             let db = db.clone();
             let local = local.clone();
             let cp = self.collection_parser.clone();
@@ -962,6 +963,13 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
         debug!("share: {:?}", msg);
+        let format = if msg.recursive {
+            Format::Collection
+        } else {
+            Format::Blob
+        };
+        let db = self.inner.db.clone();
+        let temp_pin = db.temp_pin((hash, format));
         let conn = self
             .inner
             .endpoint
@@ -995,6 +1003,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     progress.send(ShareProgress::Abort(cause.into())).await?;
                 }
             }
+            // todo: add name to share request instead of inventing one here
+            let uuid = rand::thread_rng().gen::<[u8; 16]>();
+            db.set_root(&uuid, Some((hash, format))).await?;
+            drop(temp_pin);
             progress.send(ShareProgress::AllDone).await?;
             anyhow::Ok(())
         });
@@ -1024,7 +1036,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, ImportProgress};
+        use iroh_bytes::baomap::{ImportMode, ImportProgress, PinnedCid};
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = FlumeProgressSender::new(progress);
@@ -1062,32 +1074,55 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             ImportMode::Copy
         };
         const IO_PARALLELISM: usize = 4;
-        let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
+        let result: Vec<(Blob, u64, PinnedCid)> = futures::stream::iter(data_sources)
             .map(|source| {
                 let import_progress = import_progress.clone();
                 let db = self.inner.db.clone();
                 async move {
                     let name = source.name().to_string();
-                    let (hash, size) = db
-                        .import(source.path().to_owned(), mode, import_progress)
+                    let (cid, size) = db
+                        .import(
+                            source.path().to_owned(),
+                            mode,
+                            Format::Blob,
+                            import_progress,
+                        )
                         .await?;
-                    io::Result::Ok((Blob { hash, name }, size))
+                    io::Result::Ok((
+                        Blob {
+                            hash: *cid.hash(),
+                            name,
+                        },
+                        size,
+                        cid,
+                    ))
                 }
             })
             .buffered(IO_PARALLELISM)
             .try_collect::<Vec<_>>()
             .await?;
-        let total_blobs_size = result.iter().map(|(_, size)| *size).sum();
-        let blobs = result.into_iter().map(|(blob, _)| blob).collect::<Vec<_>>();
+        let total_blobs_size = result.iter().map(|(_, size, _)| *size).sum();
+        let (blobs, cids): (Vec<_>, Vec<_>) =
+            result.into_iter().map(|(blob, _, cid)| (blob, cid)).unzip();
         let collection = Collection::new(blobs, total_blobs_size)?;
         let data = collection.to_bytes()?;
-        let hash = self.inner.db.import_bytes(data.into()).await?;
-        progress.send(ProvideProgress::AllDone { hash }).await?;
+        let cid = self
+            .inner
+            .db
+            .import_bytes(data.into(), Format::Collection)
+            .await?;
+        let root_name = rand::thread_rng().gen::<[u8; 16]>();
+        self.inner.db.set_root(&root_name, Some(*cid.cid()));
+        // now that we have set the collection cid as a root, we can drop the temp pins
+        drop(cids);
+        progress
+            .send(ProvideProgress::AllDone { hash: *cid.hash() })
+            .await?;
 
         self.inner
             .callbacks
             .send(Event::ByteProvide(
-                iroh_bytes::provider::Event::CollectionAdded { hash },
+                iroh_bytes::provider::Event::CollectionAdded { hash: *cid.hash() },
             ))
             .await;
 

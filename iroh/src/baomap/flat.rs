@@ -121,15 +121,14 @@
 //!
 //! Once the download is complete, the partial data and partial outboard files are renamed
 //! to the final partial data and partial outboard files.
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant};
 
-use anyhow::Context;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkNum};
@@ -137,16 +136,14 @@ use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
-use futures::stream::LocalBoxStream;
-use futures::{Future, FutureExt, StreamExt};
-use genawaiter::rc::{Co, Gen};
+use futures::{Future, FutureExt};
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
-    self, EntryStatus, ExportMode, Format, GcMarkEvent, ImportMode, ImportProgress, Map, MapEntry,
-    PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
+    self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
+    PartialMap, PartialMapEntry, PinnedCid, ReadableStore, ValidateProgress,
 };
-use iroh_bytes::collection::CollectionParser;
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
+use iroh_bytes::util::{Cid, Format};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use rand::Rng;
@@ -165,6 +162,12 @@ struct State {
     outboard: BTreeMap<Hash, Bytes>,
     // data, cached for all complete entries that are small enough
     data: BTreeMap<Hash, Bytes>,
+    // in memory tracking of live set
+    live: BTreeMap<Hash, Instant>,
+    // temp pins
+    temp: BTreeMap<Cid, u64>,
+    // roots
+    roots: BTreeMap<Bytes, Cid>,
 }
 
 #[derive(Debug, Default)]
@@ -381,6 +384,7 @@ struct Options {
     partial_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
+    live_timeout: Duration,
     rt: tokio::runtime::Handle,
 }
 
@@ -637,8 +641,20 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static> {
-        unimplemented!()
+    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+        let inner = self.0.state.read().unwrap();
+        let items = inner.temp.keys().copied().collect::<Vec<_>>();
+        Box::new(items.into_iter())
+    }
+
+    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+        let inner = self.0.state.read().unwrap();
+        let items = inner
+            .roots
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>();
+        Box::new(items.into_iter())
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -673,25 +689,133 @@ impl baomap::Store for Store {
         &self,
         path: PathBuf,
         mode: ImportMode,
+        format: Format,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
         let this = self.clone();
         self.0
             .options
             .rt
-            .spawn_blocking(move || this.import_sync(path, mode, progress))
+            .spawn_blocking(move || this.import_sync(path, mode, format, progress))
             .map(flatten_to_io)
             .boxed()
     }
 
-    fn import_bytes(&self, data: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+    fn import_bytes(&self, data: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>> {
         let this = self.clone();
         self.0
             .options
             .rt
-            .spawn_blocking(move || this.import_bytes_sync(data))
+            .spawn_blocking(move || this.import_bytes_sync(data, format))
             .map(flatten_to_io)
             .boxed()
+    }
+
+    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
+        let now = Instant::now();
+        let mut state = self.0.state.write().unwrap();
+        state.live.extend(elements.into_iter().map(|h| (h, now)));
+    }
+
+    fn is_live(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        if let Some(last_seen) = state.live.get(hash) {
+            last_seen.elapsed() < self.0.options.live_timeout
+        } else {
+            false
+        }
+    }
+
+    fn set_root(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
+        tracing::info!("set_root {:?} {:?}", name, value);
+        let mut state = self.0.state.write().unwrap();
+        if let Some(item) = value {
+            state.roots.insert(name.to_vec().into(), item);
+        } else {
+            state.roots.remove(name);
+        }
+        async move { Ok(()) }.boxed()
+    }
+
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        let mut data = None;
+        let mut outboard = None;
+        let mut partial_data = None;
+        let mut partial_outboard = None;
+        let mut state = self.0.state.write().unwrap();
+        if let Some(entry) = state.complete.remove(hash) {
+            if entry.owned_data {
+                data = Some(self.owned_data_path(hash));
+            }
+            if needs_outboard(entry.size) {
+                outboard = Some(self.owned_outboard_path(hash));
+            }
+        }
+        if let Some(partial) = state.partial.remove(hash) {
+            partial_data = Some(self.0.options.partial_data_path(*hash, &partial.uuid));
+            if needs_outboard(partial.size) {
+                partial_outboard = Some(self.0.options.partial_outboard_path(*hash, &partial.uuid));
+            }
+        }
+        state.outboard.remove(hash);
+        state.data.remove(hash);
+        drop(state);
+        // TODO: there is a race condition if we have just decided to delete a file,
+        // and somebody adds it again before the deletion is complete.
+        //
+        // we could take a lock here and hold it until the deletion is complete.
+        // ideally it would be a per-hash lock.
+        //
+        // for the partial files this is not a problem, since a new one will have a new uuid.
+        async move {
+            if let Some(data) = data {
+                if let Err(cause) = tokio::fs::remove_file(data).await {
+                    tracing::warn!("failed to delete data file: {}", cause);
+                }
+            }
+            if let Some(outboard) = outboard {
+                if let Err(cause) = tokio::fs::remove_file(outboard).await {
+                    tracing::warn!("failed to delete outboard file: {}", cause);
+                }
+            }
+            if let Some(partial_data) = partial_data {
+                if let Err(cause) = tokio::fs::remove_file(partial_data).await {
+                    tracing::warn!("failed to delete partial data file: {}", cause);
+                }
+            }
+            if let Some(partial_outboard) = partial_outboard {
+                if let Err(cause) = tokio::fs::remove_file(partial_outboard).await {
+                    tracing::warn!("failed to delete partial outboard file: {}", cause);
+                }
+            }
+
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn temp_pin(&self, cid: Cid) -> PinnedCid {
+        PinnedCid::new(cid, Some(self.0.clone()))
+    }
+}
+
+impl LivenessTracker for Inner {
+    fn on_clone(&self, cid: &Cid) {
+        tracing::info!("temp pinning: {:?}", cid);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*cid).or_default();
+        // panic if we overflow an u64
+        *entry = entry.checked_add(1).unwrap();
+    }
+
+    fn on_drop(&self, cid: &Cid) {
+        tracing::info!("temp pin drop: {:?}", cid);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*cid).or_default();
+        *entry = entry.saturating_sub(1);
+        if *entry == 0 {
+            state.temp.remove(cid);
+        }
     }
 }
 
@@ -714,8 +838,9 @@ impl Store {
         self,
         path: PathBuf,
         mode: ImportMode,
+        format: Format,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<(Hash, u64)> {
+    ) -> io::Result<(PinnedCid, u64)> {
         if !path.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -733,7 +858,7 @@ impl Store {
             id,
             path: path.clone(),
         })?;
-        let (hash, new, outboard) = match mode {
+        let (cid, new, outboard) = match mode {
             ImportMode::TryReference => {
                 // compute outboard and hash from the data in place, since we assume that it is stable
                 let size = path.metadata()?.len();
@@ -743,7 +868,9 @@ impl Store {
                     Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-                (hash, CompleteEntry::new_external(size, path), outboard)
+                use baomap::Store;
+                let cid = self.temp_pin((hash, format));
+                (cid, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
                 let uuid = rand::thread_rng().gen::<[u8; 16]>();
@@ -764,10 +891,16 @@ impl Store {
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 let data_path = self.owned_data_path(&hash);
+                use baomap::Store;
+                // the cid must be pinned before we move the file, otherwise there is a race condition
+                // where it might be deleted here.
+                let cid = self.temp_pin((hash, Format::Blob));
                 std::fs::rename(temp_data_path, data_path)?;
-                (hash, CompleteEntry::new_default(size), outboard)
+                (cid, CompleteEntry::new_default(size), outboard)
             }
         };
+        // all writes here are protected by the temp pin
+        let hash = *cid.hash();
         if let Some(outboard) = outboard.as_ref() {
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::write(outboard_path, outboard)?;
@@ -784,12 +917,14 @@ impl Store {
         if let Some(outboard) = outboard {
             state.outboard.insert(hash, outboard.into());
         }
-        Ok((hash, size))
+        Ok((cid, size))
     }
 
-    fn import_bytes_sync(&self, data: Bytes) -> io::Result<Hash> {
+    fn import_bytes_sync(&self, data: Bytes, format: Format) -> io::Result<PinnedCid> {
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();
+        use baomap::Store;
+        let cid = self.temp_pin((hash, format));
         let data_path = self.owned_data_path(&hash);
         std::fs::write(data_path, &data)?;
         if outboard.len() > 8 {
@@ -804,7 +939,7 @@ impl Store {
         if size < self.0.options.inline_threshold {
             state.data.insert(hash, data.to_vec().into());
         }
-        Ok(hash)
+        Ok(cid)
     }
 
     fn export_sync(
@@ -1136,12 +1271,16 @@ impl Store {
                 partial,
                 outboard,
                 data: Default::default(),
+                live: Default::default(),
+                roots: Default::default(),
+                temp: Default::default(),
             }),
             options: Options {
                 complete_path,
                 partial_path,
                 move_threshold: 1024 * 128,
                 inline_threshold: 1024 * 16,
+                live_timeout: Duration::from_secs(120),
                 rt: rt.main().clone(),
             },
         })))

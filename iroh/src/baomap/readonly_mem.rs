@@ -23,11 +23,13 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{
-        self, range_collections::RangeSet2, EntryStatus, ExportMode, Format, ImportMode,
-        ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore,
-        ValidateProgress,
+        self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
+        Map, MapEntry, PartialMap, PartialMapEntry, PinnedCid, ReadableStore, ValidateProgress,
     },
-    util::progress::{IdGenerator, ProgressSender},
+    util::{
+        progress::{IdGenerator, ProgressSender},
+        Cid, Format,
+    },
     Hash, IROH_BLOCK_SIZE,
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
@@ -231,7 +233,11 @@ impl ReadableStore for Store {
         Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static> {
+    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
+
+    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -306,15 +312,16 @@ impl baomap::Store for Store {
         &self,
         data: PathBuf,
         mode: ImportMode,
+        format: Format,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
-        let _ = (data, mode, progress);
+    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
+        let _ = (data, mode, progress, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
     /// import a byte slice
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
-        let _ = bytes;
+    fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>> {
+        let _ = (bytes, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 }

@@ -362,7 +362,7 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let hash = self.db.import_bytes(value.into()).await?;
+                let hash = self.db.import_bytes(value.into(), Format::Blob).await?;
                 self.doc.insert(key, &self.author, hash, len as u64)?;
             }
             Cmd::Get {
@@ -457,7 +457,7 @@ impl ReplState {
                                         String::from_utf8(bytes.clone()).unwrap().into_bytes();
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let hash = db.import_bytes(value.into()).await?;
+                                    let hash = db.import_bytes(value.into(), Format::Blob).await?;
                                     doc.insert(key, &author, hash, len as u64)?;
                                 }
                                 Ok(count)
@@ -517,6 +517,7 @@ impl ReplState {
                     .import(
                         file_path.clone(),
                         ImportMode::Copy,
+                        Format::Blob,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
@@ -551,6 +552,7 @@ impl ReplState {
                             .import(
                                 file.path().into(),
                                 ImportMode::Copy,
+                                Format::Blob,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;

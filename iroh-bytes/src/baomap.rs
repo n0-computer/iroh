@@ -1,22 +1,17 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{collections::BTreeSet, io, path::PathBuf};
+use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
     collection::CollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
-        RpcError,
+        Cid, Format, RpcError,
     },
     Hash,
 };
-use anyhow::Context;
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
-use futures::{
-    future::{self, BoxFuture, LocalBoxFuture},
-    stream::{self, LocalBoxStream},
-    Future, FutureExt, StreamExt,
-};
+use futures::{future::BoxFuture, stream::LocalBoxStream, FutureExt, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
 use range_collections::RangeSet2;
@@ -25,20 +20,6 @@ use tokio::sync::mpsc;
 
 pub use bao_tree;
 pub use range_collections;
-
-/// A format identifier
-///
-/// Should we make this an u64 and use https://github.com/multiformats/multicodec/blob/master/table.csv?
-///
-/// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
-/// able to use for iroh collections would be 2 bytes varint encoded or something...
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Format {
-    /// Hash refers to a blob
-    Blob,
-    /// Hash refers to an iroh collection (format here?)
-    Collection,
-}
 
 /// The availability status of an entry in a store.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -161,7 +142,11 @@ pub trait ReadableStore: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// existing roots must be present in memory.
-    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static>;
+    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static>;
+
+    /// Temp pins
+    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static>;
+
     /// Validate the database
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
 
@@ -200,13 +185,14 @@ pub trait Store: ReadableStore + PartialMap {
         &self,
         data: PathBuf,
         mode: ImportMode,
+        format: Format,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>>;
+    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>>;
 
     /// This trait method imports data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>>;
+    fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>>;
 
     /// Traverse all roots recursively and mark them as live.
     ///
@@ -214,17 +200,17 @@ pub trait Store: ReadableStore + PartialMap {
     ///
     /// Not polling this stream to completion is dangerous, since it might lead
     /// to some live data being missed.
-    /// 
+    ///
     /// The implementation of this method should do the minimum amount of work
     /// to determine the live set. Actual deletion of garbage should be done
     /// in the gc_sweep phase.
     fn gc_mark<'a>(
         &'a self,
         cp: impl CollectionParser + 'a,
-        extra_roots: impl Iterator<Item = io::Result<(Hash, Format)>> + 'a,
+        extra_roots: impl IntoIterator<Item = io::Result<Cid>> + 'a,
     ) -> LocalBoxStream<'a, GcMarkEvent> {
         Gen::new(|co| async move {
-            if let Err(e) = gc_task(self, cp, extra_roots, &co).await {
+            if let Err(e) = gc_mark_task(self, cp, extra_roots, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
@@ -245,8 +231,9 @@ pub trait Store: ReadableStore + PartialMap {
                 if !self.is_live(&hash) {
                     if let Err(e) = self.delete(&hash).await {
                         co.yield_(GcSweepEvent::Error(e.into())).await;
+                    } else {
+                        count += 1;
                     }
-                    count += 1;
                 }
             }
             co.yield_(GcSweepEvent::CustomInfo(format!("deleted {} blobs", count)))
@@ -258,14 +245,21 @@ pub trait Store: ReadableStore + PartialMap {
     /// Add the given hashes to the live set.
     ///
     /// This is used by the gc mark phase to mark roots as live.
-    fn add_live<'a>(&'a self, live: impl IntoIterator<Item = Hash> + 'a) {
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
         let _ = live;
+    }
+
+    /// Set a named pin
+    fn set_root(&self, name: &[u8], hash: Option<Cid>) -> BoxFuture<io::Result<()>> {
+        let _ = name;
+        let _ = hash;
+        async move { Ok(()) }.boxed()
     }
 
     /// True if the given hash is live.
     fn is_live(&self, hash: &Hash) -> bool {
         let _ = hash;
-        true
+        false
     }
 
     /// physically delete the given hash from the store.
@@ -273,13 +267,93 @@ pub trait Store: ReadableStore + PartialMap {
         let _ = hash;
         async move { Ok(()) }.boxed()
     }
+
+    /// Create a temporary pin for this store
+    fn temp_pin(&self, cid: Cid) -> PinnedCid {
+        PinnedCid {
+            cid,
+            liveness: None,
+        }
+    }
+}
+
+/// A trait for things that can track liveness of cids.
+///
+/// A cid in iroh is just a hash and a format. This trait works together with
+/// [PinnedCid] to keep track of the liveness of a cid.
+///
+/// It is important to include the format in the liveness tracking, since
+/// pinning a blob and pinning a collection are different things.
+pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
+    /// Called on clone
+    fn on_clone(&self, cid: &Cid) {
+        let _ = cid;
+    }
+    /// Called on drop
+    fn on_drop(&self, cid: &Cid) {
+        let _ = cid;
+    }
+}
+
+/// A pinned cid
+///
+/// This contains all the information of a blake3 cid, but in addition keeps
+/// the corresponding data alive.
+#[derive(Debug)]
+pub struct PinnedCid {
+    /// The cid we are pinning
+    cid: Cid,
+    /// liveness tracker
+    liveness: Option<Arc<dyn LivenessTracker>>,
+}
+
+impl PinnedCid {
+    /// Create a new pinned cid
+    pub fn new(cid: Cid, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
+        if let Some(liveness) = liveness.as_ref() {
+            liveness.on_clone(&cid);
+        }
+        Self { cid, liveness }
+    }
+
+    /// The hash of the pinned item
+    pub fn cid(&self) -> &Cid {
+        &self.cid
+    }
+
+    /// The hash of the pinned item
+    pub fn hash(&self) -> &Hash {
+        &self.cid.0
+    }
+
+    /// The format of the pinned item
+    pub fn format(&self) -> Format {
+        self.cid.1
+    }
+}
+
+impl Clone for PinnedCid {
+    fn clone(&self) -> Self {
+        if let Some(liveness) = self.liveness.as_ref() {
+            liveness.on_clone(&self.cid);
+        }
+        Self::new(self.cid, self.liveness.clone())
+    }
+}
+
+impl Drop for PinnedCid {
+    fn drop(&mut self) {
+        if let Some(liveness) = self.liveness.as_ref() {
+            liveness.on_drop(&self.cid);
+        }
+    }
 }
 
 /// Implementation of the gc method.
-async fn gc_task<'a>(
+async fn gc_mark_task<'a>(
     store: &'a impl Store,
     cp: impl CollectionParser + 'a,
-    extra_roots: impl Iterator<Item = io::Result<(Hash, Format)>> + 'a,
+    extra_roots: impl IntoIterator<Item = io::Result<Cid>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
     let mut roots = BTreeSet::new();
@@ -294,12 +368,16 @@ async fn gc_task<'a>(
         };
     }
     info!("traversing roots");
-    for item in store.roots() {
-        roots.insert(item);
+    for (_name, cid) in store.roots() {
+        roots.insert(cid);
+    }
+    info!("traversing temp roots");
+    for cid in store.temp_pins() {
+        roots.insert(cid);
     }
     info!("traversing extra roots");
-    for item in extra_roots {
-        roots.insert(item?);
+    for cid in extra_roots {
+        roots.insert(cid?);
     }
     let mut current = roots.into_iter().collect::<Vec<_>>();
     let mut live: BTreeSet<Hash> = BTreeSet::new();
@@ -340,6 +418,7 @@ async fn gc_task<'a>(
             }
         }
     }
+    info!("gc mark done. found {} live blobs", live.len());
     store.add_live(live);
     Ok(())
 }

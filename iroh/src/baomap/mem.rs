@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use super::flatten_to_io;
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
@@ -26,23 +27,23 @@ use iroh_bytes::baomap;
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
-use iroh_bytes::baomap::Format;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
 use iroh_bytes::baomap::PartialMap;
 use iroh_bytes::baomap::PartialMapEntry;
+use iroh_bytes::baomap::PinnedCid;
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
 use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::IgnoreProgressSender;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::util::runtime;
+use iroh_bytes::util::Cid;
+use iroh_bytes::util::Format;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
 use tokio::sync::mpsc;
-
-use super::flatten_to_io;
 
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
@@ -336,7 +337,11 @@ impl ReadableStore for Store {
         )
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = (Hash, Format)> + Send + Sync + 'static> {
+    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
+
+    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -439,8 +444,9 @@ impl baomap::Store for Store {
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
+        format: Format,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
         let this = self.clone();
         self.0
             .rt
@@ -459,19 +465,21 @@ impl baomap::Store for Store {
                     size: bytes.len() as u64,
                 })?;
                 let size = bytes.len() as u64;
-                let hash = this.import_bytes_sync(bytes, progress)?;
-                Ok((hash, size))
+                let cid = this.import_bytes_sync(bytes, format, progress)?;
+                Ok((cid, size))
             })
             .map(flatten_to_io)
             .boxed()
     }
 
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+    fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>> {
         let this = self.clone();
         self.0
             .rt
             .main()
-            .spawn_blocking(move || this.import_bytes_sync(bytes, IgnoreProgressSender::default()))
+            .spawn_blocking(move || {
+                this.import_bytes_sync(bytes, format, IgnoreProgressSender::default())
+            })
             .map(flatten_to_io)
             .boxed()
     }
@@ -489,8 +497,9 @@ impl Store {
     fn import_bytes_sync(
         &self,
         bytes: Bytes,
+        format: Format,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<Hash> {
+    ) -> io::Result<PinnedCid> {
         let size = bytes.len() as u64;
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
@@ -505,13 +514,16 @@ impl Store {
             tree,
             data: outboard.into(),
         };
+        let hash = hash.into();
+        use baomap::Store;
+        let cid = self.temp_pin((hash, format));
         self.0
             .state
             .write()
             .unwrap()
             .complete
-            .insert(hash.into(), (bytes, outboard));
-        Ok(hash.into())
+            .insert(hash, (bytes, outboard));
+        Ok(cid)
     }
 
     fn export_sync(
