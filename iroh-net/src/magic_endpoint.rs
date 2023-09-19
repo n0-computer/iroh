@@ -175,7 +175,7 @@ impl MagicEndpointBuilder {
     /// Optionally set the path where peer info should be stored.
     ///
     /// If the file exists, it will be used to populate an initial set of peers.
-    pub fn peers_path(mut self, path: PathBuf) -> Self {
+    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
         self.peers_path = Some(path);
         self
     }

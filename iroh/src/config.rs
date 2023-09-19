@@ -48,6 +48,8 @@ pub enum IrohPaths {
     DocsDatabase,
     /// Path to the console state
     Console,
+    /// Path to store known peer data.
+    PeerData,
 }
 
 impl From<&IrohPaths> for &'static str {
@@ -58,6 +60,7 @@ impl From<&IrohPaths> for &'static str {
             IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
             IrohPaths::DocsDatabase => "docs.redb",
             IrohPaths::Console => "console",
+            IrohPaths::PeerData => "peers.postcard",
         }
     }
 }
