@@ -2250,7 +2250,7 @@ impl Actor {
         if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.node_id) {
             ep.update_from_node_addr(&n);
             let id = ep.id;
-            for endpoint in &n.endpoints {
+            for endpoint in &n.direct_addrs {
                 self.peer_map
                     .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
