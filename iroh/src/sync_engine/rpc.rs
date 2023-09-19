@@ -17,7 +17,7 @@ use crate::{
         DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
         DocTicket, RpcResult, ShareMode,
     },
-    sync_engine::{KeepCallback, LiveStatus, PeerSource, SyncEngine},
+    sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
@@ -95,7 +95,7 @@ impl<S: Store> SyncEngine<S> {
             }
             ShareMode::Write => replica.secret_key(),
         };
-        let me = PeerSource::from_endpoint(&self.endpoint).await?;
+        let me = self.endpoint.my_addr().await?;
         self.start_sync(replica.namespace(), vec![]).await?;
         Ok(DocShareResponse(DocTicket {
             key,

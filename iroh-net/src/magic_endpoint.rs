@@ -30,6 +30,14 @@ pub struct NodeAddr {
 }
 
 impl NodeAddr {
+    /// Create a new [`NodeAddr`] with only a `node_id`.
+    pub fn new(node_id: PublicKey) -> Self {
+        Self {
+            node_id,
+            derp_region: None,
+            endpoints: vec![],
+        }
+    }
     /// Create a new [`NodeAddr`] from its parts.
     pub fn from_parts(
         node_id: PublicKey,
@@ -41,6 +49,18 @@ impl NodeAddr {
             derp_region,
             endpoints,
         }
+    }
+
+    /// Set the DERP region.
+    pub fn with_derp_region(mut self, derp_region: Option<u16>) -> Self {
+        self.derp_region = derp_region;
+        self
+    }
+
+    /// Add a list of direct endpoints.
+    pub fn with_endpoints(mut self, endpoints: &[SocketAddr]) -> Self {
+        self.endpoints.extend_from_slice(endpoints);
+        self
     }
 }
 
@@ -353,19 +373,13 @@ impl MagicEndpoint {
     /// If the `derp_region` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
     ///
     /// If no UDP addresses and no DERP region is provided, it will error.
-    pub async fn connect(
-        &self,
-        node_id: PublicKey,
-        alpn: &[u8],
-        derp_region: Option<u16>,
-        known_addrs: &[SocketAddr],
-    ) -> Result<quinn::Connection> {
-        self.add_known_addrs(node_id, derp_region, known_addrs)
-            .await?;
+    pub async fn connect(&self, addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+        self.add_known_addr(addr.clone()).await?;
+        let node_id = addr.node_id;
 
-        let addr = self.msock.get_mapping_addr(&node_id).await;
-        let Some(addr) = addr else {
-            return Err(match (known_addrs.is_empty(), derp_region) {
+        let quic_mapped_addr = self.msock.get_mapping_addr(&addr.node_id).await;
+        let Some(quic_mapped_addr) = quic_mapped_addr else {
+            return Err(match (addr.endpoints.is_empty(), addr.derp_region) {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {node_id:?}")
                 }
@@ -380,7 +394,7 @@ impl MagicEndpoint {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
                 &self.secret_key,
-                Some(node_id),
+                Some(addr.node_id),
                 alpn_protocols,
                 self.keylog,
             )?;
@@ -391,15 +405,12 @@ impl MagicEndpoint {
             client_config
         };
 
-        debug!(
-            "connecting to {}: (via {} - {:?})",
-            node_id, addr, known_addrs
-        );
+        debug!("connecting to {}", addr.node_id);
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self
             .endpoint
-            .connect_with(client_config, addr, "localhost")?;
+            .connect_with(client_config, quic_mapped_addr, "localhost")?;
 
         connect.await.context("failed connecting to provider")
     }
@@ -414,17 +425,7 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
-    pub async fn add_known_addrs(
-        &self,
-        node_id: PublicKey,
-        derp_region: Option<u16>,
-        endpoints: &[SocketAddr],
-    ) -> Result<()> {
-        let addr = NodeAddr {
-            node_id,
-            derp_region,
-            endpoints: endpoints.to_vec(),
-        };
+    pub async fn add_known_addr(&self, addr: NodeAddr) -> Result<()> {
         self.msock.add_known_addr(addr).await?;
         Ok(())
     }
@@ -565,10 +566,8 @@ mod tests {
                     .await
                     .unwrap();
                 info!("client connecting");
-                let conn = ep
-                    .connect(server_peer_id, TEST_ALPN, region_id, &[])
-                    .await
-                    .unwrap();
+                let addr = NodeAddr::new(server_peer_id).with_derp_region(region_id);
+                let conn = ep.connect(addr, TEST_ALPN).await.unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 
                 // First write is accepted by server.  We need this bit of synchronisation

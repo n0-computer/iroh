@@ -951,12 +951,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let conn = self
             .inner
             .endpoint
-            .connect(
-                msg.peer.node_id,
-                &iroh_bytes::protocol::ALPN,
-                msg.peer.derp_region,
-                &msg.peer.endpoints,
-            )
+            .connect(msg.peer, &iroh_bytes::protocol::ALPN)
             .await?;
         progress.send(GetProgress::Connected).await?;
         let progress2 = progress.clone();

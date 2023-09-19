@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 pub use iroh_bytes::{baomap::ValidateProgress, provider::AddProgress, util::RpcResult};
 
-use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
+use crate::sync_engine::{LiveEvent, LiveStatus};
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -418,11 +418,11 @@ pub struct DocTicket {
     /// either a public or private key
     pub key: KeyBytes,
     /// a list of peers
-    pub peers: Vec<PeerSource>,
+    pub peers: Vec<NodeAddr>,
 }
 impl DocTicket {
     /// Create a new doc ticket
-    pub fn new(key: KeyBytes, peers: Vec<PeerSource>) -> Self {
+    pub fn new(key: KeyBytes, peers: Vec<NodeAddr>) -> Self {
         Self { key, peers }
     }
     /// Serialize the ticket to a byte array.
@@ -509,7 +509,7 @@ pub struct DocStartSyncRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// List of peers to join
-    pub peers: Vec<PeerSource>,
+    pub peers: Vec<NodeAddr>,
 }
 
 impl RpcMsg<ProviderService> for DocStartSyncRequest {

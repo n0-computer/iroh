@@ -2904,7 +2904,7 @@ pub(crate) mod tests {
                     println!("[{}] connecting to {}", a_name, b_addr);
                     let conn = a
                         .endpoint
-                        .connect(b_peer_id, &ALPN, region, &[b_addr])
+                        .connect(NodeAddr::from_parts(b_peer_id, region, vec![b_addr]), &ALPN)
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 

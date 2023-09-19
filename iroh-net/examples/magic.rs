@@ -4,9 +4,9 @@ use clap::Parser;
 use iroh_net::{
     defaults::{default_derp_map, TEST_REGION_ID},
     derp::DerpMap,
-    key::{PublicKey, SecretKey},
+    key::SecretKey,
     magic_endpoint::accept_conn,
-    MagicEndpoint,
+    MagicEndpoint, NodeAddr,
 };
 use tracing::{debug, info};
 use url::Url;
@@ -96,11 +96,9 @@ async fn main() -> anyhow::Result<()> {
             addrs,
             derp_region,
         } => {
-            let peer_id: PublicKey = peer_id.parse()?;
-            let addrs = addrs.unwrap_or_default();
-            let conn = endpoint
-                .connect(peer_id, EXAMPLE_ALPN, derp_region, &addrs)
-                .await?;
+            let addr =
+                NodeAddr::from_parts(peer_id.parse()?, derp_region, addrs.unwrap_or_default());
+            let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
             info!("connected");
 
             let (mut send, mut recv) = conn.open_bi().await?;

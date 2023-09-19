@@ -1,9 +1,7 @@
 //! Network implementation of the iroh-sync protocol
 
-use std::net::SocketAddr;
-
 use anyhow::{Context, Result};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
+use iroh_net::{magic_endpoint::get_peer_id, MagicEndpoint, NodeAddr};
 use tracing::debug;
 
 use crate::{
@@ -26,17 +24,16 @@ mod codec;
 pub async fn connect_and_sync<S: store::Store>(
     endpoint: &MagicEndpoint,
     doc: &Replica<S::Instance>,
-    peer_id: PublicKey,
-    derp_region: Option<u16>,
-    addrs: &[SocketAddr],
+    addr: NodeAddr,
 ) -> anyhow::Result<()> {
-    debug!("sync with peer {}: start", peer_id);
+    let node_id = addr.node_id;
+    debug!("sync with peer {}: start", node_id);
     let connection = endpoint
-        .connect(peer_id, SYNC_ALPN, derp_region, addrs)
+        .connect(addr, SYNC_ALPN)
         .await
         .context("dial_and_sync")?;
     let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
-    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer_id).await;
+    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, node_id).await;
 
     #[cfg(feature = "metrics")]
     if res.is_ok() {
@@ -45,7 +42,7 @@ pub async fn connect_and_sync<S: store::Store>(
         inc!(Metrics, initial_sync_failed);
     }
 
-    debug!("sync with peer {}: finish {:?}", peer_id, res);
+    debug!("sync with peer {}: finish {:?}", node_id, res);
     res
 }
 

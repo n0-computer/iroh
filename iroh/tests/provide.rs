@@ -20,7 +20,7 @@ use iroh::{
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
     key::{PublicKey, SecretKey},
-    MagicEndpoint,
+    MagicEndpoint, NodeAddr,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
@@ -923,8 +923,9 @@ async fn test_token_passthrough() -> Result<()> {
             .keylog(true)
             .bind(0)
             .await?;
+        let node_addr = NodeAddr::from_parts(peer_id, Some(1), addrs.clone());
         endpoint
-            .connect(peer_id, &iroh_bytes::protocol::ALPN, Some(1), &addrs)
+            .connect(node_addr, &iroh_bytes::protocol::ALPN)
             .await
             .context("failed to connect to provider")?;
         let request = GetRequest::all(hash).with_token(token).into();

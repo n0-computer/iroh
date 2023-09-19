@@ -19,7 +19,7 @@ use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
     downloader::Downloader,
-    sync_engine::{LiveEvent, PeerSource, SyncEngine, SYNC_ALPN},
+    sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
@@ -33,7 +33,7 @@ use iroh_gossip::{
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     defaults::default_derp_map, derp::DerpMap, key::SecretKey, magic_endpoint::get_alpn,
-    MagicEndpoint,
+    MagicEndpoint, NodeAddr,
 };
 use iroh_sync::{
     store::{self, GetFilter, Store as _},
@@ -195,13 +195,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let our_ticket = {
         // add our local endpoints to the ticket and print it for others to join
-        let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
         let mut peers = peers.clone();
-        peers.push(PeerSource {
-            peer_id: endpoint.peer_id(),
-            addrs,
-            derp_region: endpoint.my_derp().await,
-        });
+        peers.push(endpoint.my_addr().await?);
         Ticket { peers, topic }
     };
     println!("> ticket to join us: {our_ticket}");
@@ -850,7 +845,7 @@ fn get_stats() {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<PeerSource>,
+    peers: Vec<NodeAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.

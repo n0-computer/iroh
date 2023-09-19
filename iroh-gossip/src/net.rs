@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, NodeAddr};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -266,16 +266,17 @@ struct IrohInfo {
 }
 
 impl IrohInfo {
-    async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
-        Ok(Self {
-            addrs: endpoint
-                .local_endpoints()
-                .await?
-                .iter()
-                .map(|ep| ep.addr)
-                .collect(),
-            derp_region: endpoint.my_derp().await,
-        })
+    fn into_node_addr(self, node_id: PublicKey) -> NodeAddr {
+        NodeAddr::from_parts(node_id, self.derp_region, self.addrs)
+    }
+}
+
+impl From<NodeAddr> for IrohInfo {
+    fn from(value: NodeAddr) -> Self {
+        Self {
+            addrs: value.endpoints,
+            derp_region: value.derp_region,
+        }
     }
 }
 
@@ -370,7 +371,7 @@ impl Actor {
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
-                    let info = IrohInfo::from_endpoint(&self.endpoint).await?;
+                    let info: IrohInfo = self.endpoint.my_addr().await?.into();
                     let peer_data = postcard::to_stdvec(&info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
                 }
@@ -537,11 +538,8 @@ impl Actor {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
-                        if let Err(err) = self
-                            .endpoint
-                            .add_known_addrs(peer, info.derp_region, &info.addrs)
-                            .await
-                        {
+                        let addr = info.into_node_addr(peer);
+                        if let Err(err) = self.endpoint.add_known_addr(addr).await {
                             debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
                         }
                     }
@@ -685,8 +683,9 @@ mod test {
 
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        ep2.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
-        ep3.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
+        let addr1 = NodeAddr::from_parts(pi1, derp_region, vec![]);
+        ep2.add_known_addr(addr1.clone()).await.unwrap();
+        ep3.add_known_addr(addr1).await.unwrap();
         // join the topics and wait for the connection to succeed
         go1.join(topic, vec![]).await.unwrap();
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();

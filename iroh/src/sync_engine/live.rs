@@ -1,8 +1,5 @@
 use std::{
     collections::HashMap,
-    fmt,
-    net::SocketAddr,
-    str::FromStr,
     sync::{atomic::AtomicU64, Arc},
 };
 
@@ -22,7 +19,7 @@ use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
 };
-use iroh_net::{key::PublicKey, MagicEndpoint};
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{
     net::connect_and_sync,
     store,
@@ -36,63 +33,6 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 const CHANNEL_CAP: usize = 8;
-
-/// The address to connect to a peer
-// TODO: Move into iroh-net
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PeerSource {
-    /// The peer id (required)
-    pub peer_id: PublicKey,
-    /// Socket addresses for this peer (may be empty)
-    pub addrs: Vec<SocketAddr>,
-    /// Derp region for this peer
-    pub derp_region: Option<u16>,
-}
-
-impl PeerSource {
-    /// Deserializes from bytes.
-    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        postcard::from_bytes(bytes).map_err(Into::into)
-    }
-    /// Serializes to bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-    /// Create with information gathered from a [`MagicEndpoint`]
-    pub async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
-        Ok(Self {
-            peer_id: endpoint.peer_id(),
-            derp_region: endpoint.my_derp().await,
-            addrs: endpoint
-                .local_endpoints()
-                .await?
-                .into_iter()
-                .map(|ep| ep.addr)
-                .collect(),
-        })
-    }
-}
-
-/// Serializes to base32.
-impl fmt::Display for PeerSource {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = self.to_bytes();
-        let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
-    }
-}
-
-/// Deserializes from base32.
-impl FromStr for PeerSource {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let slf = Self::from_bytes(&bytes)?;
-        Ok(slf)
-    }
-}
 
 /// An iroh-sync operation
 ///
@@ -127,11 +67,11 @@ enum ToActor<S: store::Store> {
     },
     StartSync {
         replica: Replica<S::Instance>,
-        peers: Vec<PeerSource>,
+        peers: Vec<NodeAddr>,
     },
     JoinPeers {
         namespace: NamespaceId,
-        peers: Vec<PeerSource>,
+        peers: Vec<NodeAddr>,
     },
     StopSync {
         namespace: NamespaceId,
@@ -258,7 +198,7 @@ impl<S: store::Store> LiveSync<S> {
     pub async fn start_sync(
         &self,
         replica: Replica<S::Instance>,
-        peers: Vec<PeerSource>,
+        peers: Vec<NodeAddr>,
     ) -> Result<()> {
         self.to_actor_tx
             .send(ToActor::<S>::StartSync { replica, peers })
@@ -267,7 +207,7 @@ impl<S: store::Store> LiveSync<S> {
     }
 
     /// Join and sync with a set of peers for a document that is already syncing.
-    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
+    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         self.to_actor_tx
             .send(ToActor::<S>::JoinPeers { namespace, peers })
             .await?;
@@ -469,7 +409,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             async move {
                 debug!("init sync with {peer}");
                 // TODO: Make sure that the peer is dialable.
-                let res = connect_and_sync::<S>(&endpoint, &replica, peer, None, &[]).await;
+                let res = connect_and_sync::<S>(&endpoint, &replica, NodeAddr::new(peer)).await;
                 debug!("synced with {peer}: {res:?}");
                 (topic, peer, res)
             }
@@ -546,19 +486,16 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     async fn join_gossip_and_start_initial_sync(
         &mut self,
         namespace: &NamespaceId,
-        peers: Vec<PeerSource>,
+        peers: Vec<NodeAddr>,
     ) -> anyhow::Result<()> {
         let topic = TopicId::from_bytes(*namespace.as_bytes());
-        let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.peer_id).collect();
+        let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.node_id).collect();
 
         // add addresses of initial peers to our endpoint address book
-        for peer in &peers {
-            if let Err(err) = self
-                .endpoint
-                .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
-                .await
-            {
-                warn!(peer = ?peer.peer_id, "failed to add known addrs: {err:?}");
+        for addr in peers {
+            let peer = addr.node_id;
+            if let Err(err) = self.endpoint.add_known_addr(addr).await {
+                warn!(?peer, "failed to add known addrs: {err:?}");
             }
         }
 
@@ -585,7 +522,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     async fn start_sync(
         &mut self,
         replica: Replica<S::Instance>,
-        peers: Vec<PeerSource>,
+        peers: Vec<NodeAddr>,
     ) -> Result<()> {
         let namespace = replica.namespace();
         let topic = TopicId::from_bytes(*namespace.as_bytes());

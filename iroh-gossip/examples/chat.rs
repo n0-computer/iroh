@@ -13,7 +13,7 @@ use iroh_net::{
     derp::DerpMap,
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    MagicEndpoint,
+    MagicEndpoint, NodeAddr,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -144,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
 
     // print a ticket that includes our own peer id and endpoint addresses
     let ticket = {
-        let me = PeerAddr::from_endpoint(&endpoint).await?;
+        let me = endpoint.my_addr().await?;
         let peers = peers.iter().chain([&me]).cloned().collect();
         Ticket { topic, peers }
     };
@@ -160,9 +160,7 @@ async fn main() -> anyhow::Result<()> {
         println!("> trying to connect to {} peers...", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
         for peer in &peers {
-            endpoint
-                .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
-                .await?;
+            endpoint.add_known_addr(peer).await?;
         }
     };
     let peer_ids = peers.iter().map(|p| p.peer_id).collect();
@@ -292,7 +290,7 @@ enum Message {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<PeerAddr>,
+    peers: Vec<NodeAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.
@@ -302,28 +300,6 @@ impl Ticket {
     /// Serializes to bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct PeerAddr {
-    peer_id: PublicKey,
-    addrs: Vec<SocketAddr>,
-    derp_region: Option<u16>,
-}
-
-impl PeerAddr {
-    pub async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
-        Ok(Self {
-            peer_id: endpoint.peer_id(),
-            derp_region: endpoint.my_derp().await,
-            addrs: endpoint
-                .local_endpoints()
-                .await?
-                .iter()
-                .map(|ep| ep.addr)
-                .collect(),
-        })
     }
 }
 
