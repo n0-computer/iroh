@@ -129,7 +129,10 @@ async fn sync_subscribe() -> Result<()> {
     let author = client.create_author().await?;
     doc.set_bytes(author, b"k".to_vec(), b"v".to_vec()).await?;
     let event = tokio::time::timeout(Duration::from_millis(100), sub.next()).await?;
-    assert!(matches!(event, Some(Ok(LiveEvent::InsertLocal { .. } ))), "expected InsertLocal but got {event:?}") ;
+    assert!(
+        matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
+        "expected InsertLocal but got {event:?}"
+    );
     node.shutdown();
     Ok(())
 }

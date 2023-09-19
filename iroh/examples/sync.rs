@@ -238,8 +238,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
-        docs.clone(),
         gossip.clone(),
+        docs.clone(),
         db.clone(),
         downloader,
     );
