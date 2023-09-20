@@ -1,6 +1,6 @@
 #![cfg(feature = "mem-db")]
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryStreamExt};
@@ -9,7 +9,7 @@ use iroh::{
     collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync_engine::LiveEvent,
+    sync_engine::{LiveEvent, Origin, SyncReason},
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -61,6 +61,82 @@ async fn spawn_nodes(
     Ok(nodes)
 }
 
+/// This tests the simplest scenario: A node connects to another node, and performs sync.
+#[tokio::test]
+async fn sync_simple() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let nodes = spawn_nodes(rt, 2).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    // create doc on node0
+    let (ticket, doc0) = {
+        let iroh = &clients[0];
+        let author = iroh.authors.create().await?;
+        let doc = iroh.docs.create().await?;
+        doc.set_bytes(author, b"k1".to_vec(), b"v1".to_vec())
+            .await?;
+        assert_latest(&doc, b"k1", b"v1").await;
+        let ticket = doc.share(ShareMode::Write).await?;
+        (ticket, doc)
+    };
+
+    let mut events0 = doc0.subscribe().await?;
+
+    // node1: join in
+    let iroh = &clients[1];
+    let doc = iroh.docs.import(ticket.clone()).await?;
+    let mut events = doc.subscribe().await?;
+    let event = events.try_next().await?.unwrap();
+    assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+    let event = events.try_next().await?.unwrap();
+    let LiveEvent::SyncFinished(event) = event else {
+        panic!("expected LiveEvent::SyncFinished, but got {event:?}");
+    };
+    assert_eq!(event.namespace, doc.id());
+    assert_eq!(event.peer, nodes[0].peer_id());
+    assert_eq!(event.origin, Origin::Connect(SyncReason::DirectJoin));
+    assert_eq!(event.result, Ok(()));
+    let event = events.try_next().await?.unwrap();
+    assert!(matches!(event, LiveEvent::ContentReady { .. }));
+    assert_latest(&doc, b"k1", b"v1").await;
+
+    // check sync event on node0
+    let event = events0.try_next().await?.unwrap();
+    let LiveEvent::SyncFinished(event) = event else {
+        panic!("expected LiveEvent::SyncFinished, but got {event:?}");
+    };
+    assert_eq!(event.namespace, doc0.id());
+    assert_eq!(event.peer, nodes[1].peer_id());
+    assert_eq!(event.origin, Origin::Accept);
+    assert_eq!(event.result, Ok(()));
+
+    for node in nodes {
+        node.shutdown();
+    }
+    Ok(())
+}
+
+/// Test subscribing to replica events (without sync)
+#[tokio::test]
+async fn sync_subscribe() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt).await?;
+    let client = node.client();
+    let doc = client.docs.create().await?;
+    let mut sub = doc.subscribe().await?;
+    let author = client.authors.create().await?;
+    doc.set_bytes(author, b"k".to_vec(), b"v".to_vec()).await?;
+    let event = tokio::time::timeout(Duration::from_millis(100), sub.next()).await?;
+    assert!(
+        matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
+        "expected InsertLocal but got {event:?}"
+    );
+    node.shutdown();
+    Ok(())
+}
+
 #[tokio::test]
 async fn sync_full_basic() -> Result<()> {
     setup_logging();
@@ -90,9 +166,20 @@ async fn sync_full_basic() -> Result<()> {
         // wait for remote insert on doc2
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::SyncFinished(_)),
+            "expected SyncFinished but got {event:?}"
+        );
+        let event = events.try_next().await?.unwrap();
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
 
         assert_latest(&doc, b"k1", b"v1").await;
 
@@ -106,15 +193,21 @@ async fn sync_full_basic() -> Result<()> {
 
         // wait for remote insert on doc1
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
 
         assert_latest(&doc1, key, value).await;
         doc
     };
 
-    //  node 3 joins & imports the doc from peer 1
+    // node 3 joins & imports the doc from peer 1
     let _doc3 = {
         let iroh = &clients[2];
         let doc = iroh.docs.import(ticket).await?;
@@ -122,13 +215,30 @@ async fn sync_full_basic() -> Result<()> {
         // wait for 2 remote inserts
         let mut events = doc.subscribe().await?;
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::InsertRemote { .. }));
+        assert!(
+            matches!(event, LiveEvent::InsertRemote { .. }),
+            "expected InsertRemote but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::SyncFinished(_)),
+            "expected SyncFinished but got {event:?}"
+        );
         let event = events.try_next().await?.unwrap();
-        assert!(matches!(event, LiveEvent::ContentReady { .. }));
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
+        let event = events.try_next().await?.unwrap();
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
 
         assert_latest(&doc, b"k1", b"v1").await;
         assert_latest(&doc, b"k2", b"v2").await;

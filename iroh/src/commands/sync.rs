@@ -5,7 +5,7 @@ use indicatif::HumanBytes;
 use iroh::{
     client::quic::{Doc, Iroh},
     rpc_protocol::{DocTicket, ShareMode},
-    sync_engine::LiveEvent,
+    sync_engine::{LiveEvent, Origin},
 };
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
@@ -246,6 +246,24 @@ impl DocCommands {
                         }
                         LiveEvent::ContentReady { hash } => {
                             println!("content ready: {}", fmt_short(hash.as_bytes()))
+                        }
+                        LiveEvent::SyncFinished(event) => {
+                            let origin = match event.origin {
+                                Origin::Accept => "they initiated",
+                                Origin::Connect(_) => "we initiated",
+                            };
+                            match event.result {
+                                Ok(_) => println!(
+                                    "synced doc {} with peer {} ({origin})",
+                                    fmt_short(event.namespace),
+                                    fmt_short(event.peer)
+                                ),
+                                Err(err) => println!(
+                                    "failed to synced doc {} with peer {} ({origin}): {err}",
+                                    fmt_short(event.namespace),
+                                    fmt_short(event.peer)
+                                ),
+                            }
                         }
                     }
                 }
