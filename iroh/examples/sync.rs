@@ -25,6 +25,7 @@ use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
+    util::BlobFormat,
 };
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
@@ -362,8 +363,9 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let hash = self.db.import_bytes(value.into(), Format::Blob).await?;
-                self.doc.insert(key, &self.author, hash, len as u64)?;
+                let cid = self.db.import_bytes(value.into(), BlobFormat::Raw).await?;
+                self.doc
+                    .insert(key, &self.author, *cid.hash(), len as u64)?;
             }
             Cmd::Get {
                 key,
@@ -457,8 +459,9 @@ impl ReplState {
                                         String::from_utf8(bytes.clone()).unwrap().into_bytes();
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let hash = db.import_bytes(value.into(), Format::Blob).await?;
-                                    doc.insert(key, &author, hash, len as u64)?;
+                                    let cid =
+                                        db.import_bytes(value.into(), BlobFormat::Raw).await?;
+                                    doc.insert(key, &author, *cid.hash(), len as u64)?;
                                 }
                                 Ok(count)
                             });
@@ -512,15 +515,16 @@ impl ReplState {
         match cmd {
             FsCmd::ImportFile { file_path, key } => {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-                let (hash, len) = self
+                let (cid, len) = self
                     .db
                     .import(
                         file_path.clone(),
                         ImportMode::Copy,
-                        Format::Blob,
+                        BlobFormat::Raw,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
+                let hash = *cid.hash();
                 self.doc.insert(key, &self.author, hash, len)?;
                 println!(
                     "> imported {file_path:?}: {} ({})",
@@ -547,15 +551,16 @@ impl ReplState {
                             continue;
                         }
                         let key = format!("{key_prefix}/{relative}");
-                        let (hash, len) = self
+                        let (cid, len) = self
                             .db
                             .import(
                                 file.path().into(),
                                 ImportMode::Copy,
-                                Format::Blob,
+                                BlobFormat::Raw,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;
+                        let hash = *cid.hash();
                         self.doc.insert(key, &self.author, hash, len)?;
                         println!(
                             "> imported {relative}: {} ({})",
