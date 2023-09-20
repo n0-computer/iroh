@@ -155,6 +155,9 @@ pub enum FullCommands {
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
+
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Fetch data from a provider
     ///
@@ -214,6 +217,7 @@ impl FullCommands {
                 addr,
                 rpc_port,
                 request_token,
+                tag,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
@@ -224,12 +228,14 @@ impl FullCommands {
                     rt,
                     path,
                     in_place,
+                    tag.map(String::into_bytes),
                     ProvideOptions {
                         addr,
                         rpc_port,
                         keylog,
                         request_token,
                         derp_map: config.derp_map()?,
+                        gc_period: config.gc_period,
                     },
                 )
                 .await
@@ -397,6 +403,9 @@ pub enum BlobCommands {
         /// will not change.
         #[clap(long, default_value_t = false)]
         in_place: bool,
+        /// Tag to store the data under
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Download data to the running provider's database and provide it.
     ///
@@ -440,6 +449,9 @@ pub enum BlobCommands {
         /// and iroh will assume that it will not change.
         #[clap(long, default_value_t = false)]
         stable: bool,
+        /// Tag to store the data under
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// List availble content on the node.
     #[clap(subcommand)]
@@ -468,6 +480,7 @@ impl BlobCommands {
                 derp_region,
                 mut out,
                 stable: in_place,
+                tag,
             } => {
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
@@ -505,6 +518,7 @@ impl BlobCommands {
                         token: token.cloned(),
                         out: out.map(|x| x.display().to_string()),
                         in_place,
+                        tag: tag.map(|x| x.into_bytes()),
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -516,7 +530,11 @@ impl BlobCommands {
             Self::List(cmd) => cmd.run(client).await,
             Self::Delete(cmd) => cmd.run(client).await,
             Self::Validate { repair } => self::validate::run(client, repair).await,
-            Self::Add { path, in_place } => self::add::run(client, path, in_place).await,
+            Self::Add {
+                path,
+                in_place,
+                tag,
+            } => self::add::run(client, path, in_place, tag.map(String::into_bytes)).await,
         }
     }
 }

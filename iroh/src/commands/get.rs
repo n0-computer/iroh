@@ -99,6 +99,7 @@ impl GetInteractive {
                 token: self.token,
                 in_place: true,
                 out: Some(out),
+                tag: None,
             })
             .await?;
         let pb = make_download_pb();

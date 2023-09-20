@@ -5,7 +5,7 @@ use indicatif::HumanBytes;
 use iroh::{
     client::quic::RpcClient,
     rpc_protocol::{
-        ListBlobsRequest, ListIncompleteBlobsRequest, ListRootsRequest, ListRootsResponse,
+        ListBlobsRequest, ListIncompleteBlobsRequest, ListTagsRequest, ListTagsResponse,
     },
 };
 
@@ -16,7 +16,7 @@ pub enum Commands {
     /// List the available blobs on the running provider.
     IncompleteBlobs,
     /// List the available roots on the running provider.
-    Roots,
+    Tags,
 }
 
 impl Commands {
@@ -36,10 +36,11 @@ impl Commands {
                     println!("{} {}", item.hash, item.size);
                 }
             }
-            Commands::Roots => {
-                let mut response = client.server_streaming(ListRootsRequest).await?;
+            Commands::Tags => {
+                let mut response = client.server_streaming(ListTagsRequest).await?;
                 while let Some(item) = response.next().await {
-                    let ListRootsResponse { name, hash, format } = item?;
+                    let ListTagsResponse { name, cid } = item?;
+                    let (hash, format) = cid;
                     let name = if let Ok(text) = std::str::from_utf8(&name) {
                         format!("\"{}\"", text)
                     } else {

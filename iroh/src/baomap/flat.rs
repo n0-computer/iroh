@@ -165,8 +165,8 @@ struct State {
     live: BTreeSet<Hash>,
     // temp pins
     temp: BTreeMap<Cid, u64>,
-    // roots
-    roots: BTreeMap<Bytes, Cid>,
+    // tags
+    tags: BTreeMap<Bytes, Cid>,
 }
 
 #[derive(Debug, Default)]
@@ -648,7 +648,7 @@ impl ReadableStore for Store {
     fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
         let items = inner
-            .roots
+            .tags
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>();
@@ -709,7 +709,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn set_root(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
+    fn set_tag(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
         let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
             format!("\"{}\"", text)
         } else {
@@ -718,9 +718,9 @@ impl baomap::Store for Store {
         tracing::info!("set_root {} {:?}", name_debug, value);
         let mut state = self.0.state.write().unwrap();
         if let Some(item) = value {
-            state.roots.insert(name.to_vec().into(), item);
+            state.tags.insert(name.to_vec().into(), item);
         } else {
-            state.roots.remove(name);
+            state.tags.remove(name);
         }
         async move { Ok(()) }.boxed()
     }
@@ -1322,7 +1322,7 @@ impl Store {
                 outboard,
                 data: Default::default(),
                 live: Default::default(),
-                roots: Default::default(),
+                tags: Default::default(),
                 temp: Default::default(),
             }),
             options: Options {

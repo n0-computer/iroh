@@ -10,13 +10,19 @@ use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{client::quic::RpcClient, rpc_protocol::ProvideRequest};
 use iroh_bytes::{provider::ProvideProgress, Hash};
 
-pub async fn run(client: RpcClient, path: PathBuf, in_place: bool) -> Result<()> {
+pub async fn run(
+    client: RpcClient,
+    path: PathBuf,
+    in_place: bool,
+    tag: Option<Vec<u8>>,
+) -> Result<()> {
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
     let stream = client
         .server_streaming(ProvideRequest {
             path: absolute,
             in_place,
+            tag,
         })
         .await?;
     let (hash, entries) = aggregate_add_response(stream).await?;

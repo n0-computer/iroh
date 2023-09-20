@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
@@ -40,12 +41,14 @@ pub struct ProvideOptions {
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
+    pub gc_period: Duration,
 }
 
 pub async fn run(
     rt: &runtime::Handle,
     path: Option<PathBuf>,
     in_place: bool,
+    tag: Option<Vec<u8>>,
     opts: ProvideOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {
@@ -56,6 +59,7 @@ pub async fn run(
         );
     }
 
+    let gc_period = opts.gc_period;
     let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
     let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
     tokio::fs::create_dir_all(&blob_dir).await?;
@@ -94,7 +98,11 @@ pub async fn run(
                 };
                 // tell the provider to add the data
                 let stream = controller
-                    .server_streaming(ProvideRequest { path, in_place })
+                    .server_streaming(ProvideRequest {
+                        path,
+                        in_place,
+                        tag,
+                    })
                     .await?;
                 match aggregate_add_response(stream).await {
                     Ok((hash, entries)) => {
@@ -114,8 +122,10 @@ pub async fn run(
     };
 
     let db2 = db.clone();
-    let gc_task = rt.local_pool().spawn_pinned(|| async move {
+    let gc_task = rt.local_pool().spawn_pinned(move || async move {
         'outer: loop {
+            // do delay before the two phases of GC
+            tokio::time::sleep(gc_period).await;
             tracing::info!("Starting GC mark phase");
             let mut stream = db2.gc_mark(IrohCollectionParser, None);
             while let Some(item) = stream.next().await {
@@ -148,7 +158,6 @@ pub async fn run(
                     }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         }
     });
 

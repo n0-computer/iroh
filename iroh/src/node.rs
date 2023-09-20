@@ -61,8 +61,8 @@ use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BytesGetRequest, BytesGetResponse, ConnectionInfoRequest, ConnectionInfoResponse,
     ConnectionsRequest, ConnectionsResponse, ListBlobsRequest, ListBlobsResponse,
-    ListIncompleteBlobsRequest, ListIncompleteBlobsResponse, ListRootsRequest, ListRootsResponse,
-    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, SetRootRequest,
+    ListIncompleteBlobsRequest, ListIncompleteBlobsResponse, ListTagsRequest, ListTagsResponse,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, SetTagRequest,
     ShareRequest, ShutdownRequest, StatsGetRequest, StatsGetResponse, StatusRequest,
     StatusResponse, ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
@@ -814,19 +814,18 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn list_roots(
+    fn list_tags(
         self,
-        _msg: ListRootsRequest,
-    ) -> impl Stream<Item = ListRootsResponse> + Send + 'static {
+        _msg: ListTagsRequest,
+    ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
         let roots = self.inner.db.roots();
-        futures::stream::iter(roots).filter_map(move |(name, (hash, format))| async move {
-            Some(ListRootsResponse { name, hash, format })
-        })
+        futures::stream::iter(roots)
+            .filter_map(move |(name, cid)| async move { Some(ListTagsResponse { name, cid }) })
     }
 
-    fn set_root(self, msg: SetRootRequest) -> impl Future<Output = RpcResult<()>> {
+    fn set_tag(self, msg: SetTagRequest) -> impl Future<Output = RpcResult<()>> {
         async move {
-            self.inner.db.set_root(&msg.name, msg.value).await?;
+            self.inner.db.set_tag(&msg.name, msg.value).await?;
             Ok(())
         }
     }
@@ -989,9 +988,9 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     progress.send(ShareProgress::Abort(cause.into())).await?;
                 }
             }
-            // todo: add name to share request instead of inventing one here
-            let uuid = rand::thread_rng().gen::<[u8; 16]>();
-            db.set_root(&uuid, Some((hash, format))).await?;
+            if let Some(tag) = msg.tag {
+                db.set_tag(&tag, Some((hash, format))).await?;
+            };
             drop(temp_pin);
             progress.send(ShareProgress::AllDone).await?;
             anyhow::Ok(())
@@ -1098,7 +1097,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             .import_bytes(data.into(), Format::Collection)
             .await?;
         let root_name = rand::thread_rng().gen::<[u8; 16]>();
-        self.inner.db.set_root(&root_name, Some(*cid.cid()));
+        self.inner.db.set_tag(&root_name, Some(*cid.cid()));
         // now that we have set the collection cid as a root, we can drop the temp pins
         drop(cids);
         progress
@@ -1277,10 +1276,10 @@ fn handle_rpc_request<
                     .await
             }
             ListCollections(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_roots)
+                chan.server_streaming(msg, handler, RpcHandler::list_tags)
                     .await
             }
-            SetRoot(msg) => chan.rpc(msg, handler, RpcHandler::set_root).await,
+            SetRoot(msg) => chan.rpc(msg, handler, RpcHandler::set_tag).await,
             Provide(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await
@@ -1530,6 +1529,7 @@ mod tests {
                 .server_streaming(ProvideRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                     in_place: false,
+                    tag: Some("tag".to_owned().into()),
                 })
                 .await?;
 

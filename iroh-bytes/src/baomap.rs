@@ -194,6 +194,21 @@ pub trait Store: ReadableStore + PartialMap {
     /// It is a special case of `import` that does not use the file system.
     fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>>;
 
+    /// Set a named pin
+    fn set_tag(&self, name: &[u8], hash: Option<Cid>) -> BoxFuture<io::Result<()>> {
+        let _ = name;
+        let _ = hash;
+        async move { Ok(()) }.boxed()
+    }
+
+    /// Create a temporary pin for this store
+    fn temp_pin(&self, cid: Cid) -> PinnedCid {
+        PinnedCid {
+            cid,
+            liveness: None,
+        }
+    }
+
     /// Traverse all roots recursively and mark them as live.
     ///
     /// Poll this stream to completion to perform a full gc mark phase.
@@ -254,13 +269,6 @@ pub trait Store: ReadableStore + PartialMap {
         let _ = live;
     }
 
-    /// Set a named pin
-    fn set_root(&self, name: &[u8], hash: Option<Cid>) -> BoxFuture<io::Result<()>> {
-        let _ = name;
-        let _ = hash;
-        async move { Ok(()) }.boxed()
-    }
-
     /// True if the given hash is live.
     fn is_live(&self, hash: &Hash) -> bool {
         let _ = hash;
@@ -271,14 +279,6 @@ pub trait Store: ReadableStore + PartialMap {
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
         let _ = hash;
         async move { Ok(()) }.boxed()
-    }
-
-    /// Create a temporary pin for this store
-    fn temp_pin(&self, cid: Cid) -> PinnedCid {
-        PinnedCid {
-            cid,
-            liveness: None,
-        }
     }
 }
 

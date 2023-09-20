@@ -11,12 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::{
-    protocol::RequestToken,
-    provider::ShareProgress,
-    util::{Cid, Format},
-    Hash,
-};
+use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, util::Cid, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 
@@ -52,6 +47,8 @@ pub struct ProvideRequest {
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
+    /// Optional tag for the data.
+    pub tag: Option<Vec<u8>>,
 }
 
 impl Msg<ProviderService> for ProvideRequest {
@@ -80,6 +77,8 @@ pub struct ShareRequest {
     /// This optional field contains the derp region to use for contacting the peer
     /// over the DERP protocol.
     pub derp_region: Option<u16>,
+    /// Tag under which to store the data
+    pub tag: Option<Vec<u8>>,
     /// This optional field contains the path to store the data to. If it is not
     /// set, the data is dumped to stdout.
     pub out: Option<String>,
@@ -163,43 +162,39 @@ impl ServerStreamingMsg<ProviderService> for ListIncompleteBlobsRequest {
     type Response = ListIncompleteBlobsResponse;
 }
 
-/// List all collections
-///
-/// Lists all collections that have been explicitly added to the database.
+/// List all tags
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListRootsRequest;
+pub struct ListTagsRequest;
 
-/// A response to a list collections request
+/// List tags response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListRootsResponse {
-    /// Name of the root
+pub struct ListTagsResponse {
+    /// Name of the tag
     pub name: Bytes,
-    /// Hash of the root
-    pub hash: Hash,
-    /// Format of the root
-    pub format: Format,
+    /// Cid of the tag
+    pub cid: Cid,
 }
 
-impl Msg<ProviderService> for ListRootsRequest {
+impl Msg<ProviderService> for ListTagsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ListRootsRequest {
-    type Response = ListRootsResponse;
+impl ServerStreamingMsg<ProviderService> for ListTagsRequest {
+    type Response = ListTagsResponse;
 }
 
-/// List all collections
+/// Set a tag
 ///
-/// Lists all collections that have been explicitly added to the database.
+/// Can be used to clear a tag by setting the value to None
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SetRootRequest {
+pub struct SetTagRequest {
     /// Name of the root
     pub name: Bytes,
     /// Hash of the root
     pub value: Option<Cid>,
 }
 
-impl RpcMsg<ProviderService> for SetRootRequest {
+impl RpcMsg<ProviderService> for SetTagRequest {
     type Response = RpcResult<()>;
 }
 
@@ -692,8 +687,8 @@ pub enum ProviderRequest {
     Version(VersionRequest),
     ListBlobs(ListBlobsRequest),
     ListIncompleteBlobs(ListIncompleteBlobsRequest),
-    ListCollections(ListRootsRequest),
-    SetRoot(SetRootRequest),
+    ListCollections(ListTagsRequest),
+    SetRoot(SetTagRequest),
     Provide(ProvideRequest),
     Share(ShareRequest),
     Status(StatusRequest),
@@ -734,7 +729,7 @@ pub enum ProviderResponse {
     Version(VersionResponse),
     ListBlobs(ListBlobsResponse),
     ListIncompleteBlobs(ListIncompleteBlobsResponse),
-    ListCollections(ListRootsResponse),
+    ListCollections(ListTagsResponse),
     Provide(ProvideProgress),
     Share(ShareProgress),
     Status(StatusResponse),
