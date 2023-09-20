@@ -115,6 +115,7 @@ pub enum DocCommands {
         #[clap(short, long)]
         author: Option<AuthorId>,
         /// Prefex to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
+        #[clap(short, long)]
         prefix: String,
         /// Path to a local file or directory to import
         ///
@@ -126,6 +127,21 @@ pub enum DocCommands {
         /// Moving a file imported with in-place will result in data corruption
         #[clap(short, long)]
         in_place: bool,
+    },
+    /// Export data from a document
+    Export {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Key to the entry (parsed as UTF-8 string)
+        #[clap(short, long)]
+        key: String,
+        /// Path to export to
+        #[clap(short, long)]
+        path: String,
     },
     /// Output changes and events on a document
     Watch {
@@ -276,7 +292,7 @@ impl DocCommands {
                             print!("invalid file path: {:?}", file.path());
                             continue;
                         }
-                        let key = if prefix == String::from("") {
+                        let key = if prefix.is_empty() {
                             relative.to_string()
                         } else {
                             format!("{prefix}/{relative}")
@@ -286,14 +302,34 @@ impl DocCommands {
                             .blobs
                             .add_from_path(file.path().into(), in_place)
                             .await?;
-                        let (hash, _) = aggregate_add_response(stream).await?;
-                        // doc.set_hash(&self.author, key, hash)?;
+                        // TODO(b5): horrible hack b/c add_from_path creates a collection, and we really just want
+                        // the raw blob
+                        let (_, entries) = aggregate_add_response(stream).await?;
+                        let hash = entries[0].hash;
                         doc.set_hash(author, key.into(), hash).await?;
                         // println!(
                         //     "> imported {relative}: {} ({})",
                         //     fmt_hash(hash),
                         //     HumanBytes(len)
                         // );
+                    }
+                }
+            }
+            Self::Export { doc, key, path } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let key = key.as_bytes().to_vec();
+                let filter = GetFilter::Key(key);
+                // let path = canonicalize_path(&path)?.canonicalize()?;
+                let path: PathBuf = path.into();
+
+                let mut stream = doc.get_many(filter).await?;
+                while let Some(entry) = stream.try_next().await? {
+                    match doc.read_to_bytes(&entry).await {
+                        Ok(content) => {
+                            // println!("writing to {}", path.display());
+                            std::fs::write(path.clone(), content).unwrap();
+                        }
+                        Err(err) => println!("<failed to get content: {err}>"),
                     }
                 }
             }
