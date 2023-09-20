@@ -115,13 +115,13 @@ pub enum DocCommands {
         #[clap(short, long)]
         author: Option<AuthorId>,
         /// Prefex to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
-        #[clap(short, long)]
+        #[clap(long)]
         prefix: String,
         /// Path to a local file or directory to import
         ///
         /// Pathnames will be used as the document key
-        #[clap(short, long)]
-        file: String,
+        #[clap(long)]
+        path: String,
         /// If true, don't copy the file into iroh, reference the existing file instead
         ///
         /// Moving a file imported with in-place will result in data corruption
@@ -272,7 +272,7 @@ impl DocCommands {
                 doc,
                 author,
                 mut prefix,
-                file,
+                path,
                 in_place,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
@@ -281,7 +281,7 @@ impl DocCommands {
                 if prefix.ends_with('/') {
                     prefix.pop();
                 }
-                let root = canonicalize_path(&file)?.canonicalize()?;
+                let root = canonicalize_path(&path)?.canonicalize()?;
                 let files = walkdir::WalkDir::new(&root).into_iter();
                 // TODO: parallelize
                 for file in files {
