@@ -4,6 +4,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
 
 /// Address information for a node.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeAddr {
     /// The node's public key.
     pub node_id: PublicKey,
@@ -26,6 +27,21 @@ pub struct NodeAddr {
     pub derp_region: Option<u16>,
     /// Socket addresses where this node might be reached directly.
     pub endpoints: Vec<SocketAddr>,
+}
+
+impl NodeAddr {
+    /// Create a new [`NodeAddr`] from its parts.
+    pub fn from_parts(
+        node_id: PublicKey,
+        derp_region: Option<u16>,
+        endpoints: Vec<SocketAddr>,
+    ) -> Self {
+        Self {
+            node_id,
+            derp_region,
+            endpoints,
+        }
+    }
 }
 
 /// Builder for [MagicEndpoint]
@@ -291,6 +307,15 @@ impl MagicEndpoint {
     /// Returns `None` if we are not connected to any DERP region.
     pub async fn my_derp(&self) -> Option<u16> {
         self.msock.my_derp().await
+    }
+
+    /// Get the [`NodeAddr`] for this endpoint.
+    // TODO: We can save an async call by exposing this on the msock.
+    pub async fn my_addr(&self) -> Result<NodeAddr> {
+        let addrs = self.local_endpoints().await?;
+        let derp = self.my_derp().await;
+        let addrs = addrs.into_iter().map(|x| x.addr).collect();
+        Ok(NodeAddr::from_parts(self.peer_id(), derp, addrs))
     }
 
     /// Get information on all the nodes we have connection information about.
