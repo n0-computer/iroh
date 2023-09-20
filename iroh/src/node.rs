@@ -823,11 +823,9 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             .filter_map(move |(name, cid)| async move { Some(ListTagsResponse { name, cid }) })
     }
 
-    fn set_tag(self, msg: SetTagRequest) -> impl Future<Output = RpcResult<()>> {
-        async move {
-            self.inner.db.set_tag(&msg.name, msg.value).await?;
-            Ok(())
-        }
+    async fn set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
+        self.inner.db.set_tag(&msg.name, msg.value).await?;
+        Ok(())
     }
 
     /// Invoke validate on the database and stream out the result

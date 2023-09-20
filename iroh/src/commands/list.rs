@@ -44,7 +44,7 @@ impl Commands {
                     let name = if let Ok(text) = std::str::from_utf8(&name) {
                         format!("\"{}\"", text)
                     } else {
-                        hex::encode(&name)
+                        hex::encode(name)
                     };
                     println!("{}: {} {:?}", name, hash, format,);
                 }

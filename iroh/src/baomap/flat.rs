@@ -650,7 +650,7 @@ impl ReadableStore for Store {
         let items = inner
             .tags
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (k.clone(), *v))
             .collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
@@ -710,10 +710,10 @@ impl baomap::Store for Store {
     }
 
     fn set_tag(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
-        let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
+        let name_debug = if let Ok(text) = std::str::from_utf8(name) {
             format!("\"{}\"", text)
         } else {
-            hex::encode(&name)
+            hex::encode(name)
         };
         tracing::info!("set_root {} {:?}", name_debug, value);
         let mut state = self.0.state.write().unwrap();
@@ -974,7 +974,7 @@ impl Store {
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         // for a short time we will have neither partial nor complete
         self.0.state.write().unwrap().partial.remove(&hash);
-        std::fs::rename(temp_data_path, &data_path)?;
+        std::fs::rename(temp_data_path, data_path)?;
         let outboard = if temp_outboard_path.exists() {
             let outboard_path = self.0.options.owned_outboard_path(&hash);
             std::fs::rename(temp_outboard_path, &outboard_path)?;
