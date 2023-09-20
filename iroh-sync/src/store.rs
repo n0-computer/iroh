@@ -50,6 +50,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
+    /// Close a replica.
+    ///
+    /// This removes the event subscription from the replica, if active, and removes the replica
+    /// instance from the store's cache.
+    fn close_replica(&self, namespace: &NamespaceId);
+
     /// Create a new author key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
         let author = Author::new(rng);

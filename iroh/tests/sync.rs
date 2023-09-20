@@ -1,6 +1,6 @@
 #![cfg(feature = "mem-db")]
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryStreamExt};
@@ -114,6 +114,26 @@ async fn sync_simple() -> Result<()> {
     for node in nodes {
         node.shutdown();
     }
+    Ok(())
+}
+
+/// Test subscribing to replica events (without sync)
+#[tokio::test]
+async fn sync_subscribe() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt).await?;
+    let client = node.client();
+    let doc = client.create_doc().await?;
+    let mut sub = doc.subscribe().await?;
+    let author = client.create_author().await?;
+    doc.set_bytes(author, b"k".to_vec(), b"v".to_vec()).await?;
+    let event = tokio::time::timeout(Duration::from_millis(100), sub.next()).await?;
+    assert!(
+        matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
+        "expected InsertLocal but got {event:?}"
+    );
+    node.shutdown();
     Ok(())
 }
 
