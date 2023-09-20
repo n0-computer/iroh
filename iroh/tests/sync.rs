@@ -9,7 +9,7 @@ use iroh::{
     collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync_engine::{LiveEvent, Origin, SyncEvent, SyncReason},
+    sync_engine::{LiveEvent, SyncEvent},
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -227,8 +227,8 @@ async fn sync_full_basic() -> Result<()> {
     // now expect SyncFinished
     let event = events.try_next().await?.unwrap();
     let LiveEvent::SyncFinished(event) = event else {
-            panic!("expected SyncFinished but got {event:?}");
-        };
+        panic!("expected SyncFinished but got {event:?}");
+    };
     let expected = SyncEvent {
         peer: nodes[0].peer_id(),
         namespace: doc.id(),

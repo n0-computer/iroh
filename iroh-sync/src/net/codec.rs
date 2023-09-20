@@ -259,6 +259,7 @@ mod tests {
         sync::Namespace,
         AuthorId,
     };
+    use anyhow::Result;
     use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
     use rand_core::{CryptoRngCore, SeedableRng};
@@ -331,7 +332,7 @@ mod tests {
                     futures::future::ready(
                         bob_replica_store_task
                             .open_replica(&namespace)
-                            .map(Into::into),
+                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
                     )
                 },
                 alice_peer_id,
@@ -533,7 +534,11 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 |namespace, _| {
-                    futures::future::ready(bob_store.open_replica(&namespace).map(Into::into))
+                    futures::future::ready(
+                        bob_store
+                            .open_replica(&namespace)
+                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
+                    )
                 },
                 alice_node_pubkey,
             )
