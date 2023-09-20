@@ -41,7 +41,7 @@ impl MessageId {
 pub enum InEvent<PI> {
     /// A [`Message`] was received from the peer.
     RecvMessage(PI, Message),
-    /// Broadcast the contained payload to the full swarm.
+    /// Broadcast the contained payload to the given scope.
     Broadcast(Bytes, Scope),
     /// A timer has expired.
     TimerExpired(Timer),
@@ -92,7 +92,7 @@ pub struct GossipEvent<PI> {
     /// The peer that we received the gossip message from. Note that this is not the peer that
     /// originally broadcasted the message, but the peer before us in the gossiping path.
     pub delivered_from: PI,
-    /// The broadcast scope of the message
+    /// The broadcast scope of the message.
     pub scope: Scope,
     /// The distance in hops that the message travelled from the original author.
     pub distance: u16,
@@ -147,12 +147,12 @@ pub struct Gossip {
     /// Message contents.
     #[debug("<{}b>", content.len())]
     content: Bytes,
-    /// Scope to publish to
+    /// Scope to broadcast to.
     scope: Scope,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Copy)]
 /// The broadcast scope of a gossip message.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Copy)]
 pub enum Scope {
     /// The message is broadcast to all peers in the swarm.
     Swarm,

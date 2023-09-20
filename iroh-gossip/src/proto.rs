@@ -80,7 +80,20 @@ impl<T> PeerIdentity for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + 
 ///
 /// Implementations may use these bytes to supply addresses or other information needed to connect
 /// to a peer that is not included in the peer's [`PeerIdentity`].
-pub type PeerData = bytes::Bytes;
+#[derive(
+    derive_more::Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::From,
+    derive_more::Into,
+    derive_more::Deref,
+    Default,
+)]
+#[debug("PeerData({}b)", self.0.len())]
+pub struct PeerData(bytes::Bytes);
 
 /// PeerInfo contains a peer's identifier and the opaque peer data as provided by the implementer.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
