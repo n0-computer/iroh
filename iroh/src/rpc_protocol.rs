@@ -669,7 +669,7 @@ pub struct ProviderService;
 
 /// The request enum, listing all possible requests.
 #[allow(missing_docs)]
-#[derive(Debug, Serialize, Deserialize, From, TryInto)]
+#[derive(strum::Display, Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderRequest {
     NodeStatus(NodeStatusRequest),
     NodeStats(NodeStatsRequest),
