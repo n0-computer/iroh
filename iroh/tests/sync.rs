@@ -124,9 +124,9 @@ async fn sync_subscribe() -> Result<()> {
     let rt = test_runtime();
     let node = spawn_node(rt).await?;
     let client = node.client();
-    let doc = client.create_doc().await?;
+    let doc = client.docs.create().await?;
     let mut sub = doc.subscribe().await?;
-    let author = client.create_author().await?;
+    let author = client.authors.create().await?;
     doc.set_bytes(author, b"k".to_vec(), b"v".to_vec()).await?;
     let event = tokio::time::timeout(Duration::from_millis(100), sub.next()).await?;
     assert!(
