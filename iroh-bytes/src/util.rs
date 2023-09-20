@@ -20,15 +20,15 @@ pub mod runtime;
 /// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
 /// able to use for iroh collections would be 2 bytes varint encoded or something...
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Format {
+pub enum BlobFormat {
     /// Hash refers to a blob
-    Blob,
+    Raw,
     /// Hash refers to an iroh collection (format here?)
     Collection,
 }
 
 /// A hash and format pair
-pub type Cid = (Hash, Format);
+pub type Cid = (Hash, BlobFormat);
 
 /// Hash type used throught.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]

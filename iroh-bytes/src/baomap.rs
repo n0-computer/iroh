@@ -5,7 +5,7 @@ use crate::{
     collection::CollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
-        Cid, Format, RpcError,
+        BlobFormat, Cid, RpcError,
     },
     Hash,
 };
@@ -185,14 +185,18 @@ pub trait Store: ReadableStore + PartialMap {
         &self,
         data: PathBuf,
         mode: ImportMode,
-        format: Format,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>>;
 
     /// This trait method imports data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
-    fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>>;
+    fn import_bytes(
+        &self,
+        bytes: Bytes,
+        format: BlobFormat,
+    ) -> BoxFuture<'_, io::Result<PinnedCid>>;
 
     /// Set a named pin
     fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
@@ -332,7 +336,7 @@ impl PinnedCid {
     }
 
     /// The format of the pinned item
-    pub fn format(&self) -> Format {
+    pub fn format(&self) -> BlobFormat {
         self.cid.1
     }
 }
@@ -395,7 +399,7 @@ async fn gc_mark_task<'a>(
     // terminate after 1 iteration.
     while !current.is_empty() {
         for (hash, format) in std::mem::take(&mut current) {
-            if live.insert(hash) && format == Format::Collection {
+            if live.insert(hash) && format == BlobFormat::Collection {
                 let Some(entry) = store.get(&hash) else {
                     warn!("gc: {} not found", hash);
                     continue;

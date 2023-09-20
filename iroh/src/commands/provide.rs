@@ -7,13 +7,12 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
-use bytes::Bytes;
 use iroh::{
     baomap::flat,
     client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
-    node::{GcPolicy, Node, StaticTokenAuthHandler},
-    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
+    node::{Node, StaticTokenAuthHandler},
+    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, key::SecretKey};
@@ -36,14 +35,12 @@ pub struct ProvideOptions {
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
-    pub gc_policy: GcPolicy,
 }
 
 pub async fn run(
     rt: &runtime::Handle,
     path: Option<PathBuf>,
     in_place: bool,
-    tag: Option<Bytes>,
     opts: ProvideOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {
@@ -56,7 +53,7 @@ pub async fn run(
 
     let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
     let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
-    let meta_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
+    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
     tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::fs::create_dir_all(&partial_blob_dir).await?;
     let db = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
@@ -66,7 +63,7 @@ pub async fn run(
     let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), store, rt, key, opts).await?;
-    let controller = provider.controller();
+    let client = provider.client();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
     }
@@ -92,13 +89,7 @@ pub async fn run(
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let stream = controller
-                    .server_streaming(ProvideRequest {
-                        path,
-                        in_place,
-                        tag,
-                    })
-                    .await?;
+                let stream = client.blobs.add_from_path(path, in_place).await?;
                 match aggregate_add_response(stream).await {
                     Ok((hash, entries)) => {
                         print_add_response(hash, entries);
@@ -148,7 +139,6 @@ async fn provide<B: BaoStore, D: DocStore>(
     let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
-        .gc_policy(opts.gc_policy)
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
         builder = builder.enable_derp(dm);

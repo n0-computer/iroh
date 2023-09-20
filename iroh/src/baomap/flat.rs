@@ -142,7 +142,7 @@ use iroh_bytes::baomap::{
     PartialMap, PartialMapEntry, PinnedCid, ReadableStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
-use iroh_bytes::util::{Cid, Format};
+use iroh_bytes::util::{BlobFormat, Cid};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use rand::Rng;
@@ -691,7 +691,7 @@ impl baomap::Store for Store {
         &self,
         path: PathBuf,
         mode: ImportMode,
-        format: Format,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
         let this = self.clone();
@@ -703,7 +703,11 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn import_bytes(&self, data: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>> {
+    fn import_bytes(
+        &self,
+        data: Bytes,
+        format: BlobFormat,
+    ) -> BoxFuture<'_, io::Result<PinnedCid>> {
         let this = self.clone();
         self.0
             .options
@@ -796,7 +800,7 @@ impl Store {
         self,
         path: PathBuf,
         mode: ImportMode,
-        format: Format,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<(PinnedCid, u64)> {
         if !path.is_absolute() {
@@ -853,7 +857,7 @@ impl Store {
                 use baomap::Store;
                 // the cid must be pinned before we move the file, otherwise there is a race condition
                 // where it might be deleted here.
-                let cid = self.temp_pin((hash, Format::Blob));
+                let cid = self.temp_pin((hash, BlobFormat::Raw));
                 std::fs::rename(temp_data_path, data_path)?;
                 (cid, CompleteEntry::new_default(size), outboard)
             }
@@ -914,7 +918,7 @@ impl Store {
         Ok(())
     }
 
-    fn import_bytes_sync(&self, data: Bytes, format: Format) -> io::Result<PinnedCid> {
+    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<PinnedCid> {
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();

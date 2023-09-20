@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
@@ -125,7 +125,7 @@ pub enum AuthorCommands {
 }
 
 impl DocCommands {
-    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { id: doc } => {
                 env.set_doc(doc)?;
@@ -136,7 +136,7 @@ impl DocCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let doc = iroh.create_doc().await?;
+                let doc = iroh.docs.create().await?;
                 println!("{}", doc.id());
 
                 if switch {
@@ -149,7 +149,7 @@ impl DocCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let doc = iroh.import_doc(ticket).await?;
+                let doc = iroh.docs.import(ticket).await?;
                 println!("{}", doc.id());
 
                 if switch {
@@ -158,13 +158,13 @@ impl DocCommands {
                 }
             }
             Self::List => {
-                let mut stream = iroh.list_docs().await?;
+                let mut stream = iroh.docs.list().await?;
                 while let Some(id) = stream.try_next().await? {
                     println!("{}", id)
                 }
             }
             Self::Share { doc, mode } => {
-                let doc = iroh.get_doc(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let ticket = doc.share(mode).await?;
                 println!("{}", ticket);
             }
@@ -174,7 +174,7 @@ impl DocCommands {
                 key,
                 value,
             } => {
-                let doc = iroh.get_doc(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
@@ -188,7 +188,7 @@ impl DocCommands {
                 author,
                 content,
             } => {
-                let doc = iroh.get_doc(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
                 let filter = match (author, prefix) {
                     (None, false) => GetFilter::Key(key),
@@ -215,7 +215,7 @@ impl DocCommands {
                 prefix,
                 author,
             } => {
-                let doc = iroh.get_doc(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let filter = GetFilter::author_prefix(author, prefix);
 
                 let mut stream = doc.get_many(filter).await?;
@@ -224,7 +224,7 @@ impl DocCommands {
                 }
             }
             Self::Watch { doc } => {
-                let doc = iroh.get_doc(env.doc(doc)?).await?;
+                let doc = get_doc(iroh, env, doc).await?;
                 let mut stream = doc.subscribe().await?;
                 while let Some(event) = stream.next().await {
                     let event = event?;
@@ -255,15 +255,22 @@ impl DocCommands {
     }
 }
 
+async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
+    iroh.docs
+        .get(env.doc(id)?)
+        .await?
+        .context("Document not found")
+}
+
 impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh, env: ConsoleEnv) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
             Self::Switch { author } => {
                 env.set_author(author)?;
                 println!("Active author is now {}", fmt_short(author.as_bytes()));
             }
             Self::List => {
-                let mut stream = iroh.list_authors().await?;
+                let mut stream = iroh.authors.list().await?;
                 while let Some(author_id) = stream.try_next().await? {
                     println!("{}", author_id);
                 }
@@ -273,7 +280,7 @@ impl AuthorCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let author_id = iroh.create_author().await?;
+                let author_id = iroh.authors.create().await?;
                 println!("{}", author_id);
 
                 if switch {
@@ -307,7 +314,7 @@ async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<
     println!("{}", fmt_entry(entry));
     if content {
         if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
-            match doc.get_content_bytes(entry.content_hash()).await {
+            match doc.read_to_bytes(entry).await {
                 Ok(content) => match String::from_utf8(content.into()) {
                     Ok(s) => println!("{s}"),
                     Err(_err) => println!("<invalid UTF-8>"),

@@ -9,10 +9,10 @@ use indicatif::{
 };
 use iroh::{
     collection::{Collection, IrohCollectionParser},
-    rpc_protocol::ShareRequest,
+    rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-use iroh_bytes::{baomap::range_collections::RangeSet2, provider::ShareProgress};
+use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress};
 use iroh_bytes::{
     get::{
         self,
@@ -89,27 +89,27 @@ impl GetInteractive {
         write(format!("Fetching: {}", hash));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let mut stream = provider
-            .controller()
-            .server_streaming(ShareRequest {
+            .client()
+            .blobs
+            .download(BlobDownloadRequest {
                 hash: self.hash,
                 recursive: !self.single,
-                peer: self.opts.peer_id,
-                addrs: self.opts.addrs,
-                derp_region: self.opts.derp_region,
+                peer: self.opts.peer,
                 token: self.token,
-                in_place: true,
-                out: Some(out),
-                tag: None,
+                out: DownloadLocation::External {
+                    path: out,
+                    in_place: true,
+                },
             })
             .await?;
         let pb = make_download_pb();
         let mut sizes = BTreeMap::new();
         while let Some(x) = stream.next().await {
             match x? {
-                ShareProgress::Connected => {
+                GetProgress::Connected => {
                     write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
                 }
-                ShareProgress::FoundCollection {
+                GetProgress::FoundCollection {
                     total_blobs_size,
                     num_blobs,
                     ..
@@ -120,24 +120,24 @@ impl GetInteractive {
                         total_blobs_size.unwrap_or_default(),
                     )?;
                 }
-                ShareProgress::Found { id, size, .. } => {
+                GetProgress::Found { id, size, .. } => {
                     sizes.insert(id, (size, 0));
                 }
-                ShareProgress::Progress { id, offset } => {
+                GetProgress::Progress { id, offset } => {
                     if let Some((_, current)) = sizes.get_mut(&id) {
                         *current = offset;
                         let total = sizes.values().map(|(_, current)| current).sum::<u64>();
                         pb.set_position(total);
                     }
                 }
-                ShareProgress::Done { id } => {
+                GetProgress::Done { id } => {
                     if let Some((size, current)) = sizes.get_mut(&id) {
                         *current = *size;
                         let total = sizes.values().map(|(_, current)| current).sum::<u64>();
                         pb.set_position(total);
                     }
                 }
-                ShareProgress::NetworkDone {
+                GetProgress::NetworkDone {
                     bytes_read,
                     elapsed,
                     ..
@@ -150,7 +150,7 @@ impl GetInteractive {
                         HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
                     ));
                 }
-                ShareProgress::AllDone => {
+                GetProgress::AllDone => {
                     break;
                 }
                 _ => {}

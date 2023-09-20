@@ -38,8 +38,8 @@ use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::IgnoreProgressSender;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::util::runtime;
+use iroh_bytes::util::BlobFormat;
 use iroh_bytes::util::Cid;
-use iroh_bytes::util::Format;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
@@ -444,7 +444,7 @@ impl baomap::Store for Store {
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
-        format: Format,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
         let this = self.clone();
@@ -472,7 +472,11 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>> {
+    fn import_bytes(
+        &self,
+        bytes: Bytes,
+        format: BlobFormat,
+    ) -> BoxFuture<'_, io::Result<PinnedCid>> {
         let this = self.clone();
         self.0
             .rt
@@ -497,7 +501,7 @@ impl Store {
     fn import_bytes_sync(
         &self,
         bytes: Bytes,
-        format: Format,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<PinnedCid> {
         let size = bytes.len() as u64;

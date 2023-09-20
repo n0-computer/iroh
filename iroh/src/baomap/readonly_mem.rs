@@ -28,7 +28,7 @@ use iroh_bytes::{
     },
     util::{
         progress::{IdGenerator, ProgressSender},
-        Cid, Format,
+        BlobFormat, Cid,
     },
     Hash, IROH_BLOCK_SIZE,
 };
@@ -312,7 +312,7 @@ impl baomap::Store for Store {
         &self,
         data: PathBuf,
         mode: ImportMode,
-        format: Format,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
         let _ = (data, mode, progress, format);
@@ -320,7 +320,11 @@ impl baomap::Store for Store {
     }
 
     /// import a byte slice
-    fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>> {
+    fn import_bytes(
+        &self,
+        bytes: Bytes,
+        format: BlobFormat,
+    ) -> BoxFuture<'_, io::Result<PinnedCid>> {
         let _ = (bytes, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
