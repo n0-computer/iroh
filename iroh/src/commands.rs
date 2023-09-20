@@ -28,6 +28,7 @@ const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
 pub mod add;
+pub mod delete;
 pub mod doctor;
 pub mod get;
 pub mod list;
@@ -452,6 +453,9 @@ pub enum BlobCommands {
         #[clap(long, default_value_t = false)]
         repair: bool,
     },
+    /// Delete content on the node.
+    #[clap(subcommand)]
+    Delete(self::delete::Commands),
 }
 
 impl BlobCommands {
@@ -511,6 +515,7 @@ impl BlobCommands {
                 Ok(())
             }
             Self::List(cmd) => cmd.run(iroh).await,
+            Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { repair } => self::validate::run(iroh, repair).await,
             Self::Add {
                 path,

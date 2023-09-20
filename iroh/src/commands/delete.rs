@@ -1,14 +1,15 @@
 use anyhow::Result;
 use clap::Subcommand;
-use iroh::{client::quic::RpcClient, rpc_protocol::SetTagRequest};
+use iroh::client::quic::Iroh;
+use iroh_bytes::Hash;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Delete the given tags
-    Tags {
+    /// Delete the given tag
+    Tag {
         /// Tag names to delete
         #[arg(required = true)]
-        names: Vec<String>,
+        name: String,
 
         /// Tag names are hex encoded
         ///
@@ -16,23 +17,34 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         hex: bool,
     },
+
+    /// Delete the given blobs
+    Blob {
+        /// Blobs to delete
+        #[arg(required = true)]
+        hash: Hash,
+    },
 }
 
 impl Commands {
-    pub async fn run(self, client: RpcClient) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Commands::Tags { names, hex } => {
-                for name in names {
-                    let name = if hex {
-                        hex::decode(name)?
-                    } else {
-                        name.into_bytes()
-                    }
-                    .into();
-                    let response = client.rpc(SetTagRequest { name, value: None }).await?;
-                    if let Err(e) = response {
-                        println!("Error: {}", e);
-                    }
+            Commands::Tag { name, hex } => {
+                let name = if hex {
+                    hex::decode(name)?
+                } else {
+                    name.into_bytes()
+                }
+                .into();
+                let response = iroh.blobs.delete_tag(name).await;
+                if let Err(e) = response {
+                    println!("Error: {}", e);
+                }
+            }
+            Commands::Blob { hash } => {
+                let response = iroh.blobs.delete_blob(hash).await;
+                if let Err(e) = response {
+                    println!("Error: {}", e);
                 }
             }
         }

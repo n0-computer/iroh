@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::{BlobFormat, Cid};
+use iroh_bytes::util::BlobFormat;
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -179,6 +179,9 @@ pub struct BlobListCollectionsRequest;
 /// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListCollectionsResponse {
+    /// Tag of the collection
+    pub tag: Bytes,
+
     /// Hash of the collection
     pub hash: Hash,
     /// Number of children in the collection
@@ -224,16 +227,25 @@ impl ServerStreamingMsg<ProviderService> for BlobListTagsRequest {
     type Response = BlobListTagsResponse;
 }
 
-/// Set one tag to a new value or clear it
+/// Delete a tag
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobSetTagRequest {
+pub struct BlobDeleteTagRequest {
     /// Name of the tag
     pub name: Bytes,
-    /// Hash and format for the tag
-    pub value: Option<Cid>,
 }
 
-impl RpcMsg<ProviderService> for BlobSetTagRequest {
+impl RpcMsg<ProviderService> for BlobDeleteTagRequest {
+    type Response = RpcResult<()>;
+}
+
+/// Delete a blob
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobDeleteBlobRequest {
+    /// Name of the tag
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for BlobDeleteBlobRequest {
     type Response = RpcResult<()>;
 }
 
@@ -728,7 +740,8 @@ pub enum ProviderRequest {
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
     BlobListTags(BlobListTagsRequest),
-    BlobSetTag(BlobSetTagRequest),
+    BlobDeleteTag(BlobDeleteTagRequest),
+    BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
 
     DocInfo(DocInfoRequest),
@@ -766,7 +779,7 @@ pub enum ProviderResponse {
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
     BlobListTags(BlobListTagsResponse),
-    BlobSetTag(RpcResult<()>),
+    BlobDeleteTag(RpcResult<()>),
     BlobValidate(ValidateProgress),
 
     DocInfo(RpcResult<DocInfoResponse>),

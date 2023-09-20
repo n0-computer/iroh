@@ -31,8 +31,22 @@ pub enum BlobFormat {
 pub type Cid = (Hash, BlobFormat);
 
 /// Hash type used throught.
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);
+
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Hash").field(&DD(self.to_hex())).finish()
+    }
+}
+
+struct DD<T: fmt::Display>(T);
+
+impl<T: fmt::Display> fmt::Debug for DD<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
 
 impl Hash {
     /// Calculate the hash of the provide bytes.

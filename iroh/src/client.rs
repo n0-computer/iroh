@@ -23,9 +23,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDownloadRequest,
-    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
-    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadResponse,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDeleteBlobRequest,
+    BlobDeleteTagRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
+    BlobListRequest, BlobListResponse, BlobListTagsRequest, BlobListTagsResponse, BlobReadResponse,
     BlobValidateRequest, BytesGetRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
     DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
@@ -284,6 +285,24 @@ where
             .server_streaming(BlobListCollectionsRequest)
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// List all tags.
+    pub async fn list_tags(&self) -> Result<impl Stream<Item = Result<BlobListTagsResponse>>> {
+        let stream = self.rpc.server_streaming(BlobListTagsRequest).await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// Delete a tag.
+    pub async fn delete_tag(&self, name: Bytes) -> Result<()> {
+        self.rpc.rpc(BlobDeleteTagRequest { name }).await??;
+        Ok(())
+    }
+
+    /// Delete a blob.
+    pub async fn delete_blob(&self, hash: Hash) -> Result<()> {
+        self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
+        Ok(())
     }
 }
 

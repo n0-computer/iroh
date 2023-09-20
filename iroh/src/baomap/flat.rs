@@ -744,7 +744,7 @@ impl baomap::Store for Store {
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
         let res = state.live.contains(hash);
-        tracing::debug!("is_live: {:?} {} {}", hash, state.live.len(), res);
+        tracing::debug!("is_live: {:?} {}", hash, res);
         res
     }
 
@@ -891,7 +891,7 @@ impl Store {
         } else {
             hex::encode(&name)
         };
-        tracing::info!("set_root {} {:?}", name_debug, value);
+        tracing::info!("set_tag {} {:?}", name_debug, value);
         let mut tags = self.0.tags.write().unwrap();
         let mut new_tags = tags.clone();
         let changed = if let Some(value) = value {
@@ -901,7 +901,7 @@ impl Store {
                 true
             }
         } else {
-            tags.remove(&name).is_some()
+            new_tags.remove(&name).is_some()
         };
         if changed {
             let serialized = postcard::to_stdvec(&new_tags).unwrap();
@@ -1126,6 +1126,9 @@ impl Store {
             complete_path.display(),
             partial_path.display()
         );
+        std::fs::create_dir_all(&complete_path)?;
+        std::fs::create_dir_all(&partial_path)?;
+        std::fs::create_dir_all(&meta_path)?;
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
         let mut full_index =
@@ -1601,6 +1604,9 @@ impl FromStr for FileName {
     }
 }
 
+/// Write data to a file, and then atomically rename it to the final path.
+///
+/// This assumes that the directories for both files already exist.
 fn write_atomic(temp_path: &Path, final_path: &Path, data: &[u8]) -> io::Result<()> {
     let mut file = std::fs::File::create(temp_path)?;
     file.write_all(data)?;
