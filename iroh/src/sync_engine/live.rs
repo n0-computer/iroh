@@ -511,7 +511,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         // Inform our neighbors that we have new content ready.
                         let op = Op::ContentReady(hash);
                         let message = postcard::to_stdvec(&op)?.into();
-                        self.gossip.broadcast_neighbors(topic, message).await?;
+                        self.gossip.broadcast_neighbors(namespace.into(), message).await?;
                     }
 
                 }
@@ -595,13 +595,13 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn start_sync(&mut self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
-        self.ensure_subscription(namespace)?;
+        self.ensure_open(namespace)?;
         self.syncing_replicas.insert(namespace);
         self.join_peers(namespace, peers).await?;
         Ok(())
     }
 
-    fn ensure_subscription(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
+    fn ensure_open(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
         if !self.open_replicas.contains(&namespace) {
             let Some(replica) = self.replica_store.open_replica(&namespace)? else {
                 bail!("Replica not found");
@@ -647,7 +647,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         cb: OnLiveEventCallback,
     ) -> anyhow::Result<RemovalToken> {
-        self.ensure_subscription(namespace)?;
+        self.ensure_open(namespace)?;
         let subs = self.event_subscriptions.entry(namespace).or_default();
         let removal_id = self
             .event_removal_id
@@ -778,7 +778,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         }
     }
 
-    fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
+    async fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
         let namespace: NamespaceId = topic.as_bytes().into();
         let Some(replica) = self.get_replica_if_syncing(&namespace) else {
             return Err(anyhow!("Doc {namespace:?} is not active"));
