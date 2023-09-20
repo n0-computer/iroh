@@ -72,8 +72,8 @@ async fn sync_simple() -> Result<()> {
     // create doc on node0
     let (ticket, doc0) = {
         let iroh = &clients[0];
-        let author = iroh.create_author().await?;
-        let doc = iroh.create_doc().await?;
+        let author = iroh.authors.create().await?;
+        let doc = iroh.docs.create().await?;
         doc.set_bytes(author, b"k1".to_vec(), b"v1".to_vec())
             .await?;
         assert_latest(&doc, b"k1", b"v1").await;
@@ -85,7 +85,7 @@ async fn sync_simple() -> Result<()> {
 
     // node1: join in
     let iroh = &clients[1];
-    let doc = iroh.import_doc(ticket.clone()).await?;
+    let doc = iroh.docs.import(ticket.clone()).await?;
     let mut events = doc.subscribe().await?;
     let event = events.try_next().await?.unwrap();
     assert!(matches!(event, LiveEvent::InsertRemote { .. }));
