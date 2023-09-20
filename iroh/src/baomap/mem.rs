@@ -337,7 +337,7 @@ impl ReadableStore for Store {
         )
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 

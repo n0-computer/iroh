@@ -50,7 +50,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
-use rand::Rng;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -818,9 +817,12 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         self,
         _msg: ListTagsRequest,
     ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
-        let roots = self.inner.db.roots();
-        futures::stream::iter(roots)
-            .filter_map(move |(name, cid)| async move { Some(ListTagsResponse { name, cid }) })
+        futures::stream::iter(
+            self.inner
+                .db
+                .tags()
+                .map(|(name, cid)| ListTagsResponse { name, cid }),
+        )
     }
 
     async fn set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
@@ -1020,6 +1022,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
         use iroh_bytes::baomap::{ImportMode, ImportProgress, PinnedCid};
+        use rand::Rng;
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = FlumeProgressSender::new(progress);

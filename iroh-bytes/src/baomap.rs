@@ -142,7 +142,7 @@ pub trait ReadableStore: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// existing roots must be present in memory.
-    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static>;
+    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static>;
 
     /// Temp pins
     fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static>;
@@ -361,8 +361,6 @@ async fn gc_mark_task<'a>(
     extra_roots: impl IntoIterator<Item = io::Result<Cid>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
-    store.clear_live();
-    let mut roots = BTreeSet::new();
     macro_rules! info {
         ($($arg:tt)*) => {
             co.yield_(GcMarkEvent::CustomInfo(format!($($arg)*))).await;
@@ -373,8 +371,10 @@ async fn gc_mark_task<'a>(
             co.yield_(GcMarkEvent::CustomWarning(format!($($arg)*), None)).await;
         };
     }
-    info!("traversing roots");
-    for (name, cid) in store.roots() {
+    store.clear_live();
+    let mut roots = BTreeSet::new();
+    info!("traversing tags");
+    for (name, cid) in store.tags() {
         info!("adding root {:?} {:?}", name, cid);
         roots.insert(cid);
     }

@@ -165,8 +165,6 @@ struct State {
     live: BTreeSet<Hash>,
     // temp pins
     temp: BTreeMap<Cid, u64>,
-    // tags
-    tags: BTreeMap<Bytes, Cid>,
 }
 
 #[derive(Debug, Default)]
@@ -347,9 +345,10 @@ impl PartialMap for Store {
         // reachable.
         tracing::info!("protecting partial hash {}", hash);
         state.live.insert(hash);
-        let entry = state.partial.entry(hash).or_insert_with(|| {
-            PartialEntryData::new(size, new_uuid())
-        });
+        let entry = state
+            .partial
+            .entry(hash)
+            .or_insert_with(|| PartialEntryData::new(size, new_uuid()));
         let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
         let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
         Ok(PartialEntry {
@@ -410,6 +409,7 @@ impl Options {
 struct Inner {
     options: Options,
     state: RwLock<State>,
+    tags: RwLock<BTreeMap<Bytes, Cid>>,
     // mutex for async access to complete files
     //
     // complete files are never written to. They come into existence when a partial
@@ -645,10 +645,9 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
-        let inner = self.0.state.read().unwrap();
+    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+        let inner = self.0.tags.read().unwrap();
         let items = inner
-            .tags
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect::<Vec<_>>();
@@ -710,31 +709,13 @@ impl baomap::Store for Store {
     }
 
     fn set_tag(&self, name: Bytes, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
-        async move {
-            let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
-                format!("\"{}\"", text)
-            } else {
-                hex::encode(&name)
-            };
-            tracing::info!("set_root {} {:?}", name_debug, value);
-            let mut tags = self.0.state.read().unwrap().tags.clone();
-            let changed = if let Some(value) = value {
-                if let Some(old_value) = tags.insert(name, value) {
-                    value != old_value
-                } else {
-                    true
-                }
-            } else {
-                tags.remove(&name).is_some()
-            };
-            if changed {
-                let path = self.0.options.meta_path.join(format!("tags-{}.meta", hex::encode(new_uuid())));
-                let serialized = postcard::to_stdvec(&tags).unwrap();
-                std::fs::write(path, serialized)?;
-                self.0.state.write().unwrap().tags = tags;
-            }
-            Ok(())
-        }.boxed()
+        let this = self.clone();
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.set_tag_sync(name, value))
+            .map(flatten_to_io)
+            .boxed()
     }
 
     fn temp_pin(&self, cid: Cid) -> PinnedCid {
@@ -893,6 +874,45 @@ impl Store {
         }
         drop(complete_io_guard);
         Ok((cid, size))
+    }
+
+    fn set_tag_sync(&self, name: Bytes, value: Option<Cid>) -> io::Result<()> {
+        let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
+            format!("\"{}\"", text)
+        } else {
+            hex::encode(&name)
+        };
+        tracing::info!("set_root {} {:?}", name_debug, value);
+        let mut tags = self.0.tags.write().unwrap();
+        let mut new_tags = tags.clone();
+        let changed = if let Some(value) = value {
+            if let Some(old_value) = new_tags.insert(name, value) {
+                value != old_value
+            } else {
+                true
+            }
+        } else {
+            tags.remove(&name).is_some()
+        };
+        if changed {
+            let temp_path = self
+                .0
+                .options
+                .meta_path
+                .join(format!("tags-{}.meta", hex::encode(new_uuid())));
+            let final_path = self.0.options.meta_path.join("tags.meta");
+            let serialized = postcard::to_stdvec(&new_tags).unwrap();
+            tracing::info!(
+                "persisting tags to  {}. {} bytes",
+                final_path.display(),
+                serialized.len()
+            );
+            std::fs::write(&temp_path, serialized)?;
+            std::fs::rename(temp_path, final_path)?;
+            *tags = new_tags;
+        }
+        drop(tags);
+        Ok(())
     }
 
     fn import_bytes_sync(&self, data: Bytes, format: Format) -> io::Result<PinnedCid> {
@@ -1329,6 +1349,13 @@ impl Store {
         for hash in partial.keys() {
             tracing::info!("partial {}", hash);
         }
+        let tags_path = meta_path.join("tags.meta");
+        let mut tags = BTreeMap::new();
+        if tags_path.exists() {
+            let data = std::fs::read(tags_path)?;
+            tags = postcard::from_bytes(&data)?;
+            tracing::info!("loaded tags. {} entries", tags.len());
+        };
         Ok(Self(Arc::new(Inner {
             state: RwLock::new(State {
                 complete,
@@ -1336,9 +1363,9 @@ impl Store {
                 outboard,
                 data: Default::default(),
                 live: Default::default(),
-                tags: Default::default(),
                 temp: Default::default(),
             }),
+            tags: RwLock::new(tags),
             options: Options {
                 complete_path,
                 partial_path,
