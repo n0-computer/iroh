@@ -1240,7 +1240,7 @@ fn handle_rpc_request<
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
-        debug!("handling rpc request: {}", std::any::type_name::<E>());
+        debug!("handling rpc request: {msg}");
         match msg {
             NodeWatch(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::node_watch)
