@@ -423,7 +423,6 @@ impl<PI: PeerIdentity> State<PI> {
             scope,
         };
         let me = self.me;
-        // TODO: Do we want to lazy push neighbor messages as well?
         if let Scope::Swarm = scope {
             self.received_messages
                 .insert(id, (), now + self.config.message_id_retention);
