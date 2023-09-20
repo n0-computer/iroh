@@ -348,8 +348,7 @@ impl PartialMap for Store {
         tracing::info!("protecting partial hash {}", hash);
         state.live.insert(hash);
         let entry = state.partial.entry(hash).or_insert_with(|| {
-            let uuid = rand::thread_rng().gen::<[u8; 16]>();
-            PartialEntryData::new(size, uuid)
+            PartialEntryData::new(size, new_uuid())
         });
         let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
         let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
@@ -376,6 +375,7 @@ impl PartialMap for Store {
 struct Options {
     complete_path: PathBuf,
     partial_path: PathBuf,
+    meta_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
     rt: tokio::runtime::Handle,
@@ -709,20 +709,32 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn set_tag(&self, name: &[u8], value: Option<Cid>) -> BoxFuture<io::Result<()>> {
-        let name_debug = if let Ok(text) = std::str::from_utf8(name) {
-            format!("\"{}\"", text)
-        } else {
-            hex::encode(name)
-        };
-        tracing::info!("set_root {} {:?}", name_debug, value);
-        let mut state = self.0.state.write().unwrap();
-        if let Some(item) = value {
-            state.tags.insert(name.to_vec().into(), item);
-        } else {
-            state.tags.remove(name);
-        }
-        async move { Ok(()) }.boxed()
+    fn set_tag(&self, name: Bytes, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+        async move {
+            let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
+                format!("\"{}\"", text)
+            } else {
+                hex::encode(&name)
+            };
+            tracing::info!("set_root {} {:?}", name_debug, value);
+            let mut tags = self.0.state.read().unwrap().tags.clone();
+            let changed = if let Some(value) = value {
+                if let Some(old_value) = tags.insert(name, value) {
+                    value != old_value
+                } else {
+                    true
+                }
+            } else {
+                tags.remove(&name).is_some()
+            };
+            if changed {
+                let path = self.0.options.meta_path.join(format!("tags-{}.meta", hex::encode(new_uuid())));
+                let serialized = postcard::to_stdvec(&tags).unwrap();
+                std::fs::write(path, serialized)?;
+                self.0.state.write().unwrap().tags = tags;
+            }
+            Ok(())
+        }.boxed()
     }
 
     fn temp_pin(&self, cid: Cid) -> PinnedCid {
@@ -742,12 +754,12 @@ impl baomap::Store for Store {
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
         let res = state.live.contains(hash);
-        println!("is_live: {:?} {} {}", hash, state.live.len(), res);
+        tracing::debug!("is_live: {:?} {} {}", hash, state.live.len(), res);
         res
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
-        println!("delete: {:?}", hash);
+        tracing::debug!("delete: {:?}", hash);
         let this = self.clone();
         let hash = *hash;
         self.0
@@ -834,7 +846,7 @@ impl Store {
                 (cid, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
-                let uuid = rand::thread_rng().gen::<[u8; 16]>();
+                let uuid = new_uuid();
                 let temp_data_path = self
                     .0
                     .options
@@ -873,6 +885,7 @@ impl Store {
         entry.union_with(new)?;
         if entry.external.len() != n {
             let path = self.0.options.paths_path(hash);
+            // todo: this is not atomic
             std::fs::write(path, entry.external_to_bytes())?;
         }
         if let Some(outboard) = outboard {
@@ -1082,6 +1095,7 @@ impl Store {
     pub(crate) fn load_sync(
         complete_path: PathBuf,
         partial_path: PathBuf,
+        meta_path: PathBuf,
         rt: iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         tracing::info!(
@@ -1328,6 +1342,7 @@ impl Store {
             options: Options {
                 complete_path,
                 partial_path,
+                meta_path,
                 move_threshold: 1024 * 128,
                 inline_threshold: 1024 * 16,
                 rt: rt.main().clone(),
@@ -1340,12 +1355,14 @@ impl Store {
     pub fn load_blocking(
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
+        meta_path: impl AsRef<Path>,
         rt: &iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
+        let meta_path = meta_path.as_ref().to_path_buf();
         let rt = rt.clone();
-        let db = Self::load_sync(complete_path, partial_path, rt)?;
+        let db = Self::load_sync(complete_path, partial_path, meta_path, rt)?;
         Ok(db)
     }
 
@@ -1353,14 +1370,16 @@ impl Store {
     pub async fn load(
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
+        meta_path: impl AsRef<Path>,
         rt: &iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
+        let meta_path = meta_path.as_ref().to_path_buf();
         let rtc = rt.clone();
         let db = rt
             .main()
-            .spawn_blocking(move || Self::load_sync(complete_path, partial_path, rtc))
+            .spawn_blocking(move || Self::load_sync(complete_path, partial_path, meta_path, rtc))
             .await??;
         Ok(db)
     }
@@ -1413,6 +1432,10 @@ fn compute_outboard(
     let ob = ob.into_inner();
     let ob = if ob.len() > 8 { Some(ob) } else { None };
     Ok((hash.into(), ob))
+}
+
+fn new_uuid() -> [u8; 16] {
+    rand::thread_rng().gen::<[u8; 16]>()
 }
 
 pub(crate) struct ProgressReader2<R, F: Fn(u64) -> io::Result<()>> {

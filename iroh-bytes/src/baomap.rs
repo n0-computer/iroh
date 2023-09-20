@@ -195,7 +195,7 @@ pub trait Store: ReadableStore + PartialMap {
     fn import_bytes(&self, bytes: Bytes, format: Format) -> BoxFuture<'_, io::Result<PinnedCid>>;
 
     /// Set a named pin
-    fn set_tag(&self, name: &[u8], hash: Option<Cid>) -> BoxFuture<io::Result<()>> {
+    fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
         let _ = name;
         let _ = hash;
         async move { Ok(()) }.boxed()

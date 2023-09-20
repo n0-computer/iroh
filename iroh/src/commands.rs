@@ -228,7 +228,7 @@ impl FullCommands {
                     rt,
                     path,
                     in_place,
-                    tag.map(String::into_bytes),
+                    tag.map(|x| x.into_bytes().into()),
                     ProvideOptions {
                         addr,
                         rpc_port,
@@ -518,7 +518,7 @@ impl BlobCommands {
                         token: token.cloned(),
                         out: out.map(|x| x.display().to_string()),
                         in_place,
-                        tag: tag.map(|x| x.into_bytes()),
+                        tag: tag.map(|x| x.into_bytes().into()),
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -534,7 +534,7 @@ impl BlobCommands {
                 path,
                 in_place,
                 tag,
-            } => self::add::run(client, path, in_place, tag.map(String::into_bytes)).await,
+            } => self::add::run(client, path, in_place, tag.map(|x| x.into_bytes().into())).await,
         }
     }
 }

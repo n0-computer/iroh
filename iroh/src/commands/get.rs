@@ -68,7 +68,7 @@ impl GetInteractive {
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
         let db: iroh::baomap::flat::Store =
-            iroh::baomap::flat::Store::load(temp_dir.clone(), temp_dir.clone(), &self.rt).await?;
+            iroh::baomap::flat::Store::load(&temp_dir, &temp_dir, &temp_dir, &self.rt).await?;
         // TODO: we don't need sync here, maybe disable completely?
         let doc_store = iroh_sync::store::memory::Store::default();
         // spin up temp node and ask it to download the data for us

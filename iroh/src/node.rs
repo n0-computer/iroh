@@ -824,7 +824,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
 
     async fn set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
-        self.inner.db.set_tag(&msg.name, msg.value).await?;
+        self.inner.db.set_tag(msg.name, msg.value).await?;
         Ok(())
     }
 
@@ -987,7 +987,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 }
             }
             if let Some(tag) = msg.tag {
-                db.set_tag(&tag, Some((hash, format))).await?;
+                db.set_tag(tag, Some((hash, format))).await?;
             };
             drop(temp_pin);
             progress.send(ShareProgress::AllDone).await?;
@@ -1094,8 +1094,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             .db
             .import_bytes(data.into(), Format::Collection)
             .await?;
-        let root_name = rand::thread_rng().gen::<[u8; 16]>();
-        self.inner.db.set_tag(&root_name, Some(*cid.cid()));
+        let root_name = rand::thread_rng().gen::<[u8; 16]>().to_vec().into();
+        self.inner.db.set_tag(root_name, Some(*cid.cid()));
         // now that we have set the collection cid as a root, we can drop the temp pins
         drop(cids);
         progress

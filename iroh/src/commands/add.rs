@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{client::quic::RpcClient, rpc_protocol::ProvideRequest};
@@ -14,7 +15,7 @@ pub async fn run(
     client: RpcClient,
     path: PathBuf,
     in_place: bool,
-    tag: Option<Vec<u8>>,
+    tag: Option<Bytes>,
 ) -> Result<()> {
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());

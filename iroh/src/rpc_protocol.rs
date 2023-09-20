@@ -48,7 +48,7 @@ pub struct ProvideRequest {
     /// can be shared in place.
     pub in_place: bool,
     /// Optional tag for the data.
-    pub tag: Option<Vec<u8>>,
+    pub tag: Option<Bytes>,
 }
 
 impl Msg<ProviderService> for ProvideRequest {
@@ -78,7 +78,7 @@ pub struct ShareRequest {
     /// over the DERP protocol.
     pub derp_region: Option<u16>,
     /// Tag under which to store the data
-    pub tag: Option<Vec<u8>>,
+    pub tag: Option<Bytes>,
     /// This optional field contains the path to store the data to. If it is not
     /// set, the data is dumped to stdout.
     pub out: Option<String>,

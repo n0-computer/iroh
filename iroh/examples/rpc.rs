@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     match args.path {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
-            let db = iroh::baomap::flat::Store::load(path.clone(), path, &rt).await?;
+            let db = iroh::baomap::flat::Store::load(&path, &path, &path, &rt).await?;
             run(db).await
         }
         None => {

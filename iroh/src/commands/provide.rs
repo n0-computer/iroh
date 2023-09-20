@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
+use bytes::Bytes;
 use futures::StreamExt;
 use iroh::{
     baomap::flat,
@@ -48,7 +49,7 @@ pub async fn run(
     rt: &runtime::Handle,
     path: Option<PathBuf>,
     in_place: bool,
-    tag: Option<Vec<u8>>,
+    tag: Option<Bytes>,
     opts: ProvideOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {
@@ -62,9 +63,10 @@ pub async fn run(
     let gc_period = opts.gc_period;
     let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
     let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
+    let meta_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
     tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let db = flat::Store::load(&blob_dir, &partial_blob_dir, rt)
+    let db = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let key = Some(IrohPaths::SecretKey.with_env()?);

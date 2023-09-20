@@ -45,6 +45,8 @@ pub enum IrohPaths {
     BaoFlatStoreComplete,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
     BaoFlatStorePartial,
+    /// Path to the node's [flat-file store](iroh::baomap::flat) for metadata such as the tags table.
+    BaoFlatStoreMeta,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
     DocsDatabase,
     /// Path to the console state
@@ -57,6 +59,7 @@ impl From<&IrohPaths> for &'static str {
             IrohPaths::SecretKey => "keypair",
             IrohPaths::BaoFlatStoreComplete => "blobs.v0",
             IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
+            IrohPaths::BaoFlatStoreMeta => "blobs-meta.v0",
             IrohPaths::DocsDatabase => "docs.redb",
             IrohPaths::Console => "console",
         }
