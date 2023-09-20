@@ -719,6 +719,8 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use anyhow::Result;
     use rand_core::SeedableRng;
 
@@ -884,6 +886,42 @@ mod tests {
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_content_hashes_iterator_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_basics(store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_content_hashes_iterator_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_content_hashes_iterator(store)
+    }
+
+    fn test_content_hashes_iterator<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let mut expected = HashSet::new();
+        let n_replicas = 3;
+        let n_entries = 4;
+        for i in 0..n_replicas {
+            let namespace = Namespace::new(&mut rng);
+            let author = store.new_author(&mut rng)?;
+            let replica = store.new_replica(namespace)?;
+            for j in 0..n_entries {
+                let key = format!("{j}");
+                let data = format!("{i}:{j}");
+                let hash = replica.hash_and_insert(key, &author, data)?;
+                expected.insert(hash);
+            }
+        }
+        assert_eq!(expected.len(), n_replicas * n_entries);
+        let actual = store.content_hashes()?.collect::<Result<HashSet<Hash>>>()?;
+        assert_eq!(actual, expected);
         Ok(())
     }
 

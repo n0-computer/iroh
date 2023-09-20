@@ -5,6 +5,7 @@ use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 use anyhow::Result;
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
+use iroh_bytes::Hash;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
@@ -111,6 +112,7 @@ impl Store {
 impl super::Store for Store {
     type Instance = StoreInstance;
     type GetIter<'a> = RangeIterator<'a>;
+    type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -224,6 +226,10 @@ impl super::Store for Store {
         let signed_entry = SignedEntry::new(entry_signature, entry);
 
         Ok(Some(signed_entry))
+    }
+
+    fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
+        ContentHashesIterator::create(&self.db)
     }
 }
 
@@ -500,6 +506,47 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let iter = RangeIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)?;
         let iter2 = RangeIterator::empty(&self.store.db)?;
         Ok(iter.chain(iter2))
+    }
+}
+
+/// Iterator over all content hashes for the fs store.
+#[self_referencing]
+pub struct ContentHashesIterator<'a> {
+    read_tx: ReadTransaction<'a>,
+    #[borrows(read_tx)]
+    #[covariant]
+    record_table: RecordsTable<'this>,
+    #[covariant]
+    #[borrows(record_table)]
+    records: RecordsRange<'this>,
+}
+impl<'a> ContentHashesIterator<'a> {
+    fn create(db: &'a Arc<Database>) -> anyhow::Result<Self> {
+        let iter = Self::try_new(
+            db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_table(RECORDS_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            |table| table.iter().map_err(anyhow::Error::from),
+        )?;
+        Ok(iter)
+    }
+}
+
+impl Iterator for ContentHashesIterator<'_> {
+    type Item = Result<Hash>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.with_mut(|fields| match fields.records.next() {
+            None => None,
+            Some(Err(err)) => Some(Err(err.into())),
+            Some(Ok((_key, value))) => {
+                let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value.value();
+                Some(Ok(Hash::from(hash)))
+            }
+        })
     }
 }
 
