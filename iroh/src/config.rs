@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -187,7 +186,7 @@ impl Default for NodeConfig {
         Self {
             // TODO(ramfox): this should probably just be a derp map
             derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
-            gc_policy: GcPolicy::Interval(Duration::from_secs(10)),
+            gc_policy: GcPolicy::Disabled,
         }
     }
 }

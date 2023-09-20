@@ -89,6 +89,8 @@ impl<S: Store> SyncEngine<S> {
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
+        self.start_sync(req.doc_id, vec![]).await?;
+        let me = PeerSource::from_endpoint(&self.endpoint).await?;
         let replica = self.get_replica(&req.doc_id)?;
         let key = match req.mode {
             ShareMode::Read => {
@@ -98,8 +100,6 @@ impl<S: Store> SyncEngine<S> {
             }
             ShareMode::Write => replica.secret_key(),
         };
-        let me = PeerSource::from_endpoint(&self.endpoint).await?;
-        self.start_sync(replica.namespace(), vec![]).await?;
         Ok(DocShareResponse(DocTicket {
             key,
             peers: vec![me],
@@ -153,15 +153,13 @@ impl<S: Store> SyncEngine<S> {
         req: DocStartSyncRequest,
     ) -> RpcResult<DocStartSyncResponse> {
         let DocStartSyncRequest { doc_id, peers } = req;
-        let replica = self.get_replica(&doc_id)?;
-        self.start_sync(replica.namespace(), peers).await?;
+        self.start_sync(doc_id, peers).await?;
         Ok(DocStartSyncResponse {})
     }
 
     pub async fn doc_stop_sync(&self, req: DocStopSyncRequest) -> RpcResult<DocStopSyncResponse> {
         let DocStopSyncRequest { doc_id } = req;
-        let replica = self.get_replica(&doc_id)?;
-        self.stop_sync(replica.namespace()).await?;
+        self.stop_sync(doc_id).await?;
         Ok(DocStopSyncResponse {})
     }
 
