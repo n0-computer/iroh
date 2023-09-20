@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
@@ -9,7 +11,7 @@ use iroh::{
 };
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
-use crate::config::ConsoleEnv;
+use crate::{commands::add::aggregate_add_response, config::ConsoleEnv};
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
@@ -98,7 +100,34 @@ pub enum DocCommands {
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
     },
-    /// Watch for changes and events on a document
+    /// Import data into a document
+    Import {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Author of the entry.
+        ///
+        /// Required unless the author is set through the IROH_AUTHOR environment variable.
+        /// Within the Iroh console, the active author can also set with `author switch`.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
+        /// Prefex to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
+        prefix: String,
+        /// Path to a local file or directory to import
+        ///
+        /// Pathnames will be used as the document key
+        #[clap(short, long)]
+        file: String,
+        /// If true, don't copy the file into iroh, reference the existing file instead
+        ///
+        /// Moving a file imported with in-place will result in data corruption
+        #[clap(short, long)]
+        in_place: bool,
+    },
+    /// Output changes and events on a document
     Watch {
         /// Document to operate on.
         ///
@@ -221,6 +250,51 @@ impl DocCommands {
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
+                }
+            }
+            Self::Import {
+                doc,
+                author,
+                mut prefix,
+                file,
+                in_place,
+            } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let author = env.author(author)?;
+
+                if prefix.ends_with('/') {
+                    prefix.pop();
+                }
+                let root = canonicalize_path(&file)?.canonicalize()?;
+                let files = walkdir::WalkDir::new(&root).into_iter();
+                // TODO: parallelize
+                for file in files {
+                    let file = file?;
+                    if file.file_type().is_file() {
+                        let relative = file.path().strip_prefix(&root)?.to_string_lossy();
+                        if relative.is_empty() {
+                            print!("invalid file path: {:?}", file.path());
+                            continue;
+                        }
+                        let key = if prefix == String::from("") {
+                            relative.to_string()
+                        } else {
+                            format!("{prefix}/{relative}")
+                        };
+
+                        let stream = iroh
+                            .blobs
+                            .add_from_path(file.path().into(), in_place)
+                            .await?;
+                        let (hash, _) = aggregate_add_response(stream).await?;
+                        // doc.set_hash(&self.author, key, hash)?;
+                        doc.set_hash(author, key.into(), hash).await?;
+                        // println!(
+                        //     "> imported {relative}: {} ({})",
+                        //     fmt_hash(hash),
+                        //     HumanBytes(len)
+                        // );
+                    }
                 }
             }
             Self::Watch { doc } => {
@@ -353,4 +427,9 @@ async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<
         }
     }
     Ok(())
+}
+
+fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(shellexpand::tilde(&path).to_string());
+    Ok(path)
 }

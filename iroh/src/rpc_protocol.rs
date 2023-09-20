@@ -614,7 +614,6 @@ pub struct DocSetRequest {
     /// Key of this entry.
     pub key: Vec<u8>,
     /// Value of this entry.
-    // TODO: Allow to provide the hash directly
     // TODO: Add a way to provide content as stream
     pub value: Vec<u8>,
 }
@@ -623,9 +622,33 @@ impl RpcMsg<ProviderService> for DocSetRequest {
     type Response = RpcResult<DocSetResponse>;
 }
 
+/// Set an entry in a document to a given hash
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Key of this entry.
+    pub key: Vec<u8>,
+    /// Value of this entry.
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for DocSetHashRequest {
+    type Response = RpcResult<DocSetHashResponse>;
+}
+
 /// Response to [`DocSetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetResponse {
+    /// The newly-created entry.
+    pub entry: SignedEntry,
+}
+
+/// Response to [`DocSetHashRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashResponse {
     /// The newly-created entry.
     pub entry: SignedEntry,
 }
@@ -764,6 +787,7 @@ pub enum ProviderRequest {
     DocCreate(DocCreateRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
+    DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
     DocStartSync(DocStartSyncRequest),
@@ -803,6 +827,7 @@ pub enum ProviderResponse {
     DocCreate(RpcResult<DocCreateResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
+    DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
     DocShare(RpcResult<DocShareResponse>),

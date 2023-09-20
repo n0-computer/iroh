@@ -2,23 +2,25 @@
 
 use anyhow::anyhow;
 use futures::{FutureExt, Stream};
+use itertools::Itertools;
+use rand::rngs::OsRng;
+
 use iroh_bytes::{
+    baomap::MapEntry,
     baomap::Store as BaoStore,
     util::{BlobFormat, RpcError},
 };
 use iroh_sync::{store::Store, sync::Namespace};
-use itertools::Itertools;
-use rand::rngs::OsRng;
 
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
         DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
-        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocInfoResponse, DocListRequest, DocListResponse, DocSetHashRequest, DocSetHashResponse,
+        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -189,7 +191,33 @@ impl<S: Store> SyncEngine<S> {
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
     }
+    pub async fn doc_set_hash<B: BaoStore>(
+        &self,
+        bao_store: &B,
+        req: DocSetHashRequest,
+    ) -> RpcResult<DocSetHashResponse> {
+        let DocSetHashRequest {
+            doc_id,
+            author_id,
+            key,
+            hash,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        let entry = bao_store
+            .get(&hash)
+            .ok_or_else(|| anyhow!("hash is not present in store"))?;
+        let len = entry.size();
 
+        replica
+            .insert(&key, &author, hash, len)
+            .map_err(anyhow::Error::from)?;
+        let entry = self
+            .store
+            .get_one(replica.namespace(), author.id(), &key)?
+            .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
+        Ok(DocSetHashResponse { entry })
+    }
     pub fn doc_get_many(
         &self,
         req: DocGetManyRequest,

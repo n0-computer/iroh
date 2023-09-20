@@ -29,11 +29,11 @@ use crate::rpc_protocol::{
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
     BlobReadResponse, BlobValidateRequest, BytesGetRequest, CounterStats, DeleteTagRequest,
     DocCreateRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
-    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, WrapOption,
+    DocListRequest, DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
+    DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -407,6 +407,20 @@ where
     /// Get the document id of this doc.
     pub fn id(&self) -> NamespaceId {
         self.id
+    }
+
+    /// Set the content of a key to a hash value
+    pub async fn set_hash(&self, author_id: AuthorId, key: Vec<u8>, hash: Hash) -> Result<Hash> {
+        let res = self
+            .rpc
+            .rpc(DocSetHashRequest {
+                doc_id: self.id,
+                author_id,
+                key,
+                hash,
+            })
+            .await??;
+        Ok(res.entry.content_hash())
     }
 
     /// Set the content of a key to a byte array.
