@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::magic_endpoint::AddrInfo as IrohInfo;
+use iroh_net::magic_endpoint::AddrInfo;
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -503,11 +503,11 @@ impl Actor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<IrohInfo>(&data) {
+                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<AddrInfo>(&data) {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
-                        let IrohInfo {
+                        let AddrInfo {
                             derp_region,
                             endpoints,
                         } = info;
