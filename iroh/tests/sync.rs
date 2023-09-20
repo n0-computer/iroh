@@ -147,8 +147,8 @@ async fn sync_full_basic() -> Result<()> {
     // node1: create doc and ticket
     let (ticket, doc1) = {
         let iroh = &clients[0];
-        let author = iroh.create_author().await?;
-        let doc = iroh.create_doc().await?;
+        let author = iroh.authors.create().await?;
+        let doc = iroh.docs.create().await?;
         let key = b"k1";
         let value = b"v1";
         doc.set_bytes(author, key.to_vec(), value.to_vec()).await?;
@@ -160,8 +160,8 @@ async fn sync_full_basic() -> Result<()> {
     // node2: join in
     let _doc2 = {
         let iroh = &clients[1];
-        let author = iroh.create_author().await?;
-        let doc = iroh.import_doc(ticket.clone()).await?;
+        let author = iroh.authors.create().await?;
+        let doc = iroh.docs.import(ticket.clone()).await?;
 
         // wait for remote insert on doc2
         let mut events = doc.subscribe().await?;
@@ -210,7 +210,7 @@ async fn sync_full_basic() -> Result<()> {
     // node 3 joins & imports the doc from peer 1
     let _doc3 = {
         let iroh = &clients[2];
-        let doc = iroh.import_doc(ticket).await?;
+        let doc = iroh.docs.import(ticket).await?;
 
         // wait for 2 remote inserts
         let mut events = doc.subscribe().await?;
@@ -264,8 +264,8 @@ async fn sync_subscribe_stop() -> Result<()> {
     let node = spawn_node(rt).await?;
     let client = node.client();
 
-    let doc = client.create_doc().await?;
-    let author = client.create_author().await?;
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
     doc.start_sync(vec![]).await?;
 
     let status = doc.status().await?;
@@ -299,7 +299,7 @@ async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
         .next()
         .await
         .ok_or_else(|| anyhow!("entry not found"))??;
-    let content = doc.get_content_bytes(entry.content_hash()).await?;
+    let content = doc.read_to_bytes(&entry).await?;
     Ok(content.to_vec())
 }
 

@@ -14,15 +14,15 @@ async fn main() -> anyhow::Result<()> {
         .spawn()
         .await?;
     let client = node.client();
-    let doc = client.create_doc().await?;
-    let author = client.create_author().await?;
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;
     let mut stream = doc.get_many(GetFilter::All).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        let content = doc.get_content_bytes(entry.content_hash()).await?;
+        let content = doc.read_to_bytes(&entry).await?;
         println!("  content {}", String::from_utf8(content.to_vec())?)
     }
 

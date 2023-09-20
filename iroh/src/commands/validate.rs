@@ -4,12 +4,12 @@ use anyhow::Result;
 use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use iroh::{client::quic::RpcClient, rpc_protocol::ValidateRequest};
+use iroh::client::quic::Iroh;
 use iroh_bytes::{baomap::ValidateProgress, Hash};
 
-pub async fn run(client: RpcClient, repair: bool) -> Result<()> {
+pub async fn run(iroh: &Iroh, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();
-    let mut response = client.server_streaming(ValidateRequest { repair }).await?;
+    let mut response = iroh.blobs.validate(repair).await?;
 
     while let Some(item) = response.next().await {
         match item? {

@@ -8,7 +8,7 @@ use std::{
 
 use quic_rpc::transport::quinn::QuinnConnection;
 
-use crate::rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService, VersionRequest};
+use crate::rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, ProviderService};
 
 /// TODO: Change to "/iroh-rpc/1"
 pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -41,10 +41,10 @@ pub async fn connect_raw(rpc_port: u16) -> anyhow::Result<RpcClient> {
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
     let client = RpcClient::new(connection);
-    // Do a version request to check if the server is running.
-    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
+    // Do a status request to check if the server is running.
+    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(NodeStatusRequest))
         .await
-        .context("iroh server is not running")??;
+        .context("Iroh node is not running")??;
     Ok(client)
 }
 fn create_quinn_client(
