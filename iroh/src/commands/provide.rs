@@ -4,24 +4,18 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
-use futures::StreamExt;
 use iroh::{
     baomap::flat,
     client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
-    node::{Node, StaticTokenAuthHandler},
+    node::{GcPolicy, Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{
-    baomap::{GcMarkEvent, GcSweepEvent, Store as BaoStore},
-    protocol::RequestToken,
-    util::runtime,
-};
+use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, key::SecretKey};
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
@@ -42,7 +36,7 @@ pub struct ProvideOptions {
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
-    pub gc_period: Duration,
+    pub gc_policy: GcPolicy,
 }
 
 pub async fn run(
@@ -60,7 +54,6 @@ pub async fn run(
         );
     }
 
-    let gc_period = opts.gc_period;
     let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
     let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
     let meta_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
@@ -123,46 +116,6 @@ pub async fn run(
         )
     };
 
-    let db2 = db.clone();
-    let gc_task = rt.local_pool().spawn_pinned(move || async move {
-        'outer: loop {
-            // do delay before the two phases of GC
-            tokio::time::sleep(gc_period).await;
-            tracing::info!("Starting GC mark phase");
-            let mut stream = db2.gc_mark(IrohCollectionParser, None);
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcMarkEvent::CustomInfo(text) => {
-                        tracing::info!("{}", text);
-                    }
-                    GcMarkEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcMarkEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-            tracing::info!("Starting GC sweep phase");
-            let mut stream = db2.gc_sweep();
-            while let Some(item) = stream.next().await {
-                match item {
-                    GcSweepEvent::CustomInfo(text) => {
-                        tracing::info!("{}", text);
-                    }
-                    GcSweepEvent::CustomWarning(text, _) => {
-                        tracing::warn!("{}", text);
-                    }
-                    GcSweepEvent::Error(err) => {
-                        tracing::error!("Fatal error during GC mark {}", err);
-                        continue 'outer;
-                    }
-                }
-            }
-        }
-    });
-
     let provider2 = provider.clone();
     tokio::select! {
         biased;
@@ -174,9 +127,6 @@ pub async fn run(
             res?;
         }
     }
-
-    gc_task.abort();
-    drop(gc_task);
 
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
@@ -198,6 +148,7 @@ async fn provide<B: BaoStore, D: DocStore>(
     let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
+        .gc_policy(opts.gc_policy)
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
         builder = builder.enable_derp(dm);

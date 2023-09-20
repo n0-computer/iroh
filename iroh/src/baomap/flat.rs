@@ -123,7 +123,7 @@
 //! to the final partial data and partial outboard files.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -402,6 +402,11 @@ impl Options {
 
     fn paths_path(&self, hash: Hash) -> PathBuf {
         self.complete_path.join(FileName::Paths(hash).to_string())
+    }
+
+    fn temp_paths_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
+        self.complete_path
+            .join(FileName::TempPaths(hash, *uuid).to_string())
     }
 }
 
@@ -865,9 +870,9 @@ impl Store {
         let n = entry.external.len();
         entry.union_with(new)?;
         if entry.external.len() != n {
-            let path = self.0.options.paths_path(hash);
-            // todo: this is not atomic
-            std::fs::write(path, entry.external_to_bytes())?;
+            let temp_path = self.0.options.temp_paths_path(hash, &new_uuid());
+            let final_path = self.0.options.paths_path(hash);
+            write_atomic(&temp_path, &final_path, &entry.external_to_bytes())?;
         }
         if let Some(outboard) = outboard {
             state.outboard.insert(hash, outboard.into());
@@ -895,20 +900,14 @@ impl Store {
             tags.remove(&name).is_some()
         };
         if changed {
+            let serialized = postcard::to_stdvec(&new_tags).unwrap();
             let temp_path = self
                 .0
                 .options
                 .meta_path
                 .join(format!("tags-{}.meta", hex::encode(new_uuid())));
             let final_path = self.0.options.meta_path.join("tags.meta");
-            let serialized = postcard::to_stdvec(&new_tags).unwrap();
-            tracing::info!(
-                "persisting tags to  {}. {} bytes",
-                final_path.display(),
-                serialized.len()
-            );
-            std::fs::write(&temp_path, serialized)?;
-            std::fs::rename(temp_path, final_path)?;
+            write_atomic(&temp_path, &final_path, &serialized)?;
             *tags = new_tags;
         }
         drop(tags);
@@ -1505,6 +1504,8 @@ pub enum FileName {
     /// We can have multiple files with the same outboard, in case the outboard
     /// does not contain hashes. But we don't store those outboards.
     Outboard(Hash),
+    /// Temporary paths file
+    TempPaths(Hash, [u8; 16]),
     /// External paths for the hash
     Paths(Hash),
     /// File is going to be used to store metadata
@@ -1541,6 +1542,9 @@ impl fmt::Display for FileName {
                     hex::encode(uuid),
                     OUTBOARD_EXT
                 )
+            }
+            Self::TempPaths(hash, uuid) => {
+                write!(f, "{}-{}.paths", hex::encode(hash), hex::encode(uuid))
             }
             Self::Paths(hash) => {
                 write!(f, "{}.paths", hex::encode(hash))
@@ -1593,6 +1597,13 @@ impl FromStr for FileName {
     }
 }
 
+fn write_atomic(temp_path: &Path, final_path: &Path, data: &[u8]) -> io::Result<()> {
+    let mut file = std::fs::File::create(temp_path)?;
+    file.write_all(data)?;
+    std::fs::rename(temp_path, final_path)?;
+    Ok(())
+}
+
 struct DD<T: fmt::Display>(T);
 
 impl<T: fmt::Display> fmt::Debug for DD<T> {
@@ -1621,6 +1632,11 @@ impl fmt::Debug for FileName {
                 .debug_tuple("Paths")
                 .field(&DD(hex::encode(arg0)))
                 .finish(),
+            Self::TempPaths(hash, guid) => f
+                .debug_tuple("TempPaths")
+                .field(&DD(hash))
+                .field(&DD(hex::encode(guid)))
+                .finish(),
         }
     }
 }
@@ -1634,19 +1650,8 @@ impl FileName {
             FileName::PartialOutboard(_, _) => true,
             FileName::Outboard(_) => false,
             FileName::Meta(_) => false,
+            FileName::TempPaths(_, _) => true,
             FileName::Paths(_) => false,
-        }
-    }
-
-    /// some bytes that can be used as a hint for the name of the file
-    pub fn name_hint(&self) -> &[u8] {
-        match self {
-            FileName::PartialData(hash, _) => hash.as_bytes(),
-            FileName::Data(hash) => hash.as_bytes(),
-            FileName::PartialOutboard(hash, _) => hash.as_bytes(),
-            FileName::Meta(data) => data.as_slice(),
-            FileName::Outboard(_) => &[],
-            FileName::Paths(_) => &[],
         }
     }
 }

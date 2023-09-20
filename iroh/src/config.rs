@@ -6,11 +6,11 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use config::{Environment, File, Value};
+use iroh::node::GcPolicy;
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},
@@ -178,7 +178,7 @@ pub struct NodeConfig {
     /// The regions for DERP to use.
     pub derp_regions: Vec<DerpRegion>,
     /// How often to run garbage collection.
-    pub gc_period: Duration,
+    pub gc_policy: GcPolicy,
 }
 
 impl Default for NodeConfig {
@@ -186,8 +186,7 @@ impl Default for NodeConfig {
         Self {
             // TODO(ramfox): this should probably just be a derp map
             derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
-            // TODO: increase this to a few minutes
-            gc_period: Duration::from_secs(10),
+            gc_policy: GcPolicy::Disabled,
         }
     }
 }

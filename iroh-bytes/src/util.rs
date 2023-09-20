@@ -15,7 +15,7 @@ pub mod runtime;
 
 /// A format identifier
 ///
-/// Should we make this an u64 and use https://github.com/multiformats/multicodec/blob/master/table.csv?
+/// Should we make this an u64 and use <https://github.com/multiformats/multicodec/blob/master/table.csv>?
 ///
 /// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
 /// able to use for iroh collections would be 2 bytes varint encoded or something...

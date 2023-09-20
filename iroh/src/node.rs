@@ -20,7 +20,8 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
-    ExportMode, Map, MapEntry, ReadableStore, Store as BaoStore, ValidateProgress,
+    ExportMode, GcMarkEvent, GcSweepEvent, Map, MapEntry, ReadableStore, Store as BaoStore,
+    ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::Stats;
@@ -38,6 +39,7 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
+use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -50,6 +52,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -83,6 +86,16 @@ const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
 
+/// Policy for garbage collection.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GcPolicy {
+    /// Garbage collection is disabled.
+    #[default]
+    Disabled,
+    /// Garbage collection is run at the given interval.
+    Interval(Duration),
+}
+
 /// Builder for the [`Node`].
 ///
 /// You must supply a blob store. Various store implementations are available
@@ -114,6 +127,7 @@ pub struct Builder<
     derp_map: Option<DerpMap>,
     collection_parser: C,
     rt: Option<runtime::Handle>,
+    gc_policy: GcPolicy,
     docs: S,
 }
 
@@ -172,6 +186,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: NoCollectionParser,
             rt: None,
+            gc_policy: GcPolicy::Disabled,
             docs,
         }
     }
@@ -202,6 +217,7 @@ where
             collection_parser: self.collection_parser,
             rt: self.rt,
             docs: self.docs,
+            gc_policy: self.gc_policy,
         }
     }
 
@@ -223,6 +239,7 @@ where
             derp_map: self.derp_map,
             rt: self.rt,
             docs: self.docs,
+            gc_policy: self.gc_policy,
         }
     }
 
@@ -281,6 +298,14 @@ where
     /// Uses the given [`SecretKey`] for the [`PublicKey`] instead of a newly generated one.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
         self.secret_key = secret_key;
+        self
+    }
+
+    /// Sets the garbage collection policy.
+    ///
+    /// By default garbage collection is disabled.
+    pub fn gc_policy(mut self, gc_policy: GcPolicy) -> Self {
+        self.gc_policy = gc_policy;
         self
     }
 
@@ -389,6 +414,18 @@ where
             downloader,
         );
 
+        let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
+            tracing::info!("Starting GC task");
+            let db = self.db.clone();
+            let cp = self.collection_parser.clone();
+            let task = rt
+                .local_pool()
+                .spawn_pinned(move || Self::gc_loop(db, cp, gc_period));
+            Some(AbortingJoinHandle(task))
+        } else {
+            None
+        };
+
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
         let rt3 = rt.clone();
@@ -401,6 +438,7 @@ where
             cancel_token,
             callbacks: callbacks.clone(),
             cb_sender,
+            gc_task,
             rt,
             sync,
         });
@@ -543,6 +581,45 @@ where
             .await
             .ok();
     }
+
+    async fn gc_loop(db: D, cp: C, gc_period: Duration) {
+        'outer: loop {
+            // do delay before the two phases of GC
+            tokio::time::sleep(gc_period).await;
+            tracing::info!("Starting GC mark phase");
+            let mut stream = db.gc_mark(cp.clone(), None);
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcMarkEvent::CustomInfo(text) => {
+                        tracing::info!("{}", text);
+                    }
+                    GcMarkEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcMarkEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+            tracing::info!("Starting GC sweep phase");
+            let mut stream = db.gc_sweep();
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcSweepEvent::CustomInfo(text) => {
+                        tracing::info!("{}", text);
+                    }
+                    GcSweepEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcSweepEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
@@ -632,6 +709,9 @@ struct NodeInner<D, S: DocStore> {
     cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
     #[allow(dead_code)]
     callbacks: Callbacks,
+    // the purpose of this is to keep the task alive
+    #[allow(dead_code)]
+    gc_task: Option<AbortingJoinHandle<()>>,
     rt: runtime::Handle,
     pub(crate) sync: SyncEngine<S>,
 }

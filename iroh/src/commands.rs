@@ -235,7 +235,7 @@ impl FullCommands {
                         keylog,
                         request_token,
                         derp_map: config.derp_map()?,
-                        gc_period: config.gc_period,
+                        gc_policy: config.gc_policy,
                     },
                 )
                 .await
