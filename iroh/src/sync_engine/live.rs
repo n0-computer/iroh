@@ -685,13 +685,24 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.peer_id).collect();
 
         // add addresses of initial peers to our endpoint address book
-        for peer in &peers {
+        for PeerSource {
+            peer_id,
+            addrs,
+            derp_region,
+        } in peers.into_iter()
+        {
             if let Err(err) = self
                 .endpoint
-                .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
+                .add_peer_data(iroh_net::PeerData {
+                    peer_id,
+                    addr_info: iroh_net::AddrInfo {
+                        derp_region,
+                        direct_addresses: addrs,
+                    },
+                })
                 .await
             {
-                warn!(peer = ?peer.peer_id, "failed to add known addrs: {err:?}");
+                warn!(peer = ?peer_id, "failed to add known addrs: {err:?}");
             }
         }
 

@@ -11,7 +11,7 @@ use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::NodeAddr;
+use iroh_net::PeerData;
 use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
@@ -253,7 +253,7 @@ impl FullCommands {
                         rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
-                            peer: NodeAddr::from_parts(peer, region, addrs),
+                            peer: PeerData::from_parts(peer, region, addrs),
                             keylog,
                             derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
@@ -466,7 +466,7 @@ impl BlobCommands {
                     ticket.into_parts()
                 } else {
                     (
-                        NodeAddr::from_parts(peer.unwrap(), derp_region, addr),
+                        PeerData::from_parts(peer.unwrap(), derp_region, addr),
                         hash.unwrap(),
                         token,
                         recursive.unwrap_or_default(),

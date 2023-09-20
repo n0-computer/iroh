@@ -34,7 +34,7 @@ pub async fn connect_and_sync<S: store::Store>(
     debug!(peer = ?peer, "sync (via connect): start");
     let namespace = doc.namespace();
     let connection = endpoint
-        .connect(peer, SYNC_ALPN, derp_region, addrs)
+        .connect((peer, derp_region, addrs).into(), SYNC_ALPN)
         .await
         .context("failed to establish connection")?;
     debug!(?peer, ?namespace, "sync (via connect): connected");

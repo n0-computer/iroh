@@ -41,7 +41,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, NodeAddr,
+    tls, MagicEndpoint, PeerData,
 };
 use iroh_sync::store::Store as DocStore;
 use once_cell::sync::OnceCell;
@@ -712,7 +712,7 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     }
 
     /// Return the [`NodeAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
+    pub async fn my_addr(&self) -> Result<PeerData> {
         self.inner.endpoint.my_addr().await
     }
 
@@ -955,12 +955,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let conn = self
             .inner
             .endpoint
-            .connect(
-                msg.peer.node_id,
-                &iroh_bytes::protocol::ALPN,
-                msg.peer.derp_region,
-                &msg.peer.endpoints,
-            )
+            .connect(msg.peer, &iroh_bytes::protocol::ALPN)
             .await?;
         progress.send(GetProgress::Connected).await?;
         let progress2 = progress.clone();
@@ -1473,8 +1468,8 @@ mod tests {
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node.ticket(hash).await.unwrap();
-        println!("addrs: {:?}", ticket.node_addr().endpoints);
-        assert!(!ticket.node_addr().endpoints.is_empty());
+        println!("addrs: {:?}", ticket.node_addr().addr_info);
+        assert!(!ticket.node_addr().addr_info.direct_addresses.is_empty());
     }
 
     #[cfg(feature = "mem-db")]
