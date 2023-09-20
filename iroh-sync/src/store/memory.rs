@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::Result;
 use ed25519_dalek::{SignatureError, VerifyingKey};
+use iroh_bytes::Hash;
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use crate::{
@@ -31,11 +32,12 @@ pub struct Store {
 type Rid = (AuthorId, Vec<u8>);
 type Rvalue = SignedEntry;
 type RecordMap = BTreeMap<Rid, Rvalue>;
-type ReplicaRecordsOwned = HashMap<NamespaceId, RecordMap>;
+type ReplicaRecordsOwned = BTreeMap<NamespaceId, RecordMap>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
     type GetIter<'a> = RangeIterator<'a>;
+    type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
 
@@ -122,6 +124,16 @@ impl super::Store for Store {
             .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
 
         Ok(value.cloned())
+    }
+
+    /// Get all content hashes of all replicas in the store.
+    fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
+        let records = self.replica_records.read();
+        Ok(ContentHashesIterator {
+            records,
+            namespace_i: 0,
+            record_i: 0,
+        })
     }
 }
 
@@ -236,6 +248,31 @@ impl GetFilter {
             GetFilter::Prefix { namespace, .. } => *namespace,
             GetFilter::Author { namespace, .. } => *namespace,
             GetFilter::AuthorAndPrefix { namespace, .. } => *namespace,
+        }
+    }
+}
+
+/// Iterator over all content hashes in the memory store.
+pub struct ContentHashesIterator<'a> {
+    records: ReplicaRecords<'a>,
+    namespace_i: usize,
+    record_i: usize,
+}
+impl<'a> Iterator for ContentHashesIterator<'a> {
+    type Item = Result<Hash>;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let records = self.records.values().nth(self.namespace_i)?;
+            match records.values().nth(self.record_i) {
+                None => {
+                    self.namespace_i += 1;
+                    self.record_i = 0;
+                }
+                Some(record) => {
+                    self.record_i += 1;
+                    return Some(Ok(record.content_hash()));
+                }
+            }
         }
     }
 }
