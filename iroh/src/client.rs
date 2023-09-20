@@ -225,10 +225,15 @@ where
         &self,
         path: PathBuf,
         in_place: bool,
+        tag: Option<Bytes>,
     ) -> Result<impl Stream<Item = Result<AddProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobAddPathRequest { path, in_place })
+            .server_streaming(BlobAddPathRequest {
+                path,
+                in_place,
+                tag,
+            })
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
     }

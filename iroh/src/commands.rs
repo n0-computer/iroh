@@ -151,6 +151,9 @@ pub enum FullCommands {
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Fetch data from a provider
     ///
@@ -210,16 +213,19 @@ impl FullCommands {
                 addr,
                 rpc_port,
                 request_token,
+                tag,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
                     Some(RequestTokenOptions::Token(token)) => Some(token),
                     None => None,
                 };
+                let tag = tag.map(|t| t.into_bytes().into());
                 self::provide::run(
                     rt,
                     path,
                     in_place,
+                    tag,
                     ProvideOptions {
                         addr,
                         rpc_port,
@@ -387,6 +393,9 @@ pub enum BlobCommands {
         /// will not change.
         #[clap(long, default_value_t = false)]
         in_place: bool,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Download data to the running provider's database and provide it.
     ///
@@ -430,6 +439,9 @@ pub enum BlobCommands {
         /// and iroh will assume that it will not change.
         #[clap(long, default_value_t = false)]
         stable: bool,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// List availble content on the node.
     #[clap(subcommand)]
@@ -455,6 +467,7 @@ impl BlobCommands {
                 derp_region,
                 mut out,
                 stable: in_place,
+                tag,
             } => {
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
@@ -479,6 +492,7 @@ impl BlobCommands {
                         in_place,
                     },
                 };
+                let tag = tag.map(|x| x.into_bytes().into());
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
@@ -487,6 +501,7 @@ impl BlobCommands {
                         peer,
                         token,
                         out,
+                        tag,
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -497,7 +512,11 @@ impl BlobCommands {
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Validate { repair } => self::validate::run(iroh, repair).await,
-            Self::Add { path, in_place } => self::add::run(iroh, path, in_place).await,
+            Self::Add {
+                path,
+                in_place,
+                tag,
+            } => self::add::run(iroh, path, in_place, tag.map(|x| x.into_bytes().into())).await,
         }
     }
 }

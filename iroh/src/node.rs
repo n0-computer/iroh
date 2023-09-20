@@ -61,11 +61,11 @@ use crate::rpc_protocol::{
     BlobAddPathRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobListTagsRequest, BlobListTagsResponse, BlobReadResponse,
-    BlobValidateRequest, BytesGetRequest, DownloadLocation, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
-    ProviderService,
+    BlobSetTagRequest, BlobValidateRequest, BytesGetRequest, DownloadLocation,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
+    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
+    ProviderResponse, ProviderService,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -860,11 +860,21 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
+    async fn blob_set_tag(self, msg: BlobSetTagRequest) -> RpcResult<()> {
+        self.inner.db.set_tag(msg.name, msg.value).await?;
+        Ok(())
+    }
+
     fn blob_list_tags(
         self,
         _msg: BlobListTagsRequest,
     ) -> impl Stream<Item = BlobListTagsResponse> + Send + 'static {
-        futures::stream::empty()
+        futures::stream::iter(
+            self.inner
+                .db
+                .tags()
+                .map(|(name, (hash, format))| BlobListTagsResponse { name, hash, format }),
+        )
     }
 
     /// Invoke validate on the database and stream out the result
@@ -1302,6 +1312,7 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_tags)
                     .await
             }
+            BlobSetTag(msg) => chan.rpc(msg, handler, RpcHandler::blob_set_tag).await,
             BlobAddPath(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_add_from_path)
                     .await
@@ -1544,6 +1555,7 @@ mod tests {
                 .server_streaming(BlobAddPathRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                     in_place: false,
+                    tag: None,
                 })
                 .await?;
 

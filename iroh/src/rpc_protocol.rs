@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::BlobFormat;
+use iroh_bytes::util::{BlobFormat, Cid};
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -51,6 +51,8 @@ pub struct BlobAddPathRequest {
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
+    /// Optional tag to tag the data with.
+    pub tag: Option<Bytes>,
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {
@@ -74,6 +76,8 @@ pub struct BlobDownloadRequest {
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,
+    /// Optional tag to tag the data with.
+    pub tag: Option<Bytes>,
     /// This field contains the location to store the data at.
     pub out: DownloadLocation,
 }
@@ -218,6 +222,19 @@ impl Msg<ProviderService> for BlobListTagsRequest {
 
 impl ServerStreamingMsg<ProviderService> for BlobListTagsRequest {
     type Response = BlobListTagsResponse;
+}
+
+/// Set one tag to a new value or clear it
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobSetTagRequest {
+    /// Name of the tag
+    pub name: Bytes,
+    /// Hash and format for the tag
+    pub value: Option<Cid>,
+}
+
+impl RpcMsg<ProviderService> for BlobSetTagRequest {
+    type Response = RpcResult<()>;
 }
 
 /// List connection information about all the nodes we know about
@@ -711,6 +728,7 @@ pub enum ProviderRequest {
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
     BlobListTags(BlobListTagsRequest),
+    BlobSetTag(BlobSetTagRequest),
     BlobValidate(BlobValidateRequest),
 
     DocInfo(DocInfoRequest),
@@ -748,6 +766,7 @@ pub enum ProviderResponse {
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
     BlobListTags(BlobListTagsResponse),
+    BlobSetTag(RpcResult<()>),
     BlobValidate(ValidateProgress),
 
     DocInfo(RpcResult<DocInfoResponse>),

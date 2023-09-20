@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
+use bytes::Bytes;
 use iroh::{
     baomap::flat,
     client::quic::RPC_ALPN,
@@ -41,6 +42,7 @@ pub async fn run(
     rt: &runtime::Handle,
     path: Option<PathBuf>,
     in_place: bool,
+    tag: Option<Bytes>,
     opts: ProvideOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {
@@ -89,7 +91,7 @@ pub async fn run(
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let stream = client.blobs.add_from_path(path, in_place).await?;
+                let stream = client.blobs.add_from_path(path, in_place, tag).await?;
                 match aggregate_add_response(stream).await {
                     Ok((hash, entries)) => {
                         print_add_response(hash, entries);

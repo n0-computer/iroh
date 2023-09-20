@@ -100,6 +100,7 @@ impl GetInteractive {
                     path: out,
                     in_place: true,
                 },
+                tag: None,
             })
             .await?;
         let pb = make_download_pb();
