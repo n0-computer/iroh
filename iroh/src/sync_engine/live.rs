@@ -792,9 +792,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         debug!(peer = ?msg.delivered_from, topic = ?topic, "received entry via gossip");
                         // If the distance is 0, we received the message from its original author.
                         // In this case, assume that the peer can provide the content to us.
-                        let content_status = match msg.distance {
-                            0 => ContentStatus::Complete,
-                            _ => ContentStatus::Missing,
+                        let content_status = match msg.scope.is_direct() {
+                            true => ContentStatus::Complete,
+                            false => ContentStatus::Missing,
                         };
                         // At this point, we do not know if the peer has the content.
                         replica.insert_remote_entry(

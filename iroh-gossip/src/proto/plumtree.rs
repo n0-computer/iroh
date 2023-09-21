@@ -93,9 +93,7 @@ pub struct GossipEvent<PI> {
     /// originally broadcasted the message, but the peer before us in the gossiping path.
     pub delivered_from: PI,
     /// The broadcast scope of the message.
-    pub scope: Scope,
-    /// The distance in hops that the message travelled from the original author.
-    pub distance: u16,
+    pub scope: DeliveryScope,
 }
 
 impl<PI> GossipEvent<PI> {
@@ -104,7 +102,6 @@ impl<PI> GossipEvent<PI> {
             content: message.content.clone(),
             scope: message.scope,
             delivered_from: from,
-            distance: message.round.0,
         }
     }
 }
@@ -142,13 +139,41 @@ pub enum Message {
 pub struct Gossip {
     /// Id of the message.
     id: MessageId,
-    /// Delivery round of the message.
-    round: Round,
     /// Message contents.
     #[debug("<{}b>", content.len())]
     content: Bytes,
     /// Scope to broadcast to.
-    scope: Scope,
+    scope: DeliveryScope,
+}
+
+impl Gossip {
+    fn round(&self) -> Option<Round> {
+        match self.scope {
+            DeliveryScope::Swarm(round) => Some(round),
+            DeliveryScope::Neighbors => None,
+        }
+    }
+}
+
+/// The scope to deliver the message to.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Copy)]
+pub enum DeliveryScope {
+    /// This message was received from the swarm, with a distance (in hops) travelled from the
+    /// original broadcaster.
+    Swarm(Round),
+    /// This message was received from a direct neighbor that broadcasted the message to neighbors
+    /// only.
+    Neighbors,
+}
+
+impl DeliveryScope {
+    /// Whether this message was directly received from its publisher.
+    pub fn is_direct(&self) -> bool {
+        match self {
+            Self::Neighbors | Self::Swarm(Round(0)) => true,
+            _ => false,
+        }
+    }
 }
 
 /// The broadcast scope of a gossip message.
@@ -162,12 +187,14 @@ pub enum Scope {
 
 impl Gossip {
     /// Get a clone of this `Gossip` message and increase the delivery round by 1.
-    pub fn next_round(self) -> Gossip {
-        Gossip {
-            id: self.id,
-            content: self.content,
-            round: self.round.next(),
-            scope: self.scope,
+    pub fn next_round(&self) -> Option<Gossip> {
+        match self.scope {
+            DeliveryScope::Neighbors => None,
+            DeliveryScope::Swarm(round) => Some(Gossip {
+                id: self.id,
+                content: self.content.clone(),
+                scope: DeliveryScope::Swarm(round.next()),
+            }),
         }
     }
 
@@ -416,14 +443,13 @@ impl<PI: PeerIdentity> State<PI> {
     /// Pushing the message id to the lazy peers is delayed by a timer.
     fn broadcast(&mut self, content: Bytes, scope: Scope, now: Instant, io: &mut impl IO<PI>) {
         let id = MessageId::from_content(&content);
-        let message = Gossip {
-            id,
-            round: Round(0),
-            content,
-            scope,
+        let scope = match scope {
+            Scope::Neighbors => DeliveryScope::Neighbors,
+            Scope::Swarm => DeliveryScope::Swarm(Round(0)),
         };
+        let message = Gossip { id, content, scope };
         let me = self.me;
-        if let Scope::Swarm = scope {
+        if let DeliveryScope::Swarm(_) = scope {
             self.received_messages
                 .insert(id, (), now + self.config.message_id_retention);
             self.cache.insert(
@@ -457,7 +483,7 @@ impl<PI: PeerIdentity> State<PI> {
             io.push(OutEvent::SendMessage(sender, Message::Prune));
         // otherwise store the message, emit to application and forward to peers
         } else {
-            if let Scope::Swarm = message.scope {
+            if let DeliveryScope::Swarm(prev_round) = message.scope {
                 // insert the message in the list of received messages
                 self.received_messages.insert(
                     message.id,
@@ -467,7 +493,7 @@ impl<PI: PeerIdentity> State<PI> {
                 // increase the round for forwarding the message, and add to cache
                 // to reply to Graft messages later
                 // TODO: add callback/event to application to get missing messages that were received before?
-                let message = message.clone().next_round();
+                let message = message.next_round().expect("just checked");
 
                 self.cache.insert(
                     message.id,
@@ -485,7 +511,7 @@ impl<PI: PeerIdentity> State<PI> {
                     self.optimize_tree(&sender, &message, previous_ihaves, io);
                 }
                 self.stats.max_last_delivery_hop =
-                    self.stats.max_last_delivery_hop.max(message.round.0);
+                    self.stats.max_last_delivery_hop.max(prev_round.0);
             }
 
             // emit event to application
@@ -507,7 +533,7 @@ impl<PI: PeerIdentity> State<PI> {
         previous_ihaves: VecDeque<(PI, Round)>,
         io: &mut impl IO<PI>,
     ) {
-        let round = message.round;
+        let round = message.round().expect("only called for swarm messages");
         let best_ihave = previous_ihaves
             .iter()
             .min_by(|(_a_peer, a_round), (_b_peer, b_round)| a_round.cmp(b_round))
@@ -661,10 +687,13 @@ impl<PI: PeerIdentity> State<PI> {
     /// Queue lazy message announcements into the queue that will be sent out as batched
     /// [`Message::IHave`] messages once the [`Timer::DispatchLazyPush`] timer is triggered.
     fn lazy_push(&mut self, gossip: Gossip, sender: &PI, io: &mut impl IO<PI>) {
+        let Some(round) = gossip.round() else {
+            return;
+        };
         for peer in self.lazy_push_peers.iter().filter(|x| *x != sender) {
             self.lazy_push_queue.entry(*peer).or_default().push(IHave {
                 id: gossip.id,
-                round: gossip.round,
+                round,
             });
         }
         if !self.dispatch_timer_scheduled {
@@ -709,9 +738,8 @@ mod test {
             3,
             Message::Gossip(Gossip {
                 id,
-                round: Round(6),
                 content: content.clone(),
-                scope: Scope::Swarm,
+                scope: DeliveryScope::Swarm(Round(6)),
             }),
         );
         state.handle(event, now, &mut io);
@@ -726,8 +754,7 @@ mod test {
             io.push(OutEvent::EmitEvent(Event::Received(GossipEvent {
                 content,
                 delivered_from: 3,
-                scope: Scope::Swarm,
-                distance: 6,
+                scope: DeliveryScope::Swarm(Round(6)),
             })));
             io
         };
@@ -754,9 +781,8 @@ mod test {
             3,
             Message::Gossip(Gossip {
                 id,
-                round: Round(9),
                 content: content.clone(),
-                scope: Scope::Swarm,
+                scope: DeliveryScope::Swarm(Round(9)),
             }),
         );
         state.handle(event, now, &mut io);
@@ -775,8 +801,7 @@ mod test {
             io.push(OutEvent::EmitEvent(Event::Received(GossipEvent {
                 content,
                 delivered_from: 3,
-                scope: Scope::Swarm,
-                distance: 9,
+                scope: DeliveryScope::Swarm(Round(9)),
             })));
             io
         };
@@ -793,9 +818,8 @@ mod test {
         let content: Bytes = b"hello1".to_vec().into();
         let message = Message::Gossip(Gossip {
             content: content.clone(),
-            round: Round(1),
             id: MessageId::from_content(&content),
-            scope: Scope::Swarm,
+            scope: DeliveryScope::Swarm(Round(1)),
         });
         let mut io = VecDeque::new();
         state.handle(InEvent::RecvMessage(2, message), now, &mut io);
@@ -812,8 +836,7 @@ mod test {
             io.push(OutEvent::EmitEvent(Event::Received(GossipEvent {
                 content,
                 delivered_from: 2,
-                scope: Scope::Swarm,
-                distance: 1,
+                scope: DeliveryScope::Swarm(Round(1)),
             })));
             io
         };
@@ -823,9 +846,8 @@ mod test {
         let content: Bytes = b"hello2".to_vec().into();
         let message = Message::Gossip(Gossip {
             content,
-            round: Round(1),
             id: MessageId::from_content(b"foo"),
-            scope: Scope::Swarm,
+            scope: DeliveryScope::Swarm(Round(1)),
         });
         let mut io = VecDeque::new();
         state.handle(InEvent::RecvMessage(2, message), now, &mut io);
@@ -841,9 +863,8 @@ mod test {
         let content: Bytes = b"hello1".to_vec().into();
         let message = Message::Gossip(Gossip {
             content: content.clone(),
-            round: Round(1),
             id: MessageId::from_content(&content),
-            scope: Scope::Swarm,
+            scope: DeliveryScope::Swarm(Round(1)),
         });
         let mut io = VecDeque::new();
         state.handle(InEvent::RecvMessage(2, message), now, &mut io);
