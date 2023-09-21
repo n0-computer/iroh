@@ -49,7 +49,7 @@ use crate::{
     disco,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::NodeAddr,
+    magic_endpoint::PeerAddr,
     net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
@@ -573,7 +573,7 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub async fn add_known_addr(&self, addr: NodeAddr) -> Result<()> {
+    pub async fn add_peer_addr(&self, addr: PeerAddr) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
         self.inner
             .actor_sender
@@ -863,7 +863,7 @@ enum ActorMessage {
         dst_key: PublicKey,
         msg: disco::CallMeMaybe,
     },
-    AddKnownAddr(NodeAddr, sync::oneshot::Sender<()>),
+    AddKnownAddr(PeerAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
 }
@@ -2234,23 +2234,24 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, n: NodeAddr) {
-        if self.peer_map.endpoint_for_node_key(&n.node_id).is_none() {
+    fn add_known_addr(&mut self, n: PeerAddr) {
+        let PeerAddr { peer_id, info } = n;
+        if self.peer_map.endpoint_for_node_key(&peer_id).is_none() {
             info!(
-                peer = ?n.node_id,
+                peer = ?n.peer_id,
                 "inserting peer's endpoint in PeerMap"
             );
             self.peer_map.insert_endpoint(EndpointOptions {
                 msock_sender: self.inner.actor_sender.clone(),
-                public_key: n.node_id,
-                derp_region: n.derp_region,
+                public_key: peer_id,
+                derp_region: info.derp_region,
             });
         }
 
-        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.node_id) {
-            ep.update_from_node_addr(&n);
+        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&peer_id) {
+            ep.update_from_node_addr(&info);
             let id = ep.id;
-            for endpoint in &n.endpoints {
+            for endpoint in &info.direct_addresses {
                 self.peer_map
                     .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
@@ -2762,12 +2763,14 @@ pub(crate) mod tests {
                 if i == my_idx {
                     continue;
                 }
-                let addr = NodeAddr {
-                    endpoints: new_eps.iter().map(|ep| ep.addr).collect(),
-                    node_id: me.public(),
-                    derp_region: Some(1),
+                let addr = PeerAddr {
+                    peer_id: me.public(),
+                    info: crate::AddrInfo {
+                        derp_region: Some(1),
+                        direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
+                    },
                 };
-                let _ = m.endpoint.magic_sock().add_known_addr(addr).await;
+                let _ = m.endpoint.magic_sock().add_peer_addr(addr).await;
             }
         }
 
@@ -2902,9 +2905,10 @@ pub(crate) mod tests {
                 let a_span = debug_span!("sender", a_name, %a_addr);
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
+                    let peer_b_data = PeerAddr::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
-                        .connect(b_peer_id, &ALPN, region, &[b_addr])
+                        .connect(peer_b_data, &ALPN)
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 

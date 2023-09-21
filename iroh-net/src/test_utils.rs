@@ -20,7 +20,7 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
-pub(crate) async fn run_derper() -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
+pub(crate) async fn run_derper() -> Result<(DerpMap, u16, CleanupDropGuard)> {
     // TODO: pass a mesh_key?
 
     let server_key = SecretKey::generate();
@@ -69,5 +69,5 @@ pub(crate) async fn run_derper() -> Result<(DerpMap, Option<u16>, CleanupDropGua
         .instrument(info_span!("derp-stun-cleanup")),
     );
 
-    Ok((m, Some(region_id), CleanupDropGuard(tx)))
+    Ok((m, region_id, CleanupDropGuard(tx)))
 }
