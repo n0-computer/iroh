@@ -1063,7 +1063,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         };
         let db = self.inner.db.clone();
         let cid = (hash, format);
-        let temp_pin = db.temp_pin(cid);
+        let temp_pin = db.temp_tag(cid);
         let conn = self
             .inner
             .endpoint
@@ -1140,7 +1140,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, ImportProgress, PinnedCid};
+        use iroh_bytes::baomap::{ImportMode, ImportProgress, TempTag};
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = FlumeProgressSender::new(progress);
@@ -1178,7 +1178,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             ImportMode::Copy
         };
         const IO_PARALLELISM: usize = 4;
-        let result: Vec<(Blob, u64, PinnedCid)> = futures::stream::iter(data_sources)
+        let result: Vec<(Blob, u64, TempTag)> = futures::stream::iter(data_sources)
             .map(|source| {
                 let import_progress = import_progress.clone();
                 let db = self.inner.db.clone();

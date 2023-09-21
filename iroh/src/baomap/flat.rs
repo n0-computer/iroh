@@ -139,7 +139,7 @@ use futures::{Future, FutureExt};
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
     self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
-    PartialMap, PartialMapEntry, PinnedCid, ReadableStore, ValidateProgress,
+    PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, Cid};
@@ -163,7 +163,7 @@ struct State {
     data: BTreeMap<Hash, Bytes>,
     // in memory tracking of live set
     live: BTreeSet<Hash>,
-    // temp pins
+    // temp tags
     temp: BTreeMap<Cid, u64>,
 }
 
@@ -334,7 +334,7 @@ impl PartialMap for Store {
         let mut state = self.0.state.write().unwrap();
         // this protects the entry from being deleted until the next mark phase
         //
-        // example: a collection containing this hash is temp pinned, but
+        // example: a collection containing this hash is temp tagged, but
         // we did not have the collection at the time of the mark phase.
         //
         // now we get the collection and it's child between the mark and the sweep
@@ -644,7 +644,7 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
         let items = inner.temp.keys().copied().collect::<Vec<_>>();
         Box::new(items.into_iter())
@@ -693,7 +693,7 @@ impl baomap::Store for Store {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let this = self.clone();
         self.0
             .options
@@ -703,11 +703,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn import_bytes(
-        &self,
-        data: Bytes,
-        format: BlobFormat,
-    ) -> BoxFuture<'_, io::Result<PinnedCid>> {
+    fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let this = self.clone();
         self.0
             .options
@@ -727,8 +723,8 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn temp_pin(&self, cid: Cid) -> PinnedCid {
-        PinnedCid::new(cid, Some(self.0.clone()))
+    fn temp_tag(&self, cid: Cid) -> TempTag {
+        TempTag::new(cid, Some(self.0.clone()))
     }
 
     fn clear_live(&self) {
@@ -763,7 +759,7 @@ impl baomap::Store for Store {
 
 impl LivenessTracker for Inner {
     fn on_clone(&self, cid: &Cid) {
-        tracing::info!("temp pinning: {:?}", cid);
+        tracing::info!("temp tagging: {:?}", cid);
         let mut state = self.state.write().unwrap();
         let entry = state.temp.entry(*cid).or_default();
         // panic if we overflow an u64
@@ -771,7 +767,7 @@ impl LivenessTracker for Inner {
     }
 
     fn on_drop(&self, cid: &Cid) {
-        tracing::info!("temp pin drop: {:?}", cid);
+        tracing::info!("temp tag drop: {:?}", cid);
         let mut state = self.state.write().unwrap();
         let entry = state.temp.entry(*cid).or_default();
         *entry = entry.saturating_sub(1);
@@ -802,7 +798,7 @@ impl Store {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<(PinnedCid, u64)> {
+    ) -> io::Result<(TempTag, u64)> {
         if !path.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -832,7 +828,7 @@ impl Store {
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 use baomap::Store;
-                let cid = self.temp_pin((hash, format));
+                let cid = self.temp_tag((hash, format));
                 (cid, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
@@ -857,12 +853,12 @@ impl Store {
                 use baomap::Store;
                 // the cid must be pinned before we move the file, otherwise there is a race condition
                 // where it might be deleted here.
-                let cid = self.temp_pin((hash, BlobFormat::Raw));
+                let cid = self.temp_tag((hash, BlobFormat::Raw));
                 std::fs::rename(temp_data_path, data_path)?;
                 (cid, CompleteEntry::new_default(size), outboard)
             }
         };
-        // all writes here are protected by the temp pin
+        // all writes here are protected by the temp tag
         let hash = *cid.hash();
         if let Some(outboard) = outboard.as_ref() {
             let outboard_path = self.owned_outboard_path(&hash);
@@ -918,12 +914,12 @@ impl Store {
         Ok(())
     }
 
-    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<PinnedCid> {
+    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();
         use baomap::Store;
-        let cid = self.temp_pin((hash, format));
+        let cid = self.temp_tag((hash, format));
         let data_path = self.owned_data_path(&hash);
         std::fs::write(data_path, &data)?;
         if outboard.len() > 8 {

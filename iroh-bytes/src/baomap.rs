@@ -144,8 +144,8 @@ pub trait ReadableStore: Map {
     /// existing tags must be present in memory.
     fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static>;
 
-    /// Temp pins
-    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static>;
+    /// Temp tags
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static>;
 
     /// Validate the database
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
@@ -187,16 +187,12 @@ pub trait Store: ReadableStore + PartialMap {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>>;
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
 
     /// This trait method imports data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
-    fn import_bytes(
-        &self,
-        bytes: Bytes,
-        format: BlobFormat,
-    ) -> BoxFuture<'_, io::Result<PinnedCid>>;
+    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
 
     /// Set a named pin
     fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
@@ -206,8 +202,8 @@ pub trait Store: ReadableStore + PartialMap {
     }
 
     /// Create a temporary pin for this store
-    fn temp_pin(&self, cid: Cid) -> PinnedCid {
-        PinnedCid {
+    fn temp_tag(&self, cid: Cid) -> TempTag {
+        TempTag {
             cid,
             liveness: None,
         }
@@ -304,19 +300,19 @@ pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
     }
 }
 
-/// A pinned cid
+/// A cid that is protected from garbage collection.
 ///
 /// This contains all the information of a blake3 cid, but in addition keeps
 /// the corresponding data alive.
 #[derive(Debug)]
-pub struct PinnedCid {
+pub struct TempTag {
     /// The cid we are pinning
     cid: Cid,
     /// liveness tracker
     liveness: Option<Arc<dyn LivenessTracker>>,
 }
 
-impl PinnedCid {
+impl TempTag {
     /// Create a new pinned cid
     pub fn new(cid: Cid, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
         if let Some(liveness) = liveness.as_ref() {
@@ -341,7 +337,7 @@ impl PinnedCid {
     }
 }
 
-impl Clone for PinnedCid {
+impl Clone for TempTag {
     fn clone(&self) -> Self {
         if let Some(liveness) = self.liveness.as_ref() {
             liveness.on_clone(&self.cid);
@@ -350,7 +346,7 @@ impl Clone for PinnedCid {
     }
 }
 
-impl Drop for PinnedCid {
+impl Drop for TempTag {
     fn drop(&mut self) {
         if let Some(liveness) = self.liveness.as_ref() {
             liveness.on_drop(&self.cid);
@@ -383,7 +379,7 @@ async fn gc_mark_task<'a>(
         roots.insert(cid);
     }
     info!("traversing temp roots");
-    for cid in store.temp_pins() {
+    for cid in store.temp_tags() {
         info!("adding temp pin {:?}", cid);
         roots.insert(cid);
     }

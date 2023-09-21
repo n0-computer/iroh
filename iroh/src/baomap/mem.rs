@@ -31,7 +31,7 @@ use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
 use iroh_bytes::baomap::PartialMap;
 use iroh_bytes::baomap::PartialMapEntry;
-use iroh_bytes::baomap::PinnedCid;
+use iroh_bytes::baomap::TempTag;
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
 use iroh_bytes::util::progress::IdGenerator;
@@ -341,7 +341,7 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -446,7 +446,7 @@ impl baomap::Store for Store {
         _mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let this = self.clone();
         self.0
             .rt
@@ -472,11 +472,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn import_bytes(
-        &self,
-        bytes: Bytes,
-        format: BlobFormat,
-    ) -> BoxFuture<'_, io::Result<PinnedCid>> {
+    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let this = self.clone();
         self.0
             .rt
@@ -503,7 +499,7 @@ impl Store {
         bytes: Bytes,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<PinnedCid> {
+    ) -> io::Result<TempTag> {
         let size = bytes.len() as u64;
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
@@ -520,7 +516,7 @@ impl Store {
         };
         let hash = hash.into();
         use baomap::Store;
-        let cid = self.temp_pin((hash, format));
+        let cid = self.temp_tag((hash, format));
         self.0
             .state
             .write()

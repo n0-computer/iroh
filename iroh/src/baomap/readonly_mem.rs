@@ -24,7 +24,7 @@ use futures::{
 use iroh_bytes::{
     baomap::{
         self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
-        Map, MapEntry, PartialMap, PartialMapEntry, PinnedCid, ReadableStore, ValidateProgress,
+        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
     },
     util::{
         progress::{IdGenerator, ProgressSender},
@@ -237,7 +237,7 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    fn temp_pins(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -314,17 +314,13 @@ impl baomap::Store for Store {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(PinnedCid, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let _ = (data, mode, progress, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
     /// import a byte slice
-    fn import_bytes(
-        &self,
-        bytes: Bytes,
-        format: BlobFormat,
-    ) -> BoxFuture<'_, io::Result<PinnedCid>> {
+    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let _ = (bytes, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
