@@ -304,19 +304,13 @@ pub struct PeerInfo {
 impl PeerInfo {
     /// Create a new [`PeerInfo`] from its parts.
     pub fn new(peer_id: PublicKey, role: PeerRole) -> Self {
-        Self {
-            peer_id,
-            role,
-        }
+        Self { peer_id, role }
     }
 }
 
 impl From<(PublicKey, PeerRole)> for PeerInfo {
     fn from((peer_id, role): (PublicKey, PeerRole)) -> Self {
-        Self {
-            peer_id,
-            role,
-        }
+        Self { peer_id, role }
     }
 }
 
@@ -907,8 +901,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
         if !self.is_needed(hash) {
             self.providers.remove(hash)
-        } else {
-            self.providers.move_hash_to_back(&peer, hash);
         }
         if peer_ready {
             self.on_peer_ready(peer);
@@ -1137,10 +1129,15 @@ impl ProviderMap {
     ///
     /// I.e. get the next hash that was added with [`PeerRole::Provider`] for this peer.
     fn get_next_provider_hash_for_peer(&mut self, peer: &PublicKey) -> Option<Hash> {
-        self.provider_hashes_by_peer
+        let hash = self
+            .provider_hashes_by_peer
             .get(peer)
             .and_then(|hashes| hashes.front())
-            .copied()
+            .copied();
+        if let Some(hash) = hash {
+            self.move_hash_to_back(peer, hash);
+        }
+        hash
     }
 
     /// Signal the registry that this hash is no longer of interest.
@@ -1159,9 +1156,10 @@ impl ProviderMap {
     fn move_hash_to_back(&mut self, peer: &PublicKey, hash: Hash) {
         let hashes = self.provider_hashes_by_peer.get_mut(peer);
         if let Some(hashes) = hashes {
-            let front = hashes.pop_front();
-            debug_assert_eq!(front, Some(hash));
-            hashes.push_back(hash);
+            debug_assert_eq!(hashes.front(), Some(&hash));
+            if !hashes.is_empty() {
+                hashes.rotate_left(1);
+            }
         }
     }
 }
