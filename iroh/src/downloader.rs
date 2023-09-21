@@ -656,13 +656,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             .get_candidates(hash)
             .filter_map(|(peer_id, role)| {
                 let peer = PeerInfo::new(*peer_id, *role);
-                if let Some(info) = self.peers.get(&peer_id) {
+                if let Some(info) = self.peers.get(peer_id) {
                     info.conn.as_ref()?;
                     let req_count = info.active_requests();
                     // filter out peers at capacity
                     let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
                     has_capacity.then_some((peer, ConnState::Connected(req_count)))
-                } else if self.dialer.is_pending(&peer_id) {
+                } else if self.dialer.is_pending(peer_id) {
                     Some((peer, ConnState::Dialing))
                 } else {
                     Some((peer, ConnState::NotConnected))
