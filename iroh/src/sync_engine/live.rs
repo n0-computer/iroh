@@ -4,7 +4,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::downloader::{DownloadKind, Downloader};
+use crate::downloader::{DownloadKind, Downloader, PeerRole};
 use anyhow::{anyhow, bail, Result};
 use flume::r#async::RecvStream;
 use futures::{
@@ -37,6 +37,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, warn, Instrument};
 
+pub use iroh_sync::ContentStatus;
+
 const CHANNEL_CAP: usize = 8;
 
 /// An iroh-sync operation
@@ -46,6 +48,8 @@ const CHANNEL_CAP: usize = 8;
 pub enum Op {
     /// A new entry was inserted into the document.
     Put(SignedEntry),
+    /// A peer now has content available for a hash.
+    ContentReady(Hash),
 }
 
 #[derive(Debug, Clone)]
@@ -146,28 +150,11 @@ pub enum LiveEvent {
     SyncFinished(SyncEvent),
 }
 
-/// Availability status of an entry's content bytes
-// TODO: Add IsDownloading
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum ContentStatus {
-    /// Fully available on the local node.
-    Complete,
-    /// Partially available on the local node.
-    Incomplete,
-    /// Not available on the local node.
-    ///
-    /// This currently means either that the content is about to be downloaded, failed to be
-    /// downloaded, or was never requested.
-    Missing,
-}
-
-impl From<EntryStatus> for ContentStatus {
-    fn from(value: EntryStatus) -> Self {
-        match value {
-            EntryStatus::Complete => ContentStatus::Complete,
-            EntryStatus::Partial => ContentStatus::Incomplete,
-            EntryStatus::NotFound => ContentStatus::Missing,
-        }
+fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
+    match entry {
+        EntryStatus::Complete => ContentStatus::Complete,
+        EntryStatus::Partial => ContentStatus::Incomplete,
+        EntryStatus::NotFound => ContentStatus::Missing,
     }
 }
 
@@ -437,7 +424,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // new gossip message
                 Some(event) = self.gossip_events.next() => {
                     let (topic, event) = event?;
-                    if let Err(err) = self.on_gossip_event(topic, event) {
+                    if let Err(err) = self.on_gossip_event(topic, event).await {
                         error!("Failed to process gossip event: {err:?}");
                     }
                 },
@@ -467,6 +454,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             let event = LiveEvent::ContentReady { hash };
                             notify_all(subs, event).await;
                         }
+
+                        // Inform our neighbors that we have new content ready.
+                        let op = Op::ContentReady(hash);
+                        let message = postcard::to_stdvec(&op)?.into();
+                        self.gossip.broadcast_neighbors(namespace.into(), message).await?;
                     }
 
                 }
@@ -567,22 +559,31 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn start_sync(&mut self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
-        self.open_replica(namespace)?;
+        self.ensure_open(namespace)?;
         self.syncing_replicas.insert(namespace);
         self.join_peers(namespace, peers).await?;
         Ok(())
     }
 
     /// Open a replica, if not yet in our set of open replicas.
-    fn open_replica(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
+    fn ensure_open(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
         if !self.open_replicas.contains(&namespace) {
             let Some(replica) = self.replica_store.open_replica(&namespace)? else {
                 bail!("Replica not found");
             };
+
+            // setup event subscription.
             let events = replica
                 .subscribe()
                 .ok_or_else(|| anyhow::anyhow!("trying to subscribe twice to the same replica"))?;
             self.replica_events.push(events.into_stream());
+
+            // setup content status callback
+            let bao_store = self.bao_store.clone();
+            let content_status_cb =
+                Box::new(move |hash| entry_to_content_status(bao_store.contains(&hash)));
+            replica.set_content_status_callback(content_status_cb);
+
             self.open_replicas.insert(namespace);
         }
         Ok(())
@@ -611,7 +612,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         cb: OnLiveEventCallback,
     ) -> anyhow::Result<RemovalToken> {
-        self.open_replica(namespace)?;
+        self.ensure_open(namespace)?;
         let subs = self.event_subscriptions.entry(namespace).or_default();
         let removal_id = self
             .event_removal_id
@@ -783,19 +784,37 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         }
     }
 
-    fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
+    async fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
         let namespace: NamespaceId = topic.as_bytes().into();
         let Some(replica) = self.get_replica_if_syncing(&namespace) else {
             return Err(anyhow!("Doc {namespace:?} is not active"));
         };
         match event {
             // We received a gossip message. Try to insert it into our replica.
-            Event::Received(data, prev_peer) => {
-                let op: Op = postcard::from_bytes(&data)?;
+            Event::Received(msg) => {
+                let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
                     Op::Put(entry) => {
-                        debug!(peer = ?prev_peer, topic = ?topic, "received entry via gossip");
-                        replica.insert_remote_entry(entry, *prev_peer.as_bytes())?
+                        debug!(peer = ?msg.delivered_from, topic = ?topic, "received entry via gossip");
+                        // If the distance is 0, we received the message from its original author.
+                        // In this case, assume that the peer can provide the content to us.
+                        let content_status = match msg.scope.is_direct() {
+                            true => ContentStatus::Complete,
+                            false => ContentStatus::Missing,
+                        };
+                        // At this point, we do not know if the peer has the content.
+                        replica.insert_remote_entry(
+                            entry,
+                            *msg.delivered_from.as_bytes(),
+                            content_status,
+                        )?
+                    }
+                    Op::ContentReady(hash) => {
+                        // Inform the downloader that we now know that this peer has the content
+                        // for this hash.
+                        self.downloader
+                            .peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()])
+                            .await;
                     }
                 }
             }
@@ -836,7 +855,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     notify_all(subs, event).await;
                 }
             }
-            InsertOrigin::Sync(peer_id) => {
+            InsertOrigin::Sync {
+                from: peer_id,
+                content_status,
+            } => {
                 let from = PublicKey::from_bytes(&peer_id)?;
                 let entry = signed_entry.entry();
                 let hash = entry.record().content_hash();
@@ -844,10 +866,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 let entry_status = self.bao_store.contains(&hash);
-                if matches!(entry_status, EntryStatus::NotFound) {
+                if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
+                    let role = match content_status {
+                        ContentStatus::Complete => PeerRole::Provider,
+                        _ => PeerRole::Candidate,
+                    };
                     let handle = self
                         .downloader
-                        .queue(DownloadKind::Blob { hash }, vec![from])
+                        .queue(DownloadKind::Blob { hash }, vec![(from, role).into()])
                         .await;
                     let fut = async move {
                         // NOTE: this ignores the result for now, simply keeping the option
@@ -863,7 +889,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     let event = LiveEvent::InsertRemote {
                         from,
                         entry: entry.clone(),
-                        content_status: entry_status.into(),
+                        content_status: entry_to_content_status(entry_status),
                     };
                     notify_all(subs, event).await;
                 }
