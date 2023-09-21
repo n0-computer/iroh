@@ -138,10 +138,10 @@ pub trait ReadableStore: Map {
     /// This function should not block to perform io. The knowledge about
     /// existing blobs must be present in memory.
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
-    /// list all roots (collections or other explicitly added things) in the database
+    /// list all tags (collections or other explicitly added things) in the database
     ///
     /// This function should not block to perform io. The knowledge about
-    /// existing roots must be present in memory.
+    /// existing tags must be present in memory.
     fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static>;
 
     /// Temp pins
