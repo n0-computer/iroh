@@ -1139,8 +1139,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             }
             if let Some(tag) = msg.tag {
                 db.set_tag(tag, Some(cid)).await?;
-            };
-            drop(temp_pin);
+                drop(temp_pin);
+            } else {
+                temp_pin.leak();
+            }
             progress.send(GetProgress::AllDone).await?;
             anyhow::Ok(())
         });
@@ -1243,7 +1245,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         progress.send(AddProgress::AllDone { hash }).await?;
         if let Some(tag) = msg.tag {
             self.inner.db.set_tag(tag, Some(*pinned_cid.cid())).await?;
-        };
+            drop(pinned_cid);
+        } else {
+            pinned_cid.leak();
+        }
         drop(pinned_cids);
         self.inner
             .callbacks

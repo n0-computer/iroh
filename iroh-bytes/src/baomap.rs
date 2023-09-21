@@ -11,7 +11,7 @@ use crate::{
 };
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::LocalBoxStream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
 use range_collections::RangeSet2;
@@ -195,19 +195,10 @@ pub trait Store: ReadableStore + PartialMap {
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
 
     /// Set a named pin
-    fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
-        let _ = name;
-        let _ = hash;
-        async move { Ok(()) }.boxed()
-    }
+    fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>>;
 
     /// Create a temporary pin for this store
-    fn temp_tag(&self, cid: Cid) -> TempTag {
-        TempTag {
-            cid,
-            liveness: None,
-        }
-    }
+    fn temp_tag(&self, cid: Cid) -> TempTag;
 
     /// Traverse all roots recursively and mark them as live.
     ///
@@ -258,28 +249,18 @@ pub trait Store: ReadableStore + PartialMap {
     }
 
     /// Clear the live set.
-    fn clear_live(&self) {
-        let _ = self;
-    }
+    fn clear_live(&self);
 
     /// Add the given hashes to the live set.
     ///
     /// This is used by the gc mark phase to mark roots as live.
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
-        let _ = live;
-    }
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>);
 
     /// True if the given hash is live.
-    fn is_live(&self, hash: &Hash) -> bool {
-        let _ = hash;
-        false
-    }
+    fn is_live(&self, hash: &Hash) -> bool;
 
     /// physically delete the given hash from the store.
-    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
-        let _ = hash;
-        async move { Ok(()) }.boxed()
-    }
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>>;
 }
 
 /// A trait for things that can track liveness of cids.
@@ -334,6 +315,14 @@ impl TempTag {
     /// The format of the pinned item
     pub fn format(&self) -> BlobFormat {
         self.cid.1
+    }
+
+    /// Keep the item alive until the end of the process
+    pub fn leak(mut self) {
+        // set the liveness tracker to None, so that the refcount is not decreased
+        // during drop. This means that the refcount will never reach 0 and the
+        // item will not be gced until the end of the process.
+        self.liveness = None;
     }
 }
 

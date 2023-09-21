@@ -2,6 +2,7 @@
 //!
 //! Main entry point is [Store].
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io;
 use std::io::Write;
 use std::num::TryFromIntError;
@@ -29,6 +30,7 @@ use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
+use iroh_bytes::baomap::LivenessTracker;
 use iroh_bytes::baomap::PartialMap;
 use iroh_bytes::baomap::PartialMapEntry;
 use iroh_bytes::baomap::TempTag;
@@ -199,6 +201,9 @@ struct Inner {
 struct State {
     complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
+    tags: BTreeMap<Bytes, Cid>,
+    temp: BTreeMap<Cid, u64>,
+    live: BTreeSet<Hash>,
 }
 
 /// The [MapEntry] implementation for [Store].
@@ -338,11 +343,29 @@ impl ReadableStore for Store {
     }
 
     fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+        let tags = self
+            .0
+            .state
+            .read()
+            .unwrap()
+            .tags
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect::<Vec<_>>();
+        Box::new(tags.into_iter())
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+        let tags = self
+            .0
+            .state
+            .read()
+            .unwrap()
+            .temp
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        Box::new(tags.into_iter())
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -482,6 +505,62 @@ impl baomap::Store for Store {
             })
             .map(flatten_to_io)
             .boxed()
+    }
+
+    fn set_tag(&self, name: Bytes, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+        let mut state = self.0.state.write().unwrap();
+        if let Some(value) = value {
+            state.tags.insert(name, value);
+        } else {
+            state.tags.remove(&name);
+        }
+        futures::future::ok(()).boxed()
+    }
+
+    fn temp_tag(&self, cid: Cid) -> TempTag {
+        TempTag::new(cid, Some(self.0.clone()))
+    }
+
+    fn clear_live(&self) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.clear();
+    }
+
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.extend(live);
+    }
+
+    fn is_live(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        state.live.contains(hash)
+    }
+
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        let mut state = self.0.state.write().unwrap();
+        state.complete.remove(hash);
+        state.partial.remove(hash);
+        futures::future::ok(()).boxed()
+    }
+}
+
+impl LivenessTracker for Inner {
+    fn on_clone(&self, cid: &Cid) {
+        tracing::info!("temp tagging: {:?}", cid);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*cid).or_default();
+        // panic if we overflow an u64
+        *entry = entry.checked_add(1).unwrap();
+    }
+
+    fn on_drop(&self, cid: &Cid) {
+        tracing::info!("temp tag drop: {:?}", cid);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*cid).or_default();
+        *entry = entry.saturating_sub(1);
+        if *entry == 0 {
+            state.temp.remove(cid);
+        }
     }
 }
 

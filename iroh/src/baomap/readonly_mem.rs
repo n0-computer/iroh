@@ -324,4 +324,25 @@ impl baomap::Store for Store {
         let _ = (bytes, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
+
+    fn clear_live(&self) {}
+
+    fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+        let _ = (name, hash);
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn temp_tag(&self, cid: Cid) -> TempTag {
+        TempTag::new(cid, None)
+    }
+
+    fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
+
+    fn delete(&self, _hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn is_live(&self, _hash: &Hash) -> bool {
+        true
+    }
 }
