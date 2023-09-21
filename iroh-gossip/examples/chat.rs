@@ -13,7 +13,7 @@ use iroh_net::{
     derp::DerpMap,
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    MagicEndpoint, PeerData,
+    MagicEndpoint, PeerAddr,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
             let gossip_cell = gossip_cell.clone();
             let notify = notify.clone();
             Box::new(move |endpoints| {
-                // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+                // send our updated endpoints to the gossip protocol to be sent as PeerAddr to peers
                 if let Some(gossip) = gossip_cell.get() {
                     gossip.update_endpoints(endpoints).ok();
                 }
@@ -290,7 +290,7 @@ enum Message {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<PeerData>,
+    peers: Vec<PeerAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.
