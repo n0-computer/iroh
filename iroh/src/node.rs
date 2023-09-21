@@ -186,7 +186,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: NoCollectionParser,
-            gc_policy: GcPolicy::Interval(std::time::Duration::from_secs(10)),
+            gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
         }

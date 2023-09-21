@@ -285,7 +285,7 @@ pub trait Store: ReadableStore + PartialMap {
 /// A trait for things that can track liveness of cids.
 ///
 /// A cid in iroh is just a hash and a format. This trait works together with
-/// [PinnedCid] to keep track of the liveness of a cid.
+/// [TempTag] to keep track of the liveness of a cid.
 ///
 /// It is important to include the format in the liveness tracking, since
 /// pinning a blob and pinning a collection are different things.
