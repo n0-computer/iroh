@@ -2235,7 +2235,7 @@ impl Actor {
 
     #[instrument(skip_all)]
     fn add_known_addr(&mut self, n: PeerAddr) {
-        let PeerAddr { peer_id, addr_info } = n;
+        let PeerAddr { peer_id, info } = n;
         if self.peer_map.endpoint_for_node_key(&peer_id).is_none() {
             info!(
                 peer = ?n.peer_id,
@@ -2244,14 +2244,14 @@ impl Actor {
             self.peer_map.insert_endpoint(EndpointOptions {
                 msock_sender: self.inner.actor_sender.clone(),
                 public_key: peer_id,
-                derp_region: addr_info.derp_region,
+                derp_region: info.derp_region,
             });
         }
 
         if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&peer_id) {
-            ep.update_from_node_addr(&addr_info);
+            ep.update_from_node_addr(&info);
             let id = ep.id;
-            for endpoint in &addr_info.direct_addresses {
+            for endpoint in &info.direct_addresses {
                 self.peer_map
                     .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
@@ -2765,7 +2765,7 @@ pub(crate) mod tests {
                 }
                 let addr = PeerAddr {
                     peer_id: me.public(),
-                    addr_info: crate::AddrInfo {
+                    info: crate::AddrInfo {
                         derp_region: Some(1),
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },

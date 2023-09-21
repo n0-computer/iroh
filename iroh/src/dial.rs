@@ -72,7 +72,7 @@ impl Ticket {
         recursive: bool,
     ) -> Result<Self> {
         ensure!(
-            !peer.addr_info.direct_addresses.is_empty(),
+            !peer.info.direct_addresses.is_empty(),
             "addrs list can not be empty"
         );
         Ok(Self {
@@ -87,7 +87,7 @@ impl Ticket {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let slf: Ticket = postcard::from_bytes(bytes)?;
         ensure!(
-            !slf.peer.addr_info.direct_addresses.is_empty(),
+            !slf.peer.info.direct_addresses.is_empty(),
             "Invalid address list in ticket"
         );
         Ok(slf)

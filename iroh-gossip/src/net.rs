@@ -505,13 +505,13 @@ impl Actor {
                 }
                 OutEvent::PeerData(peer, data) => match postcard::from_bytes::<AddrInfo>(&data) {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
-                    Ok(addr_info) => {
-                        debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {addr_info:?}");
-                        let peer_data = iroh_net::PeerAddr {
+                    Ok(info) => {
+                        debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
+                        let peer_addr = iroh_net::PeerAddr {
                             peer_id: peer,
-                            addr_info,
+                            info,
                         };
-                        if let Err(err) = self.endpoint.add_peer_addr(peer_data).await {
+                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
                             debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
                         }
                     }
@@ -593,7 +593,7 @@ async fn connection_loop(
 mod test {
     use std::time::Duration;
 
-    use iroh_net::PeerData;
+    use iroh_net::PeerAddr;
     use iroh_net::{derp::DerpMap, MagicEndpoint};
     use tokio::spawn;
     use tokio::time::timeout;
@@ -656,10 +656,10 @@ mod test {
 
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        ep2.add_peer_addr(PeerData::new(pi1).with_derp_region(derp_region))
+        ep2.add_peer_addr(PeerAddr::new(pi1).with_derp_region(derp_region))
             .await
             .unwrap();
-        ep3.add_peer_addr(PeerData::new(pi1).with_derp_region(derp_region))
+        ep3.add_peer_addr(PeerAddr::new(pi1).with_derp_region(derp_region))
             .await
             .unwrap();
         // join the topics and wait for the connection to succeed

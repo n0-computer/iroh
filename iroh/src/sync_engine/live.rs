@@ -695,7 +695,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 .endpoint
                 .add_peer_addr(iroh_net::PeerAddr {
                     peer_id,
-                    addr_info: iroh_net::AddrInfo {
+                    info: iroh_net::AddrInfo {
                         derp_region,
                         direct_addresses: addrs,
                     },

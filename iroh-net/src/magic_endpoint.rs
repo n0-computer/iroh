@@ -24,7 +24,7 @@ pub struct PeerAddr {
     /// The node's public key.
     pub peer_id: PublicKey,
     /// Addressing information to connect to [`Self::peer_id`].
-    pub addr_info: AddrInfo,
+    pub info: AddrInfo,
 }
 
 impl PeerAddr {
@@ -32,13 +32,13 @@ impl PeerAddr {
     pub fn new(peer_id: PublicKey) -> Self {
         PeerAddr {
             peer_id,
-            addr_info: Default::default(),
+            info: Default::default(),
         }
     }
 
     /// Add a derp region to the peer's [`AddrInfo`].
     pub fn with_derp_region(mut self, derp_region: u16) -> Self {
-        self.addr_info.derp_region = Some(derp_region);
+        self.info.derp_region = Some(derp_region);
         self
     }
 
@@ -47,18 +47,18 @@ impl PeerAddr {
         mut self,
         addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
-        self.addr_info.direct_addresses = addresses.into_iter().collect();
+        self.info.direct_addresses = addresses.into_iter().collect();
         self
     }
 
     /// Get the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.addr_info.direct_addresses.iter()
+        self.info.direct_addresses.iter()
     }
 
     /// Get the derp region of this peer.
     pub fn derp_region(&self) -> Option<u16> {
-        self.addr_info.derp_region
+        self.info.derp_region
     }
 }
 
@@ -67,7 +67,7 @@ impl From<(PublicKey, Option<u16>, &[SocketAddr])> for PeerAddr {
         let (peer_id, derp_region, direct_addresses_iter) = value;
         PeerAddr {
             peer_id,
-            addr_info: AddrInfo {
+            info: AddrInfo {
                 derp_region,
                 direct_addresses: direct_addresses_iter.to_vec(),
             },
@@ -100,7 +100,7 @@ impl PeerAddr {
     ) -> Self {
         Self {
             peer_id,
-            addr_info: AddrInfo {
+            info: AddrInfo {
                 derp_region,
                 direct_addresses,
             },
@@ -420,10 +420,10 @@ impl MagicEndpoint {
     pub async fn connect(&self, peer_addr: PeerAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         self.add_peer_addr(peer_addr.clone()).await?;
 
-        let PeerAddr { peer_id, addr_info } = peer_addr;
+        let PeerAddr { peer_id, info } = peer_addr;
         let addr = self.msock.get_mapping_addr(&peer_id).await;
         let Some(addr) = addr else {
-            return Err(match (addr_info.direct_addresses.is_empty(), addr_info.derp_region) {
+            return Err(match (info.direct_addresses.is_empty(), info.derp_region) {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}")
                 }
@@ -451,7 +451,7 @@ impl MagicEndpoint {
 
         debug!(
             "connecting to {}: (via {} - {:?})",
-            peer_id, addr, addr_info.direct_addresses
+            peer_id, addr, info.direct_addresses
         );
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.

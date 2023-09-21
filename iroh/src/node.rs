@@ -1468,8 +1468,8 @@ mod tests {
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node.ticket(hash).await.unwrap();
-        println!("addrs: {:?}", ticket.node_addr().addr_info);
-        assert!(!ticket.node_addr().addr_info.direct_addresses.is_empty());
+        println!("addrs: {:?}", ticket.node_addr().info);
+        assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
 
     #[cfg(feature = "mem-db")]
