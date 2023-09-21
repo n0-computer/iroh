@@ -1,6 +1,6 @@
 //! Network implementation of the iroh-sync protocol
 
-use std::{future::Future, net::SocketAddr, result::Result};
+use std::{future::Future, net::SocketAddr};
 
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
 use serde::{Deserialize, Serialize};

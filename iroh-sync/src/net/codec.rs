@@ -1,4 +1,4 @@
-use std::{future::Future, result::Result};
+use std::future::Future;
 
 use anyhow::{anyhow, ensure};
 use bytes::{Buf, BufMut, BytesMut};

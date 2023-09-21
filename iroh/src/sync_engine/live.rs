@@ -397,20 +397,11 @@ struct Actor<S: store::Store, B: baomap::Store> {
     /// Running sync futures (from connect).
     #[allow(clippy::type_complexity)]
     running_sync_connect: FuturesUnordered<
-        BoxFuture<
-            'static,
-            (
-                NamespaceId,
-                PublicKey,
-                SyncReason,
-                std::result::Result<(), ConnectError>,
-            ),
-        >,
+        BoxFuture<'static, (NamespaceId, PublicKey, SyncReason, Result<(), ConnectError>)>,
     >,
     /// Running sync futures (from accept).
-    running_sync_accept: FuturesUnordered<
-        BoxFuture<'static, std::result::Result<(NamespaceId, PublicKey), AcceptError>>,
-    >,
+    running_sync_accept:
+        FuturesUnordered<BoxFuture<'static, Result<(NamespaceId, PublicKey), AcceptError>>>,
     /// Runnning download futures.
     pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
     /// Running gossip join futures.
@@ -524,7 +515,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
                 Some((namespace, res)) = self.pending_joins.next() => {
                     if let Err(err) = res {
-                        error!(?namespace, ?err, "failed to join gossip");
+                        error!(?namespace, %err, "failed to join gossip");
                     } else {
                         debug!(?namespace, "joined gossip");
                     }
@@ -755,7 +746,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         peer: PublicKey,
         reason: SyncReason,
-        result: std::result::Result<(), ConnectError>,
+        result: Result<(), ConnectError>,
     ) {
         match result {
             Err(ConnectError::RemoteAbort(AbortReason::AlreadySyncing)) => {
@@ -788,7 +779,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
     async fn on_sync_via_accept_finished(
         &mut self,
-        res: std::result::Result<(NamespaceId, PublicKey), AcceptError>,
+        res: Result<(NamespaceId, PublicKey), AcceptError>,
     ) {
         match res {
             Ok((namespace, peer)) => {
