@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::BlobFormat;
+use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -51,8 +51,8 @@ pub struct BlobAddPathRequest {
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
-    /// Optional tag to tag the data with.
-    pub tag: Option<Bytes>,
+    /// Tag to tag the data with.
+    pub tag: SetTagOption,
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {
@@ -77,7 +77,7 @@ pub struct BlobDownloadRequest {
     /// the download request.
     pub token: Option<RequestToken>,
     /// Optional tag to tag the data with.
-    pub tag: Option<Bytes>,
+    pub tag: SetTagOption,
     /// This field contains the location to store the data at.
     pub out: DownloadLocation,
 }
@@ -180,7 +180,7 @@ pub struct BlobListCollectionsRequest;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListCollectionsResponse {
     /// Tag of the collection
-    pub tag: Bytes,
+    pub tag: Tag,
 
     /// Hash of the collection
     pub hash: Hash,
@@ -212,7 +212,7 @@ pub struct BlobListTagsRequest;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListTagsResponse {
     /// Name of the tag
-    pub name: Bytes,
+    pub name: Tag,
     /// Format of the data
     pub format: BlobFormat,
     /// Hash of the data
@@ -231,7 +231,7 @@ impl ServerStreamingMsg<ProviderService> for BlobListTagsRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobDeleteTagRequest {
     /// Name of the tag
-    pub name: Bytes,
+    pub name: Tag,
 }
 
 impl RpcMsg<ProviderService> for BlobDeleteTagRequest {

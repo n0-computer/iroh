@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Context, Result};
-use bytes::Bytes;
 use iroh::{
     baomap::flat,
     client::quic::RPC_ALPN,
@@ -15,7 +14,11 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
+use iroh_bytes::{
+    baomap::Store as BaoStore,
+    protocol::RequestToken,
+    util::{runtime, SetTagOption},
+};
 use iroh_net::{derp::DerpMap, key::SecretKey};
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
@@ -42,7 +45,7 @@ pub async fn run(
     rt: &runtime::Handle,
     path: Option<PathBuf>,
     in_place: bool,
-    tag: Option<Bytes>,
+    tag: SetTagOption,
     opts: ProvideOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {

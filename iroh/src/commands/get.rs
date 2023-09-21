@@ -12,7 +12,7 @@ use iroh::{
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress};
+use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress, util::SetTagOption};
 use iroh_bytes::{
     get::{
         self,
@@ -100,7 +100,7 @@ impl GetInteractive {
                     path: out,
                     in_place: true,
                 },
-                tag: None,
+                tag: SetTagOption::Auto,
             })
             .await?;
         let pb = make_download_pb();

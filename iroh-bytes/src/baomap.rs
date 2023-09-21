@@ -5,7 +5,7 @@ use crate::{
     collection::CollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
-        BlobFormat, Cid, RpcError,
+        BlobFormat, Cid, RpcError, Tag,
     },
     Hash,
 };
@@ -142,7 +142,7 @@ pub trait ReadableStore: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// existing tags must be present in memory.
-    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static>;
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static>;
 
     /// Temp tags
     fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static>;
@@ -194,8 +194,11 @@ pub trait Store: ReadableStore + PartialMap {
     /// It is a special case of `import` that does not use the file system.
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
 
-    /// Set a named pin
-    fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>>;
+    /// Set a tag
+    fn set_tag(&self, name: Tag, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>>;
+
+    /// Create a new tag
+    fn create_tag(&self, hash: Cid) -> BoxFuture<'_, io::Result<Tag>>;
 
     /// Create a temporary pin for this store
     fn temp_tag(&self, cid: Cid) -> TempTag;

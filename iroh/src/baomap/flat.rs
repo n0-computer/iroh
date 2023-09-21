@@ -127,6 +127,7 @@ use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::SystemTime;
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
@@ -142,7 +143,7 @@ use iroh_bytes::baomap::{
     PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, Cid};
+use iroh_bytes::util::{BlobFormat, Cid, Tag};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use rand::Rng;
@@ -414,7 +415,7 @@ impl Options {
 struct Inner {
     options: Options,
     state: RwLock<State>,
-    tags: RwLock<BTreeMap<Bytes, Cid>>,
+    tags: RwLock<BTreeMap<Tag, Cid>>,
     // mutex for async access to complete files
     //
     // complete files are never written to. They come into existence when a partial
@@ -650,7 +651,7 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static> {
         let inner = self.0.tags.read().unwrap();
         let items = inner
             .iter()
@@ -713,7 +714,17 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn set_tag(&self, name: Bytes, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+    fn create_tag(&self, value: Cid) -> BoxFuture<'_, io::Result<Tag>> {
+        let this = self.clone();
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.create_tag_sync(value))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
+    fn set_tag(&self, name: Tag, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
         self.0
             .options
@@ -881,13 +892,8 @@ impl Store {
         Ok((cid, size))
     }
 
-    fn set_tag_sync(&self, name: Bytes, value: Option<Cid>) -> io::Result<()> {
-        let name_debug = if let Ok(text) = std::str::from_utf8(&name) {
-            format!("\"{}\"", text)
-        } else {
-            hex::encode(&name)
-        };
-        tracing::info!("set_tag {} {:?}", name_debug, value);
+    fn set_tag_sync(&self, name: Tag, value: Option<Cid>) -> io::Result<()> {
+        tracing::info!("set_tag {} {:?}", name, value);
         let mut tags = self.0.tags.write().unwrap();
         let mut new_tags = tags.clone();
         let changed = if let Some(value) = value {
@@ -912,6 +918,25 @@ impl Store {
         }
         drop(tags);
         Ok(())
+    }
+
+    fn create_tag_sync(&self, value: Cid) -> io::Result<Tag> {
+        tracing::info!("create_tag {:?}", value);
+        let mut tags = self.0.tags.write().unwrap();
+        let mut new_tags = tags.clone();
+        let tag = Tag::auto(SystemTime::now(), |x| new_tags.contains_key(x));
+        new_tags.insert(tag.clone(), value);
+        let serialized = postcard::to_stdvec(&new_tags).unwrap();
+        let temp_path = self
+            .0
+            .options
+            .meta_path
+            .join(format!("tags-{}.meta", hex::encode(new_uuid())));
+        let final_path = self.0.options.meta_path.join("tags.meta");
+        write_atomic(&temp_path, &final_path, &serialized)?;
+        *tags = new_tags;
+        drop(tags);
+        Ok(tag)
     }
 
     fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {

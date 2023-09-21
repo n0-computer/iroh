@@ -27,7 +27,7 @@ use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, Cid, RpcResult};
+use iroh_bytes::util::{BlobFormat, Cid, RpcResult, SetTagOption};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, CustomGetHandler, RequestAuthorizationHandler},
@@ -1137,12 +1137,15 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     progress.send(GetProgress::Abort(cause.into())).await?;
                 }
             }
-            if let Some(tag) = msg.tag {
-                db.set_tag(tag, Some(cid)).await?;
-                drop(temp_pin);
-            } else {
-                temp_pin.leak();
+            match msg.tag {
+                SetTagOption::Named(tag) => {
+                    db.set_tag(tag, Some(cid)).await?;
+                }
+                SetTagOption::Auto => {
+                    db.create_tag(cid).await?;
+                }
             }
+            drop(temp_pin);
             progress.send(GetProgress::AllDone).await?;
             anyhow::Ok(())
         });
@@ -1243,12 +1246,16 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             .await?;
         let hash = *pinned_cid.hash();
         progress.send(AddProgress::AllDone { hash }).await?;
-        if let Some(tag) = msg.tag {
-            self.inner.db.set_tag(tag, Some(*pinned_cid.cid())).await?;
-            drop(pinned_cid);
-        } else {
-            pinned_cid.leak();
+        let cid = *pinned_cid.cid();
+        match msg.tag {
+            SetTagOption::Named(tag) => {
+                self.inner.db.set_tag(tag, Some(cid)).await?;
+            }
+            SetTagOption::Auto => {
+                self.inner.db.create_tag(cid).await?;
+            }
         }
+        drop(pinned_cid);
         drop(pinned_cids);
         self.inner
             .callbacks
@@ -1653,6 +1660,8 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
+        use iroh_bytes::util::SetTagOption;
+
         let rt = runtime::Handle::from_current(1)?;
         let db = crate::baomap::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
@@ -1684,7 +1693,7 @@ mod tests {
                 .server_streaming(BlobAddPathRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                     in_place: false,
-                    tag: None,
+                    tag: SetTagOption::Auto,
                 })
                 .await?;
 

@@ -1,13 +1,15 @@
 //! Utility functions and types.
 use anyhow::Result;
 use bao_tree::blake3;
+use bytes::Bytes;
+use derive_more::{Debug, Display, From, Into};
 use postcard::experimental::max_size::MaxSize;
 use serde::{
     de::{self, SeqAccess},
     ser::SerializeTuple,
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use std::{fmt, result, str::FromStr};
+use std::{borrow::Borrow, fmt, result, str::FromStr, time::SystemTime};
 use thiserror::Error;
 pub mod io;
 pub mod progress;
@@ -62,6 +64,65 @@ impl fmt::Debug for BlobFormat {
             f.debug_tuple("Other").field(&self.0).finish()
         }
     }
+}
+
+/// A tag
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]
+pub struct Tag(pub Bytes);
+
+impl Borrow<[u8]> for Tag {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl From<String> for Tag {
+    fn from(value: String) -> Self {
+        Self(Bytes::from(value))
+    }
+}
+
+impl Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = self.0.as_ref();
+        match std::str::from_utf8(bytes) {
+            Ok(s) => write!(f, "\"{}\"", s),
+            Err(_) => write!(f, "{}", hex::encode(bytes)),
+        }
+    }
+}
+
+impl Debug for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Tag").field(&DD(self)).finish()
+    }
+}
+
+impl Tag {
+    /// Create a new tag that does not exist yet.
+    pub fn auto(time: SystemTime, exists: impl Fn(&[u8]) -> bool) -> Self {
+        let now = chrono::DateTime::<chrono::Utc>::from(time);
+        let mut i = 0;
+        loop {
+            let mut text = format!("auto-{}", now);
+            if i != 0 {
+                text.push_str(&format!("-{}", i));
+            }
+            if !exists(text.as_bytes()) {
+                return Self::from(text);
+            }
+            i += 1;
+        }
+    }
+}
+
+/// Option for commands that allow setting a tag
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SetTagOption {
+    /// A tag will be automatically generated
+    Auto,
+    /// The tag is explicitly named
+    Named(Tag),
 }
 
 /// A hash and format pair

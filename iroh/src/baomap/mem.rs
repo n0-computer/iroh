@@ -10,6 +10,7 @@ use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::SystemTime;
 
 use super::flatten_to_io;
 use bao_tree::blake3;
@@ -42,6 +43,7 @@ use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::util::runtime;
 use iroh_bytes::util::BlobFormat;
 use iroh_bytes::util::Cid;
+use iroh_bytes::util::Tag;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
@@ -201,7 +203,7 @@ struct Inner {
 struct State {
     complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
-    tags: BTreeMap<Bytes, Cid>,
+    tags: BTreeMap<Tag, Cid>,
     temp: BTreeMap<Cid, u64>,
     live: BTreeSet<Hash>,
 }
@@ -342,7 +344,7 @@ impl ReadableStore for Store {
         )
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static> {
         let tags = self
             .0
             .state
@@ -507,7 +509,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn set_tag(&self, name: Bytes, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+    fn set_tag(&self, name: Tag, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
         let mut state = self.0.state.write().unwrap();
         if let Some(value) = value {
             state.tags.insert(name, value);
@@ -515,6 +517,13 @@ impl baomap::Store for Store {
             state.tags.remove(&name);
         }
         futures::future::ok(()).boxed()
+    }
+
+    fn create_tag(&self, hash: Cid) -> BoxFuture<'_, io::Result<Tag>> {
+        let mut state = self.0.state.write().unwrap();
+        let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
+        state.tags.insert(tag.clone(), hash);
+        futures::future::ok(tag).boxed()
     }
 
     fn temp_tag(&self, cid: Cid) -> TempTag {

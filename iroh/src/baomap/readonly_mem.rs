@@ -28,7 +28,7 @@ use iroh_bytes::{
     },
     util::{
         progress::{IdGenerator, ProgressSender},
-        BlobFormat, Cid,
+        BlobFormat, Cid, Tag,
     },
     Hash, IROH_BLOCK_SIZE,
 };
@@ -233,7 +233,7 @@ impl ReadableStore for Store {
         Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Bytes, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -327,8 +327,11 @@ impl baomap::Store for Store {
 
     fn clear_live(&self) {}
 
-    fn set_tag(&self, name: Bytes, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
-        let _ = (name, hash);
+    fn set_tag(&self, _name: Tag, _hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn create_tag(&self, _hash: Cid) -> BoxFuture<'_, io::Result<Tag>> {
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 

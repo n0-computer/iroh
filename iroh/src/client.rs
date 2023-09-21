@@ -15,6 +15,7 @@ use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
+use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
@@ -226,7 +227,7 @@ where
         &self,
         path: PathBuf,
         in_place: bool,
-        tag: Option<Bytes>,
+        tag: SetTagOption,
     ) -> Result<impl Stream<Item = Result<AddProgress>>> {
         let stream = self
             .rpc
@@ -294,7 +295,7 @@ where
     }
 
     /// Delete a tag.
-    pub async fn delete_tag(&self, name: Bytes) -> Result<()> {
+    pub async fn delete_tag(&self, name: Tag) -> Result<()> {
         self.rpc.rpc(BlobDeleteTagRequest { name }).await??;
         Ok(())
     }

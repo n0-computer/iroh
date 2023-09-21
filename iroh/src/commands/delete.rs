@@ -1,7 +1,8 @@
 use anyhow::Result;
+use bytes::Bytes;
 use clap::Subcommand;
 use iroh::client::quic::Iroh;
-use iroh_bytes::Hash;
+use iroh_bytes::{util::Tag, Hash};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
@@ -31,11 +32,10 @@ impl Commands {
         match self {
             Commands::Tag { name, hex } => {
                 let name = if hex {
-                    hex::decode(name)?
+                    Tag::from(Bytes::from(hex::decode(name)?))
                 } else {
-                    name.into_bytes()
-                }
-                .into();
+                    name.into()
+                };
                 let response = iroh.blobs.delete_tag(name).await;
                 if let Err(e) = response {
                     println!("Error: {}", e);

@@ -10,6 +10,7 @@ use human_time::ToHumanTimeString;
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
+use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::NodeAddr;
 use iroh_net::{
@@ -221,7 +222,10 @@ impl FullCommands {
                     Some(RequestTokenOptions::Token(token)) => Some(token),
                     None => None,
                 };
-                let tag = tag.map(|t| t.into_bytes().into());
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
                 self::provide::run(
                     rt,
                     path,
@@ -496,7 +500,10 @@ impl BlobCommands {
                         in_place,
                     },
                 };
-                let tag = tag.map(|x| x.into_bytes().into());
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
@@ -521,7 +528,13 @@ impl BlobCommands {
                 path,
                 in_place,
                 tag,
-            } => self::add::run(iroh, path, in_place, tag.map(|x| x.into_bytes().into())).await,
+            } => {
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
+                self::add::run(iroh, path, in_place, tag).await
+            }
         }
     }
 }

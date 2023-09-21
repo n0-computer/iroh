@@ -5,13 +5,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::client::quic::Iroh;
-use iroh_bytes::{provider::AddProgress, Hash};
+use iroh_bytes::{provider::AddProgress, util::SetTagOption, Hash};
 
-pub async fn run(iroh: &Iroh, path: PathBuf, in_place: bool, tag: Option<Bytes>) -> Result<()> {
+pub async fn run(iroh: &Iroh, path: PathBuf, in_place: bool, tag: SetTagOption) -> Result<()> {
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
     let stream = iroh.blobs.add_from_path(absolute, in_place, tag).await?;

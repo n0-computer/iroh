@@ -35,18 +35,14 @@ impl Commands {
             }
             Commands::Collections => {
                 let mut response = iroh.blobs.list_collections().await?;
-                while let Some(collection) = response.next().await {
-                    let collection = collection?;
-                    let name = match std::str::from_utf8(&collection.tag) {
-                        Ok(name) => format!("\"{}\"", name),
-                        Err(_) => hex::encode(collection.tag),
-                    };
-                    let total_blobs_count = collection.total_blobs_count.unwrap_or_default();
-                    let total_blobs_size = collection.total_blobs_size.unwrap_or_default();
+                while let Some(res) = response.next().await {
+                    let res = res?;
+                    let total_blobs_count = res.total_blobs_count.unwrap_or_default();
+                    let total_blobs_size = res.total_blobs_size.unwrap_or_default();
                     println!(
                         "{}: {} {} {} ({})",
-                        name,
-                        collection.hash,
+                        res.tag,
+                        res.hash,
                         total_blobs_count,
                         if total_blobs_count > 1 {
                             "blobs"
@@ -59,13 +55,9 @@ impl Commands {
             }
             Commands::Tags => {
                 let mut response = iroh.blobs.list_tags().await?;
-                while let Some(tag) = response.next().await {
-                    let tag = tag?;
-                    let name = match std::str::from_utf8(&tag.name) {
-                        Ok(name) => format!("\"{}\"", name),
-                        Err(_) => hex::encode(tag.name),
-                    };
-                    println!("{}: {} ({:?})", name, tag.hash, tag.format,);
+                while let Some(res) = response.next().await {
+                    let res = res?;
+                    println!("{}: {} ({:?})", res.name, res.hash, res.format,);
                 }
             }
         }
