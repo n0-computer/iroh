@@ -572,19 +572,19 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         let Some(replica) = self.get_replica_if_syncing(&namespace) else {
             return;
         };
-        // Check if we synced and only start sync if not yet synced
-        // sync_with_peer is triggered on NeighborUp events, so might trigger repeatedly for the
-        // same peers.
-        // TODO: Track finished time and potentially re-run sync
+        // Do not initiate the sync if we are already syncing or did previously sync successfully.
+        // TODO: Track finished time and potentially re-run sync on finished state if enough time
+        // passed.
         match self.get_sync_state(namespace, peer) {
             SyncState::Accepting | SyncState::Dialing(_) | SyncState::Finished => {
                 return;
             }
             SyncState::Failed | SyncState::None => {}
         };
+
         let cancel = CancellationToken::new();
         self.set_sync_state(namespace, peer, SyncState::Dialing(cancel.clone()));
-        let task = {
+        let fut = {
             let endpoint = self.endpoint.clone();
             let replica = replica.clone();
             async move {
@@ -599,7 +599,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             }
             .boxed()
         };
-        self.running_sync_connect.push(task);
+        self.running_sync_connect.push(fut);
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
@@ -642,6 +642,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         Ok(())
     }
 
+    /// Open a replica, if not yet in our set of open replicas.
     fn open_replica(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
         if !self.open_replicas.contains(&namespace) {
             let Some(replica) = self.replica_store.open_replica(&namespace)? else {
@@ -705,6 +706,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     async fn stop_sync(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
         if self.syncing_replicas.remove(&namespace) {
             self.gossip.quit(namespace.into()).await?;
+            self.sync_state.retain(|(n, _peer), _value| *n != namespace);
             self.maybe_close_replica(namespace);
         }
         Ok(())
@@ -756,12 +758,22 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         result: std::result::Result<(), ConnectError>,
     ) {
         match result {
-            Err(ConnectError::RemoteAbort {
-                reason: AbortReason::AlreadySyncing,
-            })
-            | Err(ConnectError::Cancelled) => {
+            Err(ConnectError::RemoteAbort(AbortReason::AlreadySyncing)) => {
+                debug!(
+                    ?peer,
+                    ?namespace,
+                    ?reason,
+                    "sync[dial]: remote abort, already syncing"
+                );
+            }
+            Err(ConnectError::Cancelled) => {
                 // In case the remote aborted with already running: do nothing
-                debug!(?peer, ?namespace, ?reason, "sync[dial]: aborted");
+                debug!(
+                    ?peer,
+                    ?namespace,
+                    ?reason,
+                    "sync[dial]: cancelled, already syncing"
+                );
             }
             Err(err) => {
                 self.on_sync_finished(namespace, peer, Origin::Connect(reason), Err(err.into()))

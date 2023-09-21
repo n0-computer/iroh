@@ -164,8 +164,8 @@ pub enum ConnectError {
         error: anyhow::Error,
     },
     /// The remote peer aborted the sync request.
-    #[error("Remote peer aborted sync: {reason:?}")]
-    RemoteAbort { reason: AbortReason },
+    #[error("Remote peer aborted sync: {0:?}")]
+    RemoteAbort(AbortReason),
     /// We cancelled the operation
     #[error("Cancelled")]
     Cancelled,
@@ -266,6 +266,6 @@ impl ConnectError {
         }
     }
     pub(crate) fn remote_abort(reason: AbortReason) -> Self {
-        Self::RemoteAbort { reason }
+        Self::RemoteAbort(reason)
     }
 }
