@@ -121,6 +121,7 @@
 //!
 //! Once the download is complete, the partial data and partial outboard files are renamed
 //! to the final partial data and partial outboard files.
+#![allow(clippy::mutable_key_type)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, BufReader, Write};
