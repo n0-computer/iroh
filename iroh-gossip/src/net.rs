@@ -4,8 +4,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::magic_endpoint::AddrInfo;
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, PeerAddr};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
@@ -519,7 +518,7 @@ impl Actor {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
-                        let peer_addr = iroh_net::PeerAddr {
+                        let peer_addr = PeerAddr {
                             peer_id: peer,
                             info,
                         };
@@ -668,12 +667,9 @@ mod test {
 
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        ep2.add_peer_addr(PeerAddr::new(pi1).with_derp_region(derp_region))
-            .await
-            .unwrap();
-        ep3.add_peer_addr(PeerAddr::new(pi1).with_derp_region(derp_region))
-            .await
-            .unwrap();
+        let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
+        ep2.add_peer_addr(addr1.clone()).await.unwrap();
+        ep3.add_peer_addr(addr1).await.unwrap();
         // join the topics and wait for the connection to succeed
         go1.join(topic, vec![]).await.unwrap();
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();

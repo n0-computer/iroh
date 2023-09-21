@@ -1,4 +1,11 @@
 //! An example that runs an iroh node that can be controlled via RPC.
+//!
+//! Run this example with
+//!   $ cargo run --example rpc
+//! Then in another terminal, run any of the normal iroh CLI commands, which you can run from
+//! cargo as well:
+//!   $ cargo run node stats
+//! The `node stats` command will reach out over RPC to the node constructed in the example
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use clap::Parser;
