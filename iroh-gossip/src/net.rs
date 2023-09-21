@@ -120,7 +120,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_known_addrs`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_data`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.

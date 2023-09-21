@@ -711,7 +711,7 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
         Ticket::new(me, hash, None, true)
     }
 
-    /// Return the [`NodeAddr`] for this node.
+    /// Return the [`PeerData`] for this node.
     pub async fn my_addr(&self) -> Result<PeerData> {
         self.inner.endpoint.my_addr().await
     }

@@ -69,7 +69,7 @@ impl From<(PublicKey, Option<u16>, &[SocketAddr])> for PeerData {
             peer_id,
             addr_info: AddrInfo {
                 derp_region,
-                direct_addresses: direct_addresses_iter.iter().copied().collect(),
+                direct_addresses: direct_addresses_iter.to_vec().iter().copied().collect(),
             },
         }
     }
@@ -92,7 +92,7 @@ impl AddrInfo {
 }
 
 impl PeerData {
-    /// Create a new [`NodeAddr`] from its parts.
+    /// Create a new [`PeerData`] from its parts.
     pub fn from_parts(
         peer_id: PublicKey,
         derp_region: Option<u16>,
@@ -373,7 +373,7 @@ impl MagicEndpoint {
         self.msock.my_derp().await
     }
 
-    /// Get the [`NodeAddr`] for this endpoint.
+    /// Get the [`PeerData`] for this endpoint.
     // TODO: We can save an async call by exposing this on the msock.
     pub async fn my_addr(&self) -> Result<PeerData> {
         let addrs = self.local_endpoints().await?;
@@ -389,7 +389,7 @@ impl MagicEndpoint {
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
-    /// to the internal addressbook through [`MagicEndpoint::add_known_addrs`]), so these connections
+    /// to the internal addressbook through [`MagicEndpoint::add_peer_data`]), so these connections
     /// are not necessarily active connections.
     pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
         self.msock.tracked_endpoints().await

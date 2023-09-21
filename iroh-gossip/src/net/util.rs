@@ -105,7 +105,7 @@ impl Dialer {
     /// Start to dial a peer
     ///
     /// Note that the peer's addresses and/or derp region must be added to the endpoint's
-    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_known_addrs`].
+    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_peer_data`].
     pub fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
         if self.is_pending(&peer_id) {
             return;

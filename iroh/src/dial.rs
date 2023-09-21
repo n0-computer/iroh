@@ -103,7 +103,7 @@ impl Ticket {
         self.hash
     }
 
-    /// The [`NodeAddr`] of the provider for this ticket.
+    /// The [`PeerData`] of the provider for this ticket.
     pub fn node_addr(&self) -> &PeerData {
         &self.peer
     }
