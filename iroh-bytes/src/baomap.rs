@@ -371,7 +371,6 @@ async fn gc_mark_task<'a>(
             co.yield_(GcMarkEvent::CustomWarning(format!($($arg)*), None)).await;
         };
     }
-    store.clear_live();
     let mut roots = BTreeSet::new();
     info!("traversing tags");
     for (name, cid) in store.tags() {

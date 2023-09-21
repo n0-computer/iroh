@@ -406,6 +406,7 @@ where
             rt.clone(),
         )
         .await;
+        let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             rt.clone(),
             endpoint.clone(),
@@ -421,7 +422,7 @@ where
             let cp = self.collection_parser.clone();
             let task = rt
                 .local_pool()
-                .spawn_pinned(move || Self::gc_loop(db, cp, gc_period));
+                .spawn_pinned(move || Self::gc_loop(db, ds, cp, gc_period));
             Some(AbortingJoinHandle(task))
         } else {
             None
@@ -583,10 +584,36 @@ where
             .ok();
     }
 
-    async fn gc_loop(db: D, cp: C, gc_period: Duration) {
+    async fn gc_loop(db: D, ds: S, cp: C, gc_period: Duration) {
         'outer: loop {
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
+            db.clear_live();
+            let doc_hashes = match ds.content_hashes() {
+                Ok(hashes) => hashes,
+                Err(err) => {
+                    tracing::error!("Error getting doc hashes: {}", err);
+                    continue 'outer;
+                }
+            };
+            let mut doc_db_error = false;
+            let doc_hashes = doc_hashes.filter_map(|e| {
+                let hash = match e {
+                    Ok(e) => e,
+                    Err(err) => {
+                        tracing::error!("Error getting doc hash: {}", err);
+                        doc_db_error = true;
+                        return None;
+                    }
+                };
+                Some(hash)
+            });
+            db.add_live(doc_hashes);
+            if doc_db_error {
+                tracing::error!("Error getting doc hashes, skipping GC to be safe");
+                continue 'outer;
+            }
+
             tracing::info!("Starting GC mark phase");
             let mut stream = db.gc_mark(cp.clone(), None);
             while let Some(item) = stream.next().await {
