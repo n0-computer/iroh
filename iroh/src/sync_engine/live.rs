@@ -812,11 +812,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             true => ContentStatus::Complete,
                             false => ContentStatus::Missing,
                         };
-                        replica.insert_remote_entry(
-                            entry,
-                            *msg.delivered_from.as_bytes(),
-                            content_status,
-                        )?
+                        tokio::task::spawn_blocking(move || {
+                            replica.insert_remote_entry(
+                                entry,
+                                *msg.delivered_from.as_bytes(),
+                                content_status,
+                            )
+                        })
+                        .await??;
                     }
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content
