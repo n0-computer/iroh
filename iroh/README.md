@@ -19,7 +19,7 @@ iroh = { version = "...", default-features = false }
 
 ## Running Examples
 
-examples are located in `iroh/examples`. Some have their own cargo.toml to show different use cases, and as such are shipped as their own packages. For these run them with `cargo run --package`. eg: `cargo run --package hello-world`
+Examples are located in `iroh/examples`. Run them with `cargo run --example`. eg: `cargo run --example hello-world`. Each example has a description on how to run in a comment at the top of the example file.
 
 # License
 
