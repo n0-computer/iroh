@@ -11,7 +11,7 @@ use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMap;
 use iroh_net::key::SecretKey;
-use iroh_net::PeerData;
+use iroh_net::PeerAddr;
 use serde::{Deserialize, Serialize};
 
 /// Options for the client
@@ -20,7 +20,7 @@ pub struct Options {
     /// The secret key of the node
     pub secret_key: SecretKey,
     /// The peer to connect to.
-    pub peer: PeerData,
+    pub peer: PeerAddr,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
     /// The configuration of the derp services
@@ -54,7 +54,7 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The provider to get a file from.
-    peer: PeerData,
+    peer: PeerAddr,
     /// The hash to retrieve.
     hash: Hash,
     /// Optional Request token.
@@ -66,7 +66,7 @@ pub struct Ticket {
 impl Ticket {
     /// Creates a new ticket.
     pub fn new(
-        peer: PeerData,
+        peer: PeerAddr,
         hash: Hash,
         token: Option<RequestToken>,
         recursive: bool,
@@ -103,8 +103,8 @@ impl Ticket {
         self.hash
     }
 
-    /// The [`PeerData`] of the provider for this ticket.
-    pub fn node_addr(&self) -> &PeerData {
+    /// The [`PeerAddr`] of the provider for this ticket.
+    pub fn node_addr(&self) -> &PeerAddr {
         &self.peer
     }
 
@@ -129,7 +129,7 @@ impl Ticket {
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (PeerData, Hash, Option<RequestToken>, bool) {
+    pub fn into_parts(self) -> (PeerAddr, Hash, Option<RequestToken>, bool) {
         let Ticket {
             peer,
             hash,
@@ -189,7 +189,7 @@ mod tests {
         let derp_region = Some(0);
         let ticket = Ticket {
             hash,
-            peer: PeerData::from_parts(peer, derp_region, vec![addr]),
+            peer: PeerAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
             recursive: true,
         };

@@ -49,7 +49,7 @@ use crate::{
     disco,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::PeerData,
+    magic_endpoint::PeerAddr,
     net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
@@ -573,7 +573,7 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub async fn add_peer_data(&self, addr: PeerData) -> Result<()> {
+    pub async fn add_peer_addr(&self, addr: PeerAddr) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
         self.inner
             .actor_sender
@@ -863,7 +863,7 @@ enum ActorMessage {
         dst_key: PublicKey,
         msg: disco::CallMeMaybe,
     },
-    AddKnownAddr(PeerData, sync::oneshot::Sender<()>),
+    AddKnownAddr(PeerAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
 }
@@ -2234,8 +2234,8 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, n: PeerData) {
-        let PeerData { peer_id, addr_info } = n;
+    fn add_known_addr(&mut self, n: PeerAddr) {
+        let PeerAddr { peer_id, addr_info } = n;
         if self.peer_map.endpoint_for_node_key(&peer_id).is_none() {
             info!(
                 peer = ?n.peer_id,
@@ -2763,14 +2763,14 @@ pub(crate) mod tests {
                 if i == my_idx {
                     continue;
                 }
-                let addr = PeerData {
+                let addr = PeerAddr {
                     peer_id: me.public(),
                     addr_info: crate::AddrInfo {
                         derp_region: Some(1),
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                let _ = m.endpoint.magic_sock().add_peer_data(addr).await;
+                let _ = m.endpoint.magic_sock().add_peer_addr(addr).await;
             }
         }
 
@@ -2905,7 +2905,7 @@ pub(crate) mod tests {
                 let a_span = debug_span!("sender", a_name, %a_addr);
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
-                    let peer_b_data = PeerData::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
+                    let peer_b_data = PeerAddr::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(peer_b_data, &ALPN)

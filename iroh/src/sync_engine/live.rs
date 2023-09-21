@@ -693,7 +693,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         {
             if let Err(err) = self
                 .endpoint
-                .add_peer_data(iroh_net::PeerData {
+                .add_peer_addr(iroh_net::PeerAddr {
                     peer_id,
                     addr_info: iroh_net::AddrInfo {
                         derp_region,

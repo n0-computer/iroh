@@ -105,7 +105,7 @@ impl Dialer {
     /// Start to dial a peer
     ///
     /// Note that the peer's addresses and/or derp region must be added to the endpoint's
-    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_peer_data`].
+    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_peer_addr`].
     pub fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
         if self.is_pending(&peer_id) {
             return;
@@ -117,7 +117,7 @@ impl Dialer {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect(iroh_net::PeerData::new(peer_id), alpn_protocol) => res
+                res = endpoint.connect(iroh_net::PeerAddr::new(peer_id), alpn_protocol) => res
             };
             (peer_id, res)
         }

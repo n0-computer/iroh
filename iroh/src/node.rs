@@ -41,7 +41,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, PeerData,
+    tls, MagicEndpoint, PeerAddr,
 };
 use iroh_sync::store::Store as DocStore;
 use once_cell::sync::OnceCell;
@@ -711,8 +711,8 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
         Ticket::new(me, hash, None, true)
     }
 
-    /// Return the [`PeerData`] for this node.
-    pub async fn my_addr(&self) -> Result<PeerData> {
+    /// Return the [`PeerAddr`] for this node.
+    pub async fn my_addr(&self) -> Result<PeerAddr> {
         self.inner.endpoint.my_addr().await
     }
 

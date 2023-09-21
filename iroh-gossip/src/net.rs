@@ -120,7 +120,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_data`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_addr`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
@@ -507,11 +507,11 @@ impl Actor {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(addr_info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {addr_info:?}");
-                        let peer_data = iroh_net::PeerData {
+                        let peer_data = iroh_net::PeerAddr {
                             peer_id: peer,
                             addr_info,
                         };
-                        if let Err(err) = self.endpoint.add_peer_data(peer_data).await {
+                        if let Err(err) = self.endpoint.add_peer_addr(peer_data).await {
                             debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
                         }
                     }
@@ -656,10 +656,10 @@ mod test {
 
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        ep2.add_peer_data(PeerData::new(pi1).with_derp_region(derp_region))
+        ep2.add_peer_addr(PeerData::new(pi1).with_derp_region(derp_region))
             .await
             .unwrap();
-        ep3.add_peer_data(PeerData::new(pi1).with_derp_region(derp_region))
+        ep3.add_peer_addr(PeerData::new(pi1).with_derp_region(derp_region))
             .await
             .unwrap();
         // join the topics and wait for the connection to succeed
