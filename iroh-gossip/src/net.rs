@@ -1,18 +1,13 @@
 //! Networking for the `iroh-gossip` protocol
 
-use std::{
-    collections::HashMap, fmt, future::Future, net::SocketAddr, sync::Arc, task::Poll,
-    time::Instant,
-};
-
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, NodeAddr};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, PeerAddr};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, fmt, future::Future, sync::Arc, task::Poll, time::Instant};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
@@ -124,7 +119,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_known_addr`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_addr`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
@@ -253,33 +248,6 @@ impl Future for JoinTopicFut {
     }
 }
 
-/// Addressing information for peers.
-///
-/// This struct is serialized and transmitted to peers in `Join` and `ForwardJoin` messages.
-/// It contains the information needed by `iroh-net` to connect to peers.
-///
-/// TODO: Replace with type from iroh-net
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct IrohInfo {
-    addrs: Vec<SocketAddr>,
-    derp_region: Option<u16>,
-}
-
-impl IrohInfo {
-    fn into_node_addr(self, node_id: PublicKey) -> NodeAddr {
-        NodeAddr::from_parts(node_id, self.derp_region, self.addrs)
-    }
-}
-
-impl From<NodeAddr> for IrohInfo {
-    fn from(value: NodeAddr) -> Self {
-        Self {
-            addrs: value.direct_addrs,
-            derp_region: value.derp_region,
-        }
-    }
-}
-
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
 #[derive(Debug)]
 enum ConnOrigin {
@@ -371,7 +339,7 @@ impl Actor {
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
-                    let info: IrohInfo = self.endpoint.my_addr().await?.into();
+                    let info = self.endpoint.my_addr().await?;
                     let peer_data = postcard::to_stdvec(&info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
                 }
@@ -534,12 +502,15 @@ impl Actor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<IrohInfo>(&data) {
+                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<AddrInfo>(&data) {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
-                        let addr = info.into_node_addr(peer);
-                        if let Err(err) = self.endpoint.add_known_addr(addr).await {
+                        let peer_addr = PeerAddr {
+                            peer_id: peer,
+                            info,
+                        };
+                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
                             debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
                         }
                     }
@@ -621,6 +592,7 @@ async fn connection_loop(
 mod test {
     use std::time::Duration;
 
+    use iroh_net::PeerAddr;
     use iroh_net::{derp::DerpMap, MagicEndpoint};
     use tokio::spawn;
     use tokio::time::timeout;
@@ -683,9 +655,9 @@ mod test {
 
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        let addr1 = NodeAddr::from_parts(pi1, derp_region, vec![]);
-        ep2.add_known_addr(addr1.clone()).await.unwrap();
-        ep3.add_known_addr(addr1).await.unwrap();
+        let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
+        ep2.add_peer_addr(addr1.clone()).await.unwrap();
+        ep3.add_peer_addr(addr1).await.unwrap();
         // join the topics and wait for the connection to succeed
         go1.join(topic, vec![]).await.unwrap();
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();
@@ -798,7 +770,7 @@ mod test {
         /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
         pub(crate) async fn run_derp_and_stun(
             stun_ip: IpAddr,
-        ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
+        ) -> Result<(DerpMap, u16, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
             let server_key = SecretKey::generate();
@@ -833,7 +805,7 @@ mod test {
                 server.shutdown().await;
             });
 
-            Ok((m, Some(region_id), CleanupDropGuard(tx)))
+            Ok((m, region_id, CleanupDropGuard(tx)))
         }
 
         /// Sets up a simple STUN server.

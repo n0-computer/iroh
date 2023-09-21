@@ -13,7 +13,7 @@ use iroh_net::{
     derp::DerpMap,
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    MagicEndpoint, NodeAddr,
+    MagicEndpoint, PeerAddr,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
             let gossip_cell = gossip_cell.clone();
             let notify = notify.clone();
             Box::new(move |endpoints| {
-                // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+                // send our updated endpoints to the gossip protocol to be sent as PeerAddr to peers
                 if let Some(gossip) = gossip_cell.get() {
                     gossip.update_endpoints(endpoints).ok();
                 }
@@ -145,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
     // print a ticket that includes our own peer id and endpoint addresses
     let ticket = {
         let me = endpoint.my_addr().await?;
-        let peers = peers.iter().chain([&me]).cloned().collect();
+        let peers = peers.iter().cloned().chain([me]).collect();
         Ticket { topic, peers }
     };
     println!("> ticket to join us: {ticket}");
@@ -154,17 +154,17 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
     // join the gossip topic by connecting to known peers, if any
-    let node_ids = peers.iter().map(|p| p.node_id).collect();
+    let peer_ids = peers.iter().map(|p| p.peer_id).collect();
     if peers.is_empty() {
         println!("> waiting for peers to join us...");
     } else {
         println!("> trying to connect to {} peers...", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
-        for peer in peers {
-            endpoint.add_known_addr(peer).await?;
+        for peer in peers.into_iter() {
+            endpoint.add_peer_addr(peer).await?;
         }
     };
-    gossip.join(topic, node_ids).await?.await?;
+    gossip.join(topic, peer_ids).await?.await?;
     println!("> connected!");
 
     // broadcast our name, if set
@@ -290,7 +290,7 @@ enum Message {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<NodeAddr>,
+    peers: Vec<PeerAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.

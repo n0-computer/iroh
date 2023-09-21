@@ -15,7 +15,7 @@ pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, NodeAddr},
+    magic_endpoint::{ConnectionInfo, PeerAddr},
 };
 
 use iroh_sync::{
@@ -69,7 +69,7 @@ pub struct BlobDownloadRequest {
     /// children are downloaded and shared as well.
     pub recursive: bool,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: NodeAddr,
+    pub peer: PeerAddr,
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,
@@ -418,11 +418,11 @@ pub struct DocTicket {
     /// either a public or private key
     pub key: KeyBytes,
     /// a list of peers
-    pub peers: Vec<NodeAddr>,
+    pub peers: Vec<PeerAddr>,
 }
 impl DocTicket {
     /// Create a new doc ticket
-    pub fn new(key: KeyBytes, peers: Vec<NodeAddr>) -> Self {
+    pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
         Self { key, peers }
     }
     /// Serialize the ticket to a byte array.
@@ -509,7 +509,7 @@ pub struct DocStartSyncRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// List of peers to join
-    pub peers: Vec<NodeAddr>,
+    pub peers: Vec<PeerAddr>,
 }
 
 impl RpcMsg<ProviderService> for DocStartSyncRequest {
@@ -669,7 +669,7 @@ pub struct ProviderService;
 
 /// The request enum, listing all possible requests.
 #[allow(missing_docs)]
-#[derive(Debug, Serialize, Deserialize, From, TryInto)]
+#[derive(strum::Display, Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderRequest {
     NodeStatus(NodeStatusRequest),
     NodeStats(NodeStatsRequest),

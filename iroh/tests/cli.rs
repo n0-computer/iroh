@@ -613,14 +613,13 @@ fn test_provide_get_loop_single(
     let ticket = Ticket::from_str(&ticket).unwrap();
     let addrs = ticket
         .node_addr()
-        .direct_addrs
-        .iter()
+        .direct_addresses()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
-    let peer = ticket.node_addr().node_id.to_string();
+    let peer = ticket.node_addr().peer_id.to_string();
     let region = ticket
         .node_addr()
-        .derp_region
+        .derp_region()
         .context("should have derp region in ticket")?
         .to_string();
 

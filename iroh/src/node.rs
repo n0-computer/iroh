@@ -41,7 +41,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, NodeAddr,
+    tls, MagicEndpoint, PeerAddr,
 };
 use iroh_sync::store::Store as DocStore;
 use once_cell::sync::OnceCell;
@@ -519,8 +519,9 @@ where
                     let collection_parser = collection_parser.clone();
                     let custom_get_handler = custom_get_handler.clone();
                     let auth_handler = auth_handler.clone();
+                    let sync = handler.inner.sync.clone();
                     rt.main().spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, collection_parser, custom_get_handler, auth_handler).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, collection_parser, custom_get_handler, auth_handler).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -545,18 +546,21 @@ where
     }
 }
 
+// TODO: Restructure this code to not take all these arguments.
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
     connecting: quinn::Connecting,
     alpn: String,
     node: Arc<NodeInner<D, S>>,
     gossip: Gossip,
+    sync: SyncEngine<S>,
     collection_parser: C,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => iroh_sync::net::handle_connection(connecting, node.sync.store.clone()).await?,
+        SYNC_ALPN => sync.handle_connection(connecting).await?,
         alpn if alpn == iroh_bytes::protocol::ALPN => {
             iroh_bytes::provider::handle_connection(
                 connecting,
@@ -707,8 +711,8 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
         Ticket::new(me, hash, None, true)
     }
 
-    /// Return the [`NodeAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
+    /// Return the [`PeerAddr`] for this node.
+    pub async fn my_addr(&self) -> Result<PeerAddr> {
         self.inner.endpoint.my_addr().await
     }
 
@@ -1231,7 +1235,7 @@ fn handle_rpc_request<
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
-        debug!("handling rpc request: {}", std::any::type_name::<E>());
+        debug!("handling rpc request: {msg}");
         match msg {
             NodeWatch(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::node_watch)
@@ -1464,8 +1468,8 @@ mod tests {
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node.ticket(hash).await.unwrap();
-        println!("addrs: {:?}", ticket.node_addr().direct_addrs);
-        assert!(!ticket.node_addr().direct_addrs.is_empty());
+        println!("addrs: {:?}", ticket.node_addr().info);
+        assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
 
     #[cfg(feature = "mem-db")]

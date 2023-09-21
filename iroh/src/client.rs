@@ -16,7 +16,7 @@ use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::Hash;
-use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -438,7 +438,7 @@ where
     }
 
     /// Start to sync this document with a list of peers.
-    pub async fn start_sync(&self, peers: Vec<NodeAddr>) -> Result<()> {
+    pub async fn start_sync(&self, peers: Vec<PeerAddr>) -> Result<()> {
         let _res = self
             .rpc
             .rpc(DocStartSyncRequest {

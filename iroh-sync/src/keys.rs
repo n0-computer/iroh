@@ -201,6 +201,18 @@ impl fmt::Debug for Namespace {
     }
 }
 
+impl fmt::Debug for NamespaceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NamespaceId({})", base32::fmt_short(self.0))
+    }
+}
+
+impl fmt::Debug for AuthorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AuthorId({})", base32::fmt_short(self.0))
+    }
+}
+
 impl fmt::Debug for Author {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Author({})", self)
@@ -321,6 +333,14 @@ pub(super) mod base32 {
         text.make_ascii_lowercase();
         text
     }
+    /// Convert to a base32 string limited to the first 10 bytes
+    pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
+        let len = bytes.as_ref().len().min(10);
+        let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
+        text.make_ascii_lowercase();
+        text.push('…');
+        text
+    }
     /// Parse from a base32 string into a byte array
     pub fn parse_array<const N: usize>(input: &str) -> anyhow::Result<[u8; N]> {
         data_encoding::BASE32_NOPAD
@@ -332,7 +352,6 @@ pub(super) mod base32 {
 
 /// [`NamespacePublicKey`] in bytes
 #[derive(
-    Debug,
     Default,
     Clone,
     Copy,
@@ -351,7 +370,6 @@ pub struct NamespaceId([u8; 32]);
 
 /// [`AuthorPublicKey`] in bytes
 #[derive(
-    Debug,
     Default,
     Clone,
     Copy,
