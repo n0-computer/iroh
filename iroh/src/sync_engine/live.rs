@@ -124,7 +124,7 @@ pub type OnLiveEventCallback =
     Box<dyn Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static>;
 
 /// Events informing about actions of the live sync progres.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum LiveEvent {
     /// A local insertion.
@@ -146,6 +146,10 @@ pub enum LiveEvent {
         /// The content hash of the newly available entry content
         hash: Hash,
     },
+    /// We have a new neighbor in the swarm.
+    NeighborUp(PublicKey),
+    /// We lost a neighbor in the swarm.
+    NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
 }
@@ -795,14 +799,17 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
                     Op::Put(entry) => {
-                        debug!(peer = ?msg.delivered_from, topic = ?topic, "received entry via gossip");
-                        // If the distance is 0, we received the message from its original author.
-                        // In this case, assume that the peer can provide the content to us.
+                        debug!(peer = ?msg.delivered_from, ?namespace, "received entry via gossip");
+                        // Insert the entry into our replica.
+                        // If the message was broadcast with neighbor scope, or is received
+                        // directly from the author, we assume that the content is available at
+                        // that peer. Otherwise we don't.
+                        // The download is not triggered here, but in the `on_replica_event`
+                        // handler for the `InsertRemote` event.
                         let content_status = match msg.scope.is_direct() {
                             true => ContentStatus::Complete,
                             false => ContentStatus::Missing,
                         };
-                        // At this point, we do not know if the peer has the content.
                         replica.insert_remote_entry(
                             entry,
                             *msg.delivered_from.as_bytes(),
@@ -822,9 +829,18 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             // [Self::sync_with_peer] will check to not resync with peers synced previously in the
             // same session. TODO: Maybe this is too broad and leads to too many sync requests.
             Event::NeighborUp(peer) => {
+                debug!(?peer, ?namespace, "neighbor up");
                 self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
+                if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
+                    notify_all(subs, LiveEvent::NeighborUp(peer)).await;
+                }
             }
-            _ => {}
+            Event::NeighborDown(peer) => {
+                debug!(?peer, ?namespace, "neighbor down");
+                if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
+                    notify_all(subs, LiveEvent::NeighborDown(peer)).await;
+                }
+            }
         }
         Ok(())
     }
@@ -844,7 +860,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // A new entry was inserted locally. Broadcast a gossip message.
                 let op = Op::Put(signed_entry);
                 let message = postcard::to_stdvec(&op)?.into();
-                debug!(topic = ?topic, "broadcast new entry");
+                debug!(?namespace, "broadcast new entry");
                 self.gossip.broadcast(topic, message).await?;
 
                 // Notify subscribers about the event
