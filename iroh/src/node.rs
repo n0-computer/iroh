@@ -27,7 +27,7 @@ use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, RpcResult};
+use iroh_bytes::util::{BlobFormat, Cid, RpcResult};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, CustomGetHandler, RequestAuthorizationHandler},
@@ -935,7 +935,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
         let tags = db.tags();
-        futures::stream::iter(tags).filter_map(move |(name, (hash, format))| {
+        futures::stream::iter(tags).filter_map(move |(name, Cid(hash, format))| {
             let db = db.clone();
             let local = local.clone();
             let cp = self.collection_parser.clone();
@@ -977,7 +977,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         _msg: BlobListTagsRequest,
     ) -> impl Stream<Item = BlobListTagsResponse> + Send + 'static {
         tracing::info!("blob_list_tags");
-        futures::stream::iter(self.inner.db.tags().map(|(name, (hash, format))| {
+        futures::stream::iter(self.inner.db.tags().map(|(name, Cid(hash, format))| {
             tracing::info!("{:?} {} {:?}", name, hash, format);
             BlobListTagsResponse { name, hash, format }
         }))
@@ -1089,7 +1089,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             BlobFormat::RAW
         };
         let db = self.inner.db.clone();
-        let cid = (hash, format);
+        let cid = Cid(hash, format);
         let temp_pin = db.temp_tag(cid);
         let conn = self
             .inner

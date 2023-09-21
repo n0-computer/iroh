@@ -65,7 +65,8 @@ impl fmt::Debug for BlobFormat {
 }
 
 /// A hash and format pair
-pub type Cid = (Hash, BlobFormat);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Cid(pub Hash, pub BlobFormat);
 
 /// Hash type used throught.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]

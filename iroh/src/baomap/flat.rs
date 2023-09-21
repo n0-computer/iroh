@@ -828,7 +828,7 @@ impl Store {
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 use baomap::Store;
-                let cid = self.temp_tag((hash, format));
+                let cid = self.temp_tag(Cid(hash, format));
                 (cid, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
@@ -853,7 +853,7 @@ impl Store {
                 use baomap::Store;
                 // the cid must be pinned before we move the file, otherwise there is a race condition
                 // where it might be deleted here.
-                let cid = self.temp_tag((hash, BlobFormat::RAW));
+                let cid = self.temp_tag(Cid(hash, BlobFormat::RAW));
                 std::fs::rename(temp_data_path, data_path)?;
                 (cid, CompleteEntry::new_default(size), outboard)
             }
@@ -919,7 +919,7 @@ impl Store {
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();
         use baomap::Store;
-        let cid = self.temp_tag((hash, format));
+        let cid = self.temp_tag(Cid(hash, format));
         let data_path = self.owned_data_path(&hash);
         std::fs::write(data_path, &data)?;
         if outboard.len() > 8 {

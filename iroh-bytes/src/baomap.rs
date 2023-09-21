@@ -382,7 +382,7 @@ async fn gc_mark_task<'a>(
     // process all current. Since we don't have nested collections, this will
     // terminate after 1 iteration.
     while !current.is_empty() {
-        for (hash, format) in std::mem::take(&mut current) {
+        for Cid(hash, format) in std::mem::take(&mut current) {
             // we need to do this for all formats except raw
             if live.insert(hash) && !format.is_raw() {
                 let Some(entry) = store.get(&hash) else {
