@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, ensure};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::SinkExt;
 use iroh_net::key::PublicKey;
@@ -11,7 +11,7 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::trace;
 
 use crate::{
-    net::{AcceptOutcome, SyncError},
+    net::{AbortReason, AcceptError, AcceptOutcome, ConnectError},
     store, NamespaceId, Replica,
 };
 
@@ -23,10 +23,7 @@ const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 1024; // This is likely too large,
 impl Decoder for SyncCodec {
     type Item = Message;
     type Error = anyhow::Error;
-    fn decode(
-        &mut self,
-        src: &mut BytesMut,
-    ) -> std::result::Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if src.len() < 4 {
             return Ok(None);
         }
@@ -50,11 +47,7 @@ impl Decoder for SyncCodec {
 impl Encoder<Message> for SyncCodec {
     type Error = anyhow::Error;
 
-    fn encode(
-        &mut self,
-        item: Message,
-        dst: &mut BytesMut,
-    ) -> std::result::Result<(), Self::Error> {
+    fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let len =
             postcard::serialize_with_flavor(&item, postcard::ser_flavors::Size::default()).unwrap();
         ensure!(
@@ -81,13 +74,17 @@ impl Encoder<Message> for SyncCodec {
 /// On any error and on success the substream is closed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Message {
+    /// Init message (sent by the dialing peer)
     Init {
         /// Namespace to sync
         namespace: NamespaceId,
         /// Initial message
         message: crate::sync::ProtocolMessage,
     },
+    /// Sync messages (sent by both peers)
     Sync(crate::sync::ProtocolMessage),
+    /// Abort message (sent by the accepting peer to decline a request)
+    Abort { reason: AbortReason },
 }
 
 /// Runs the initiator side of the sync protocol.
@@ -96,7 +93,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     reader: &mut R,
     alice: &Replica<S::Instance>,
     other_peer_id: PublicKey,
-) -> Result<()> {
+) -> Result<(), ConnectError> {
     let other_peer_id = *other_peer_id.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
@@ -105,28 +102,37 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
 
     let init_message = Message::Init {
         namespace: alice.namespace(),
-        message: alice.sync_initial_message().map_err(Into::into)?,
+        message: alice.sync_initial_message().map_err(ConnectError::sync)?,
     };
     trace!("alice -> bob: {:#?}", init_message);
-    writer.send(init_message).await?;
+    writer
+        .send(init_message)
+        .await
+        .map_err(ConnectError::sync)?;
 
     // Sync message loop
-
     while let Some(msg) = reader.next().await {
-        match msg? {
+        let msg = msg.map_err(ConnectError::sync)?;
+        match msg {
             Message::Init { .. } => {
-                bail!("unexpected message: init");
+                return Err(ConnectError::sync(anyhow!("unexpected init message")));
             }
             Message::Sync(msg) => {
                 if let Some(msg) = alice
                     .sync_process_message(msg, other_peer_id)
-                    .map_err(Into::into)?
+                    .map_err(ConnectError::sync)?
                 {
                     trace!("alice -> bob: {:#?}", msg);
-                    writer.send(Message::Sync(msg)).await?;
+                    writer
+                        .send(Message::Sync(msg))
+                        .await
+                        .map_err(ConnectError::sync)?;
                 } else {
                     break;
                 }
+            }
+            Message::Abort { reason } => {
+                return Err(ConnectError::remote_abort(reason));
             }
         }
     }
@@ -140,7 +146,7 @@ pub(super) async fn run_bob<S, R, W, F, Fut>(
     reader: &mut R,
     accept_cb: F,
     other_peer_id: PublicKey,
-) -> std::result::Result<NamespaceId, SyncError>
+) -> Result<NamespaceId, AcceptError>
 where
     S: store::Store,
     R: AsyncRead + Unpin,
@@ -149,10 +155,7 @@ where
     Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
 {
     let mut state = BobState::<S>::new(other_peer_id);
-    state
-        .run(writer, reader, accept_cb)
-        .await
-        .map_err(|err| SyncError::sync(state.peer, state.namespace(), err))
+    state.run(writer, reader, accept_cb).await
 }
 
 struct BobState<S: store::Store> {
@@ -168,7 +171,16 @@ impl<S: store::Store> BobState<S> {
         }
     }
 
-    async fn run<R, W, F, Fut>(&mut self, writer: W, reader: R, accept_cb: F) -> Result<NamespaceId>
+    pub fn fail(&self, reason: impl Into<anyhow::Error>) -> AcceptError {
+        AcceptError::sync(self.peer, self.namespace(), reason.into())
+    }
+
+    async fn run<R, W, F, Fut>(
+        &mut self,
+        writer: W,
+        reader: R,
+        accept_cb: F,
+    ) -> Result<NamespaceId, AcceptError>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
@@ -178,15 +190,23 @@ impl<S: store::Store> BobState<S> {
         let mut reader = FramedRead::new(reader, SyncCodec);
         let mut writer = FramedWrite::new(writer, SyncCodec);
         while let Some(msg) = reader.next().await {
-            let next = match (msg?, self.replica.as_ref()) {
+            let msg = msg.map_err(|e| self.fail(e))?;
+            let next = match (msg, self.replica.as_ref()) {
                 (Message::Init { namespace, message }, None) => {
-                    let replica = match accept_cb(namespace, self.peer).await? {
-                        AcceptOutcome::Accept(replica) => replica,
-                        AcceptOutcome::NotAvailable => {
-                            bail!("abort sync: {namespace:?} not available")
-                        }
-                        AcceptOutcome::AlreadySyncing => {
-                            bail!("abort sync: {namespace:?} already syncing")
+                    let accept = accept_cb(namespace, self.peer).await;
+                    let accept = accept.map_err(|e| self.fail(e))?;
+                    let replica = match accept {
+                        Ok(replica) => replica,
+                        Err(reason) => {
+                            writer
+                                .send(Message::Abort { reason })
+                                .await
+                                .map_err(|e| self.fail(e))?;
+                            return Err(AcceptError::Abort {
+                                namespace,
+                                peer: self.peer,
+                                reason,
+                            });
                         }
                     };
                     trace!(?namespace, peer = ?self.peer, "run_bob: recv initial message {message:#?}");
@@ -198,13 +218,24 @@ impl<S: store::Store> BobState<S> {
                     trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv {msg:#?}");
                     replica.sync_process_message(msg, *self.peer.as_bytes())
                 }
-                (Message::Init { .. }, Some(_)) => bail!("double init message"),
-                (Message::Sync(_), None) => bail!("unexpected sync message before init"),
+                (Message::Init { .. }, Some(_)) => {
+                    return Err(self.fail(anyhow!("double init message")))
+                }
+                (Message::Sync(_), None) => {
+                    return Err(self.fail(anyhow!("unexpected sync message before init")))
+                }
+                (Message::Abort { reason }, _) => {
+                    return Err(self.fail(anyhow!("unexpected abort message ({reason:?})")))
+                }
             };
-            match next.map_err(Into::into)? {
+            let next = next.map_err(|e| self.fail(e))?;
+            match next {
                 Some(msg) => {
                     trace!(namespace = ?self.namespace(), peer = ?self.peer, "run_bob: send {msg:#?}");
-                    writer.send(Message::Sync(msg)).await?;
+                    writer
+                        .send(Message::Sync(msg))
+                        .await
+                        .map_err(|e| self.fail(e))?;
                 }
                 None => break,
             }
@@ -213,7 +244,7 @@ impl<S: store::Store> BobState<S> {
         trace!(namespace = ?self.namespace().unwrap(), peer = ?self.peer, "run_bob: finished");
 
         self.namespace()
-            .ok_or_else(|| anyhow!("Stream closed before init message"))
+            .ok_or_else(|| self.fail(anyhow!("Stream closed before init message")))
     }
 
     fn namespace(&self) -> Option<NamespaceId> {
@@ -228,6 +259,7 @@ mod tests {
         sync::Namespace,
         AuthorId,
     };
+    use anyhow::Result;
     use iroh_bytes::Hash;
     use iroh_net::key::SecretKey;
     use rand_core::{CryptoRngCore, SeedableRng};
@@ -300,7 +332,7 @@ mod tests {
                     futures::future::ready(
                         bob_replica_store_task
                             .open_replica(&namespace)
-                            .map(Into::into),
+                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
                     )
                 },
                 alice_peer_id,
@@ -502,7 +534,11 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 |namespace, _| {
-                    futures::future::ready(bob_store.open_replica(&namespace).map(Into::into))
+                    futures::future::ready(
+                        bob_store
+                            .open_replica(&namespace)
+                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
+                    )
                 },
                 alice_node_pubkey,
             )
