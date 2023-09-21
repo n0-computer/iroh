@@ -16,7 +16,7 @@ use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::Hash;
-use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -33,7 +33,7 @@ use crate::rpc_protocol::{
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
     ShareMode,
 };
-use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
+use crate::sync_engine::{LiveEvent, LiveStatus};
 
 pub mod mem;
 #[cfg(feature = "cli")]
@@ -438,7 +438,7 @@ where
     }
 
     /// Start to sync this document with a list of peers.
-    pub async fn start_sync(&self, peers: Vec<PeerSource>) -> Result<()> {
+    pub async fn start_sync(&self, peers: Vec<PeerAddr>) -> Result<()> {
         let _res = self
             .rpc
             .rpc(DocStartSyncRequest {

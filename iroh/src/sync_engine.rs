@@ -5,7 +5,7 @@
 use anyhow::anyhow;
 use iroh_bytes::{baomap::Store as BaoStore, util::runtime::Handle};
 use iroh_gossip::net::Gossip;
-use iroh_net::MagicEndpoint;
+use iroh_net::{MagicEndpoint, PeerAddr};
 use iroh_sync::{
     store::Store,
     sync::{Author, AuthorId, NamespaceId, Replica},
@@ -71,7 +71,7 @@ impl<S: Store> SyncEngine<S> {
     pub async fn start_sync(
         &self,
         namespace: NamespaceId,
-        peers: Vec<PeerSource>,
+        peers: Vec<PeerAddr>,
     ) -> anyhow::Result<()> {
         self.live.start_sync(namespace, peers).await?;
         Ok(())
