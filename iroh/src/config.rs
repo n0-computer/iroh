@@ -37,56 +37,32 @@ pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
 }
 
 /// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, strum::AsRefStr, strum::EnumString, strum::Display)]
+#[cfg_attr(test, derive(strum::EnumIter))]
 pub enum IrohPaths {
     /// Path to the node's secret key for the [`iroh_net::PublicKey`].
+    #[strum(serialize = "keypair")]
     SecretKey,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for complete blobs.
+    #[strum(serialize = "blobs.v0")]
     BaoFlatStoreComplete,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
+    #[strum(serialize = "blobs-partial.v0")]
     BaoFlatStorePartial,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for metadata such as the tags table.
+    #[strum(serialize = "blobs-meta.v0")]
     BaoFlatStoreMeta,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
+    #[strum(serialize = "docs.redb")]
     DocsDatabase,
     /// Path to the console state
+    #[strum(serialize = "console")]
     Console,
 }
 
-impl From<&IrohPaths> for &'static str {
-    fn from(value: &IrohPaths) -> Self {
-        match value {
-            IrohPaths::SecretKey => "keypair",
-            IrohPaths::BaoFlatStoreComplete => "blobs.v0",
-            IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
-            IrohPaths::BaoFlatStoreMeta => "blobs-meta.v0",
-            IrohPaths::DocsDatabase => "docs.redb",
-            IrohPaths::Console => "console",
-        }
-    }
-}
-impl FromStr for IrohPaths {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        Ok(match s {
-            "keypair" => Self::SecretKey,
-            "blobs.v0" => Self::BaoFlatStoreComplete,
-            "blobs-partial.v0" => Self::BaoFlatStorePartial,
-            "docs.redb" => Self::DocsDatabase,
-            "console" => Self::Console,
-            _ => bail!("unknown file or directory"),
-        })
-    }
-}
-impl fmt::Display for IrohPaths {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s: &str = self.into();
-        write!(f, "{s}")
-    }
-}
 impl AsRef<Path> for IrohPaths {
     fn as_ref(&self) -> &Path {
-        let s: &str = self.into();
+        let s: &str = self.as_ref();
         Path::new(s)
     }
 }
@@ -493,6 +469,8 @@ pub fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use strum::IntoEnumIterator;
+
     use super::*;
 
     #[test]
@@ -504,19 +482,13 @@ mod tests {
 
     #[test]
     fn test_iroh_paths_parse_roundtrip() {
-        let kinds = [
-            IrohPaths::SecretKey,
-            IrohPaths::BaoFlatStoreComplete,
-            IrohPaths::BaoFlatStorePartial,
-            IrohPaths::DocsDatabase,
-            IrohPaths::Console,
-        ];
-        for iroh_path in &kinds {
+        for iroh_path in IrohPaths::iter() {
+            println!("{iroh_path}");
             let root = PathBuf::from("/tmp");
-            let path = root.join(iroh_path);
+            let path = root.join(&iroh_path);
             let fname = path.file_name().unwrap().to_str().unwrap();
             let parsed = IrohPaths::from_str(fname).unwrap();
-            assert_eq!(*iroh_path, parsed);
+            assert_eq!(iroh_path, parsed);
         }
     }
 }
