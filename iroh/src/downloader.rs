@@ -923,13 +923,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 // optimistically check if the peer could do the request right away
                 match self.get_peer_connection_for_download(&peer_id) {
                     Some(conn) => {
-                        return self.start_download(
-                            kind,
-                            peer_id,
-                            conn,
-                            remaining_retries,
-                            intents,
-                        )
+                        return self.start_download(kind, peer_id, conn, remaining_retries, intents)
                     }
                     None => Some(peer_id),
                 }
@@ -1008,7 +1002,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             intents,
             remaining_retries,
             delay_key,
-            next_peer
+            next_peer,
         };
         debug!(?kind, ?info, "request scheduled");
         self.scheduled_requests.insert(kind, info);
