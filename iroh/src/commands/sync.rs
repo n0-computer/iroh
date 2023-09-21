@@ -116,7 +116,7 @@ pub enum DocCommands {
         author: Option<AuthorId>,
         /// Prefex to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
         #[clap(long)]
-        prefix: String,
+        prefix: Option<String>,
         /// Path to a local file or directory to import
         ///
         /// Pathnames will be used as the document key
@@ -271,12 +271,13 @@ impl DocCommands {
             Self::Import {
                 doc,
                 author,
-                mut prefix,
+                prefix,
                 path,
                 in_place,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
+                let mut prefix = prefix.unwrap_or_else(|| String::from(""));
 
                 if prefix.ends_with('/') {
                     prefix.pop();
@@ -284,6 +285,7 @@ impl DocCommands {
                 let root = canonicalize_path(&path)?.canonicalize()?;
                 let files = walkdir::WalkDir::new(&root).into_iter();
                 // TODO: parallelize
+                let mut counts = (0, 0);
                 for file in files {
                     let file = file?;
                     if file.file_type().is_file() {
@@ -302,8 +304,8 @@ impl DocCommands {
                             .blobs
                             .add_from_path(file.path().into(), in_place)
                             .await?;
-                        // TODO(b5): horrible hack b/c add_from_path creates a collection, and we really just want
-                        // the raw blob
+                        // TODO(b5): horrible hack b/c add_from_path creates a collection
+                        // and we really just want the raw blob
                         let (_, entries) = aggregate_add_response(stream).await?;
                         let hash = entries[0].hash;
                         doc.set_hash(author, key.into(), hash).await?;
@@ -312,8 +314,15 @@ impl DocCommands {
                         //     fmt_hash(hash),
                         //     HumanBytes(len)
                         // );
+                        counts.0 += 1;
+                        counts.1 += entries[0].size;
                     }
                 }
+                println!(
+                    "Imported {} entries totaling {}",
+                    counts.0,
+                    HumanBytes(counts.1)
+                );
             }
             Self::Export { doc, key, path } => {
                 let doc = get_doc(iroh, env, doc).await?;
