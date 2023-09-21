@@ -268,9 +268,12 @@ where
     /// Processes an incoming message and produces a response.
     /// If terminated, returns `None`
     ///
-    /// `validate_cb` is called before an entry received from the remote is inserted into the store.
+    /// `validate_cb` is called for each incoming entry received from the remote.
     /// It must return true if the entry is valid and should be stored, and false otherwise
     /// (which means the entry will be dropped and not stored).
+    ///
+    /// `content_status_cb` is called for each outgoing entry about to be sent to the remote.
+    /// It must return a [`ContentStatus`], which will be sent to the remote with the entry.
     pub fn process_message<F, F2>(
         &mut self,
         message: Message<E>,

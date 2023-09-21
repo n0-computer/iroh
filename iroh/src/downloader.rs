@@ -297,20 +297,26 @@ impl Downloader {
 /// A peer and its role with regard to a hash.
 #[derive(Debug, Clone, Copy)]
 pub struct PeerInfo {
-    node_id: PublicKey,
+    peer_id: PublicKey,
     role: PeerRole,
 }
 
 impl PeerInfo {
     /// Create a new [`PeerInfo`] from its parts.
-    pub fn new(node_id: PublicKey, role: PeerRole) -> Self {
-        Self { node_id, role }
+    pub fn new(peer_id: PublicKey, role: PeerRole) -> Self {
+        Self {
+            peer_id,
+            role,
+        }
     }
 }
 
 impl From<(PublicKey, PeerRole)> for PeerInfo {
-    fn from((node_id, role): (PublicKey, PeerRole)) -> Self {
-        Self { node_id, role }
+    fn from((peer_id, role): (PublicKey, PeerRole)) -> Self {
+        Self {
+            peer_id,
+            role,
+        }
     }
 }
 
@@ -666,14 +672,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         let mut candidates = self
             .providers
             .get_candidates(hash)
-            .filter_map(|peer| {
-                if let Some(info) = self.peers.get(&peer.node_id) {
+            .filter_map(|(peer_id, role)| {
+                let peer = PeerInfo::new(*peer_id, *role);
+                if let Some(info) = self.peers.get(&peer_id) {
                     info.conn.as_ref()?;
                     let req_count = info.active_requests();
                     // filter out peers at capacity
                     let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
                     has_capacity.then_some((peer, ConnState::Connected(req_count)))
-                } else if self.dialer.is_pending(&peer.node_id) {
+                } else if self.dialer.is_pending(&peer_id) {
                     Some((peer, ConnState::Dialing))
                 } else {
                     Some((peer, ConnState::NotConnected))
@@ -692,15 +699,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         if let ConnState::NotConnected = state {
             if !self.at_connections_capacity() {
                 // peer is not connected, not dialing and concurrency limits allow another connection
-                debug!(peer = %peer.node_id, "dialing peer");
-                self.dialer.queue_dial(peer.node_id);
-                Some(*peer)
+                debug!(peer = %peer.peer_id, "dialing peer");
+                self.dialer.queue_dial(peer.peer_id);
+                Some(peer)
             } else {
-                trace!(peer = %peer.node_id, "required peer not dialed to maintain concurrency limits");
+                trace!(peer = %peer.peer_id, "required peer not dialed to maintain concurrency limits");
                 None
             }
         } else {
-            Some(*peer)
+            Some(peer)
         }
     }
 
@@ -922,10 +929,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
         // first try with the peer that was initially assigned
         if let Some((peer, conn)) = next_peer.and_then(|peer| {
-            self.get_peer_connection_for_download(&peer.node_id)
+            self.get_peer_connection_for_download(&peer.peer_id)
                 .map(|conn| (peer, conn))
         }) {
-            return self.start_download(kind, peer.node_id, conn, remaining_retries, intents);
+            return self.start_download(kind, peer.peer_id, conn, remaining_retries, intents);
         }
 
         // we either didn't have a peer or the peer is busy or dialing. In any case try to get
@@ -934,11 +941,11 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             None => None,
             Some(peer) => {
                 // optimistically check if the peer could do the request right away
-                match self.get_peer_connection_for_download(&peer.node_id) {
+                match self.get_peer_connection_for_download(&peer.peer_id) {
                     Some(conn) => {
                         return self.start_download(
                             kind,
-                            peer.node_id,
+                            peer.peer_id,
                             conn,
                             remaining_retries,
                             intents,
@@ -1083,7 +1090,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 #[derive(Default, Debug)]
 pub struct ProviderMap {
     /// Candidates to download a hash.
-    candidates: HashMap<Hash, HashMap<PublicKey, PeerInfo>>,
+    candidates: HashMap<Hash, HashMap<PublicKey, PeerRole>>,
     /// Ordered list of provider hashes per peer.
     ///
     /// I.e. blobs we assume the peer can provide.
@@ -1091,11 +1098,11 @@ pub struct ProviderMap {
 }
 
 struct ProviderIter<'a> {
-    inner: Option<std::collections::hash_map::Values<'a, PublicKey, PeerInfo>>,
+    inner: Option<std::collections::hash_map::Iter<'a, PublicKey, PeerRole>>,
 }
 
 impl<'a> Iterator for ProviderIter<'a> {
-    type Item = &'a PeerInfo;
+    type Item = (&'a PublicKey, &'a PeerRole);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.as_mut().and_then(|iter| iter.next())
@@ -1104,8 +1111,8 @@ impl<'a> Iterator for ProviderIter<'a> {
 
 impl ProviderMap {
     /// Get candidates to download this hash.
-    fn get_candidates(&self, hash: &Hash) -> impl Iterator<Item = &PeerInfo> {
-        let inner = self.candidates.get(hash).map(|peers| peers.values());
+    fn get_candidates(&self, hash: &Hash) -> impl Iterator<Item = (&PublicKey, &PeerRole)> {
+        let inner = self.candidates.get(hash).map(|peers| peers.iter());
         ProviderIter { inner }
     }
 
@@ -1114,12 +1121,12 @@ impl ProviderMap {
         let entry = self.candidates.entry(hash).or_default();
         for peer in peers {
             entry
-                .entry(peer.node_id)
-                .and_modify(|existing| existing.role = (existing.role).max(peer.role))
-                .or_insert(*peer);
+                .entry(peer.peer_id)
+                .and_modify(|role| *role = (*role).max(peer.role))
+                .or_insert(peer.role);
             if let PeerRole::Provider = peer.role {
                 self.provider_hashes_by_peer
-                    .entry(peer.node_id)
+                    .entry(peer.peer_id)
                     .or_default()
                     .push_back(hash);
             }
