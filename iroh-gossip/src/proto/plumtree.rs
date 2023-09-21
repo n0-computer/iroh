@@ -169,10 +169,7 @@ pub enum DeliveryScope {
 impl DeliveryScope {
     /// Whether this message was directly received from its publisher.
     pub fn is_direct(&self) -> bool {
-        match self {
-            Self::Neighbors | Self::Swarm(Round(0)) => true,
-            _ => false,
-        }
+        matches!(self, Self::Neighbors | Self::Swarm(Round(0)))
     }
 }
 
