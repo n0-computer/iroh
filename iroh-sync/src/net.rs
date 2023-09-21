@@ -1,8 +1,8 @@
 //! Network implementation of the iroh-sync protocol
 
-use std::{future::Future, net::SocketAddr};
+use std::future::Future;
 
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, PeerAddr};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -27,20 +27,19 @@ mod codec;
 pub async fn connect_and_sync<S: store::Store>(
     endpoint: &MagicEndpoint,
     doc: &Replica<S::Instance>,
-    peer: PublicKey,
-    derp_region: Option<u16>,
-    addrs: &[SocketAddr],
+    peer: PeerAddr,
 ) -> Result<(), ConnectError> {
-    debug!(?peer, "sync[dial]: connect");
+    let peer_id = peer.peer_id;
+    debug!(?peer_id, "sync[dial]: connect");
     let namespace = doc.namespace();
     let connection = endpoint
-        .connect((peer, derp_region, addrs).into(), SYNC_ALPN)
+        .connect(peer, SYNC_ALPN)
         .await
         .map_err(ConnectError::connect)?;
-    debug!(?peer, ?namespace, "sync[dial]: connected");
+    debug!(?peer_id, ?namespace, "sync[dial]: connected");
     let (mut send_stream, mut recv_stream) =
         connection.open_bi().await.map_err(ConnectError::connect)?;
-    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer).await;
+    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer_id).await;
 
     send_stream.finish().await.map_err(ConnectError::close)?;
     recv_stream
@@ -55,7 +54,7 @@ pub async fn connect_and_sync<S: store::Store>(
         inc!(Metrics, sync_via_connect_failure);
     }
 
-    debug!(?peer, ?namespace, ?res, "sync[dial]: done");
+    debug!(?peer_id, ?namespace, ?res, "sync[dial]: done");
     res
 }
 

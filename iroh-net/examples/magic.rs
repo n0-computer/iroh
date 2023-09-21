@@ -4,7 +4,7 @@ use clap::Parser;
 use iroh_net::{
     defaults::{default_derp_map, TEST_REGION_ID},
     derp::DerpMap,
-    key::{PublicKey, SecretKey},
+    key::SecretKey,
     magic_endpoint::accept_conn,
     MagicEndpoint, PeerAddr,
 };
@@ -96,10 +96,9 @@ async fn main() -> anyhow::Result<()> {
             addrs,
             derp_region,
         } => {
-            let peer_id: PublicKey = peer_id.parse()?;
-            let addrs = addrs.unwrap_or_default();
-            let peer_addr = PeerAddr::from_parts(peer_id, derp_region, addrs);
-            let conn = endpoint.connect(peer_addr, EXAMPLE_ALPN).await?;
+            let addr =
+                PeerAddr::from_parts(peer_id.parse()?, derp_region, addrs.unwrap_or_default());
+            let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
             info!("connected");
 
             let (mut send, mut recv) = conn.open_bi().await?;
