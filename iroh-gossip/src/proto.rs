@@ -47,6 +47,7 @@
 
 use std::{fmt, hash::Hash};
 
+use bytes::Bytes;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 mod hyparview;
@@ -80,20 +81,26 @@ impl<T> PeerIdentity for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + 
 ///
 /// Implementations may use these bytes to supply addresses or other information needed to connect
 /// to a peer that is not included in the peer's [`PeerIdentity`].
-#[derive(
-    derive_more::Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::From,
-    derive_more::Into,
-    derive_more::Deref,
-    Default,
-)]
+#[derive(derive_more::Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[debug("PeerData({}b)", self.0.len())]
-pub struct PeerData(bytes::Bytes);
+pub struct PeerData(Bytes);
+
+impl PeerData {
+    /// Create a new [`PeerData`] from a byte buffer.
+    pub fn new(data: impl Into<Bytes>) -> Self {
+        Self(data.into())
+    }
+
+    /// Get a reference to the contained [`bytes::Bytes`].
+    pub fn inner(&self) -> &bytes::Bytes {
+        &self.0
+    }
+
+    /// Get the peer data as a byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 /// PeerInfo contains a peer's identifier and the opaque peer data as provided by the implementer.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
