@@ -3,6 +3,10 @@
 //! By default a new peer id is created when starting the example. To reuse your identity,
 //! set the `--secret-key` CLI flag with the secret key printed on a previous invocation.
 //!
+//! Run with:
+//!   $ cargo run --example sync --features=example-sync
+//! Then follow the instructions printed
+//!
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.

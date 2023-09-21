@@ -3,8 +3,8 @@
 //! This can be downloaded using the iroh CLI.
 //!
 //! This is using an in memory database and a random peer id.
-//! //! run this example from the project root:
-//!     $ cargo run -p hello-world
+//! run this example from the project root:
+//!     $ cargo run --example hello-world
 use iroh::bytes::util::runtime;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
