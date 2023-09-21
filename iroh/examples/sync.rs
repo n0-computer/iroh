@@ -363,7 +363,7 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let cid = self.db.import_bytes(value.into(), BlobFormat::Raw).await?;
+                let cid = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
                 self.doc
                     .insert(key, &self.author, *cid.hash(), len as u64)?;
             }
@@ -460,7 +460,7 @@ impl ReplState {
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
                                     let cid =
-                                        db.import_bytes(value.into(), BlobFormat::Raw).await?;
+                                        db.import_bytes(value.into(), BlobFormat::RAW).await?;
                                     doc.insert(key, &author, *cid.hash(), len as u64)?;
                                 }
                                 Ok(count)
@@ -520,7 +520,7 @@ impl ReplState {
                     .import(
                         file_path.clone(),
                         ImportMode::Copy,
-                        BlobFormat::Raw,
+                        BlobFormat::RAW,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
@@ -556,7 +556,7 @@ impl ReplState {
                             .import(
                                 file.path().into(),
                                 ImportMode::Copy,
-                                BlobFormat::Raw,
+                                BlobFormat::RAW,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;

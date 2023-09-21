@@ -383,7 +383,8 @@ async fn gc_mark_task<'a>(
     // terminate after 1 iteration.
     while !current.is_empty() {
         for (hash, format) in std::mem::take(&mut current) {
-            if live.insert(hash) && format == BlobFormat::Collection {
+            // we need to do this for all formats except raw
+            if live.insert(hash) && !format.is_raw() {
                 let Some(entry) = store.get(&hash) else {
                     warn!("gc: {} not found", hash);
                     continue;
@@ -396,7 +397,7 @@ async fn gc_mark_task<'a>(
                     warn!("gc: {} creating data reader failed", hash);
                     continue;
                 };
-                let Ok((mut iter, stats)) = cp.parse(0, reader).await else {
+                let Ok((mut iter, stats)) = cp.parse(format.into(), reader).await else {
                     warn!("gc: {} parse failed", hash);
                     continue;
                 };

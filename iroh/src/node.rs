@@ -940,7 +940,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             let local = local.clone();
             let cp = self.collection_parser.clone();
             async move {
-                if format != BlobFormat::Collection {
+                if !format.is_collection() {
                     return None;
                 }
                 let entry = db.get(&hash)?;
@@ -1084,9 +1084,9 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let hash = msg.hash;
         debug!("share: {:?}", msg);
         let format = if msg.recursive {
-            BlobFormat::Collection
+            BlobFormat::COLLECTION
         } else {
-            BlobFormat::Raw
+            BlobFormat::RAW
         };
         let db = self.inner.db.clone();
         let cid = (hash, format);
@@ -1217,7 +1217,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                         .import(
                             source.path().to_owned(),
                             mode,
-                            BlobFormat::Raw,
+                            BlobFormat::RAW,
                             import_progress,
                         )
                         .await?;
@@ -1239,7 +1239,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let pinned_cid = self
             .inner
             .db
-            .import_bytes(data.into(), BlobFormat::Collection)
+            .import_bytes(data.into(), BlobFormat::COLLECTION)
             .await?;
         let hash = *pinned_cid.hash();
         progress.send(AddProgress::AllDone { hash }).await?;

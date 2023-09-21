@@ -853,7 +853,7 @@ impl Store {
                 use baomap::Store;
                 // the cid must be pinned before we move the file, otherwise there is a race condition
                 // where it might be deleted here.
-                let cid = self.temp_tag((hash, BlobFormat::Raw));
+                let cid = self.temp_tag((hash, BlobFormat::RAW));
                 std::fs::rename(temp_data_path, data_path)?;
                 (cid, CompleteEntry::new_default(size), outboard)
             }

@@ -15,16 +15,53 @@ pub mod runtime;
 
 /// A format identifier
 ///
-/// Should we make this an u64 and use <https://github.com/multiformats/multicodec/blob/master/table.csv>?
+/// Should we make this an u64 and use ?
 ///
 /// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
 /// able to use for iroh collections would be 2 bytes varint encoded or something...
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BlobFormat {
-    /// Hash refers to a blob
-    Raw,
-    /// Hash refers to an iroh collection (format here?)
-    Collection,
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct BlobFormat(u64);
+
+impl BlobFormat {
+    /// Raw format
+    ///
+    /// raw binary in the multiformat table
+    pub const RAW: Self = Self(0x55);
+
+    /// Collection format
+    ///
+    /// seems to be one of the smallest values that are free
+    /// if we were to change a collection to be just a sequence of hashes,
+    /// we could just use the blake3 value (0x1e) here
+    pub const COLLECTION: Self = Self(0x73);
+
+    /// true if this is a raw blob
+    pub const fn is_raw(&self) -> bool {
+        self.0 == Self::RAW.0
+    }
+
+    /// true if this is an iroh collection
+    pub const fn is_collection(&self) -> bool {
+        self.0 == Self::COLLECTION.0
+    }
+}
+
+impl From<BlobFormat> for u64 {
+    fn from(value: BlobFormat) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Debug for BlobFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self == &Self::RAW {
+            f.write_str("Raw")
+        } else if self == &Self::COLLECTION {
+            f.write_str("Collection")
+        } else {
+            f.debug_tuple("Other").field(&self.0).finish()
+        }
+    }
 }
 
 /// A hash and format pair
