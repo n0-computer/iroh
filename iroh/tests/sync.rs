@@ -9,7 +9,7 @@ use iroh::{
     collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync_engine::{LiveEvent, SyncEvent},
+    sync_engine::{LiveEvent, Origin, SyncEvent},
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -239,17 +239,26 @@ async fn sync_full_basic() -> Result<()> {
     assert_eq!(event, expected, "expected {expected:?} but got {event:?}");
 
     // expect 2 times ContentReady
-    let event = events.try_next().await?.unwrap();
-    assert!(
-        matches!(event, LiveEvent::ContentReady { .. }),
-        "expected ContentReady but got {event:?}"
-    );
-    let event = events.try_next().await?.unwrap();
-    assert!(
-        matches!(event, LiveEvent::ContentReady { .. }),
-        "expected ContentReady but got {event:?}"
-    );
-
+    // potentically a `SyncFinished` event with `Origin::Accept` is inbetween,
+    // as node1 or node2 could connect to us.
+    let mut i = 0;
+    while i < 2 {
+        let event = events.try_next().await?.unwrap();
+        if matches!(
+            event,
+            LiveEvent::SyncFinished(SyncEvent {
+                origin: Origin::Accept,
+                ..
+            })
+        ) {
+            continue;
+        }
+        assert!(
+            matches!(event, LiveEvent::ContentReady { .. }),
+            "expected ContentReady but got {event:?}"
+        );
+        i += 1;
+    }
     assert_latest(&doc, b"k1", b"v1").await;
     assert_latest(&doc, b"k2", b"v2").await;
 
