@@ -570,8 +570,14 @@ const AUTHOR_BYTES: std::ops::Range<usize> = 32..64;
 const KEY_BYTES: std::ops::RangeFrom<usize> = 64..;
 
 /// The indentifier of a record.
-#[derive(Default, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RecordIdentifier(Bytes);
+
+impl Default for RecordIdentifier {
+    fn default() -> Self {
+        Self::new(NamespaceId::default(), AuthorId::default(), b"")
+    }
+}
 
 impl Debug for RecordIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
