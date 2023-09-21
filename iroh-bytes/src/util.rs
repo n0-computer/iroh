@@ -68,6 +68,68 @@ impl fmt::Debug for BlobFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Cid(pub Hash, pub BlobFormat);
 
+impl Cid {
+    /// Convert to cid bytes
+    pub fn to_cid_bytes(&self) -> Vec<u8> {
+        let helper = CidHelper::from(*self);
+        postcard::to_stdvec(&helper).unwrap()
+    }
+
+    /// Convert from cid bytes
+    pub fn from_cid_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let helper = postcard::from_bytes::<CidHelper>(bytes)?;
+        helper.try_into()
+    }
+}
+
+/// Helper struct for serializing and deserializing to multiformat cids.
+///
+/// Serializing this using the postcard format will produce a multiformat cid.
+/// Unsigned integers in postcard are varint encoded using the same scheme as
+/// multiformat, and the data, due to being fixed size, won't have a length
+/// prefix.
+#[derive(Serialize, Deserialize)]
+struct CidHelper {
+    version: u64,
+    codec: u64,
+    hash: u64,
+    size: u64,
+    data: [u8; 32],
+}
+
+impl fmt::Display for CidHelper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = postcard::to_stdvec(&self).unwrap();
+        let mut res = String::with_capacity(40);
+        res.push('b');
+        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut res);
+        write!(f, "{}", res.to_ascii_lowercase())
+    }
+}
+
+impl From<Cid> for CidHelper {
+    fn from(value: Cid) -> Self {
+        Self {
+            version: 1,            // cid version 1
+            codec: value.1.into(), // the only thing not hardcoded
+            hash: 0x1e,            // blake3
+            size: 32,              // the hash size, must be 32
+            data: *value.0.as_bytes(),
+        }
+    }
+}
+
+impl TryFrom<CidHelper> for Cid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CidHelper) -> Result<Self, Self::Error> {
+        anyhow::ensure!(value.version == 1, "invalid cid version");
+        anyhow::ensure!(value.hash == 0x1e, "invalid hash");
+        anyhow::ensure!(value.size == 32, "invalid hash size");
+        Ok(Self(Hash::from(value.data), BlobFormat(value.codec)))
+    }
+}
+
 /// Hash type used throught.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);
@@ -354,6 +416,66 @@ mod tests {
             ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
         ").unwrap();
         assert_eq_hex!(serialized, expected);
+    }
+
+    #[test]
+    fn hash_multiformat() {
+        let hash = Hash::from([0xab; 32]);
+        let serialized = hash.as_cid_bytes();
+        let expected = parse_hexdump(r"
+            01 # v1
+            55 # raw
+            1e # blake3
+            20 # 32 bytes
+            ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
+        ").unwrap();
+        assert_eq_hex!(serialized, expected);
+    }
+
+    #[test]
+    fn cid_multiformat() {
+        let hash = Hash::from([0xab; 32]);
+        let cid = Cid(hash, BlobFormat::RAW);
+        let serialized = cid.to_cid_bytes();
+        let expected = parse_hexdump(r"
+            01 # v1
+            55 # raw
+            1e # blake3
+            20 # 32 bytes
+            ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
+        ").unwrap();
+        assert_eq_hex!(serialized, expected);
+        assert_eq!(CidHelper::from(cid).to_string(), hash.to_string());
+
+        let cid = Cid(hash, BlobFormat(0x71)); // dag-cbor
+        let serialized = cid.to_cid_bytes();
+        let expected = parse_hexdump(r"
+            01 # v1
+            71 # dag-cbor
+            1e # blake3
+            20 # 32 bytes
+            ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
+        ").unwrap();
+        assert_eq_hex!(serialized, expected);
+        assert_eq!(
+            CidHelper::from(cid).to_string(),
+            "bafyr4iflvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvm"
+        );
+
+        let cid = Cid(hash, BlobFormat(0x90)); // eth-block
+        let serialized = cid.to_cid_bytes();
+        let expected = parse_hexdump(r"
+            01 # v1
+            90 01 # eth-block
+            1e # blake3
+            20 # 32 bytes
+            ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
+        ").unwrap();
+        assert_eq_hex!(serialized, expected);
+        assert_eq!(
+            CidHelper::from(cid).to_string(),
+            "bagiachravov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvovq"
+        );
     }
 
     #[test]
