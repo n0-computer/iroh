@@ -15,7 +15,7 @@ pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, NodeAddr},
+    magic_endpoint::{ConnectionInfo, PeerAddr},
 };
 
 use iroh_sync::{
@@ -69,7 +69,7 @@ pub struct BlobDownloadRequest {
     /// children are downloaded and shared as well.
     pub recursive: bool,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: NodeAddr,
+    pub peer: PeerAddr,
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,
