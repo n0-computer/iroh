@@ -363,9 +363,9 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let cid = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                let tag = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
                 self.doc
-                    .insert(key, &self.author, *cid.hash(), len as u64)?;
+                    .insert(key, &self.author, *tag.hash(), len as u64)?;
             }
             Cmd::Get {
                 key,
@@ -459,9 +459,9 @@ impl ReplState {
                                         String::from_utf8(bytes.clone()).unwrap().into_bytes();
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let cid =
+                                    let tag =
                                         db.import_bytes(value.into(), BlobFormat::RAW).await?;
-                                    doc.insert(key, &author, *cid.hash(), len as u64)?;
+                                    doc.insert(key, &author, *tag.hash(), len as u64)?;
                                 }
                                 Ok(count)
                             });
@@ -515,7 +515,7 @@ impl ReplState {
         match cmd {
             FsCmd::ImportFile { file_path, key } => {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-                let (cid, len) = self
+                let (tag, len) = self
                     .db
                     .import(
                         file_path.clone(),
@@ -524,7 +524,7 @@ impl ReplState {
                         IgnoreProgressSender::default(),
                     )
                     .await?;
-                let hash = *cid.hash();
+                let hash = *tag.hash();
                 self.doc.insert(key, &self.author, hash, len)?;
                 println!(
                     "> imported {file_path:?}: {} ({})",
@@ -551,7 +551,7 @@ impl ReplState {
                             continue;
                         }
                         let key = format!("{key_prefix}/{relative}");
-                        let (cid, len) = self
+                        let (tag, len) = self
                             .db
                             .import(
                                 file.path().into(),
@@ -560,7 +560,7 @@ impl ReplState {
                                 IgnoreProgressSender::default(),
                             )
                             .await?;
-                        let hash = *cid.hash();
+                        let hash = *tag.hash();
                         self.doc.insert(key, &self.author, hash, len)?;
                         println!(
                             "> imported {relative}: {} ({})",

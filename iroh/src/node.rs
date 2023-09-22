@@ -27,7 +27,7 @@ use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, Cid, RpcResult, SetTagOption};
+use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, CustomGetHandler, RequestAuthorizationHandler},
@@ -934,7 +934,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
         let tags = db.tags();
-        futures::stream::iter(tags).filter_map(move |(name, Cid(hash, format))| {
+        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat(hash, format))| {
             let db = db.clone();
             let local = local.clone();
             let cp = self.collection_parser.clone();
@@ -976,10 +976,15 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         _msg: BlobListTagsRequest,
     ) -> impl Stream<Item = BlobListTagsResponse> + Send + 'static {
         tracing::info!("blob_list_tags");
-        futures::stream::iter(self.inner.db.tags().map(|(name, Cid(hash, format))| {
-            tracing::info!("{:?} {} {:?}", name, hash, format);
-            BlobListTagsResponse { name, hash, format }
-        }))
+        futures::stream::iter(
+            self.inner
+                .db
+                .tags()
+                .map(|(name, HashAndFormat(hash, format))| {
+                    tracing::info!("{:?} {} {:?}", name, hash, format);
+                    BlobListTagsResponse { name, hash, format }
+                }),
+        )
     }
 
     /// Invoke validate on the database and stream out the result
@@ -1088,8 +1093,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             BlobFormat::RAW
         };
         let db = self.inner.db.clone();
-        let cid = Cid(hash, format);
-        let temp_pin = db.temp_tag(cid);
+        let haf = HashAndFormat(hash, format);
+        let temp_pin = db.temp_tag(haf);
         let conn = self
             .inner
             .endpoint
@@ -1133,10 +1138,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             }
             match msg.tag {
                 SetTagOption::Named(tag) => {
-                    db.set_tag(tag, Some(cid)).await?;
+                    db.set_tag(tag, Some(haf)).await?;
                 }
                 SetTagOption::Auto => {
-                    db.create_tag(cid).await?;
+                    db.create_tag(haf).await?;
                 }
             }
             drop(temp_pin);
@@ -1210,7 +1215,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 let db = self.inner.db.clone();
                 async move {
                     let name = source.name().to_string();
-                    let (cid, size) = db
+                    let (tag, size) = db
                         .import(
                             source.path().to_owned(),
                             mode,
@@ -1219,38 +1224,38 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                         )
                         .await?;
                     let blob = Blob {
-                        hash: *cid.hash(),
+                        hash: *tag.hash(),
                         name,
                     };
-                    io::Result::Ok((blob, size, cid))
+                    io::Result::Ok((blob, size, tag))
                 }
             })
             .buffered(IO_PARALLELISM)
             .try_collect::<Vec<_>>()
             .await?;
         let total_blobs_size = result.iter().map(|(_, size, _)| *size).sum();
-        let (blobs, pinned_cids): (Vec<_>, Vec<_>) =
-            result.into_iter().map(|(blob, _, cid)| (blob, cid)).unzip();
+        let (blobs, child_tags): (Vec<_>, Vec<_>) =
+            result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
         let collection = Collection::new(blobs, total_blobs_size)?;
         let data = collection.to_bytes()?;
-        let pinned_cid = self
+        let tag = self
             .inner
             .db
             .import_bytes(data.into(), BlobFormat::COLLECTION)
             .await?;
-        let hash = *pinned_cid.hash();
+        let hash = *tag.hash();
         progress.send(AddProgress::AllDone { hash }).await?;
-        let cid = *pinned_cid.cid();
+        let haf = *tag.inner();
         match msg.tag {
             SetTagOption::Named(tag) => {
-                self.inner.db.set_tag(tag, Some(cid)).await?;
+                self.inner.db.set_tag(tag, Some(haf)).await?;
             }
             SetTagOption::Auto => {
-                self.inner.db.create_tag(cid).await?;
+                self.inner.db.create_tag(haf).await?;
             }
         }
-        drop(pinned_cid);
-        drop(pinned_cids);
+        drop(tag);
+        drop(child_tags);
         self.inner
             .callbacks
             .send(Event::ByteProvide(

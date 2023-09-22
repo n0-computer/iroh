@@ -16,26 +16,15 @@ pub mod progress;
 pub mod runtime;
 
 /// A format identifier
-///
-/// Should we make this an u64 and use ?
-///
-/// That table is so weird. There is so much unrelated stuff in there, so the smallest value we would be
-/// able to use for iroh collections would be 2 bytes varint encoded or something...
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BlobFormat(u64);
 
 impl BlobFormat {
     /// Raw format
-    ///
-    /// raw binary in the multiformat table
-    pub const RAW: Self = Self(0x55);
+    pub const RAW: Self = Self(0);
 
     /// Collection format
-    ///
-    /// seems to be one of the smallest values that are free
-    /// if we were to change a collection to be just a sequence of hashes,
-    /// we could just use the blake3 value (0x1e) here
-    pub const COLLECTION: Self = Self(0x73);
+    pub const COLLECTION: Self = Self(1);
 
     /// true if this is a raw blob
     pub const fn is_raw(&self) -> bool {
@@ -133,7 +122,7 @@ pub enum SetTagOption {
 
 /// A hash and format pair
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Cid(pub Hash, pub BlobFormat);
+pub struct HashAndFormat(pub Hash, pub BlobFormat);
 
 /// Hash type used throught.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]

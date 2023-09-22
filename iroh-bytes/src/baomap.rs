@@ -5,7 +5,7 @@ use crate::{
     collection::CollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
-        BlobFormat, Cid, RpcError, Tag,
+        BlobFormat, HashAndFormat, RpcError, Tag,
     },
     Hash,
 };
@@ -142,10 +142,10 @@ pub trait ReadableStore: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// existing tags must be present in memory.
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static>;
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static>;
 
     /// Temp tags
-    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static>;
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
     /// Validate the database
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
@@ -195,13 +195,13 @@ pub trait Store: ReadableStore + PartialMap {
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
 
     /// Set a tag
-    fn set_tag(&self, name: Tag, hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>>;
+    fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>>;
 
     /// Create a new tag
-    fn create_tag(&self, hash: Cid) -> BoxFuture<'_, io::Result<Tag>>;
+    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>>;
 
     /// Create a temporary pin for this store
-    fn temp_tag(&self, cid: Cid) -> TempTag;
+    fn temp_tag(&self, value: HashAndFormat) -> TempTag;
 
     /// Traverse all roots recursively and mark them as live.
     ///
@@ -216,7 +216,7 @@ pub trait Store: ReadableStore + PartialMap {
     fn gc_mark<'a>(
         &'a self,
         cp: impl CollectionParser + 'a,
-        extra_roots: impl IntoIterator<Item = io::Result<Cid>> + 'a,
+        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     ) -> LocalBoxStream<'a, GcMarkEvent> {
         Gen::new(|co| async move {
             if let Err(e) = gc_mark_task(self, cp, extra_roots, &co).await {
@@ -266,58 +266,57 @@ pub trait Store: ReadableStore + PartialMap {
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>>;
 }
 
-/// A trait for things that can track liveness of cids.
+/// A trait for things that can track liveness of blobs and collections.
 ///
-/// A cid in iroh is just a hash and a format. This trait works together with
-/// [TempTag] to keep track of the liveness of a cid.
+/// This trait works together with [TempTag] to keep track of the liveness of a
+/// blob or collection.
 ///
 /// It is important to include the format in the liveness tracking, since
-/// pinning a blob and pinning a collection are different things.
+/// protecting a collection means protecting the blob and all its children,
+/// whereas protecting a raw blob only protects the blob itself.
 pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
     /// Called on clone
-    fn on_clone(&self, cid: &Cid) {
-        let _ = cid;
-    }
+    fn on_clone(&self, inner: &HashAndFormat);
     /// Called on drop
-    fn on_drop(&self, cid: &Cid) {
-        let _ = cid;
-    }
+    fn on_drop(&self, inner: &HashAndFormat);
 }
 
-/// A cid that is protected from garbage collection.
+/// A hash and format pair that is protected from garbage collection.
 ///
-/// This contains all the information of a blake3 cid, but in addition keeps
-/// the corresponding data alive.
+/// If format is raw, this will protect just the blob
+/// If format is collection, this will protect the collection and all blobs in it
 #[derive(Debug)]
 pub struct TempTag {
-    /// The cid we are pinning
-    cid: Cid,
+    /// The hash and format we are pinning
+    inner: HashAndFormat,
     /// liveness tracker
     liveness: Option<Arc<dyn LivenessTracker>>,
 }
 
 impl TempTag {
-    /// Create a new pinned cid
-    pub fn new(cid: Cid, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
+    /// Create a new temp tag for the given hash and format
+    ///
+    /// This should only be used by store implementations.
+    pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
         if let Some(liveness) = liveness.as_ref() {
-            liveness.on_clone(&cid);
+            liveness.on_clone(&inner);
         }
-        Self { cid, liveness }
+        Self { inner, liveness }
     }
 
     /// The hash of the pinned item
-    pub fn cid(&self) -> &Cid {
-        &self.cid
+    pub fn inner(&self) -> &HashAndFormat {
+        &self.inner
     }
 
     /// The hash of the pinned item
     pub fn hash(&self) -> &Hash {
-        &self.cid.0
+        &self.inner.0
     }
 
     /// The format of the pinned item
     pub fn format(&self) -> BlobFormat {
-        self.cid.1
+        self.inner.1
     }
 
     /// Keep the item alive until the end of the process
@@ -332,16 +331,16 @@ impl TempTag {
 impl Clone for TempTag {
     fn clone(&self) -> Self {
         if let Some(liveness) = self.liveness.as_ref() {
-            liveness.on_clone(&self.cid);
+            liveness.on_clone(&self.inner);
         }
-        Self::new(self.cid, self.liveness.clone())
+        Self::new(self.inner, self.liveness.clone())
     }
 }
 
 impl Drop for TempTag {
     fn drop(&mut self) {
         if let Some(liveness) = self.liveness.as_ref() {
-            liveness.on_drop(&self.cid);
+            liveness.on_drop(&self.inner);
         }
     }
 }
@@ -350,7 +349,7 @@ impl Drop for TempTag {
 async fn gc_mark_task<'a>(
     store: &'a impl Store,
     cp: impl CollectionParser + 'a,
-    extra_roots: impl IntoIterator<Item = io::Result<Cid>> + 'a,
+    extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
     macro_rules! info {
@@ -365,27 +364,27 @@ async fn gc_mark_task<'a>(
     }
     let mut roots = BTreeSet::new();
     info!("traversing tags");
-    for (name, cid) in store.tags() {
-        info!("adding root {:?} {:?}", name, cid);
-        roots.insert(cid);
+    for (name, haf) in store.tags() {
+        info!("adding root {:?} {:?}", name, haf);
+        roots.insert(haf);
     }
     info!("traversing temp roots");
-    for cid in store.temp_tags() {
-        info!("adding temp pin {:?}", cid);
-        roots.insert(cid);
+    for haf in store.temp_tags() {
+        info!("adding temp pin {:?}", haf);
+        roots.insert(haf);
     }
     info!("traversing extra roots");
-    for cid in extra_roots {
-        let cid = cid?;
-        info!("adding extra root {:?}", cid);
-        roots.insert(cid);
+    for haf in extra_roots {
+        let haf = haf?;
+        info!("adding extra root {:?}", haf);
+        roots.insert(haf);
     }
     let mut current = roots.into_iter().collect::<Vec<_>>();
     let mut live: BTreeSet<Hash> = BTreeSet::new();
     // process all current. Since we don't have nested collections, this will
     // terminate after 1 iteration.
     while !current.is_empty() {
-        for Cid(hash, format) in std::mem::take(&mut current) {
+        for HashAndFormat(hash, format) in std::mem::take(&mut current) {
             // we need to do this for all formats except raw
             if live.insert(hash) && !format.is_raw() {
                 let Some(entry) = store.get(&hash) else {

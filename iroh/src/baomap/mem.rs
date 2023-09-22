@@ -42,7 +42,7 @@ use iroh_bytes::util::progress::IgnoreProgressSender;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::util::runtime;
 use iroh_bytes::util::BlobFormat;
-use iroh_bytes::util::Cid;
+use iroh_bytes::util::HashAndFormat;
 use iroh_bytes::util::Tag;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
@@ -203,8 +203,8 @@ struct Inner {
 struct State {
     complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
-    tags: BTreeMap<Tag, Cid>,
-    temp: BTreeMap<Cid, u64>,
+    tags: BTreeMap<Tag, HashAndFormat>,
+    temp: BTreeMap<HashAndFormat, u64>,
     live: BTreeSet<Hash>,
 }
 
@@ -344,7 +344,7 @@ impl ReadableStore for Store {
         )
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
         let tags = self
             .0
             .state
@@ -357,7 +357,7 @@ impl ReadableStore for Store {
         Box::new(tags.into_iter())
     }
 
-    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         let tags = self
             .0
             .state
@@ -490,8 +490,8 @@ impl baomap::Store for Store {
                     size: bytes.len() as u64,
                 })?;
                 let size = bytes.len() as u64;
-                let cid = this.import_bytes_sync(bytes, format, progress)?;
-                Ok((cid, size))
+                let tag = this.import_bytes_sync(bytes, format, progress)?;
+                Ok((tag, size))
             })
             .map(flatten_to_io)
             .boxed()
@@ -509,7 +509,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn set_tag(&self, name: Tag, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
         let mut state = self.0.state.write().unwrap();
         if let Some(value) = value {
             state.tags.insert(name, value);
@@ -519,15 +519,15 @@ impl baomap::Store for Store {
         futures::future::ok(()).boxed()
     }
 
-    fn create_tag(&self, hash: Cid) -> BoxFuture<'_, io::Result<Tag>> {
+    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
         let mut state = self.0.state.write().unwrap();
         let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
         state.tags.insert(tag.clone(), hash);
         futures::future::ok(tag).boxed()
     }
 
-    fn temp_tag(&self, cid: Cid) -> TempTag {
-        TempTag::new(cid, Some(self.0.clone()))
+    fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
+        TempTag::new(tag, Some(self.0.clone()))
     }
 
     fn clear_live(&self) {
@@ -554,21 +554,21 @@ impl baomap::Store for Store {
 }
 
 impl LivenessTracker for Inner {
-    fn on_clone(&self, cid: &Cid) {
-        tracing::info!("temp tagging: {:?}", cid);
+    fn on_clone(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*cid).or_default();
+        let entry = state.temp.entry(*inner).or_default();
         // panic if we overflow an u64
         *entry = entry.checked_add(1).unwrap();
     }
 
-    fn on_drop(&self, cid: &Cid) {
-        tracing::info!("temp tag drop: {:?}", cid);
+    fn on_drop(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*cid).or_default();
+        let entry = state.temp.entry(*inner).or_default();
         *entry = entry.saturating_sub(1);
         if *entry == 0 {
-            state.temp.remove(cid);
+            state.temp.remove(inner);
         }
     }
 }
@@ -604,14 +604,14 @@ impl Store {
         };
         let hash = hash.into();
         use baomap::Store;
-        let cid = self.temp_tag(Cid(hash, format));
+        let tag = self.temp_tag(HashAndFormat(hash, format));
         self.0
             .state
             .write()
             .unwrap()
             .complete
             .insert(hash, (bytes, outboard));
-        Ok(cid)
+        Ok(tag)
     }
 
     fn export_sync(

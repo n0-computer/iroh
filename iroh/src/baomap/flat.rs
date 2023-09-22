@@ -144,7 +144,7 @@ use iroh_bytes::baomap::{
     PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, Cid, Tag};
+use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use rand::Rng;
@@ -166,7 +166,7 @@ struct State {
     // in memory tracking of live set
     live: BTreeSet<Hash>,
     // temp tags
-    temp: BTreeMap<Cid, u64>,
+    temp: BTreeMap<HashAndFormat, u64>,
 }
 
 #[derive(Debug, Default)]
@@ -416,7 +416,7 @@ impl Options {
 struct Inner {
     options: Options,
     state: RwLock<State>,
-    tags: RwLock<BTreeMap<Tag, Cid>>,
+    tags: RwLock<BTreeMap<Tag, HashAndFormat>>,
     // mutex for async access to complete files
     //
     // complete files are never written to. They come into existence when a partial
@@ -646,13 +646,13 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
         let items = inner.temp.keys().copied().collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
         let inner = self.0.tags.read().unwrap();
         let items = inner
             .iter()
@@ -715,7 +715,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn create_tag(&self, value: Cid) -> BoxFuture<'_, io::Result<Tag>> {
+    fn create_tag(&self, value: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
         let this = self.clone();
         self.0
             .options
@@ -725,7 +725,7 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn set_tag(&self, name: Tag, value: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
         self.0
             .options
@@ -735,8 +735,8 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn temp_tag(&self, cid: Cid) -> TempTag {
-        TempTag::new(cid, Some(self.0.clone()))
+    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
+        TempTag::new(inner, Some(self.0.clone()))
     }
 
     fn clear_live(&self) {
@@ -770,21 +770,21 @@ impl baomap::Store for Store {
 }
 
 impl LivenessTracker for Inner {
-    fn on_clone(&self, cid: &Cid) {
-        tracing::info!("temp tagging: {:?}", cid);
+    fn on_clone(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*cid).or_default();
+        let entry = state.temp.entry(*inner).or_default();
         // panic if we overflow an u64
         *entry = entry.checked_add(1).unwrap();
     }
 
-    fn on_drop(&self, cid: &Cid) {
-        tracing::info!("temp tag drop: {:?}", cid);
+    fn on_drop(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*cid).or_default();
+        let entry = state.temp.entry(*inner).or_default();
         *entry = entry.saturating_sub(1);
         if *entry == 0 {
-            state.temp.remove(cid);
+            state.temp.remove(inner);
         }
     }
 }
@@ -829,7 +829,7 @@ impl Store {
             id,
             path: path.clone(),
         })?;
-        let (cid, new, outboard) = match mode {
+        let (tag, new, outboard) = match mode {
             ImportMode::TryReference => {
                 // compute outboard and hash from the data in place, since we assume that it is stable
                 let size = path.metadata()?.len();
@@ -840,8 +840,8 @@ impl Store {
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 use baomap::Store;
-                let cid = self.temp_tag(Cid(hash, format));
-                (cid, CompleteEntry::new_external(size, path), outboard)
+                let tag = self.temp_tag(HashAndFormat(hash, format));
+                (tag, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
                 let uuid = new_uuid();
@@ -863,15 +863,15 @@ impl Store {
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 let data_path = self.owned_data_path(&hash);
                 use baomap::Store;
-                // the cid must be pinned before we move the file, otherwise there is a race condition
+                // the blob must be pinned before we move the file, otherwise there is a race condition
                 // where it might be deleted here.
-                let cid = self.temp_tag(Cid(hash, BlobFormat::RAW));
+                let tag = self.temp_tag(HashAndFormat(hash, BlobFormat::RAW));
                 std::fs::rename(temp_data_path, data_path)?;
-                (cid, CompleteEntry::new_default(size), outboard)
+                (tag, CompleteEntry::new_default(size), outboard)
             }
         };
         // all writes here are protected by the temp tag
-        let hash = *cid.hash();
+        let hash = *tag.hash();
         if let Some(outboard) = outboard.as_ref() {
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::write(outboard_path, outboard)?;
@@ -890,10 +890,10 @@ impl Store {
             state.outboard.insert(hash, outboard.into());
         }
         drop(complete_io_guard);
-        Ok((cid, size))
+        Ok((tag, size))
     }
 
-    fn set_tag_sync(&self, name: Tag, value: Option<Cid>) -> io::Result<()> {
+    fn set_tag_sync(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         tracing::info!("set_tag {} {:?}", name, value);
         let mut tags = self.0.tags.write().unwrap();
         let mut new_tags = tags.clone();
@@ -921,7 +921,7 @@ impl Store {
         Ok(())
     }
 
-    fn create_tag_sync(&self, value: Cid) -> io::Result<Tag> {
+    fn create_tag_sync(&self, value: HashAndFormat) -> io::Result<Tag> {
         tracing::info!("create_tag {:?}", value);
         let mut tags = self.0.tags.write().unwrap();
         let mut new_tags = tags.clone();
@@ -945,7 +945,7 @@ impl Store {
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();
         use baomap::Store;
-        let cid = self.temp_tag(Cid(hash, format));
+        let tag = self.temp_tag(HashAndFormat(hash, format));
         let data_path = self.owned_data_path(&hash);
         std::fs::write(data_path, &data)?;
         if outboard.len() > 8 {
@@ -961,7 +961,7 @@ impl Store {
             state.data.insert(hash, data.to_vec().into());
         }
         drop(complete_io_guard);
-        Ok(cid)
+        Ok(tag)
     }
 
     fn delete_sync(&self, hash: Hash) -> io::Result<()> {

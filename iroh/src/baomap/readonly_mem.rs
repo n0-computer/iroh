@@ -28,7 +28,7 @@ use iroh_bytes::{
     },
     util::{
         progress::{IdGenerator, ProgressSender},
-        BlobFormat, Cid, Tag,
+        BlobFormat, HashAndFormat, Tag,
     },
     Hash, IROH_BLOCK_SIZE,
 };
@@ -233,11 +233,11 @@ impl ReadableStore for Store {
         Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, Cid)> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
-    fn temp_tags(&self) -> Box<dyn Iterator<Item = Cid> + Send + Sync + 'static> {
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -327,16 +327,16 @@ impl baomap::Store for Store {
 
     fn clear_live(&self) {}
 
-    fn set_tag(&self, _name: Tag, _hash: Option<Cid>) -> BoxFuture<'_, io::Result<()>> {
+    fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
-    fn create_tag(&self, _hash: Cid) -> BoxFuture<'_, io::Result<Tag>> {
+    fn create_tag(&self, _hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
-    fn temp_tag(&self, cid: Cid) -> TempTag {
-        TempTag::new(cid, None)
+    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
+        TempTag::new(inner, None)
     }
 
     fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
