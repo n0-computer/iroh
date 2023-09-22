@@ -66,6 +66,12 @@ impl fmt::Debug for BlobFormat {
     }
 }
 
+impl Default for BlobFormat {
+    fn default() -> Self {
+        Self::RAW
+    }
+}
+
 /// A tag
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]
 pub struct Tag(pub Bytes);
