@@ -15,7 +15,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     config, disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
-    net::ip::is_unicast_link_local, stun, util::derp_only_mode,
+    net::ip::is_unicast_link_local, stun, util::derp_only_mode, PeerAddr,
 };
 
 use super::{
@@ -156,26 +156,6 @@ impl Endpoint {
             conn_type,
             latency,
         }
-    }
-
-    /// Return the addressing information of the endpoint
-    pub fn addr_info(&self) -> (PublicKey, AddrInfo) {
-        let endpoints = self
-            .endpoint_state
-            .keys()
-            .filter_map(|send_addr| {
-                if let SendAddr::Udp(socket_addr) = send_addr {
-                    Some(*socket_addr)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let addr_info = AddrInfo {
-            derp_region: self.derp_region,
-            endpoints,
-        };
-        (self.public_key, addr_info)
     }
 
     /// Returns the derp region of this endpoint
@@ -1002,6 +982,26 @@ impl Endpoint {
             },
         }
     }
+
+    pub fn direct_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
+        self.endpoint_state
+            .keys()
+            .filter_map(|send_addr| match send_addr {
+                SendAddr::Udp(socket_addr) => Some(*socket_addr),
+                SendAddr::Derp(_) => None,
+            })
+    }
+
+    pub fn peer_addr(&self) -> PeerAddr {
+        let direct_addresses = self.direct_addresses().collect();
+        PeerAddr {
+            peer_id: self.public_key,
+            info: AddrInfo {
+                derp_region: self.derp_region,
+                direct_addresses,
+            },
+        }
+    }
 }
 
 /// A `SocketAddr` with an associated latency.
@@ -1048,7 +1048,10 @@ impl PeerMap {
         let peers = self
             .by_id
             .values()
-            .map(|endpoint| endpoint.addr_info())
+            .map(|endpoint| {
+                let PeerAddr { peer_id, info } = endpoint.peer_addr();
+                (peer_id, info)
+            })
             .collect();
 
         KnownPeers { peers }
@@ -1075,25 +1078,22 @@ impl PeerMap {
     pub fn add_known_addr(
         &mut self,
         peer_id: PublicKey,
-        addr_info: AddrInfo,
+        info: AddrInfo,
         msock_sender: mpsc::Sender<ActorMessage>,
     ) {
         if self.endpoint_for_node_key(&peer_id).is_none() {
-            info!(
-                peer = ?peer_id,
-                "inserting peer's endpoint in PeerMap"
-            );
+            info!(%peer_id, "inserting peer's endpoint in PeerMap");
             self.insert_endpoint(Options {
                 msock_sender,
                 public_key: peer_id,
-                derp_region: addr_info.derp_region,
+                derp_region: info.derp_region,
             });
         }
 
         if let Some(ep) = self.endpoint_for_node_key_mut(&peer_id) {
-            ep.update_from_node_addr(&addr_info);
+            ep.update_from_node_addr(&info);
             let id = ep.id;
-            for endpoint in &addr_info.endpoints {
+            for endpoint in &info.direct_addresses {
                 self.set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
             }
         }
@@ -1657,21 +1657,21 @@ mod tests {
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port).into()
         }
 
-        let endpoints_a = vec![addr(4000), addr(4001)];
-        let endpoints_b = vec![];
-        let endpoints_c = vec![addr(5000)];
+        let direct_addresses_a = vec![addr(4000), addr(4001)];
+        let direct_addresses_b = vec![];
+        let direct_addresses_c = vec![addr(5000)];
 
         let info_a = AddrInfo {
             derp_region: region_x,
-            endpoints: endpoints_a,
+            direct_addresses: direct_addresses_a,
         };
         let info_b = AddrInfo {
             derp_region: region_y,
-            endpoints: endpoints_b,
+            direct_addresses: direct_addresses_b,
         };
         let info_c = AddrInfo {
             derp_region: None,
-            endpoints: endpoints_c,
+            direct_addresses: direct_addresses_c,
         };
 
         peer_map.add_known_addr(peer_a, info_a, tx.clone());

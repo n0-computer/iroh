@@ -2287,9 +2287,10 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, peer: PublicKey, info: AddrInfo) {
+    fn add_known_addr(&mut self, peer_addr: PeerAddr) {
+        let PeerAddr { peer_id, info } = peer_addr;
         self.peer_map
-            .add_known_addr(peer, info, self.inner.actor_sender.clone())
+            .add_known_addr(peer_id, info, self.inner.actor_sender.clone())
     }
 
     /// Returns the current IPv4 listener's port number.
