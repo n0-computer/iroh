@@ -206,11 +206,11 @@ impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListTagsRequest;
+pub struct ListTagsRequest;
 
 /// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListTagsResponse {
+pub struct ListTagsResponse {
     /// Name of the tag
     pub name: Tag,
     /// Format of the data
@@ -219,23 +219,12 @@ pub struct BlobListTagsResponse {
     pub hash: Hash,
 }
 
-impl Msg<ProviderService> for BlobListTagsRequest {
+impl Msg<ProviderService> for ListTagsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for BlobListTagsRequest {
-    type Response = BlobListTagsResponse;
-}
-
-/// Delete a tag
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobDeleteTagRequest {
-    /// Name of the tag
-    pub name: Tag,
-}
-
-impl RpcMsg<ProviderService> for BlobDeleteTagRequest {
-    type Response = RpcResult<()>;
+impl ServerStreamingMsg<ProviderService> for ListTagsRequest {
+    type Response = ListTagsResponse;
 }
 
 /// Delete a blob
@@ -246,6 +235,17 @@ pub struct BlobDeleteBlobRequest {
 }
 
 impl RpcMsg<ProviderService> for BlobDeleteBlobRequest {
+    type Response = RpcResult<()>;
+}
+
+/// Delete a tag
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteTagRequest {
+    /// Name of the tag
+    pub name: Tag,
+}
+
+impl RpcMsg<ProviderService> for DeleteTagRequest {
     type Response = RpcResult<()>;
 }
 
@@ -739,10 +739,11 @@ pub enum ProviderRequest {
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
-    BlobListTags(BlobListTagsRequest),
-    BlobDeleteTag(BlobDeleteTagRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
+
+    DeleteTag(DeleteTagRequest),
+    ListTags(ListTagsRequest),
 
     DocInfo(DocInfoRequest),
     DocList(DocListRequest),
@@ -778,9 +779,10 @@ pub enum ProviderResponse {
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
-    BlobListTags(BlobListTagsResponse),
-    BlobDeleteTag(RpcResult<()>),
     BlobValidate(ValidateProgress),
+
+    ListTags(ListTagsResponse),
+    DeleteTag(RpcResult<()>),
 
     DocInfo(RpcResult<DocInfoResponse>),
     DocList(RpcResult<DocListResponse>),

@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
+use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use comfy_table::presets::NOTHING;
 use comfy_table::{Cell, Table};
@@ -313,6 +314,11 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
+    /// Manage a running Iroh node
+    Tag {
+        #[clap(subcommand)]
+        command: TagCommands,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -374,6 +380,42 @@ impl NodeCommands {
     }
 }
 
+#[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum TagCommands {
+    /// List all tags
+    List,
+    /// Delete a tag
+    Delete {
+        tag: String,
+        #[clap(long, default_value_t = false)]
+        hex: bool,
+    },
+}
+
+impl TagCommands {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+        match self {
+            Self::List => {
+                let mut response = iroh.tags.list().await?;
+                while let Some(res) = response.next().await {
+                    let res = res?;
+                    println!("{}: {} ({:?})", res.name, res.hash, res.format,);
+                }
+            }
+            Self::Delete { tag, hex } => {
+                let tag = if hex {
+                    Tag::from(Bytes::from(hex::decode(tag)?))
+                } else {
+                    Tag::from(tag)
+                };
+                iroh.tags.delete(tag).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl RpcCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
@@ -381,6 +423,7 @@ impl RpcCommands {
             Self::Blob { command } => command.run(iroh).await,
             Self::Doc { command } => command.run(iroh, env).await,
             Self::Author { command } => command.run(iroh, env).await,
+            Self::Tag { command } => command.run(iroh).await,
         }
     }
 }

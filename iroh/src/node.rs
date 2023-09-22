@@ -59,10 +59,10 @@ use tracing::{debug, error, info, trace, warn};
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobDeleteBlobRequest, BlobDeleteTagRequest, BlobDownloadRequest,
-    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
-    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobListTagsRequest,
-    BlobListTagsResponse, BlobReadResponse, BlobValidateRequest, BytesGetRequest, DownloadLocation,
+    BlobAddPathRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
+    BlobListRequest, BlobListResponse, BlobReadResponse, BlobValidateRequest, BytesGetRequest,
+    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
@@ -961,7 +961,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    async fn blob_delete_tag(self, msg: BlobDeleteTagRequest) -> RpcResult<()> {
+    async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
         self.inner.db.set_tag(msg.name, None).await?;
         Ok(())
     }
@@ -973,8 +973,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
 
     fn blob_list_tags(
         self,
-        _msg: BlobListTagsRequest,
-    ) -> impl Stream<Item = BlobListTagsResponse> + Send + 'static {
+        _msg: ListTagsRequest,
+    ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
         tracing::info!("blob_list_tags");
         futures::stream::iter(
             self.inner
@@ -982,7 +982,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 .tags()
                 .map(|(name, HashAndFormat(hash, format))| {
                     tracing::info!("{:?} {} {:?}", name, hash, format);
-                    BlobListTagsResponse { name, hash, format }
+                    ListTagsResponse { name, hash, format }
                 }),
         )
     }
@@ -1442,11 +1442,11 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_collections)
                     .await
             }
-            BlobListTags(msg) => {
+            ListTags(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_tags)
                     .await
             }
-            BlobDeleteTag(msg) => chan.rpc(msg, handler, RpcHandler::blob_delete_tag).await,
+            DeleteTag(msg) => chan.rpc(msg, handler, RpcHandler::blob_delete_tag).await,
             BlobDeleteBlob(msg) => chan.rpc(msg, handler, RpcHandler::blob_delete_blob).await,
             BlobAddPath(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_add_from_path)

@@ -12,8 +12,6 @@ pub enum Commands {
     IncompleteBlobs,
     /// List the available collections on the running provider.
     Collections,
-    /// List the available tags on the running provider.
-    Tags,
 }
 
 impl Commands {
@@ -51,13 +49,6 @@ impl Commands {
                         },
                         HumanBytes(total_blobs_size),
                     );
-                }
-            }
-            Commands::Tags => {
-                let mut response = iroh.blobs.list_tags().await?;
-                while let Some(res) = response.next().await {
-                    let res = res?;
-                    println!("{}: {} ({:?})", res.name, res.hash, res.format,);
                 }
             }
         }
