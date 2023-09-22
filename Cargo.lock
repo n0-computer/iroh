@@ -1969,6 +1969,7 @@ dependencies = [
  "quic-rpc",
  "quinn",
  "rand",
+ "rand_chacha",
  "range-collections",
  "regex",
  "rustyline",
