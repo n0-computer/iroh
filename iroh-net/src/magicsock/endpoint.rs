@@ -985,6 +985,7 @@ impl Endpoint {
         }
     }
 
+    /// Get the direct addresses for this endpoint.
     pub fn direct_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
         self.endpoint_state
             .keys()
@@ -994,6 +995,7 @@ impl Endpoint {
             })
     }
 
+    /// Get the adressing information of this endpoint.
     pub fn peer_addr(&self) -> PeerAddr {
         let direct_addresses = self.direct_addresses().collect();
         PeerAddr {
@@ -1040,12 +1042,9 @@ pub(super) struct PeerMap {
     next_id: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize, derive_more::Deref, PartialEq, Eq)]
-pub(super) struct KnownPeers {
-    peers: HashMap<PublicKey, AddrInfo>,
-}
-
 impl PeerMap {
+    /// Get the known peer addresses stored in the map. Peers with empty addressing information are
+    /// filtered out.
     pub fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
         self.by_id.values().filter_map(|endpoint| {
             let peer_addr = endpoint.peer_addr();
@@ -1053,8 +1052,9 @@ impl PeerMap {
         })
     }
 
+    /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(
-        path: &Path,
+        path: impl AsRef<Path>,
         msock_sender: mpsc::Sender<ActorMessage>,
     ) -> anyhow::Result<Self> {
         let mut me = PeerMap::default();
@@ -1069,6 +1069,7 @@ impl PeerMap {
         Ok(me)
     }
 
+    /// Add the contact information for a peer.
     pub fn add_peer_addr(&mut self, peer_addr: PeerAddr, msock_sender: mpsc::Sender<ActorMessage>) {
         let PeerAddr { peer_id, info } = peer_addr;
         if self.endpoint_for_node_key(&peer_id).is_none() {
