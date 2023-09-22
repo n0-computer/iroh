@@ -345,6 +345,7 @@ async fn sync_big() -> Result<()> {
     // let n_entries_phase2 = 5;
 
     let nodes = spawn_nodes(rt, n_nodes, &mut rng).await?;
+    let peer_ids = nodes.iter().map(|node| node.peer_id()).collect::<Vec<_>>();
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
     let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
 
@@ -391,7 +392,7 @@ async fn sync_big() -> Result<()> {
         info!(
             "peer {i} {:?}: join {:?}",
             nodes[i].peer_id(),
-            peer0.peer_id()
+            peer0.peer_id
         );
         let mut events = doc.subscribe().await?;
         doc.start_sync(vec![peer0.clone()]).await?;
@@ -411,12 +412,7 @@ async fn sync_big() -> Result<()> {
     info!("sleep 3s");
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    info!("validate all peers");
-    // assert that everyone has everything...
-    for (_i, doc) in docs.iter().enumerate() {
-        let entries = get_all(doc).await?;
-        assert_eq!(entries, expected, "phase1 post-sync correct");
-    }
+    assert_all_docs(&docs, &peer_ids, &expected, "after initial sync").await;
 
     // add entries while everyone is live.
     // create initial data on each node
@@ -431,11 +427,27 @@ async fn sync_big() -> Result<()> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // assert that everyone has everything...
-    info!("validate all peers");
-    for (_i, doc) in docs.iter().enumerate() {
-        let entries = get_all(doc).await?;
-        assert_eq!(entries, expected, "phase1 post-sync correct");
-    }
+    assert_all_docs(&docs, &peer_ids, &expected, "after gossip").await;
+
+    info!(
+        "peer1 {:?} goes offline and adds a new entry",
+        nodes[1].peer_id()
+    );
+    docs[1].stop_sync().await?;
+    publish(&[docs[1].clone()], &mut expected, 1, |i, j| {
+        (authors[1], format!("change/{j}"), format!("change:{i}:{j}"))
+    })
+    .await?;
+    info!(
+        "peer1 {:?} goes online again and joins peer0 {:?}",
+        nodes[1].peer_id(),
+        nodes[0].peer_id(),
+    );
+    docs[1].start_sync(vec![peer0.clone()]).await?;
+
+    info!("sleep 3s");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_all_docs(&docs, &peer_ids, &expected, "after peer1 published").await;
 
     info!("shutdown");
     for node in nodes {
@@ -443,6 +455,28 @@ async fn sync_big() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn assert_all_docs(
+    docs: &[Doc],
+    peer_ids: &[PublicKey],
+    expected: &Vec<ExpectedEntry>,
+    label: &str,
+) {
+    info!("validate all peers: {label}");
+    for (i, doc) in docs.iter().enumerate() {
+        let entries = get_all(doc)
+            .await
+            .expect(&format!("failed to get entries for peer {:?}", peer_ids[i]));
+        assert_eq!(
+            &entries,
+            expected,
+            "{label}: peer {i} {:?} failed (have {} but expected {})",
+            peer_ids[i],
+            entries.len(),
+            expected.len()
+        );
+    }
 }
 
 #[derive(Debug, Ord, Eq, PartialEq, PartialOrd, Clone)]
