@@ -2,7 +2,10 @@
 
 use anyhow::anyhow;
 use futures::{FutureExt, Stream};
-use iroh_bytes::{baomap::Store as BaoStore, util::RpcError};
+use iroh_bytes::{
+    baomap::Store as BaoStore,
+    util::{BlobFormat, RpcError},
+};
 use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
 use rand::rngs::OsRng;
@@ -17,7 +20,7 @@ use crate::{
         DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
         DocTicket, RpcResult, ShareMode,
     },
-    sync_engine::{KeepCallback, LiveStatus, PeerSource, SyncEngine},
+    sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
@@ -86,6 +89,8 @@ impl<S: Store> SyncEngine<S> {
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
+        self.start_sync(req.doc_id, vec![]).await?;
+        let me = self.endpoint.my_addr().await?;
         let replica = self.get_replica(&req.doc_id)?;
         let key = match req.mode {
             ShareMode::Read => {
@@ -95,8 +100,6 @@ impl<S: Store> SyncEngine<S> {
             }
             ShareMode::Write => replica.secret_key(),
         };
-        let me = PeerSource::from_endpoint(&self.endpoint).await?;
-        self.start_sync(replica.namespace(), vec![]).await?;
         Ok(DocShareResponse(DocTicket {
             key,
             peers: vec![me],
@@ -150,15 +153,13 @@ impl<S: Store> SyncEngine<S> {
         req: DocStartSyncRequest,
     ) -> RpcResult<DocStartSyncResponse> {
         let DocStartSyncRequest { doc_id, peers } = req;
-        let replica = self.get_replica(&doc_id)?;
-        self.start_sync(replica.namespace(), peers).await?;
+        self.start_sync(doc_id, peers).await?;
         Ok(DocStartSyncResponse {})
     }
 
     pub async fn doc_stop_sync(&self, req: DocStopSyncRequest) -> RpcResult<DocStopSyncResponse> {
         let DocStopSyncRequest { doc_id } = req;
-        let replica = self.get_replica(&doc_id)?;
-        self.stop_sync(replica.namespace()).await?;
+        self.stop_sync(doc_id).await?;
         Ok(DocStopSyncResponse {})
     }
 
@@ -176,9 +177,11 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
         let len = value.len();
-        let hash = bao_store.import_bytes(value.into()).await?;
+        let tag = bao_store
+            .import_bytes(value.into(), BlobFormat::RAW)
+            .await?;
         replica
-            .insert(&key, &author, hash, len as u64)
+            .insert(&key, &author, *tag.hash(), len as u64)
             .map_err(anyhow::Error::from)?;
         let entry = self
             .store

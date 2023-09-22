@@ -2,6 +2,7 @@
 //!
 //! Main entry point is [Store].
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io;
 use std::io::Write;
 use std::num::TryFromIntError;
@@ -9,7 +10,9 @@ use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::SystemTime;
 
+use super::flatten_to_io;
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
@@ -28,20 +31,23 @@ use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
+use iroh_bytes::baomap::LivenessTracker;
 use iroh_bytes::baomap::PartialMap;
 use iroh_bytes::baomap::PartialMapEntry;
+use iroh_bytes::baomap::TempTag;
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
 use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::IgnoreProgressSender;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::util::runtime;
+use iroh_bytes::util::BlobFormat;
+use iroh_bytes::util::HashAndFormat;
+use iroh_bytes::util::Tag;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
 use tokio::sync::mpsc;
-
-use super::flatten_to_io;
 
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
@@ -197,6 +203,9 @@ struct Inner {
 struct State {
     complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
+    tags: BTreeMap<Tag, HashAndFormat>,
+    temp: BTreeMap<HashAndFormat, u64>,
+    live: BTreeSet<Hash>,
 }
 
 /// The [MapEntry] implementation for [Store].
@@ -335,8 +344,30 @@ impl ReadableStore for Store {
         )
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
+        let tags = self
+            .0
+            .state
+            .read()
+            .unwrap()
+            .tags
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect::<Vec<_>>();
+        Box::new(tags.into_iter())
+    }
+
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
+        let tags = self
+            .0
+            .state
+            .read()
+            .unwrap()
+            .temp
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        Box::new(tags.into_iter())
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -438,8 +469,9 @@ impl baomap::Store for Store {
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let this = self.clone();
         self.0
             .rt
@@ -458,21 +490,86 @@ impl baomap::Store for Store {
                     size: bytes.len() as u64,
                 })?;
                 let size = bytes.len() as u64;
-                let hash = this.import_bytes_sync(bytes, progress)?;
-                Ok((hash, size))
+                let tag = this.import_bytes_sync(bytes, format, progress)?;
+                Ok((tag, size))
             })
             .map(flatten_to_io)
             .boxed()
     }
 
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let this = self.clone();
         self.0
             .rt
             .main()
-            .spawn_blocking(move || this.import_bytes_sync(bytes, IgnoreProgressSender::default()))
+            .spawn_blocking(move || {
+                this.import_bytes_sync(bytes, format, IgnoreProgressSender::default())
+            })
             .map(flatten_to_io)
             .boxed()
+    }
+
+    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+        let mut state = self.0.state.write().unwrap();
+        if let Some(value) = value {
+            state.tags.insert(name, value);
+        } else {
+            state.tags.remove(&name);
+        }
+        futures::future::ok(()).boxed()
+    }
+
+    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+        let mut state = self.0.state.write().unwrap();
+        let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
+        state.tags.insert(tag.clone(), hash);
+        futures::future::ok(tag).boxed()
+    }
+
+    fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
+        TempTag::new(tag, Some(self.0.clone()))
+    }
+
+    fn clear_live(&self) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.clear();
+    }
+
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.extend(live);
+    }
+
+    fn is_live(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        state.live.contains(hash)
+    }
+
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        let mut state = self.0.state.write().unwrap();
+        state.complete.remove(hash);
+        state.partial.remove(hash);
+        futures::future::ok(()).boxed()
+    }
+}
+
+impl LivenessTracker for Inner {
+    fn on_clone(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tagging: {:?}", inner);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*inner).or_default();
+        // panic if we overflow an u64
+        *entry = entry.checked_add(1).unwrap();
+    }
+
+    fn on_drop(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tag drop: {:?}", inner);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*inner).or_default();
+        *entry = entry.saturating_sub(1);
+        if *entry == 0 {
+            state.temp.remove(inner);
+        }
     }
 }
 
@@ -488,8 +585,9 @@ impl Store {
     fn import_bytes_sync(
         &self,
         bytes: Bytes,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<Hash> {
+    ) -> io::Result<TempTag> {
         let size = bytes.len() as u64;
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
@@ -504,13 +602,16 @@ impl Store {
             tree,
             data: outboard.into(),
         };
+        let hash = hash.into();
+        use baomap::Store;
+        let tag = self.temp_tag(HashAndFormat(hash, format));
         self.0
             .state
             .write()
             .unwrap()
             .complete
-            .insert(hash.into(), (bytes, outboard));
-        Ok(hash.into())
+            .insert(hash, (bytes, outboard));
+        Ok(tag)
     }
 
     fn export_sync(

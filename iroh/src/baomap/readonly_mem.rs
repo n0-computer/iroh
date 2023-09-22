@@ -24,9 +24,12 @@ use futures::{
 use iroh_bytes::{
     baomap::{
         self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
-        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, ValidateProgress,
+        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
     },
-    util::progress::{IdGenerator, ProgressSender},
+    util::{
+        progress::{IdGenerator, ProgressSender},
+        BlobFormat, HashAndFormat, Tag,
+    },
     Hash, IROH_BLOCK_SIZE,
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
@@ -230,7 +233,11 @@ impl ReadableStore for Store {
         Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
+
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
@@ -305,15 +312,40 @@ impl baomap::Store for Store {
         &self,
         data: PathBuf,
         mode: ImportMode,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
-        let _ = (data, mode, progress);
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+        let _ = (data, mode, progress, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
     /// import a byte slice
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
-        let _ = bytes;
+    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
+        let _ = (bytes, format);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn clear_live(&self) {}
+
+    fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn create_tag(&self, _hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
+        TempTag::new(inner, None)
+    }
+
+    fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
+
+    fn delete(&self, _hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn is_live(&self, _hash: &Hash) -> bool {
+        true
     }
 }

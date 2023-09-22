@@ -1,3 +1,10 @@
+//! This example shows the shortest path to working with documents in iroh. This example creates a
+//! document and sets an entry with key: "hello", value: "world". The document is completely local.
+//!
+//! The iroh node that creates the document is backed by an in-memory database and a random peer ID
+//!
+//! run this example from the project root:
+//!     $ cargo run --example client
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_bytes::util::runtime;
@@ -14,15 +21,15 @@ async fn main() -> anyhow::Result<()> {
         .spawn()
         .await?;
     let client = node.client();
-    let doc = client.create_doc().await?;
-    let author = client.create_author().await?;
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;
     let mut stream = doc.get_many(GetFilter::All).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        let content = doc.get_content_bytes(entry.content_hash()).await?;
+        let content = doc.read_to_bytes(&entry).await?;
         println!("  content {}", String::from_utf8(content.to_vec())?)
     }
 

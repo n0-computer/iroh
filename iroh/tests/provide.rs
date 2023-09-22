@@ -20,7 +20,7 @@ use iroh::{
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
     key::{PublicKey, SecretKey},
-    MagicEndpoint,
+    MagicEndpoint, PeerAddr,
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
@@ -146,11 +146,10 @@ async fn empty_files() -> Result<()> {
 /// Create new get options with the given peer id and addresses, using a
 /// randomly generated secret key.
 fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+    let peer = iroh_net::PeerAddr::from_parts(peer_id, Some(1), addrs);
     iroh::dial::Options {
         secret_key: SecretKey::generate(),
-        peer_id,
-        addrs,
-        derp_region: Some(1),
+        peer,
         keylog: false,
         derp_map: Some(iroh_net::defaults::default_derp_map()),
     }
@@ -924,8 +923,12 @@ async fn test_token_passthrough() -> Result<()> {
             .keylog(true)
             .bind(0)
             .await?;
+
+        let peer_addr = PeerAddr::new(peer_id)
+            .with_derp_region(1)
+            .with_direct_addresses(addrs.clone());
         endpoint
-            .connect(peer_id, &iroh_bytes::protocol::ALPN, Some(1), &addrs)
+            .connect(peer_addr, &iroh_bytes::protocol::ALPN)
             .await
             .context("failed to connect to provider")?;
         let request = GetRequest::all(hash).with_token(token).into();

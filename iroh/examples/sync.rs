@@ -3,6 +3,10 @@
 //! By default a new peer id is created when starting the example. To reuse your identity,
 //! set the `--secret-key` CLI flag with the secret key printed on a previous invocation.
 //!
+//! Run with:
+//!   $ cargo run --example sync --features=example-sync
+//! Then follow the instructions printed
+//!
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
@@ -19,12 +23,13 @@ use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
     downloader::Downloader,
-    sync_engine::{LiveEvent, PeerSource, SyncEngine, SYNC_ALPN},
+    sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
+    util::BlobFormat,
 };
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
@@ -33,7 +38,7 @@ use iroh_gossip::{
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     defaults::default_derp_map, derp::DerpMap, key::SecretKey, magic_endpoint::get_alpn,
-    MagicEndpoint,
+    MagicEndpoint, PeerAddr,
 };
 use iroh_sync::{
     store::{self, GetFilter, Store as _},
@@ -134,7 +139,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
     // build our magic endpoint and the gossip protocol
-    let (endpoint, gossip, initial_endpoints) = {
+    let (endpoint, gossip) = {
         // init a cell that will hold our gossip handle to be used in endpoint callbacks
         let gossip_cell: OnceCell<Gossip> = OnceCell::new();
         // init a channel that will emit once the initial endpoints of our local node are discovered
@@ -173,7 +178,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
         // pass our initial endpoints to the gossip protocol so that they can be announced to peers
         gossip.update_endpoints(&initial_endpoints)?;
-        (endpoint, gossip, initial_endpoints)
+        (endpoint, gossip)
     };
     println!("> our peer id: {}", endpoint.peer_id());
 
@@ -195,13 +200,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let our_ticket = {
         // add our local endpoints to the ticket and print it for others to join
-        let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
         let mut peers = peers.clone();
-        peers.push(PeerSource {
-            peer_id: endpoint.peer_id(),
-            addrs,
-            derp_region: endpoint.my_derp().await,
-        });
+        peers.push(endpoint.my_addr().await?);
         Ticket { peers, topic }
     };
     println!("> ticket to join us: {our_ticket}");
@@ -228,7 +228,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // create a bao store for the iroh-bytes blobs
     let blob_path = storage_path.join("blobs");
     std::fs::create_dir_all(&blob_path)?;
-    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
+    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
     let collection_parser = iroh::collection::IrohCollectionParser;
 
@@ -248,8 +248,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // into to the connection handler task for incoming connections.
     let state = Arc::new(State {
         gossip: gossip.clone(),
-        docs: docs.clone(),
         bytes: IrohBytesHandlers::new(rt.clone(), db.clone()),
+        sync: live_sync.clone(),
     });
 
     // spawn our endpoint loop that forwards incoming connections
@@ -285,13 +285,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
             let matcher = watch.lock().await;
             if let Some(matcher) = &*matcher {
                 match event.event {
-                    LiveEvent::ContentReady { .. } => {}
+                    LiveEvent::ContentReady { .. } | LiveEvent::SyncFinished { .. } => {}
                     LiveEvent::InsertLocal { entry } | LiveEvent::InsertRemote { entry, .. } => {
                         let key = entry.id().key();
                         if key.starts_with(matcher.as_bytes()) {
                             println!("change: {}", fmt_entry(&entry));
                         }
                     }
+                    _ => {}
                 }
             }
         }
@@ -362,8 +363,9 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let hash = self.db.import_bytes(value.into()).await?;
-                self.doc.insert(key, &self.author, hash, len as u64)?;
+                let tag = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                self.doc
+                    .insert(key, &self.author, *tag.hash(), len as u64)?;
             }
             Cmd::Get {
                 key,
@@ -457,8 +459,9 @@ impl ReplState {
                                         String::from_utf8(bytes.clone()).unwrap().into_bytes();
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let hash = db.import_bytes(value.into()).await?;
-                                    doc.insert(key, &author, hash, len as u64)?;
+                                    let tag =
+                                        db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                                    doc.insert(key, &author, *tag.hash(), len as u64)?;
                                 }
                                 Ok(count)
                             });
@@ -512,14 +515,16 @@ impl ReplState {
         match cmd {
             FsCmd::ImportFile { file_path, key } => {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-                let (hash, len) = self
+                let (tag, len) = self
                     .db
                     .import(
                         file_path.clone(),
                         ImportMode::Copy,
+                        BlobFormat::RAW,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
+                let hash = *tag.hash();
                 self.doc.insert(key, &self.author, hash, len)?;
                 println!(
                     "> imported {file_path:?}: {} ({})",
@@ -546,14 +551,16 @@ impl ReplState {
                             continue;
                         }
                         let key = format!("{key_prefix}/{relative}");
-                        let (hash, len) = self
+                        let (tag, len) = self
                             .db
                             .import(
                                 file.path().into(),
                                 ImportMode::Copy,
+                                BlobFormat::RAW,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;
+                        let hash = *tag.hash();
                         self.doc.insert(key, &self.author, hash, len)?;
                         println!(
                             "> imported {relative}: {} ({})",
@@ -765,13 +772,16 @@ impl FromStr for Cmd {
 }
 
 #[derive(Debug)]
-struct State {
+struct State<S: store::Store> {
     gossip: Gossip,
-    docs: iroh_sync::store::fs::Store,
     bytes: IrohBytesHandlers,
+    sync: SyncEngine<S>,
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, state: Arc<State>) -> anyhow::Result<()> {
+async fn endpoint_loop<S: store::Store>(
+    endpoint: MagicEndpoint,
+    state: Arc<State<S>>,
+) -> anyhow::Result<()> {
     while let Some(conn) = endpoint.accept().await {
         let state = state.clone();
         tokio::spawn(async move {
@@ -783,12 +793,15 @@ async fn endpoint_loop(endpoint: MagicEndpoint, state: Arc<State>) -> anyhow::Re
     Ok(())
 }
 
-async fn handle_connection(mut conn: quinn::Connecting, state: Arc<State>) -> anyhow::Result<()> {
+async fn handle_connection<S: store::Store>(
+    mut conn: quinn::Connecting,
+    state: Arc<State<S>>,
+) -> anyhow::Result<()> {
     let alpn = get_alpn(&mut conn).await?;
     println!("> incoming connection with alpn {alpn}");
     match alpn.as_bytes() {
         GOSSIP_ALPN => state.gossip.handle_connection(conn.await?).await,
-        SYNC_ALPN => iroh_sync::net::handle_connection(conn, state.docs.clone()).await,
+        SYNC_ALPN => state.sync.handle_connection(conn).await,
         alpn if alpn == iroh_bytes::protocol::ALPN => state.bytes.handle_connection(conn).await,
         _ => bail!("ignoring connection: unsupported ALPN protocol"),
     }
@@ -850,7 +863,7 @@ fn get_stats() {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<PeerSource>,
+    peers: Vec<PeerAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.

@@ -18,32 +18,97 @@ use crate::{
 
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
 
-/// Addressing information to connect to a peer.
-#[derive(Debug, Serialize, Deserialize, Eq)]
-pub struct AddrInfo {
-    /// The node's home DERP region.
-    pub derp_region: Option<u16>,
-    /// Socket addresses where this node might be reached directly.
-    pub endpoints: Vec<SocketAddr>,
+/// A peer and it's addressing information.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerAddr {
+    /// The node's public key.
+    pub peer_id: PublicKey,
+    /// Addressing information to connect to [`Self::peer_id`].
+    pub info: AddrInfo,
 }
 
-impl PartialEq for AddrInfo {
-    fn eq(&self, other: &Self) -> bool {
-        if self.derp_region != other.derp_region {
-            return false;
+impl PeerAddr {
+    /// Create a new [`PeerAddr`] with empty [`AddrInfo`].
+    pub fn new(peer_id: PublicKey) -> Self {
+        PeerAddr {
+            peer_id,
+            info: Default::default(),
         }
-        if self.endpoints.len() != other.endpoints.len() {
-            return false;
-        }
-        let mut self_eps = self.endpoints.clone();
-        self_eps.sort();
-        let mut others_eps = self.endpoints.clone();
-        others_eps.sort();
-        self_eps == others_eps
+    }
+
+    /// Add a derp region to the peer's [`AddrInfo`].
+    pub fn with_derp_region(mut self, derp_region: u16) -> Self {
+        self.info.derp_region = Some(derp_region);
+        self
+    }
+
+    /// Add the given direct addresses to the peer's [`AddrInfo`].
+    pub fn with_direct_addresses(
+        mut self,
+        addresses: impl IntoIterator<Item = SocketAddr>,
+    ) -> Self {
+        self.info.direct_addresses = addresses.into_iter().collect();
+        self
+    }
+
+    /// Get the direct addresses of this peer.
+    pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.info.direct_addresses.iter()
+    }
+
+    /// Get the derp region of this peer.
+    pub fn derp_region(&self) -> Option<u16> {
+        self.info.derp_region
     }
 }
 
-/// Builder for [`MagicEndpoint`]
+impl From<(PublicKey, Option<u16>, &[SocketAddr])> for PeerAddr {
+    fn from(value: (PublicKey, Option<u16>, &[SocketAddr])) -> Self {
+        let (peer_id, derp_region, direct_addresses_iter) = value;
+        PeerAddr {
+            peer_id,
+            info: AddrInfo {
+                derp_region,
+                direct_addresses: direct_addresses_iter.to_vec(),
+            },
+        }
+    }
+}
+
+/// Addressing information to connect to a peer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AddrInfo {
+    /// The peer's home DERP region.
+    pub derp_region: Option<u16>,
+    /// Socket addresses where the peer might be reached directly.
+    pub direct_addresses: Vec<SocketAddr>,
+}
+
+impl AddrInfo {
+    /// Return whether this addressing information is empty.
+    pub fn is_empty(&self) -> bool {
+        self.derp_region.is_none() && self.direct_addresses.is_empty()
+    }
+}
+
+impl PeerAddr {
+    /// Create a new [`PeerAddr`] from its parts.
+    pub fn from_parts(
+        peer_id: PublicKey,
+        derp_region: Option<u16>,
+        direct_addresses: Vec<SocketAddr>,
+    ) -> Self {
+        Self {
+            peer_id,
+            info: AddrInfo {
+                derp_region,
+                direct_addresses,
+            },
+        }
+    }
+}
+
+/// Builder for [MagicEndpoint]
 #[derive(Debug)]
 pub struct MagicEndpointBuilder {
     secret_key: Option<SecretKey>,
@@ -311,6 +376,15 @@ impl MagicEndpoint {
         self.msock.my_derp().await
     }
 
+    /// Get the [`PeerAddr`] for this endpoint.
+    // TODO: We can save an async call by exposing this on the msock.
+    pub async fn my_addr(&self) -> Result<PeerAddr> {
+        let addrs = self.local_endpoints().await?;
+        let derp = self.my_derp().await;
+        let addrs = addrs.into_iter().map(|x| x.addr).collect();
+        Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
+    }
+
     /// Get information on all the nodes we have connection information about.
     ///
     /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
@@ -318,7 +392,7 @@ impl MagicEndpoint {
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
-    /// to the internal addressbook through [`MagicEndpoint::add_known_addrs`]), so these connections
+    /// to the internal addressbook through [`MagicEndpoint::add_peer_addr`]), so these connections
     /// are not necessarily active connections.
     pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
         self.msock.tracked_endpoints().await
@@ -346,26 +420,20 @@ impl MagicEndpoint {
     /// If the `derp_region` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
     ///
     /// If no UDP addresses and no DERP region is provided, it will error.
-    pub async fn connect(
-        &self,
-        node_id: PublicKey,
-        alpn: &[u8],
-        derp_region: Option<u16>,
-        known_addrs: &[SocketAddr],
-    ) -> Result<quinn::Connection> {
-        self.add_known_addrs(node_id, derp_region, known_addrs)
-            .await?;
+    pub async fn connect(&self, peer_addr: PeerAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+        self.add_peer_addr(peer_addr.clone()).await?;
 
-        let addr = self.msock.get_mapping_addr(&node_id).await;
+        let PeerAddr { peer_id, info } = peer_addr;
+        let addr = self.msock.get_mapping_addr(&peer_id).await;
         let Some(addr) = addr else {
-            return Err(match (known_addrs.is_empty(), derp_region) {
+            return Err(match (info.direct_addresses.is_empty(), info.derp_region) {
                 (true, None) => {
-                    anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {node_id:?}")
+                    anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}")
                 }
                 (true, Some(region)) if !self.msock.has_derp_region(region).await => {
-                    anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}. Unable to dial peer {node_id:?}")
+                    anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}. Unable to dial peer {peer_id:?}")
                 }
-                _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {node_id:?}")
+                _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {peer_id:?}")
             });
         };
 
@@ -373,7 +441,7 @@ impl MagicEndpoint {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
                 &self.secret_key,
-                Some(node_id),
+                Some(peer_id),
                 alpn_protocols,
                 self.keylog,
             )?;
@@ -386,7 +454,7 @@ impl MagicEndpoint {
 
         debug!(
             "connecting to {}: (via {} - {:?})",
-            node_id, addr, known_addrs
+            peer_id, addr, info.direct_addresses
         );
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
@@ -407,17 +475,8 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
-    pub async fn add_known_addrs(
-        &self,
-        peer: PublicKey,
-        derp_region: Option<u16>,
-        endpoints: &[SocketAddr],
-    ) -> Result<()> {
-        let info = AddrInfo {
-            derp_region,
-            endpoints: endpoints.to_vec(),
-        };
-        self.msock.add_known_addr(peer, info).await?;
+    pub async fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
+        self.msock.add_peer_addr(peer_addr).await?;
         Ok(())
     }
 
@@ -437,21 +496,6 @@ impl MagicEndpoint {
         // TODO: Now wait-idle on msock!
         self.msock.close().await?;
         Ok(())
-    }
-
-    /// Get addressing information of this [`MagicEndpoint`].
-    pub async fn my_addr_info(&self) -> Result<AddrInfo> {
-        let endpoints = self
-            .local_endpoints()
-            .await?
-            .iter()
-            .map(|ep| ep.addr)
-            .collect();
-        let derp_region = self.my_derp().await;
-        Ok(AddrInfo {
-            derp_region,
-            endpoints,
-        })
     }
 
     #[cfg(test)]
@@ -572,10 +616,8 @@ mod tests {
                     .await
                     .unwrap();
                 info!("client connecting");
-                let conn = ep
-                    .connect(server_peer_id, TEST_ALPN, region_id, &[])
-                    .await
-                    .unwrap();
+                let peer_addr = PeerAddr::new(server_peer_id).with_derp_region(region_id);
+                let conn = ep.connect(peer_addr, TEST_ALPN).await.unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 
                 // First write is accepted by server.  We need this bit of synchronisation

@@ -2,23 +2,22 @@ use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
+use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use comfy_table::presets::NOTHING;
 use comfy_table::{Cell, Table};
-use futures::stream::BoxStream;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
-use iroh::client::quic::{Iroh, RpcClient};
+use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::util::RpcError;
+use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
+use iroh_net::PeerAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
 };
-use quic_rpc::client::StreamingResponseItemError;
-use quic_rpc::transport::ConnectionErrors;
 
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
@@ -31,6 +30,7 @@ const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
 pub mod add;
+pub mod delete;
 pub mod doctor;
 pub mod get;
 pub mod list;
@@ -82,14 +82,14 @@ impl Cli {
     pub async fn run(self, rt: &runtime::Handle) -> Result<()> {
         match self.command {
             Commands::Console => {
-                let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
+                let iroh = iroh::client::quic::connect(self.rpc_args.rpc_port).await?;
                 let env = ConsoleEnv::for_console()?;
-                repl::run(client, env).await
+                repl::run(&iroh, &env).await
             }
             Commands::Rpc(command) => {
-                let client = iroh::client::quic::connect_raw(self.rpc_args.rpc_port).await?;
+                let iroh = iroh::client::quic::connect(self.rpc_args.rpc_port).await?;
                 let env = ConsoleEnv::for_cli()?;
-                command.run(client, env).await
+                command.run(&iroh, &env).await
             }
             Commands::Full(command) => {
                 let FullArgs {
@@ -154,6 +154,9 @@ pub enum FullCommands {
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Fetch data from a provider
     ///
@@ -213,16 +216,22 @@ impl FullCommands {
                 addr,
                 rpc_port,
                 request_token,
+                tag,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
                     Some(RequestTokenOptions::Token(token)) => Some(token),
                     None => None,
                 };
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
                 self::provide::run(
                     rt,
                     path,
                     in_place,
+                    tag,
                     ProvideOptions {
                         addr,
                         rpc_port,
@@ -256,10 +265,8 @@ impl FullCommands {
                         rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
-                            addrs,
-                            peer_id: peer,
+                            peer: PeerAddr::from_parts(peer, region, addrs),
                             keylog,
-                            derp_region: region,
                             derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
                         },
@@ -307,6 +314,11 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
+    /// Manage a running Iroh node
+    Tag {
+        #[clap(subcommand)]
+        command: TagCommands,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -332,28 +344,25 @@ pub enum NodeCommands {
 }
 
 impl NodeCommands {
-    pub async fn run(self, client: RpcClient) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
             Self::Connections => {
-                let connections = client.server_streaming(ConnectionsRequest).await?;
+                let connections = iroh.node.connections().await?;
                 println!("{}", fmt_connections(connections).await);
             }
             Self::Connection { node_id } => {
-                let conn_info = client
-                    .rpc(ConnectionInfoRequest { node_id })
-                    .await??
-                    .conn_info;
+                let conn_info = iroh.node.connection_info(node_id).await?;
                 match conn_info {
                     Some(info) => println!("{}", fmt_connection(info)),
                     None => println!("Not Found"),
                 }
             }
             Self::Shutdown { force } => {
-                client.rpc(ShutdownRequest { force }).await?;
+                iroh.node.shutdown(force).await?;
             }
             Self::Stats => {
-                let response = client.rpc(StatsGetRequest {}).await??;
-                for (name, details) in response.stats.iter() {
+                let stats = iroh.node.stats().await?;
+                for (name, details) in stats.iter() {
                     println!(
                         "{:23} : {:>6}    ({})",
                         name, details.value, details.description
@@ -361,10 +370,46 @@ impl NodeCommands {
                 }
             }
             Self::Status => {
-                let response = client.rpc(StatusRequest).await?;
-
+                let response = iroh.node.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("PeerID: {}", response.peer_id);
+                println!("Node public key: {}", response.node_id);
+                println!("Version: {}", response.version);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum TagCommands {
+    /// List all tags
+    List,
+    /// Delete a tag
+    Delete {
+        tag: String,
+        #[clap(long, default_value_t = false)]
+        hex: bool,
+    },
+}
+
+impl TagCommands {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+        match self {
+            Self::List => {
+                let mut response = iroh.tags.list().await?;
+                while let Some(res) = response.next().await {
+                    let res = res?;
+                    println!("{}: {} ({:?})", res.name, res.hash, res.format,);
+                }
+            }
+            Self::Delete { tag, hex } => {
+                let tag = if hex {
+                    Tag::from(Bytes::from(hex::decode(tag)?))
+                } else {
+                    Tag::from(tag)
+                };
+                iroh.tags.delete(tag).await?;
             }
         }
         Ok(())
@@ -372,13 +417,13 @@ impl NodeCommands {
 }
 
 impl RpcCommands {
-    pub async fn run(self, client: RpcClient, env: ConsoleEnv) -> Result<()> {
-        let iroh = Iroh::new(client.clone());
+    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
-            Self::Node { command } => command.run(client).await,
-            Self::Blob { command } => command.run(client).await,
-            Self::Doc { command } => command.run(&iroh, env).await,
-            Self::Author { command } => command.run(&iroh, env).await,
+            Self::Node { command } => command.run(iroh).await,
+            Self::Blob { command } => command.run(iroh).await,
+            Self::Doc { command } => command.run(iroh, env).await,
+            Self::Author { command } => command.run(iroh, env).await,
+            Self::Tag { command } => command.run(iroh).await,
         }
     }
 }
@@ -396,12 +441,15 @@ pub enum BlobCommands {
         /// will not change.
         #[clap(long, default_value_t = false)]
         in_place: bool,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Download data to the running provider's database and provide it.
     ///
     /// In addition to downloading the data, you can also specify an optional output directory
     /// where the data will be exported to after it has been downloaded.
-    Share {
+    Download {
         /// Hash to get, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         hash: Option<Hash>,
@@ -439,6 +487,9 @@ pub enum BlobCommands {
         /// and iroh will assume that it will not change.
         #[clap(long, default_value_t = false)]
         stable: bool,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// List availble content on the node.
     #[clap(subcommand)]
@@ -449,12 +500,15 @@ pub enum BlobCommands {
         #[clap(long, default_value_t = false)]
         repair: bool,
     },
+    /// Delete content on the node.
+    #[clap(subcommand)]
+    Delete(self::delete::Commands),
 }
 
 impl BlobCommands {
-    pub async fn run(self, client: RpcClient) -> Result<()> {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::Share {
+            Self::Download {
                 hash,
                 recursive,
                 peer,
@@ -464,6 +518,7 @@ impl BlobCommands {
                 derp_region,
                 mut out,
                 stable: in_place,
+                tag,
             } => {
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
@@ -471,36 +526,36 @@ impl BlobCommands {
                     tracing::info!("output path is {} -> {}", out.display(), absolute.display());
                     *out = absolute;
                 }
-                let (peer, addr, token, derp_region, hash, recursive) =
-                    if let Some(ticket) = ticket.as_ref() {
-                        (
-                            ticket.peer(),
-                            ticket.addrs().to_vec(),
-                            ticket.token(),
-                            ticket.derp_region(),
-                            ticket.hash(),
-                            ticket.recursive(),
-                        )
-                    } else {
-                        (
-                            peer.unwrap(),
-                            addr,
-                            token.as_ref(),
-                            derp_region,
-                            hash.unwrap(),
-                            recursive.unwrap_or_default(),
-                        )
-                    };
-                let mut stream = client
-                    .server_streaming(ShareRequest {
+                let (peer, hash, token, recursive) = if let Some(ticket) = ticket {
+                    ticket.into_parts()
+                } else {
+                    (
+                        PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
+                        hash.unwrap(),
+                        token,
+                        recursive.unwrap_or_default(),
+                    )
+                };
+                let out = match out {
+                    None => DownloadLocation::Internal,
+                    Some(path) => DownloadLocation::External {
+                        path: path.display().to_string(),
+                        in_place,
+                    },
+                };
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
+                let mut stream = iroh
+                    .blobs
+                    .download(BlobDownloadRequest {
                         hash,
                         recursive,
                         peer,
-                        addrs: addr,
-                        derp_region,
-                        token: token.cloned(),
-                        out: out.map(|x| x.display().to_string()),
-                        in_place,
+                        token,
+                        out,
+                        tag,
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -509,9 +564,20 @@ impl BlobCommands {
                 }
                 Ok(())
             }
-            Self::List(cmd) => cmd.run(client).await,
-            Self::Validate { repair } => self::validate::run(client, repair).await,
-            Self::Add { path, in_place } => self::add::run(client, path, in_place).await,
+            Self::List(cmd) => cmd.run(iroh).await,
+            Self::Delete(cmd) => cmd.run(iroh).await,
+            Self::Validate { repair } => self::validate::run(iroh, repair).await,
+            Self::Add {
+                path,
+                in_place,
+                tag,
+            } => {
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
+                self::add::run(iroh, path, in_place, tag).await
+            }
         }
     }
 }
@@ -557,11 +623,8 @@ fn bold_cell(s: &str) -> Cell {
     Cell::new(s).add_attribute(comfy_table::Attribute::Bold)
 }
 
-async fn fmt_connections<C: ConnectionErrors>(
-    mut infos: BoxStream<
-        'static,
-        Result<Result<ConnectionsResponse, RpcError>, StreamingResponseItemError<C>>,
-    >,
+async fn fmt_connections(
+    mut infos: impl Stream<Item = Result<ConnectionInfo, anyhow::Error>> + Unpin,
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
@@ -569,7 +632,7 @@ async fn fmt_connections<C: ConnectionErrors>(
             .into_iter()
             .map(bold_cell),
     );
-    while let Some(Ok(Ok(ConnectionsResponse { conn_info }))) = infos.next().await {
+    while let Some(Ok(conn_info)) = infos.next().await {
         let node_id = conn_info.public_key.to_string();
         let region = conn_info
             .derp_region

@@ -11,9 +11,13 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
+use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
+pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
-use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo};
+use iroh_net::{
+    key::PublicKey,
+    magic_endpoint::{ConnectionInfo, PeerAddr},
+};
 
 use iroh_sync::{
     store::GetFilter,
@@ -26,18 +30,18 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::{baomap::ValidateProgress, provider::ProvideProgress, util::RpcResult};
+pub use iroh_bytes::{baomap::ValidateProgress, provider::AddProgress, util::RpcResult};
 
-use crate::sync_engine::{LiveEvent, LiveStatus, PeerSource};
+use crate::sync_engine::{LiveEvent, LiveStatus};
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
 
 /// A request to the node to provide the data at the given path
 ///
-/// Will produce a stream of [`ProvideProgress`] messages.
+/// Will produce a stream of [`AddProgress`] messages.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProvideRequest {
+pub struct BlobAddPathRequest {
     /// The path to the data to provide.
     ///
     /// This should be an absolute path valid for the file system on which
@@ -47,78 +51,86 @@ pub struct ProvideRequest {
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
+    /// Tag to tag the data with.
+    pub tag: SetTagOption,
 }
 
-impl Msg<ProviderService> for ProvideRequest {
+impl Msg<ProviderService> for BlobAddPathRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ProvideRequest {
-    type Response = ProvideProgress;
+impl ServerStreamingMsg<ProviderService> for BlobAddPathRequest {
+    type Response = AddProgress;
 }
 
 /// A request to the node to download and share the data specified by the hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShareRequest {
+pub struct BlobDownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
     /// If this flag is true, the hash is assumed to be a collection and all
     /// children are downloaded and shared as well.
     pub recursive: bool,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: PublicKey,
-    /// This vec contains possible candidate addresses of the peer.
-    pub addrs: Vec<SocketAddr>,
+    pub peer: PeerAddr,
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,
-    /// This optional field contains the derp region to use for contacting the peer
-    /// over the DERP protocol.
-    pub derp_region: Option<u16>,
-    /// This optional field contains the path to store the data to. If it is not
-    /// set, the data is dumped to stdout.
-    pub out: Option<String>,
-    /// If this flag is true, the data is shared in place, i.e. it is moved to the
-    /// out path instead of being copied. The database itself contains only a
-    /// reference to the out path of the file.
-    ///
-    /// If the data is modified in the location specified by the out path,
-    /// download attempts for the associated hash will fail.
-    ///
-    /// This flag is only relevant if the out path is set.
-    pub in_place: bool,
+    /// Optional tag to tag the data with.
+    pub tag: SetTagOption,
+    /// This field contains the location to store the data at.
+    pub out: DownloadLocation,
 }
 
-impl Msg<ProviderService> for ShareRequest {
+/// Location to store a downloaded blob at.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DownloadLocation {
+    /// Store in the node's blob storage directory.
+    Internal,
+    /// Store at the provided path.
+    External {
+        /// The path to store the data at.
+        path: String,
+        /// If this flag is true, the data is shared in place, i.e. it is moved to the
+        /// out path instead of being copied. The database itself contains only a
+        /// reference to the out path of the file.
+        ///
+        /// If the data is modified in the location specified by the out path,
+        /// download attempts for the associated hash will fail.
+        in_place: bool,
+    },
+}
+
+impl Msg<ProviderService> for BlobDownloadRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ShareRequest {
-    type Response = ShareProgress;
+impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
+    type Response = GetProgress;
 }
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ValidateRequest {
+pub struct BlobValidateRequest {
     /// If true, remove invalid data
     pub repair: bool,
 }
 
-impl Msg<ProviderService> for ValidateRequest {
+impl Msg<ProviderService> for BlobValidateRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ValidateRequest {
+impl ServerStreamingMsg<ProviderService> for BlobValidateRequest {
     type Response = ValidateProgress;
 }
 
 /// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListBlobsRequest;
+pub struct BlobListRequest;
 
 /// A response to a list blobs request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListBlobsResponse {
+pub struct BlobListResponse {
     /// Location of the blob
     pub path: String,
     /// The hash of the blob
@@ -127,21 +139,21 @@ pub struct ListBlobsResponse {
     pub size: u64,
 }
 
-impl Msg<ProviderService> for ListBlobsRequest {
+impl Msg<ProviderService> for BlobListRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ListBlobsRequest {
-    type Response = ListBlobsResponse;
+impl ServerStreamingMsg<ProviderService> for BlobListRequest {
+    type Response = BlobListResponse;
 }
 
 /// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListIncompleteBlobsRequest;
+pub struct BlobListIncompleteRequest;
 
 /// A response to a list blobs request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListIncompleteBlobsResponse {
+pub struct BlobListIncompleteResponse {
     /// The size we got
     pub size: u64,
     /// The size we expect
@@ -150,23 +162,26 @@ pub struct ListIncompleteBlobsResponse {
     pub hash: Hash,
 }
 
-impl Msg<ProviderService> for ListIncompleteBlobsRequest {
+impl Msg<ProviderService> for BlobListIncompleteRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ListIncompleteBlobsRequest {
-    type Response = ListIncompleteBlobsResponse;
+impl ServerStreamingMsg<ProviderService> for BlobListIncompleteRequest {
+    type Response = BlobListIncompleteResponse;
 }
 
 /// List all collections
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListCollectionsRequest;
+pub struct BlobListCollectionsRequest;
 
 /// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListCollectionsResponse {
+pub struct BlobListCollectionsResponse {
+    /// Tag of the collection
+    pub tag: Tag,
+
     /// Hash of the collection
     pub hash: Hash,
     /// Number of children in the collection
@@ -179,20 +194,59 @@ pub struct ListCollectionsResponse {
     pub total_blobs_size: Option<u64>,
 }
 
-impl Msg<ProviderService> for ListCollectionsRequest {
+impl Msg<ProviderService> for BlobListCollectionsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ListCollectionsRequest {
-    type Response = ListCollectionsResponse;
+impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
+    type Response = BlobListCollectionsResponse;
 }
 
-/// A request to get the version of the node
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionRequest;
+/// List all collections
+///
+/// Lists all collections that have been explicitly added to the database.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListTagsRequest;
 
-impl RpcMsg<ProviderService> for VersionRequest {
-    type Response = VersionResponse;
+/// A response to a list collections request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListTagsResponse {
+    /// Name of the tag
+    pub name: Tag,
+    /// Format of the data
+    pub format: BlobFormat,
+    /// Hash of the data
+    pub hash: Hash,
+}
+
+impl Msg<ProviderService> for ListTagsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ListTagsRequest {
+    type Response = ListTagsResponse;
+}
+
+/// Delete a blob
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobDeleteBlobRequest {
+    /// Name of the tag
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for BlobDeleteBlobRequest {
+    type Response = RpcResult<()>;
+}
+
+/// Delete a tag
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteTagRequest {
+    /// Name of the tag
+    pub name: Tag,
+}
+
+impl RpcMsg<ProviderService> for DeleteTagRequest {
+    type Response = RpcResult<()>;
 }
 
 /// List connection information about all the nodes we know about
@@ -200,67 +254,67 @@ impl RpcMsg<ProviderService> for VersionRequest {
 /// These can be nodes that we have explicitly connected to or nodes
 /// that have initiated connections to us.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsRequest;
+pub struct NodeConnectionsRequest;
 
 /// A response to a connections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionsResponse {
+pub struct NodeConnectionsResponse {
     /// Information about a connection
     pub conn_info: ConnectionInfo,
 }
 
-impl Msg<ProviderService> for ConnectionsRequest {
+impl Msg<ProviderService> for NodeConnectionsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ConnectionsRequest {
-    type Response = RpcResult<ConnectionsResponse>;
+impl ServerStreamingMsg<ProviderService> for NodeConnectionsRequest {
+    type Response = RpcResult<NodeConnectionsResponse>;
 }
 
 /// Get connection information about a specific node
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionInfoRequest {
+pub struct NodeConnectionInfoRequest {
     /// The node identifier
     pub node_id: PublicKey,
 }
 
 /// A response to a connection request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionInfoResponse {
+pub struct NodeConnectionInfoResponse {
     /// Information about a connection to a node
     pub conn_info: Option<ConnectionInfo>,
 }
 
-impl RpcMsg<ProviderService> for ConnectionInfoRequest {
-    type Response = RpcResult<ConnectionInfoResponse>;
+impl RpcMsg<ProviderService> for NodeConnectionInfoRequest {
+    type Response = RpcResult<NodeConnectionInfoResponse>;
 }
 
 /// A request to shutdown the node
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ShutdownRequest {
+pub struct NodeShutdownRequest {
     /// Force shutdown
     pub force: bool,
 }
 
-impl RpcMsg<ProviderService> for ShutdownRequest {
+impl RpcMsg<ProviderService> for NodeShutdownRequest {
     type Response = ();
 }
 
 /// A request to get information about the identity of the node
 ///
-/// See [`StatusResponse`] for the response.
+/// See [`NodeStatusResponse`] for the response.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StatusRequest;
+pub struct NodeStatusRequest;
 
-impl RpcMsg<ProviderService> for StatusRequest {
-    type Response = StatusResponse;
+impl RpcMsg<ProviderService> for NodeStatusRequest {
+    type Response = NodeStatusResponse;
 }
 
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StatusResponse {
+pub struct NodeStatusResponse {
     /// The peer id of the node
-    pub peer_id: Box<PublicKey>,
+    pub node_id: Box<PublicKey>,
     /// The addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
@@ -269,19 +323,19 @@ pub struct StatusResponse {
 
 /// A request to watch for the node status
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WatchRequest;
+pub struct NodeWatchRequest;
 
-impl Msg<ProviderService> for WatchRequest {
+impl Msg<ProviderService> for NodeWatchRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for WatchRequest {
-    type Response = WatchResponse;
+impl ServerStreamingMsg<ProviderService> for NodeWatchRequest {
+    type Response = NodeWatchResponse;
 }
 
 /// The response to a watch request
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WatchResponse {
+pub struct NodeWatchResponse {
     /// The version of the node
     pub version: String,
 }
@@ -419,11 +473,11 @@ pub struct DocTicket {
     /// either a public or private key
     pub key: KeyBytes,
     /// a list of peers
-    pub peers: Vec<PeerSource>,
+    pub peers: Vec<PeerAddr>,
 }
 impl DocTicket {
     /// Create a new doc ticket
-    pub fn new(key: KeyBytes, peers: Vec<PeerSource>) -> Self {
+    pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
         Self { key, peers }
     }
     /// Serialize the ticket to a byte array.
@@ -510,7 +564,7 @@ pub struct DocStartSyncRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// List of peers to join
-    pub peers: Vec<PeerSource>,
+    pub peers: Vec<PeerAddr>,
 }
 
 impl RpcMsg<ProviderService> for DocStartSyncRequest {
@@ -620,12 +674,12 @@ impl Msg<ProviderService> for BytesGetRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BytesGetRequest {
-    type Response = RpcResult<BytesGetResponse>;
+    type Response = RpcResult<BlobReadResponse>;
 }
 
 /// Response to [`BytesGetRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub enum BytesGetResponse {
+pub enum BlobReadResponse {
     /// The entry header.
     Entry {
         /// The size of the blob
@@ -642,10 +696,10 @@ pub enum BytesGetResponse {
 
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StatsGetRequest {}
+pub struct NodeStatsRequest {}
 
-impl RpcMsg<ProviderService> for StatsGetRequest {
-    type Response = RpcResult<StatsGetResponse>;
+impl RpcMsg<ProviderService> for NodeStatsRequest {
+    type Response = RpcResult<NodeStatsResponse>;
 }
 
 /// Counter stats
@@ -657,9 +711,9 @@ pub struct CounterStats {
     pub description: String,
 }
 
-/// Response to [`StatsGetRequest`]
+/// Response to [`NodeStatsRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StatsGetResponse {
+pub struct NodeStatsResponse {
     /// Map of statistics
     pub stats: HashMap<String, CounterStats>,
 }
@@ -670,24 +724,26 @@ pub struct ProviderService;
 
 /// The request enum, listing all possible requests.
 #[allow(missing_docs)]
-#[derive(Debug, Serialize, Deserialize, From, TryInto)]
+#[derive(strum::Display, Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderRequest {
-    Watch(WatchRequest),
-    Version(VersionRequest),
-    ListBlobs(ListBlobsRequest),
-    ListIncompleteBlobs(ListIncompleteBlobsRequest),
-    ListCollections(ListCollectionsRequest),
-    Provide(ProvideRequest),
-    Share(ShareRequest),
-    Status(StatusRequest),
-    Shutdown(ShutdownRequest),
-    Validate(ValidateRequest),
+    NodeStatus(NodeStatusRequest),
+    NodeStats(NodeStatsRequest),
+    NodeShutdown(NodeShutdownRequest),
+    NodeConnections(NodeConnectionsRequest),
+    NodeConnectionInfo(NodeConnectionInfoRequest),
+    NodeWatch(NodeWatchRequest),
 
-    // TODO: I see I changed naming convention here but at least to me it becomes easier to parse
-    // with the subject in front if there's many commands
-    AuthorList(AuthorListRequest),
-    AuthorCreate(AuthorCreateRequest),
-    AuthorImport(AuthorImportRequest),
+    BlobRead(BytesGetRequest),
+    BlobAddPath(BlobAddPathRequest),
+    BlobDownload(BlobDownloadRequest),
+    BlobList(BlobListRequest),
+    BlobListIncomplete(BlobListIncompleteRequest),
+    BlobListCollections(BlobListCollectionsRequest),
+    BlobDeleteBlob(BlobDeleteBlobRequest),
+    BlobValidate(BlobValidateRequest),
+
+    DeleteTag(DeleteTagRequest),
+    ListTags(ListTagsRequest),
 
     DocInfo(DocInfoRequest),
     DocList(DocListRequest),
@@ -701,32 +757,32 @@ pub enum ProviderRequest {
     DocShare(DocShareRequest),
     DocSubscribe(DocSubscribeRequest),
 
-    BytesGet(BytesGetRequest),
-
-    Connections(ConnectionsRequest),
-    ConnectionInfo(ConnectionInfoRequest),
-
-    Stats(StatsGetRequest),
+    AuthorList(AuthorListRequest),
+    AuthorCreate(AuthorCreateRequest),
+    AuthorImport(AuthorImportRequest),
 }
 
 /// The response enum, listing all possible responses.
 #[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
-    Watch(WatchResponse),
-    Version(VersionResponse),
-    ListBlobs(ListBlobsResponse),
-    ListIncompleteBlobs(ListIncompleteBlobsResponse),
-    ListCollections(ListCollectionsResponse),
-    Provide(ProvideProgress),
-    Share(ShareProgress),
-    Status(StatusResponse),
-    Validate(ValidateProgress),
-    Shutdown(()),
+    NodeStatus(NodeStatusResponse),
+    NodeStats(RpcResult<NodeStatsResponse>),
+    NodeConnections(RpcResult<NodeConnectionsResponse>),
+    NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
+    NodeShutdown(()),
+    NodeWatch(NodeWatchResponse),
 
-    AuthorList(RpcResult<AuthorListResponse>),
-    AuthorCreate(RpcResult<AuthorCreateResponse>),
-    AuthorImport(RpcResult<AuthorImportResponse>),
+    BlobRead(RpcResult<BlobReadResponse>),
+    BlobAddPath(AddProgress),
+    BlobDownload(GetProgress),
+    BlobList(BlobListResponse),
+    BlobListIncomplete(BlobListIncompleteResponse),
+    BlobListCollections(BlobListCollectionsResponse),
+    BlobValidate(ValidateProgress),
+
+    ListTags(ListTagsResponse),
+    DeleteTag(RpcResult<()>),
 
     DocInfo(RpcResult<DocInfoResponse>),
     DocList(RpcResult<DocListResponse>),
@@ -740,12 +796,9 @@ pub enum ProviderResponse {
     DocStopSync(RpcResult<DocStopSyncResponse>),
     DocSubscribe(RpcResult<DocSubscribeResponse>),
 
-    Connections(RpcResult<ConnectionsResponse>),
-    ConnectionInfo(RpcResult<ConnectionInfoResponse>),
-
-    BytesGet(RpcResult<BytesGetResponse>),
-
-    Stats(RpcResult<StatsGetResponse>),
+    AuthorList(RpcResult<AuthorListResponse>),
+    AuthorCreate(RpcResult<AuthorCreateResponse>),
+    AuthorImport(RpcResult<AuthorImportResponse>),
 }
 
 impl Service for ProviderService {

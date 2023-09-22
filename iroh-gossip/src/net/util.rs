@@ -5,7 +5,7 @@ use std::{collections::HashMap, io, pin::Pin, time::Instant};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use iroh_net::{key::PublicKey, MagicEndpoint};
+use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::{sleep_until, Sleep},
@@ -105,7 +105,7 @@ impl Dialer {
     /// Start to dial a peer
     ///
     /// Note that the peer's addresses and/or derp region must be added to the endpoint's
-    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_known_addrs`].
+    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_peer_addr`].
     pub fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
         if self.is_pending(&peer_id) {
             return;
@@ -117,7 +117,7 @@ impl Dialer {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect(peer_id, alpn_protocol, None, &[]) => res
+                res = endpoint.connect(PeerAddr::new(peer_id), alpn_protocol) => res
             };
             (peer_id, res)
         }

@@ -50,7 +50,7 @@ use crate::{
     disco,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::AddrInfo,
+    magic_endpoint::PeerAddr,
     net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
@@ -601,13 +601,13 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub async fn add_known_addr(&self, peer: PublicKey, info: AddrInfo) -> Result<()> {
-        let (tx, rx) = sync::oneshot::channel();
+    pub async fn add_peer_addr(&self, addr: PeerAddr) -> Result<()> {
+        let (s, r) = sync::oneshot::channel();
         self.inner
             .actor_sender
-            .send(ActorMessage::AddKnownAddr { peer, info, tx })
+            .send(ActorMessage::AddKnownAddr(addr, s))
             .await?;
-        rx.await?;
+        r.await?;
         Ok(())
     }
 
@@ -891,14 +891,7 @@ enum ActorMessage {
         dst_key: PublicKey,
         msg: disco::CallMeMaybe,
     },
-    AddKnownAddr {
-        /// Peer for which the connection info will be added.
-        peer: PublicKey,
-        /// Addressing information for the peer.
-        info: AddrInfo,
-        /// Channel to inform when the operation has finished.
-        tx: sync::oneshot::Sender<()>,
-    },
+    AddKnownAddr(PeerAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
 }
@@ -1165,9 +1158,9 @@ impl Actor {
                 let msg = disco::Message::CallMeMaybe(msg);
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
-            ActorMessage::AddKnownAddr { peer, info, tx } => {
-                self.add_known_addr(peer, info);
-                tx.send(()).unwrap();
+            ActorMessage::AddKnownAddr(addr, s) => {
+                self.add_known_addr(addr);
+                s.send(()).unwrap();
             }
             ActorMessage::ReceiveDerp(read_result) => {
                 let passthroughs = self.process_derp_read_result(read_result).await;
@@ -2804,12 +2797,14 @@ pub(crate) mod tests {
                 if i == my_idx {
                     continue;
                 }
-                let peer = me.public();
-                let info = AddrInfo {
-                    derp_region: Some(1),
-                    endpoints: new_eps.iter().map(|ep| ep.addr).collect(),
+                let addr = PeerAddr {
+                    peer_id: me.public(),
+                    info: crate::AddrInfo {
+                        derp_region: Some(1),
+                        direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
+                    },
                 };
-                let _ = m.endpoint.magic_sock().add_known_addr(peer, info).await;
+                let _ = m.endpoint.magic_sock().add_peer_addr(addr).await;
             }
         }
 
@@ -2944,9 +2939,10 @@ pub(crate) mod tests {
                 let a_span = debug_span!("sender", a_name, %a_addr);
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
+                    let peer_b_data = PeerAddr::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
-                        .connect(b_peer_id, &ALPN, region, &[b_addr])
+                        .connect(peer_b_data, &ALPN)
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 

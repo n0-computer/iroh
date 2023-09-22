@@ -585,7 +585,12 @@ impl Endpoint {
         for st in self.endpoint_state.values_mut() {
             st.index = Index::Deleted; // assume deleted until updated in next loop
         }
-        for (i, ep) in n.endpoints.iter().take(u16::MAX as usize).enumerate() {
+        for (i, ep) in n
+            .direct_addresses
+            .iter()
+            .take(u16::MAX as usize)
+            .enumerate()
+        {
             let index = Index::Some(i);
             let ep = SendAddr::Udp(*ep);
             if let Some(st) = self.endpoint_state.get_mut(&ep) {

@@ -7,18 +7,13 @@ use std::{
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::{client::quic::RpcClient, rpc_protocol::ProvideRequest};
-use iroh_bytes::{provider::ProvideProgress, Hash};
+use iroh::client::quic::Iroh;
+use iroh_bytes::{provider::AddProgress, util::SetTagOption, Hash};
 
-pub async fn run(client: RpcClient, path: PathBuf, in_place: bool) -> Result<()> {
+pub async fn run(iroh: &Iroh, path: PathBuf, in_place: bool, tag: SetTagOption) -> Result<()> {
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
-    let stream = client
-        .server_streaming(ProvideRequest {
-            path: absolute,
-            in_place,
-        })
-        .await?;
+    let stream = iroh.blobs.add_from_path(absolute, in_place, tag).await?;
     let (hash, entries) = aggregate_add_response(stream).await?;
     print_add_response(hash, entries);
     Ok(())
@@ -31,33 +26,28 @@ pub struct ProvideResponseEntry {
     pub hash: Hash,
 }
 
-pub async fn aggregate_add_response<S, E>(
-    stream: S,
-) -> anyhow::Result<(Hash, Vec<ProvideResponseEntry>)>
-where
-    S: Stream<Item = std::result::Result<ProvideProgress, E>> + Unpin,
-    E: std::error::Error + Send + Sync + 'static,
-{
-    let mut stream = stream;
+pub async fn aggregate_add_response(
+    mut stream: impl Stream<Item = Result<AddProgress>> + Unpin,
+) -> Result<(Hash, Vec<ProvideResponseEntry>)> {
     let mut collection_hash = None;
     let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
     let mut mp = Some(ProvideProgressState::new());
     while let Some(item) = stream.next().await {
         match item? {
-            ProvideProgress::Found { name, id, size } => {
+            AddProgress::Found { name, id, size } => {
                 tracing::trace!("Found({id},{name},{size})");
                 if let Some(mp) = mp.as_mut() {
                     mp.found(name.clone(), id, size);
                 }
                 collections.insert(id, (name, size, None));
             }
-            ProvideProgress::Progress { id, offset } => {
+            AddProgress::Progress { id, offset } => {
                 tracing::trace!("Progress({id}, {offset})");
                 if let Some(mp) = mp.as_mut() {
                     mp.progress(id, offset);
                 }
             }
-            ProvideProgress::Done { hash, id } => {
+            AddProgress::Done { hash, id } => {
                 tracing::trace!("Done({id},{hash:?})");
                 if let Some(mp) = mp.as_mut() {
                     mp.done(id, hash);
@@ -71,7 +61,7 @@ where
                     }
                 }
             }
-            ProvideProgress::AllDone { hash } => {
+            AddProgress::AllDone { hash } => {
                 tracing::trace!("AllDone({hash:?})");
                 if let Some(mp) = mp.take() {
                     mp.all_done();
@@ -79,7 +69,7 @@ where
                 collection_hash = Some(hash);
                 break;
             }
-            ProvideProgress::Abort(e) => {
+            AddProgress::Abort(e) => {
                 if let Some(mp) = mp.take() {
                     mp.error();
                 }
