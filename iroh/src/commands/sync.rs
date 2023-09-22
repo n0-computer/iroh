@@ -265,6 +265,12 @@ impl DocCommands {
                                 ),
                             }
                         }
+                        LiveEvent::NeighborUp(peer) => {
+                            println!("neighbor peer up: {peer:?}");
+                        }
+                        LiveEvent::NeighborDown(peer) => {
+                            println!("neighbor peer down: {peer:?}");
+                        }
                     }
                 }
             }

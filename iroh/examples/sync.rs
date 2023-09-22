@@ -291,6 +291,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             println!("change: {}", fmt_entry(&entry));
                         }
                     }
+                    _ => {}
                 }
             }
         }

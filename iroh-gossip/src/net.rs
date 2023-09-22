@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, trace, warn};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, Scope, TopicId};
+use crate::proto::{self, PeerData, Scope, TopicId};
 
 pub mod util;
 
@@ -347,10 +347,9 @@ impl Actor {
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
-                    let info = self.endpoint.my_addr().await?;
-                    let peer_data = Bytes::from(postcard::to_stdvec(&info)?);
-
-                    self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
+                    let addr = self.endpoint.my_addr().await?;
+                    let peer_data = encode_peer_data(&addr.info)?;
+                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
                     match res {
@@ -385,7 +384,7 @@ impl Actor {
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(?me, "handle to_actor  {msg:?}");
+        trace!(?me, "handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -396,7 +395,7 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(?me, peer = ?peer_id, "connection established, start loop");
+                    debug!(?me, peer = ?peer_id, "connection established");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
                             debug!(?me, peer = ?peer_id, "connection closed without error")
@@ -514,8 +513,8 @@ impl Actor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<AddrInfo>(&data) {
-                    Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
+                OutEvent::PeerData(peer, data) => match decode_peer_data(&data) {
+                    Err(err) => warn!("Failed to decode {data:?} from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
                         let peer_addr = PeerAddr {
@@ -598,6 +597,15 @@ async fn connection_loop(
         }
     }
     Ok(())
+}
+
+fn encode_peer_data(info: &AddrInfo) -> anyhow::Result<PeerData> {
+    Ok(PeerData::new(postcard::to_stdvec(info)?))
+}
+
+fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
+    let info = postcard::from_bytes(peer_data.as_bytes())?;
+    Ok(info)
 }
 
 #[cfg(test)]
