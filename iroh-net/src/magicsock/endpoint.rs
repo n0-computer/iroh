@@ -1048,9 +1048,9 @@ impl PeerMap {
         let peers = self
             .by_id
             .values()
-            .map(|endpoint| {
+            .filter_map(|endpoint| {
                 let PeerAddr { peer_id, info } = endpoint.peer_addr();
-                (peer_id, info)
+                (!info.is_empty()).then_some((peer_id, info))
             })
             .collect();
 
@@ -1657,9 +1657,9 @@ mod tests {
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port).into()
         }
 
-        let direct_addresses_a = vec![addr(4000), addr(4001)];
-        let direct_addresses_b = vec![];
-        let direct_addresses_c = vec![addr(5000)];
+        let direct_addresses_a = [addr(4000), addr(4001)].into();
+        let direct_addresses_b = [].into();
+        let direct_addresses_c = [addr(5000)].into();
 
         let info_a = AddrInfo {
             derp_region: region_x,

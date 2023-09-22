@@ -1,6 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
@@ -69,7 +69,7 @@ impl From<(PublicKey, Option<u16>, &[SocketAddr])> for PeerAddr {
             peer_id,
             info: AddrInfo {
                 derp_region,
-                direct_addresses: direct_addresses_iter.to_vec(),
+                direct_addresses: direct_addresses_iter.into_iter().copied().collect(),
             },
         }
     }
@@ -81,7 +81,7 @@ pub struct AddrInfo {
     /// The peer's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: Vec<SocketAddr>,
+    pub direct_addresses: HashSet<SocketAddr>,
 }
 
 impl AddrInfo {
@@ -102,7 +102,7 @@ impl PeerAddr {
             peer_id,
             info: AddrInfo {
                 derp_region,
-                direct_addresses,
+                direct_addresses: direct_addresses.into_iter().collect(),
             },
         }
     }
