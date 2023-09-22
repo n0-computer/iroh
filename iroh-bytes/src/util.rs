@@ -99,7 +99,7 @@ impl Tag {
         let now = chrono::DateTime::<chrono::Utc>::from(time);
         let mut i = 0;
         loop {
-            let mut text = format!("auto-{}", now);
+            let mut text = format!("auto-{}", now.format("%Y-%m-%dT%H:%M:%S%.3fZ"));
             if i != 0 {
                 text.push_str(&format!("-{}", i));
             }
