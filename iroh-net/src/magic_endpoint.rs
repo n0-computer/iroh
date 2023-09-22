@@ -69,7 +69,7 @@ impl From<(PublicKey, Option<u16>, &[SocketAddr])> for PeerAddr {
             peer_id,
             info: AddrInfo {
                 derp_region,
-                direct_addresses: direct_addresses_iter.into_iter().copied().collect(),
+                direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
         }
     }
