@@ -1,16 +1,18 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{io, path::PathBuf};
+use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
+    collection::CollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
-        RpcError,
+        BlobFormat, HashAndFormat, RpcError, Tag,
     },
     Hash,
 };
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, stream::LocalBoxStream, StreamExt};
+use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
@@ -136,11 +138,15 @@ pub trait ReadableStore: Map {
     /// This function should not block to perform io. The knowledge about
     /// existing blobs must be present in memory.
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
-    /// list all roots (collections or other explicitly added things) in the database
+    /// list all tags (collections or other explicitly added things) in the database
     ///
     /// This function should not block to perform io. The knowledge about
-    /// existing roots must be present in memory.
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// existing tags must be present in memory.
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static>;
+
+    /// Temp tags
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
+
     /// Validate the database
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
 
@@ -179,13 +185,265 @@ pub trait Store: ReadableStore + PartialMap {
         &self,
         data: PathBuf,
         mode: ImportMode,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>>;
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
 
     /// This trait method imports data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>>;
+    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
+
+    /// Set a tag
+    fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>>;
+
+    /// Create a new tag
+    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>>;
+
+    /// Create a temporary pin for this store
+    fn temp_tag(&self, value: HashAndFormat) -> TempTag;
+
+    /// Traverse all roots recursively and mark them as live.
+    ///
+    /// Poll this stream to completion to perform a full gc mark phase.
+    ///
+    /// Not polling this stream to completion is dangerous, since it might lead
+    /// to some live data being missed.
+    ///
+    /// The implementation of this method should do the minimum amount of work
+    /// to determine the live set. Actual deletion of garbage should be done
+    /// in the gc_sweep phase.
+    fn gc_mark<'a>(
+        &'a self,
+        cp: impl CollectionParser + 'a,
+        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
+    ) -> LocalBoxStream<'a, GcMarkEvent> {
+        Gen::new(|co| async move {
+            if let Err(e) = gc_mark_task(self, cp, extra_roots, &co).await {
+                co.yield_(GcMarkEvent::Error(e)).await;
+            }
+        })
+        .boxed_local()
+    }
+
+    /// Remove all blobs that are not marked as live.
+    ///
+    /// Poll this stream to completion to perform a full gc sweep. Not polling this stream
+    /// to completion just means that some garbage will remain in the database.
+    ///
+    /// Sweeping might take long, but it can safely be done in the background.
+    fn gc_sweep(&self) -> LocalBoxStream<'_, GcSweepEvent> {
+        let blobs = self.blobs();
+        Gen::new(|co| async move {
+            let mut count = 0;
+            for hash in blobs {
+                if !self.is_live(&hash) {
+                    if let Err(e) = self.delete(&hash).await {
+                        co.yield_(GcSweepEvent::Error(e.into())).await;
+                    } else {
+                        count += 1;
+                    }
+                }
+            }
+            co.yield_(GcSweepEvent::CustomInfo(format!("deleted {} blobs", count)))
+                .await;
+        })
+        .boxed_local()
+    }
+
+    /// Clear the live set.
+    fn clear_live(&self);
+
+    /// Add the given hashes to the live set.
+    ///
+    /// This is used by the gc mark phase to mark roots as live.
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>);
+
+    /// True if the given hash is live.
+    fn is_live(&self, hash: &Hash) -> bool;
+
+    /// physically delete the given hash from the store.
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>>;
+}
+
+/// A trait for things that can track liveness of blobs and collections.
+///
+/// This trait works together with [TempTag] to keep track of the liveness of a
+/// blob or collection.
+///
+/// It is important to include the format in the liveness tracking, since
+/// protecting a collection means protecting the blob and all its children,
+/// whereas protecting a raw blob only protects the blob itself.
+pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
+    /// Called on clone
+    fn on_clone(&self, inner: &HashAndFormat);
+    /// Called on drop
+    fn on_drop(&self, inner: &HashAndFormat);
+}
+
+/// A hash and format pair that is protected from garbage collection.
+///
+/// If format is raw, this will protect just the blob
+/// If format is collection, this will protect the collection and all blobs in it
+#[derive(Debug)]
+pub struct TempTag {
+    /// The hash and format we are pinning
+    inner: HashAndFormat,
+    /// liveness tracker
+    liveness: Option<Arc<dyn LivenessTracker>>,
+}
+
+impl TempTag {
+    /// Create a new temp tag for the given hash and format
+    ///
+    /// This should only be used by store implementations.
+    pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
+        if let Some(liveness) = liveness.as_ref() {
+            liveness.on_clone(&inner);
+        }
+        Self { inner, liveness }
+    }
+
+    /// The hash of the pinned item
+    pub fn inner(&self) -> &HashAndFormat {
+        &self.inner
+    }
+
+    /// The hash of the pinned item
+    pub fn hash(&self) -> &Hash {
+        &self.inner.0
+    }
+
+    /// The format of the pinned item
+    pub fn format(&self) -> BlobFormat {
+        self.inner.1
+    }
+
+    /// Keep the item alive until the end of the process
+    pub fn leak(mut self) {
+        // set the liveness tracker to None, so that the refcount is not decreased
+        // during drop. This means that the refcount will never reach 0 and the
+        // item will not be gced until the end of the process.
+        self.liveness = None;
+    }
+}
+
+impl Clone for TempTag {
+    fn clone(&self) -> Self {
+        if let Some(liveness) = self.liveness.as_ref() {
+            liveness.on_clone(&self.inner);
+        }
+        Self::new(self.inner, self.liveness.clone())
+    }
+}
+
+impl Drop for TempTag {
+    fn drop(&mut self) {
+        if let Some(liveness) = self.liveness.as_ref() {
+            liveness.on_drop(&self.inner);
+        }
+    }
+}
+
+/// Implementation of the gc method.
+async fn gc_mark_task<'a>(
+    store: &'a impl Store,
+    cp: impl CollectionParser + 'a,
+    extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
+    co: &Co<GcMarkEvent>,
+) -> anyhow::Result<()> {
+    macro_rules! info {
+        ($($arg:tt)*) => {
+            co.yield_(GcMarkEvent::CustomInfo(format!($($arg)*))).await;
+        };
+    }
+    macro_rules! warn {
+        ($($arg:tt)*) => {
+            co.yield_(GcMarkEvent::CustomWarning(format!($($arg)*), None)).await;
+        };
+    }
+    let mut roots = BTreeSet::new();
+    info!("traversing tags");
+    for (name, haf) in store.tags() {
+        info!("adding root {:?} {:?}", name, haf);
+        roots.insert(haf);
+    }
+    info!("traversing temp roots");
+    for haf in store.temp_tags() {
+        info!("adding temp pin {:?}", haf);
+        roots.insert(haf);
+    }
+    info!("traversing extra roots");
+    for haf in extra_roots {
+        let haf = haf?;
+        info!("adding extra root {:?}", haf);
+        roots.insert(haf);
+    }
+    let mut current = roots.into_iter().collect::<Vec<_>>();
+    let mut live: BTreeSet<Hash> = BTreeSet::new();
+    // process all current. Since we don't have nested collections, this will
+    // terminate after 1 iteration.
+    while !current.is_empty() {
+        for HashAndFormat(hash, format) in std::mem::take(&mut current) {
+            // we need to do this for all formats except raw
+            if live.insert(hash) && !format.is_raw() {
+                let Some(entry) = store.get(&hash) else {
+                    warn!("gc: {} not found", hash);
+                    continue;
+                };
+                if !entry.is_complete() {
+                    warn!("gc: {} is partial", hash);
+                    continue;
+                }
+                let Ok(reader) = entry.data_reader().await else {
+                    warn!("gc: {} creating data reader failed", hash);
+                    continue;
+                };
+                let Ok((mut iter, stats)) = cp.parse(format.into(), reader).await else {
+                    warn!("gc: {} parse failed", hash);
+                    continue;
+                };
+                info!("parsed collection {} {:?}", hash, stats);
+                loop {
+                    let item = match iter.next().await {
+                        Ok(Some(item)) => item,
+                        Ok(None) => break,
+                        Err(_err) => {
+                            warn!("gc: {} parse failed", hash);
+                            break;
+                        }
+                    };
+                    // if format != raw we would have to recurse here by adding this to current
+                    live.insert(item);
+                }
+            }
+        }
+    }
+    info!("gc mark done. found {} live blobs", live.len());
+    store.add_live(live);
+    Ok(())
+}
+
+/// An event related to GC
+#[derive(Debug)]
+pub enum GcMarkEvent {
+    /// A custom event (info)
+    CustomInfo(String),
+    /// A custom non critical error
+    CustomWarning(String, Option<anyhow::Error>),
+    /// An unrecoverable error during GC
+    Error(anyhow::Error),
+}
+
+/// An event related to GC
+#[derive(Debug)]
+pub enum GcSweepEvent {
+    /// A custom event (info)
+    CustomInfo(String),
+    /// A custom non critical error
+    CustomWarning(String, Option<anyhow::Error>),
+    /// An unrecoverable error during GC
+    Error(anyhow::Error),
 }
 
 /// Progress messages for an import operation

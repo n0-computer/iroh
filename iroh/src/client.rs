@@ -15,6 +15,7 @@ use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
+use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
@@ -23,13 +24,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDownloadRequest,
-    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
-    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadResponse,
-    BlobValidateRequest, BytesGetRequest, CounterStats, DocCreateRequest, DocGetManyRequest,
-    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
-    GetProgress, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDeleteBlobRequest,
+    BlobDownloadRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadResponse, BlobValidateRequest, BytesGetRequest, CounterStats, DeleteTagRequest,
+    DocCreateRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
+    DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
+    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
     ShareMode,
 };
@@ -50,6 +52,8 @@ pub struct Iroh<C> {
     pub docs: DocsClient<C>,
     /// Client for author operations.
     pub authors: AuthorsClient<C>,
+    /// Client for tags operations.
+    pub tags: TagsClient<C>,
 }
 
 impl<C> Iroh<C>
@@ -62,7 +66,8 @@ where
             node: NodeClient { rpc: rpc.clone() },
             blobs: BlobsClient { rpc: rpc.clone() },
             docs: DocsClient { rpc: rpc.clone() },
-            authors: AuthorsClient { rpc },
+            authors: AuthorsClient { rpc: rpc.clone() },
+            tags: TagsClient { rpc },
         }
     }
 }
@@ -186,6 +191,29 @@ where
     }
 }
 
+/// Iroh tags client.
+#[derive(Debug, Clone)]
+pub struct TagsClient<C> {
+    rpc: RpcClient<ProviderService, C>,
+}
+
+impl<C> TagsClient<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    /// List all tags.
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<ListTagsResponse>>> {
+        let stream = self.rpc.server_streaming(ListTagsRequest).await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// Delete a tag.
+    pub async fn delete(&self, name: Tag) -> Result<()> {
+        self.rpc.rpc(DeleteTagRequest { name }).await??;
+        Ok(())
+    }
+}
+
 /// Iroh blobs client.
 #[derive(Debug, Clone)]
 pub struct BlobsClient<C> {
@@ -225,10 +253,15 @@ where
         &self,
         path: PathBuf,
         in_place: bool,
+        tag: SetTagOption,
     ) -> Result<impl Stream<Item = Result<AddProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobAddPathRequest { path, in_place })
+            .server_streaming(BlobAddPathRequest {
+                path,
+                in_place,
+                tag,
+            })
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
     }
@@ -279,6 +312,12 @@ where
             .server_streaming(BlobListCollectionsRequest)
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// Delete a blob.
+    pub async fn delete_blob(&self, hash: Hash) -> Result<()> {
+        self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
+        Ok(())
     }
 }
 

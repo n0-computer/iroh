@@ -8,12 +8,12 @@ use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::client::quic::Iroh;
-use iroh_bytes::{provider::AddProgress, Hash};
+use iroh_bytes::{provider::AddProgress, util::SetTagOption, Hash};
 
-pub async fn run(iroh: &Iroh, path: PathBuf, in_place: bool) -> Result<()> {
+pub async fn run(iroh: &Iroh, path: PathBuf, in_place: bool, tag: SetTagOption) -> Result<()> {
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
-    let stream = iroh.blobs.add_from_path(absolute, in_place).await?;
+    let stream = iroh.blobs.add_from_path(absolute, in_place, tag).await?;
     let (hash, entries) = aggregate_add_response(stream).await?;
     print_add_response(hash, entries);
     Ok(())

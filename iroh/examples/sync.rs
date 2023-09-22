@@ -29,6 +29,7 @@ use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
+    util::BlobFormat,
 };
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
@@ -227,7 +228,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // create a bao store for the iroh-bytes blobs
     let blob_path = storage_path.join("blobs");
     std::fs::create_dir_all(&blob_path)?;
-    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &rt).await?;
+    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
     let collection_parser = iroh::collection::IrohCollectionParser;
 
@@ -362,8 +363,9 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let hash = self.db.import_bytes(value.into()).await?;
-                self.doc.insert(key, &self.author, hash, len as u64)?;
+                let tag = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                self.doc
+                    .insert(key, &self.author, *tag.hash(), len as u64)?;
             }
             Cmd::Get {
                 key,
@@ -457,8 +459,9 @@ impl ReplState {
                                         String::from_utf8(bytes.clone()).unwrap().into_bytes();
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
-                                    let hash = db.import_bytes(value.into()).await?;
-                                    doc.insert(key, &author, hash, len as u64)?;
+                                    let tag =
+                                        db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                                    doc.insert(key, &author, *tag.hash(), len as u64)?;
                                 }
                                 Ok(count)
                             });
@@ -512,14 +515,16 @@ impl ReplState {
         match cmd {
             FsCmd::ImportFile { file_path, key } => {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
-                let (hash, len) = self
+                let (tag, len) = self
                     .db
                     .import(
                         file_path.clone(),
                         ImportMode::Copy,
+                        BlobFormat::RAW,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
+                let hash = *tag.hash();
                 self.doc.insert(key, &self.author, hash, len)?;
                 println!(
                     "> imported {file_path:?}: {} ({})",
@@ -546,14 +551,16 @@ impl ReplState {
                             continue;
                         }
                         let key = format!("{key_prefix}/{relative}");
-                        let (hash, len) = self
+                        let (tag, len) = self
                             .db
                             .import(
                                 file.path().into(),
                                 ImportMode::Copy,
+                                BlobFormat::RAW,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;
+                        let hash = *tag.hash();
                         self.doc.insert(key, &self.author, hash, len)?;
                         println!(
                             "> imported {relative}: {} ({})",
