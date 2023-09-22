@@ -52,7 +52,23 @@ pub enum InsertOrigin {
     /// The entry was inserted locally.
     Local,
     /// The entry was received from the remote peer identified by [`PeerIdBytes`].
-    Sync(PeerIdBytes),
+    Sync {
+        /// The peer from which we received this entry.
+        from: PeerIdBytes,
+        /// Whether the peer claims to have the content blob for this entry.
+        content_status: ContentStatus,
+    },
+}
+
+/// Whether the content status is available on a node.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ContentStatus {
+    /// The content is completely available.
+    Complete,
+    /// The content is partially available.
+    Incomplete,
+    /// The content is missing.
+    Missing,
 }
 
 /// Local representation of a mutable, synchronizable key-value store.
@@ -61,6 +77,11 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     inner: Arc<RwLock<InnerReplica<S>>>,
     #[allow(clippy::type_complexity)]
     on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
+
+    #[allow(clippy::type_complexity)]
+    #[debug("ContentStatusCallback")]
+    content_status_cb:
+        Arc<RwLock<Option<Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>>>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -85,6 +106,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 peer: Peer::from_store(store),
             })),
             on_insert_sender: Arc::new(RwLock::new(None)),
+            content_status_cb: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -112,6 +134,24 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Remove the subscription.
     pub fn unsubscribe(&self) -> bool {
         self.on_insert_sender.write().take().is_some()
+    }
+
+    /// Set the content status callback.
+    ///
+    /// Only one callback can be active at a time. If a previous callback was registered, this
+    /// will return `false`.
+    pub fn set_content_status_callback(
+        &self,
+        cb: Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>,
+    ) -> bool {
+        let mut content_status_cb = self.content_status_cb.write();
+        match &*content_status_cb {
+            Some(_cb) => false,
+            None => {
+                *content_status_cb = Some(cb);
+                true
+            }
+        }
     }
 
     /// Insert a new record at the given key.
@@ -144,8 +184,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         &self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
+        content_status: ContentStatus,
     ) -> Result<(), InsertError<S>> {
-        let origin = InsertOrigin::Sync(received_from);
+        let origin = InsertOrigin::Sync {
+            from: received_from,
+            content_status,
+        };
         self.insert_entry(entry, origin)
     }
 
@@ -177,7 +221,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                     inc!(Metrics, new_entries_local);
                     inc_by!(Metrics, new_entries_local_size, len);
                 }
-                InsertOrigin::Sync(_) => {
+                InsertOrigin::Sync { .. } => {
                     inc!(Metrics, new_entries_remote);
                     inc_by!(Metrics, new_entries_remote_size, len);
                 }
@@ -224,12 +268,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
         let expected_namespace = self.namespace();
         let now = system_time_now();
-        let reply = self
-            .inner
-            .write()
-            .peer
-            .process_message(message, |store, entry| {
-                let origin = InsertOrigin::Sync(from_peer);
+        let reply = self.inner.write().peer.process_message(
+            message,
+            |store, entry, content_status| {
+                let origin = InsertOrigin::Sync {
+                    from: from_peer,
+                    content_status,
+                };
                 if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
                     if let Some(sender) = self.on_insert_sender.read().as_ref() {
                         sender.send((origin, entry.clone())).ok();
@@ -238,7 +283,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 } else {
                     false
                 }
-            })?;
+            },
+            |_store, entry| {
+                if let Some(cb) = self.content_status_cb.read().as_ref() {
+                    cb(entry.content_hash())
+                } else {
+                    ContentStatus::Missing
+                }
+            },
+        )?;
 
         Ok(reply)
     }

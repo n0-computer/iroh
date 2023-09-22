@@ -20,7 +20,7 @@ use crate::{
         DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
         DocTicket, RpcResult, ShareMode,
     },
-    sync_engine::{KeepCallback, LiveStatus, PeerSource, SyncEngine},
+    sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
@@ -90,7 +90,7 @@ impl<S: Store> SyncEngine<S> {
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
         self.start_sync(req.doc_id, vec![]).await?;
-        let me = PeerSource::from_endpoint(&self.endpoint).await?;
+        let me = self.endpoint.my_addr().await?;
         let replica = self.get_replica(&req.doc_id)?;
         let key = match req.mode {
             ShareMode::Read => {

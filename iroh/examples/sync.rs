@@ -3,6 +3,10 @@
 //! By default a new peer id is created when starting the example. To reuse your identity,
 //! set the `--secret-key` CLI flag with the secret key printed on a previous invocation.
 //!
+//! Run with:
+//!   $ cargo run --example sync --features=example-sync
+//! Then follow the instructions printed
+//!
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
@@ -19,7 +23,7 @@ use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
     downloader::Downloader,
-    sync_engine::{LiveEvent, PeerSource, SyncEngine, SYNC_ALPN},
+    sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
@@ -34,7 +38,7 @@ use iroh_gossip::{
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     defaults::default_derp_map, derp::DerpMap, key::SecretKey, magic_endpoint::get_alpn,
-    MagicEndpoint,
+    MagicEndpoint, PeerAddr,
 };
 use iroh_sync::{
     store::{self, GetFilter, Store as _},
@@ -135,7 +139,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
     // build our magic endpoint and the gossip protocol
-    let (endpoint, gossip, initial_endpoints) = {
+    let (endpoint, gossip) = {
         // init a cell that will hold our gossip handle to be used in endpoint callbacks
         let gossip_cell: OnceCell<Gossip> = OnceCell::new();
         // init a channel that will emit once the initial endpoints of our local node are discovered
@@ -174,7 +178,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
         // pass our initial endpoints to the gossip protocol so that they can be announced to peers
         gossip.update_endpoints(&initial_endpoints)?;
-        (endpoint, gossip, initial_endpoints)
+        (endpoint, gossip)
     };
     println!("> our peer id: {}", endpoint.peer_id());
 
@@ -196,13 +200,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let our_ticket = {
         // add our local endpoints to the ticket and print it for others to join
-        let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
         let mut peers = peers.clone();
-        peers.push(PeerSource {
-            peer_id: endpoint.peer_id(),
-            addrs,
-            derp_region: endpoint.my_derp().await,
-        });
+        peers.push(endpoint.my_addr().await?);
         Ticket { peers, topic }
     };
     println!("> ticket to join us: {our_ticket}");
@@ -293,6 +292,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             println!("change: {}", fmt_entry(&entry));
                         }
                     }
+                    _ => {}
                 }
             }
         }
@@ -863,7 +863,7 @@ fn get_stats() {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<PeerSource>,
+    peers: Vec<PeerAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.
