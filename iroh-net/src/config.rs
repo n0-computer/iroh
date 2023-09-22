@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
-use super::{key::PublicKey, portmapper};
+use super::portmapper;
 
 /// Fake WireGuard endpoint IP address that means to
 /// use DERP. When used (in the Node.DERP field), the port number of
@@ -148,27 +148,4 @@ pub struct PingResult {
 
     /// Did any error occur?
     pub err: Option<String>,
-}
-
-/// A node or peer in the iroh network.
-///
-/// Nodes are primarily identified by their [`Node::key`].
-#[derive(Clone, Debug, PartialEq)]
-pub struct Node {
-    /// The public key or PeerID, the primary identifier of this node.
-    pub key: PublicKey,
-    /// DNS name of the peer.
-    pub name: Option<String>,
-    /// Direct IP addresses of this Node.
-    ///
-    /// These are the IP addresses this node is listening on.
-    pub addresses: Vec<IpAddr>,
-    /// Endpoints on which we think the node is reachable.
-    ///
-    /// These are populated from STUN results as well as local LAN addresses.
-    pub endpoints: Vec<SocketAddr>,
-    /// DERP-in-IP:port ("127.3.3.40:N") endpoint. Only stores the `N`.
-    ///
-    /// If this nodes expected to be reachable via DERP relaying.
-    pub derp: Option<u16>,
 }

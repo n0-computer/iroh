@@ -1,6 +1,11 @@
 //! An example how to download a single blob from a node and write it to stdout.
 //!
 //! This is using the get finite state machine directly.
+//! Run this example on any `iroh get` ticket. You can create a "hello world" ticket with:
+//!     $ cargo run --example hello-world
+//! hello-world will give you a "ticket" argument & example to use with `cargo run -- get --ticket`
+//! copy that ticket value (the long string after `--ticket`) & feed it to this example:
+//!     $ cargo run --example dump-blob-fsm <ticket>
 use std::env::args;
 use std::str::FromStr;
 

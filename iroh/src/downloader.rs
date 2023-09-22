@@ -29,7 +29,7 @@
 //!   requests to a single peer is also limited.
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     num::NonZeroUsize,
 };
 
@@ -244,7 +244,7 @@ impl Downloader {
     }
 
     /// Queue a download.
-    pub async fn queue(&mut self, kind: DownloadKind, peers: Vec<PublicKey>) -> DownloadHandle {
+    pub async fn queue(&mut self, kind: DownloadKind, peers: Vec<PeerInfo>) -> DownloadHandle {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
 
@@ -285,11 +285,56 @@ impl Downloader {
     }
 
     /// Declare that certains peers can be used to download a hash.
-    pub async fn peers_have(&mut self, hash: Hash, peers: Vec<PublicKey>) {
+    pub async fn peers_have(&mut self, hash: Hash, peers: Vec<PeerInfo>) {
         let msg = Message::PeersHave { hash, peers };
         if let Err(send_err) = self.msg_tx.send(msg).await {
             let msg = send_err.0;
             debug!(?msg, "peers have not sent")
+        }
+    }
+}
+
+/// A peer and its role with regard to a hash.
+#[derive(Debug, Clone, Copy)]
+pub struct PeerInfo {
+    peer_id: PublicKey,
+    role: PeerRole,
+}
+
+impl PeerInfo {
+    /// Create a new [`PeerInfo`] from its parts.
+    pub fn new(peer_id: PublicKey, role: PeerRole) -> Self {
+        Self { peer_id, role }
+    }
+}
+
+impl From<(PublicKey, PeerRole)> for PeerInfo {
+    fn from((peer_id, role): (PublicKey, PeerRole)) -> Self {
+        Self { peer_id, role }
+    }
+}
+
+/// The role of a peer with regard to a download intent.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PeerRole {
+    /// We have information that this peer has the requested blob.
+    Provider,
+    /// We do not have information if this peer has the requested blob.
+    Candidate,
+}
+
+impl PartialOrd for PeerRole {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for PeerRole {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (PeerRole::Provider, PeerRole::Provider) => std::cmp::Ordering::Equal,
+            (PeerRole::Candidate, PeerRole::Candidate) => std::cmp::Ordering::Equal,
+            (PeerRole::Provider, PeerRole::Candidate) => std::cmp::Ordering::Greater,
+            (PeerRole::Candidate, PeerRole::Provider) => std::cmp::Ordering::Less,
         }
     }
 }
@@ -303,13 +348,13 @@ enum Message {
         id: Id,
         #[debug(skip)]
         sender: oneshot::Sender<DownloadResult>,
-        peers: Vec<PublicKey>,
+        peers: Vec<PeerInfo>,
     },
     /// Cancel an intent. The associated request will be cancelled when the last intent is
     /// cancelled.
     Cancel { id: Id, kind: DownloadKind },
     /// Declare that peers have certains hash and can be used for downloading. This feeds the [`ProviderMap`].
-    PeersHave { hash: Hash, peers: Vec<PublicKey> },
+    PeersHave { hash: Hash, peers: Vec<PeerInfo> },
 }
 
 /// Information about a request being processed.
@@ -507,7 +552,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         kind: DownloadKind,
         id: Id,
         sender: oneshot::Sender<DownloadResult>,
-        peers: Vec<PublicKey>,
+        peers: Vec<PeerInfo>,
     ) {
         self.providers.add_peers(*kind.hash(), &peers);
         if let Some(info) = self.current_requests.get_mut(&kind) {
@@ -534,9 +579,17 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             Some(info) => {
                 info.intents.insert(id, sender);
                 // pre-emptively get a peer if we don't already have one
-                if info.next_peer.is_none() {
-                    info.next_peer = next_peer
+                match (info.next_peer, next_peer) {
+                    // We did not yet have next peer, but have a peer now.
+                    (None, Some(next_peer)) => {
+                        info.next_peer = Some(next_peer);
+                    }
+                    (Some(_old_next_peer), Some(_next_peer)) => {
+                        unreachable!("invariant: info.next_peer must be none because checked above with needs_peer")
+                    }
+                    _ => {}
                 }
+
                 // increasing the retries by one accounts for multiple intents for the same request in
                 // a conservative way
                 info.remaining_retries += 1;
@@ -601,14 +654,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         let mut candidates = self
             .providers
             .get_candidates(hash)
-            .filter_map(|peer| {
-                if let Some(info) = self.peers.get(peer) {
+            .filter_map(|(peer_id, role)| {
+                let peer = PeerInfo::new(*peer_id, *role);
+                if let Some(info) = self.peers.get(peer_id) {
                     info.conn.as_ref()?;
                     let req_count = info.active_requests();
                     // filter out peers at capacity
                     let has_capacity = !self.concurrency_limits.peer_at_request_capacity(req_count);
                     has_capacity.then_some((peer, ConnState::Connected(req_count)))
-                } else if self.dialer.is_pending(peer) {
+                } else if self.dialer.is_pending(peer_id) {
                     Some((peer, ConnState::Dialing))
                 } else {
                     Some((peer, ConnState::NotConnected))
@@ -616,7 +670,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             })
             .collect::<Vec<_>>();
 
-        candidates.sort_unstable_by_key(|peer_and_state| peer_and_state.1 /* state */);
+        // Sort candidates by:
+        // * Role (Providers > Candidates)
+        // * ConnState (Connected > Dialing > NotConnected)
+        candidates.sort_unstable_by_key(|(PeerInfo { role, .. }, state)| (*role, *state));
 
         // this is our best peer, check if we need to dial it
         let (peer, state) = candidates.pop()?;
@@ -624,15 +681,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         if let ConnState::NotConnected = state {
             if !self.at_connections_capacity() {
                 // peer is not connected, not dialing and concurrency limits allow another connection
-                debug!(%peer, "dialing peer");
-                self.dialer.queue_dial(*peer);
-                Some(*peer)
+                debug!(peer = %peer.peer_id, "dialing peer");
+                self.dialer.queue_dial(peer.peer_id);
+                Some(peer.peer_id)
             } else {
-                trace!(%peer, "required peer not dialed to maintain concurrency limits");
+                trace!(peer = %peer.peer_id, "required peer not dialed to maintain concurrency limits");
                 None
             }
         } else {
-            Some(*peer)
+            Some(peer.peer_id)
         }
     }
 
@@ -663,7 +720,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     }
 
     /// Handle a [`Message::PeersHave`].
-    fn handle_peers_have(&mut self, hash: Hash, peers: Vec<PublicKey>) {
+    fn handle_peers_have(&mut self, hash: Hash, peers: Vec<PeerInfo>) {
         // check if this still needed
         if self.is_needed(hash) {
             self.providers.add_peers(hash, &peers);
@@ -680,6 +737,31 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             || self.scheduled_requests.contains_key(&as_collection)
     }
 
+    /// Check if this hash is currently being downloaded.
+    fn is_current_request(&self, hash: Hash) -> bool {
+        let as_blob = DownloadKind::Blob { hash };
+        let as_collection = DownloadKind::Collection { hash };
+        self.current_requests.contains_key(&as_blob)
+            || self.current_requests.contains_key(&as_collection)
+    }
+
+    /// Remove a hash from the scheduled queue.
+    fn unschedule(&mut self, hash: Hash) -> Option<(DownloadKind, PendingRequestInfo)> {
+        let as_blob = DownloadKind::Blob { hash };
+        let as_collection = DownloadKind::Collection { hash };
+        let info = match self.scheduled_requests.remove(&as_blob) {
+            Some(req) => Some(req),
+            None => self.scheduled_requests.remove(&as_collection),
+        };
+        if let Some(info) = info {
+            let kind = self.scheduled_request_queue.remove(&info.delay_key);
+            let kind = kind.into_inner();
+            Some((kind, info))
+        } else {
+            None
+        }
+    }
+
     /// Handle receiving a new connection.
     fn on_connection_ready(&mut self, peer: PublicKey, result: anyhow::Result<D::Connection>) {
         match result {
@@ -688,11 +770,46 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 let drop_key = self.goodbye_peer_queue.insert(peer, IDLE_PEER_TIMEOUT);
                 self.peers
                     .insert(peer, ConnectionInfo::new_idle(connection, drop_key));
+                self.on_peer_ready(peer);
             }
             Err(err) => {
                 debug!(%peer, %err, "connection to peer failed")
             }
         }
+    }
+
+    /// Called after the connection to a peer is established, and after finishing a download.
+    ///
+    /// Starts the next provider hash download, if there is one.
+    fn on_peer_ready(&mut self, peer: PublicKey) {
+        // Get the next provider hash for this peer.
+        let Some(hash) = self.providers.get_next_provider_hash_for_peer(&peer) else {
+            return;
+        };
+
+        if self.is_current_request(hash) {
+            return;
+        }
+
+        let Some(conn) = self.get_peer_connection_for_download(&peer) else {
+            return;
+        };
+
+        let Some((kind, info)) = self.unschedule(hash) else {
+            debug_assert!(
+                false,
+                "invalid state: expected {hash} to be scheduled, but it wasn't"
+            );
+            return;
+        };
+
+        let PendingRequestInfo {
+            intents,
+            remaining_retries,
+            ..
+        } = info;
+
+        self.start_download(kind, peer, conn, remaining_retries, intents);
     }
 
     fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {
@@ -730,18 +847,20 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
         let hash = *kind.hash();
 
-        match result {
+        let peer_ready = match result {
             Ok(()) => {
                 debug!(%peer, ?kind, "download completed");
                 for sender in intents.into_values() {
                     let _ = sender.send(Ok(()));
                 }
+                true
             }
             Err(FailureAction::AbortRequest(reason)) => {
                 debug!(%peer, ?kind, %reason, "aborting request");
                 for sender in intents.into_values() {
                     let _ = sender.send(Err(anyhow::anyhow!("request aborted")));
                 }
+                true
             }
             Err(FailureAction::DropPeer(reason)) => {
                 debug!(%peer, ?kind, %reason, "peer will be dropped");
@@ -749,6 +868,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     // TODO(@divma): this will fail open streams, do we want this?
                     // connection.close(..)
                 }
+                false
             }
             Err(FailureAction::RetryLater(reason)) => {
                 // check if the download can be retried
@@ -763,11 +883,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                         let _ = sender.send(Err(anyhow::anyhow!("download ran out of attempts")));
                     }
                 }
+                false
             }
-        }
+        };
 
         if !self.is_needed(hash) {
             self.providers.remove(hash)
+        }
+        if peer_ready {
+            self.on_peer_ready(peer);
         }
     }
 
@@ -784,24 +908,24 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         } = info;
 
         // first try with the peer that was initially assigned
-        if let Some((peer, conn)) = next_peer.and_then(|peer| {
-            self.get_peer_connection_for_download(&peer)
-                .map(|conn| (peer, conn))
+        if let Some((peer_id, conn)) = next_peer.and_then(|peer_id| {
+            self.get_peer_connection_for_download(&peer_id)
+                .map(|conn| (peer_id, conn))
         }) {
-            return self.start_download(kind, peer, conn, remaining_retries, intents);
+            return self.start_download(kind, peer_id, conn, remaining_retries, intents);
         }
 
         // we either didn't have a peer or the peer is busy or dialing. In any case try to get
         // another peer
         let next_peer = match self.get_best_candidate(kind.hash()) {
             None => None,
-            Some(peer) => {
+            Some(peer_id) => {
                 // optimistically check if the peer could do the request right away
-                match self.get_peer_connection_for_download(&peer) {
+                match self.get_peer_connection_for_download(&peer_id) {
                     Some(conn) => {
-                        return self.start_download(kind, peer, conn, remaining_retries, intents)
+                        return self.start_download(kind, peer_id, conn, remaining_retries, intents)
                     }
-                    None => Some(peer),
+                    None => Some(peer_id),
                 }
             }
         };
@@ -871,6 +995,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // number) is maxed at INITIAL_RETRY_COUNT
         let delay = INITIAL_REQUEST_DELAY
             * (INITIAL_RETRY_COUNT.saturating_sub(remaining_retries) as u32 + 1);
+
         let delay_key = self.scheduled_request_queue.insert(kind.clone(), delay);
 
         let info = PendingRequestInfo {
@@ -939,15 +1064,19 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 #[derive(Default, Debug)]
 pub struct ProviderMap {
     /// Candidates to download a hash.
-    candidates: HashMap<Hash, HashSet<PublicKey>>,
+    candidates: HashMap<Hash, HashMap<PublicKey, PeerRole>>,
+    /// Ordered list of provider hashes per peer.
+    ///
+    /// I.e. blobs we assume the peer can provide.
+    provider_hashes_by_peer: HashMap<PublicKey, VecDeque<Hash>>,
 }
 
 struct ProviderIter<'a> {
-    inner: Option<std::collections::hash_set::Iter<'a, PublicKey>>,
+    inner: Option<std::collections::hash_map::Iter<'a, PublicKey, PeerRole>>,
 }
 
 impl<'a> Iterator for ProviderIter<'a> {
-    type Item = &'a PublicKey;
+    type Item = (&'a PublicKey, &'a PeerRole);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.as_mut().and_then(|iter| iter.next())
@@ -956,19 +1085,64 @@ impl<'a> Iterator for ProviderIter<'a> {
 
 impl ProviderMap {
     /// Get candidates to download this hash.
-    fn get_candidates(&self, hash: &Hash) -> impl Iterator<Item = &PublicKey> {
-        let inner = self.candidates.get(hash).map(|peer_set| peer_set.iter());
+    fn get_candidates(&self, hash: &Hash) -> impl Iterator<Item = (&PublicKey, &PeerRole)> {
+        let inner = self.candidates.get(hash).map(|peers| peers.iter());
         ProviderIter { inner }
     }
 
     /// Register peers for a hash. Should only be done for hashes we care to download.
-    fn add_peers(&mut self, hash: Hash, peers: &[PublicKey]) {
-        self.candidates.entry(hash).or_default().extend(peers)
+    fn add_peers(&mut self, hash: Hash, peers: &[PeerInfo]) {
+        let entry = self.candidates.entry(hash).or_default();
+        for peer in peers {
+            entry
+                .entry(peer.peer_id)
+                .and_modify(|role| *role = (*role).max(peer.role))
+                .or_insert(peer.role);
+            if let PeerRole::Provider = peer.role {
+                self.provider_hashes_by_peer
+                    .entry(peer.peer_id)
+                    .or_default()
+                    .push_back(hash);
+            }
+        }
+    }
+
+    /// Get the next provider hash for a peer.
+    ///
+    /// I.e. get the next hash that was added with [`PeerRole::Provider`] for this peer.
+    fn get_next_provider_hash_for_peer(&mut self, peer: &PublicKey) -> Option<Hash> {
+        let hash = self
+            .provider_hashes_by_peer
+            .get(peer)
+            .and_then(|hashes| hashes.front())
+            .copied();
+        if let Some(hash) = hash {
+            self.move_hash_to_back(peer, hash);
+        }
+        hash
     }
 
     /// Signal the registry that this hash is no longer of interest.
     fn remove(&mut self, hash: Hash) {
-        self.candidates.remove(&hash);
+        let peers = self.candidates.remove(&hash);
+        if let Some(peers) = peers {
+            for peer in peers.keys() {
+                if let Some(hashes) = self.provider_hashes_by_peer.get_mut(peer) {
+                    hashes.retain(|h| *h != hash);
+                }
+            }
+        }
+    }
+
+    /// Move a hash to the back of the provider queue for a peer.
+    fn move_hash_to_back(&mut self, peer: &PublicKey, hash: Hash) {
+        let hashes = self.provider_hashes_by_peer.get_mut(peer);
+        if let Some(hashes) = hashes {
+            debug_assert_eq!(hashes.front(), Some(&hash));
+            if !hashes.is_empty() {
+                hashes.rotate_left(1);
+            }
+        }
     }
 }
 

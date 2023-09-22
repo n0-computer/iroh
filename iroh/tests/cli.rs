@@ -616,12 +616,13 @@ fn test_provide_get_loop_single(
     let ticket = match_provide_output(&mut provider, num_blobs)?;
     let ticket = Ticket::from_str(&ticket).unwrap();
     let addrs = ticket
-        .addrs()
-        .iter()
+        .node_addr()
+        .direct_addresses()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
-    let peer = ticket.peer().to_string();
+    let peer = ticket.node_addr().peer_id.to_string();
     let region = ticket
+        .node_addr()
         .derp_region()
         .context("should have derp region in ticket")?
         .to_string();

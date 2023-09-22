@@ -46,7 +46,9 @@ async fn smoke_test() {
     let kind = DownloadKind::Blob {
         hash: Hash::new([0u8; 32]),
     };
-    let handle = downloader.queue(kind.clone(), vec![peer]).await;
+    let handle = downloader
+        .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .await;
     // wait for the download result to be reported
     handle.await.expect("should report success");
     // verify that the peer was dialed
@@ -73,7 +75,9 @@ async fn deduplication() {
     };
     let mut handles = Vec::with_capacity(10);
     for _ in 0..10 {
-        let h = downloader.queue(kind.clone(), vec![peer]).await;
+        let h = downloader
+            .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+            .await;
         handles.push(h);
     }
     assert!(
@@ -103,16 +107,24 @@ async fn cancellation() {
     let kind_1 = DownloadKind::Blob {
         hash: Hash::new([0u8; 32]),
     };
-    let handle_a = downloader.queue(kind_1.clone(), vec![peer]).await;
-    let handle_b = downloader.queue(kind_1.clone(), vec![peer]).await;
+    let handle_a = downloader
+        .queue(kind_1.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .await;
+    let handle_b = downloader
+        .queue(kind_1.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .await;
     downloader.cancel(handle_a).await;
 
     // create a request with two intents and cancel them both
     let kind_2 = DownloadKind::Blob {
         hash: Hash::new([1u8; 32]),
     };
-    let handle_c = downloader.queue(kind_2.clone(), vec![peer]).await;
-    let handle_d = downloader.queue(kind_2.clone(), vec![peer]).await;
+    let handle_c = downloader
+        .queue(kind_2.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .await;
+    let handle_d = downloader
+        .queue(kind_2.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .await;
     downloader.cancel(handle_c).await;
     downloader.cancel(handle_d).await;
 
@@ -148,7 +160,9 @@ async fn max_concurrent_requests() {
         let kind = DownloadKind::Blob {
             hash: Hash::new([i; 32]),
         };
-        let h = downloader.queue(kind.clone(), vec![peer]).await;
+        let h = downloader
+            .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+            .await;
         expected_history.push((kind, peer));
         handles.push(h);
     }
@@ -191,9 +205,50 @@ async fn max_concurrent_requests_per_peer() {
         let kind = DownloadKind::Blob {
             hash: Hash::new([i; 32]),
         };
-        let h = downloader.queue(kind.clone(), vec![peer]).await;
+        let h = downloader
+            .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+            .await;
         handles.push(h);
     }
 
     futures::future::join_all(handles).await;
+}
+
+/// Tests that providers are preferred over candidates.
+#[tokio::test]
+async fn peer_role_provider() {
+    let dialer = dialer::TestingDialer::default();
+    dialer.set_dial_duration(Duration::from_millis(100));
+    let getter = getter::TestingGetter::default();
+    let concurrency_limits = ConcurrencyLimits::default();
+
+    let mut downloader =
+        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+
+    let peer_candidate1 = SecretKey::from_bytes(&[0u8; 32]).public();
+    let peer_candidate2 = SecretKey::from_bytes(&[1u8; 32]).public();
+    let peer_provider = SecretKey::from_bytes(&[2u8; 32]).public();
+    let kind = DownloadKind::Blob {
+        hash: Hash::new([0u8; 32]),
+    };
+    let handle = downloader
+        .queue(
+            kind.clone(),
+            vec![
+                (peer_candidate1, PeerRole::Candidate).into(),
+                (peer_provider, PeerRole::Provider).into(),
+                (peer_candidate2, PeerRole::Candidate).into(),
+            ],
+        )
+        .await;
+    let now = std::time::Instant::now();
+    assert!(handle.await.is_ok(), "download succeeded");
+    // this is, I think, currently the best way to test that no delay was performed. It should be
+    // safe enough to assume that test runtime is not longer than the delay of 500ms.
+    assert!(
+        now.elapsed() < INITIAL_REQUEST_DELAY,
+        "no initial delay was added to fetching from a provider"
+    );
+    getter.assert_history(&[(kind, peer_provider)]);
+    dialer.assert_history(&[peer_provider]);
 }

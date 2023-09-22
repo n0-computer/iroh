@@ -3,8 +3,8 @@
 //! This can be downloaded using the iroh CLI.
 //!
 //! This is using an in memory database and a random peer id.
-//! //! run this example from the project root:
-//!     $ cargo run -p hello-world
+//! run this example from the project root:
+//!     $ cargo run --example hello-world
 use iroh::bytes::util::runtime;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -37,9 +37,9 @@ async fn main() -> anyhow::Result<()> {
     let ticket = node.ticket(hash).await?.with_recursive(false);
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
-    println!("node PeerID:     {}", ticket.peer());
+    println!("node PeerID:     {}", ticket.node_addr().peer_id);
     println!("node listening addresses:");
-    for addr in ticket.addrs() {
+    for addr in ticket.node_addr().direct_addresses() {
         println!("\t{:?}", addr);
     }
     // print the ticket, containing all the above information

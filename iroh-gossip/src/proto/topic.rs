@@ -11,7 +11,7 @@ use rand::Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 
-use super::plumtree::{self, InEvent as GossipIn};
+use super::plumtree::{self, GossipEvent, InEvent as GossipIn, Scope};
 use super::{
     hyparview::{self, InEvent as SwarmIn},
     state::MessageKind,
@@ -112,14 +112,14 @@ impl<PI> Message<PI> {
 }
 
 /// An event to be emitted to the application for a particular topic.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Event<PI> {
     /// We have a new, direct neighbor in the swarm membership layer for this topic
     NeighborUp(PI),
     /// We dropped direct neighbor in the swarm membership layer for this topic
     NeighborDown(PI),
     /// A gossip message was received for this topic
-    Received(#[debug("<{}b>", _0.len())] Bytes, PI),
+    Received(GossipEvent<PI>),
 }
 
 impl<PI> From<hyparview::Event<PI>> for Event<PI> {
@@ -134,7 +134,7 @@ impl<PI> From<hyparview::Event<PI>> for Event<PI> {
 impl<PI> From<plumtree::Event<PI>> for Event<PI> {
     fn from(value: plumtree::Event<PI>) -> Self {
         match value {
-            plumtree::Event::Received(message, prev_peer) => Self::Received(message, prev_peer),
+            plumtree::Event::Received(event) => Self::Received(event),
         }
     }
 }
@@ -160,7 +160,7 @@ pub enum Command<PI> {
     /// but only become operational after the first join request by another peer.
     Join(Vec<PI>),
     /// Broadcast a message for this topic.
-    Broadcast(#[debug("<{}b>", _0.len())] Bytes),
+    Broadcast(#[debug("<{}b>", _0.len())] Bytes, Scope),
     /// Leave this topic and drop all state.
     Quit,
 }
@@ -232,7 +232,10 @@ impl<PI: PeerIdentity, R: Rng> State<PI, R> {
                         self.swarm.handle(SwarmIn::RequestJoin(peer), now, io);
                     }
                 }
-                Command::Broadcast(data) => self.gossip.handle(GossipIn::Broadcast(data), now, io),
+                Command::Broadcast(data, scope) => {
+                    self.gossip
+                        .handle(GossipIn::Broadcast(data, scope), now, io)
+                }
                 Command::Quit => self.swarm.handle(SwarmIn::Quit, now, io),
             },
             InEvent::RecvMessage(from, message) => {

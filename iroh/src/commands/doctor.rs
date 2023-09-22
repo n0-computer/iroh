@@ -17,7 +17,7 @@ use iroh_net::{
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
-    netcheck, portmapper, MagicEndpoint,
+    netcheck, portmapper, MagicEndpoint, PeerAddr,
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -540,7 +540,7 @@ async fn make_endpoint(
 async fn connect(
     dial: String,
     secret_key: SecretKey,
-    remote_endpoints: Vec<SocketAddr>,
+    direct_addresses: Vec<SocketAddr>,
     derp_region: Option<u16>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
@@ -550,9 +550,8 @@ async fn connect(
     let peer_id = PublicKey::try_from(&bytes[..]).context("failed to parse PublicKey")?;
 
     tracing::info!("dialing {:?}", peer_id);
-    let conn = endpoint
-        .connect(peer_id, &DR_DERP_ALPN, derp_region, &remote_endpoints)
-        .await;
+    let peer_addr = PeerAddr::from_parts(peer_id, derp_region, direct_addresses);
+    let conn = endpoint.connect(peer_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
             if let Err(cause) = passive_side(connection).await {

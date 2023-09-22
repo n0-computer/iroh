@@ -1,6 +1,7 @@
 //! Storage trait and implementation for iroh-sync documents
 
 use anyhow::Result;
+use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +24,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Iterator over entries in the store, returned from [`Self::get_many`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
+    where
+        Self: 'a;
+
+    /// Iterator over all content hashes in the store, returned from [`Self::content_hashes`]
+    type ContentHashesIter<'a>: Iterator<Item = Result<Hash>>
     where
         Self: 'a;
 
@@ -49,6 +55,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     //
     // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
+
+    /// Close a replica.
+    ///
+    /// This removes the event subscription from the replica, if active, and removes the replica
+    /// instance from the store's cache.
+    fn close_replica(&self, namespace: &NamespaceId);
 
     /// Create a new author key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
@@ -78,6 +90,9 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         author: AuthorId,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>>;
+
+    /// Get all content hashes of all replicas in the store.
+    fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
 }
 
 /// Filter a get query onto a namespace

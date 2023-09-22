@@ -10,6 +10,8 @@ use rand::Rng;
 use rand_core::SeedableRng;
 use tracing::{debug, warn};
 
+use crate::proto::Scope;
+
 use super::{
     util::TimerMap, Command, Config, Event, InEvent, OutEvent, PeerIdentity, State, Timer, TopicId,
 };
@@ -315,8 +317,11 @@ impl Simulator {
                 .filter(|p| *p != from),
         );
         let expected_len = expected.len() as u64;
-        self.network
-            .command(from, TOPIC, Command::Broadcast(message.clone()));
+        self.network.command(
+            from,
+            TOPIC,
+            Command::Broadcast(message.clone(), Scope::Swarm),
+        );
 
         let mut tick = 0;
         loop {
@@ -331,7 +336,7 @@ impl Simulator {
             let events = self.network.events();
             let received: HashSet<_> = events
                 .filter(
-                    |(_peer, _topic, event)| matches!(event,  Event::Received(recv, _) if recv == &message),
+                    |(_peer, _topic, event)| matches!(event,  Event::Received(recv) if recv.content == message),
                 )
                 .map(|(peer, _topic, _msg)| peer)
                 .collect();

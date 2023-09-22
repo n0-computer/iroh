@@ -1,18 +1,13 @@
 //! Networking for the `iroh-gossip` protocol
 
-use std::{
-    collections::HashMap, fmt, future::Future, net::SocketAddr, sync::Arc, task::Poll,
-    time::Instant,
-};
-
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, PeerAddr};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
@@ -20,7 +15,7 @@ use tokio::{
 use tracing::{debug, trace, warn};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, TopicId};
+use crate::proto::{self, PeerData, Scope, TopicId};
 
 pub mod util;
 
@@ -55,16 +50,16 @@ type ProtoMessage = proto::Message<PublicKey>;
 /// Each topic is a separate broadcast tree with separate memberships.
 ///
 /// A topic has to be joined before you can publish or subscribe on the topic.
-/// To join the swarm for a topic, you have to know the [PublicKey] of at least one peer that also joined the topic.
+/// To join the swarm for a topic, you have to know the [`PublicKey`] of at least one peer that also joined the topic.
 ///
 /// Messages published on the swarm will be delivered to all peers that joined the swarm for that
 /// topic. You will also be relaying (gossiping) messages published by other peers.
 ///
 /// With the default settings, the protocol will maintain up to 5 peer connections per topic.
 ///
-/// Even though the [`Gossip`] is created from a [MagicEndpoint], it does not accept connections
+/// Even though the [`Gossip`] is created from a [`MagicEndpoint`], it does not accept connections
 /// itself. You should run an accept loop on the MagicEndpoint yourself, check the ALPN protocol of incoming
-/// connections, and if the ALPN protocol equals [GOSSIP_ALPN], forward the connection to the
+/// connections, and if the ALPN protocol equals [`GOSSIP_ALPN`], forward the connection to the
 /// gossip actor through [Self::handle_connection].
 ///
 /// The gossip actor will, however, initiate new connections to other peers by itself.
@@ -124,7 +119,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_known_addrs`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_addr`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
@@ -154,20 +149,33 @@ impl Gossip {
         Ok(())
     }
 
-    /// Broadcast a message on a topic.
+    /// Broadcast a message on a topic to all peers in the swarm.
     ///
-    /// This does not join the topic automatically, so you have to call [Self::join] yourself
+    /// This does not join the topic automatically, so you have to call [`Self::join`] yourself
     /// for messages to be broadcast to peers.
     pub async fn broadcast(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.send(ToActor::Broadcast(topic, message, tx)).await?;
+        self.send(ToActor::Broadcast(topic, message, Scope::Swarm, tx))
+            .await?;
+        rx.await??;
+        Ok(())
+    }
+
+    /// Broadcast a message on a topic to the immediate neighbors.
+    ///
+    /// This does not join the topic automatically, so you have to call [`Self::join`] yourself
+    /// for messages to be broadcast to peers.
+    pub async fn broadcast_neighbors(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.send(ToActor::Broadcast(topic, message, Scope::Neighbors, tx))
+            .await?;
         rx.await??;
         Ok(())
     }
 
     /// Subscribe to messages and event notifications for a topic.
     ///
-    /// Does not join the topic automatically, so you have to call [Self::join] yourself
+    /// Does not join the topic automatically, so you have to call [`Self::join`] yourself
     /// to actually receive messages.
     pub async fn subscribe(&self, topic: TopicId) -> anyhow::Result<broadcast::Receiver<Event>> {
         let (tx, rx) = oneshot::channel();
@@ -178,7 +186,7 @@ impl Gossip {
 
     /// Subscribe to all events published on topics that you joined.
     ///
-    /// Note that this method takes self by value. Usually you would clone the [Gossip] handle.
+    /// Note that this method takes self by value. Usually you would clone the [`Gossip`] handle.
     /// before.
     pub fn subscribe_all(self) -> impl Stream<Item = anyhow::Result<(TopicId, Event)>> {
         Gen::new(|co| async move {
@@ -201,7 +209,7 @@ impl Gossip {
         }
     }
 
-    /// Pass an incoming [quinn::Connection] to the gossip actor.
+    /// Handle an incoming [`quinn::Connection`].
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
     pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
@@ -253,32 +261,6 @@ impl Future for JoinTopicFut {
     }
 }
 
-/// Addressing information for peers.
-///
-/// This struct is serialized and transmitted to peers in `Join` and `ForwardJoin` messages.
-/// It contains the information needed by `iroh-net` to connect to peers.
-///
-/// TODO: Replace with type from iroh-net
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct IrohInfo {
-    addrs: Vec<SocketAddr>,
-    derp_region: Option<u16>,
-}
-
-impl IrohInfo {
-    async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
-        Ok(Self {
-            addrs: endpoint
-                .local_endpoints()
-                .await?
-                .iter()
-                .map(|ep| ep.addr)
-                .collect(),
-            derp_region: endpoint.my_derp().await,
-        })
-    }
-}
-
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
 #[derive(Debug)]
 enum ConnOrigin {
@@ -287,42 +269,37 @@ enum ConnOrigin {
 }
 
 /// Input messages for the gossip [`Actor`].
+#[derive(derive_more::Debug)]
 enum ToActor {
     /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
     /// (happens internally in the actor).
-    ConnIncoming(PublicKey, ConnOrigin, quinn::Connection),
+    ConnIncoming(PublicKey, ConnOrigin, #[debug(skip)] quinn::Connection),
     /// Join a topic with a list of peers. Reply with oneshot once at least one peer joined.
-    Join(TopicId, Vec<PublicKey>, oneshot::Sender<anyhow::Result<()>>),
+    Join(
+        TopicId,
+        Vec<PublicKey>,
+        #[debug(skip)] oneshot::Sender<anyhow::Result<()>>,
+    ),
     /// Leave a topic, send disconnect messages and drop all state.
     Quit(TopicId),
     /// Broadcast a message on a topic.
-    Broadcast(TopicId, Bytes, oneshot::Sender<anyhow::Result<()>>),
+    Broadcast(
+        TopicId,
+        #[debug("<{}b>", _1.len())] Bytes,
+        Scope,
+        #[debug(skip)] oneshot::Sender<anyhow::Result<()>>,
+    ),
     /// Subscribe to a topic. Return oneshot which resolves to a broadcast receiver for events on a
     /// topic.
     Subscribe(
         TopicId,
-        oneshot::Sender<anyhow::Result<broadcast::Receiver<Event>>>,
+        #[debug(skip)] oneshot::Sender<anyhow::Result<broadcast::Receiver<Event>>>,
     ),
     /// Subscribe to a topic. Return oneshot which resolves to a broadcast receiver for events on a
     /// topic.
-    SubscribeAll(oneshot::Sender<anyhow::Result<broadcast::Receiver<(TopicId, Event)>>>),
-}
-
-impl fmt::Debug for ToActor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ToActor::ConnIncoming(peer_id, origin, _conn) => {
-                write!(f, "ConnIncoming({peer_id:?}, {origin:?})")
-            }
-            ToActor::Join(topic, peers, _reply) => write!(f, "Join({topic:?}, {peers:?})"),
-            ToActor::Quit(topic) => write!(f, "Quit({topic:?})"),
-            ToActor::Broadcast(topic, message, _reply) => {
-                write!(f, "Broadcast({topic:?}, bytes<{}>)", message.len())
-            }
-            ToActor::Subscribe(topic, _reply) => write!(f, "Subscribe({topic:?})"),
-            ToActor::SubscribeAll(_reply) => write!(f, "SubscribeAll"),
-        }
-    }
+    SubscribeAll(
+        #[debug(skip)] oneshot::Sender<anyhow::Result<broadcast::Receiver<(TopicId, Event)>>>,
+    ),
 }
 
 /// Actor that sends and handles messages between the connection and main state loops
@@ -370,9 +347,9 @@ impl Actor {
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
-                    let info = IrohInfo::from_endpoint(&self.endpoint).await?;
-                    let peer_data = postcard::to_stdvec(&info)?;
-                    self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
+                    let addr = self.endpoint.my_addr().await?;
+                    let peer_data = encode_peer_data(&addr.info)?;
+                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
                     match res {
@@ -407,7 +384,7 @@ impl Actor {
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(?me, "handle to_actor  {msg:?}");
+        trace!(?me, "handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -418,7 +395,7 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(?me, peer = ?peer_id, "connection established, start loop");
+                    debug!(?me, peer = ?peer_id, "connection established");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
                             debug!(?me, peer = ?peer_id, "connection closed without error")
@@ -460,9 +437,12 @@ impl Actor {
                     .await?;
                 self.subscribers_topic.remove(&topic_id);
             }
-            ToActor::Broadcast(topic_id, message, reply) => {
-                self.handle_in_event(InEvent::Command(topic_id, Command::Broadcast(message)), now)
-                    .await?;
+            ToActor::Broadcast(topic_id, message, scope, reply) => {
+                self.handle_in_event(
+                    InEvent::Command(topic_id, Command::Broadcast(message, scope)),
+                    now,
+                )
+                .await?;
                 reply.send(Ok(())).ok();
             }
             ToActor::Subscribe(topic_id, reply) => {
@@ -533,15 +513,15 @@ impl Actor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<IrohInfo>(&data) {
-                    Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
+                OutEvent::PeerData(peer, data) => match decode_peer_data(&data) {
+                    Err(err) => warn!("Failed to decode {data:?} from {peer}: {err}"),
                     Ok(info) => {
                         debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
-                        if let Err(err) = self
-                            .endpoint
-                            .add_known_addrs(peer, info.derp_region, &info.addrs)
-                            .await
-                        {
+                        let peer_addr = PeerAddr {
+                            peer_id: peer,
+                            info,
+                        };
+                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
                             debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
                         }
                     }
@@ -619,10 +599,20 @@ async fn connection_loop(
     Ok(())
 }
 
+fn encode_peer_data(info: &AddrInfo) -> anyhow::Result<PeerData> {
+    Ok(PeerData::new(postcard::to_stdvec(info)?))
+}
+
+fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
+    let info = postcard::from_bytes(peer_data.as_bytes())?;
+    Ok(info)
+}
+
 #[cfg(test)]
 mod test {
     use std::time::Duration;
 
+    use iroh_net::PeerAddr;
     use iroh_net::{derp::DerpMap, MagicEndpoint};
     use tokio::spawn;
     use tokio::time::timeout;
@@ -685,8 +675,9 @@ mod test {
 
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        ep2.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
-        ep3.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
+        let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
+        ep2.add_peer_addr(addr1.clone()).await.unwrap();
+        ep3.add_peer_addr(addr1).await.unwrap();
         // join the topics and wait for the connection to succeed
         go1.join(topic, vec![]).await.unwrap();
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();
@@ -716,8 +707,8 @@ mod test {
             loop {
                 let ev = stream2.recv().await.unwrap();
                 info!("go2 event: {ev:?}");
-                if let Event::Received(msg, _prev_peer) = ev {
-                    recv.push(msg);
+                if let Event::Received(msg) = ev {
+                    recv.push(msg.content);
                 }
                 if recv.len() == len {
                     return recv;
@@ -731,8 +722,8 @@ mod test {
             loop {
                 let ev = stream3.recv().await.unwrap();
                 info!("go3 event: {ev:?}");
-                if let Event::Received(msg, _prev_peer) = ev {
-                    recv.push(msg);
+                if let Event::Received(msg) = ev {
+                    recv.push(msg.content);
                 }
                 if recv.len() == len {
                     return recv;
@@ -799,7 +790,7 @@ mod test {
         /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
         pub(crate) async fn run_derp_and_stun(
             stun_ip: IpAddr,
-        ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
+        ) -> Result<(DerpMap, u16, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
             let server_key = SecretKey::generate();
@@ -834,7 +825,7 @@ mod test {
                 server.shutdown().await;
             });
 
-            Ok((m, Some(region_id), CleanupDropGuard(tx)))
+            Ok((m, region_id, CleanupDropGuard(tx)))
         }
 
         /// Sets up a simple STUN server.

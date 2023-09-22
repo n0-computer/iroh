@@ -93,9 +93,9 @@ pub enum Event {
     },
 }
 
-/// Progress updates for the provide operation.
+/// Progress updates for the add operation.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ProvideProgress {
+pub enum AddProgress {
     /// An item was found with name `name`, from now on referred to via `id`
     Found {
         /// A new unique id for this entry.
@@ -130,9 +130,9 @@ pub enum ProvideProgress {
     Abort(RpcError),
 }
 
-/// Progress updates for the provide operation.
+/// Progress updates for the get operation.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ShareProgress {
+pub enum GetProgress {
     /// A new connection was established.
     Connected,
     /// An item was found with hash `hash`, from now on referred to via `id`.

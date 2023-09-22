@@ -1,6 +1,7 @@
 //! Implementation of [`super::Dialer`] used for testing.
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
@@ -84,5 +85,10 @@ impl TestingDialer {
     #[track_caller]
     pub(super) fn assert_history(&self, history: &[PublicKey]) {
         assert_eq!(self.0.read().dial_history, history)
+    }
+
+    pub(super) fn set_dial_duration(&self, duration: Duration) {
+        let mut inner = self.0.write();
+        inner.dial_duration = duration;
     }
 }

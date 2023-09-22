@@ -13,8 +13,8 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    config, disco, key::PublicKey, magicsock::Timer, net::ip::is_unicast_link_local, stun,
-    util::derp_only_mode,
+    config, disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
+    net::ip::is_unicast_link_local, stun, util::derp_only_mode,
 };
 
 use super::{
@@ -540,31 +540,36 @@ impl Endpoint {
         }
     }
 
-    pub fn update_from_node(&mut self, n: &config::Node) {
+    pub fn update_from_node_addr(&mut self, n: &AddrInfo) {
         if self.best_addr.is_none() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status
-            if self.derp_region.is_none() && n.derp.is_some() {
+            if self.derp_region.is_none() && n.derp_region.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.derp_region.is_some() && n.derp.is_none() {
+            } else if self.derp_region.is_some() && n.derp_region.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
 
-        if n.derp.is_some() {
+        if n.derp_region.is_some() {
             debug!(
                 "Changing derp region for {:?} from {:?} to {:?}",
-                self.public_key, self.derp_region, n.derp
+                self.public_key, self.derp_region, n.derp_region
             );
-            self.derp_region = n.derp;
+            self.derp_region = n.derp_region;
         }
 
         for st in self.endpoint_state.values_mut() {
             st.index = Index::Deleted; // assume deleted until updated in next loop
         }
-        for (i, ep) in n.endpoints.iter().take(u16::MAX as usize).enumerate() {
+        for (i, ep) in n
+            .direct_addresses
+            .iter()
+            .take(u16::MAX as usize)
+            .enumerate()
+        {
             let index = Index::Some(i);
             let ep = SendAddr::Udp(*ep);
             if let Some(st) = self.endpoint_state.get_mut(&ep) {
