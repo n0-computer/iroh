@@ -6,10 +6,12 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
@@ -1044,43 +1046,31 @@ pub(super) struct KnownPeers {
 }
 
 impl PeerMap {
-    pub fn known_peers(&self) -> KnownPeers {
-        let peers = self
-            .by_id
-            .values()
-            .filter_map(|endpoint| {
-                let PeerAddr { peer_id, info } = endpoint.peer_addr();
-                (!info.is_empty()).then_some((peer_id, info))
-            })
-            .collect();
-
-        KnownPeers { peers }
-    }
-
-    pub fn from_known_peers(peers: KnownPeers, msock_sender: mpsc::Sender<ActorMessage>) -> Self {
-        let mut peer_map = Self::default();
-        // inneficient but relies on proven logic
-        for (peer, info) in peers.peers.into_iter() {
-            peer_map.add_known_addr(peer, info, msock_sender.clone());
-        }
-        peer_map
+    pub fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
+        self.by_id.values().filter_map(|endpoint| {
+            let peer_addr = endpoint.peer_addr();
+            (!peer_addr.info.is_empty()).then_some(peer_addr)
+        })
     }
 
     pub fn load_from_file(
         path: &Path,
         msock_sender: mpsc::Sender<ActorMessage>,
     ) -> anyhow::Result<Self> {
+        let mut me = PeerMap::default();
         let contents = std::fs::read(path)?;
-        let peers: KnownPeers = postcard::from_bytes(&contents)?;
-        Ok(Self::from_known_peers(peers, msock_sender))
+        let mut slice: &[u8] = &contents;
+        while !slice.is_empty() {
+            let (peer_addr, next_contents) =
+                postcard::take_from_bytes(slice).context("failed to load peer data")?;
+            me.add_peer_addr(peer_addr, msock_sender.clone());
+            slice = next_contents;
+        }
+        Ok(me)
     }
 
-    pub fn add_known_addr(
-        &mut self,
-        peer_id: PublicKey,
-        info: AddrInfo,
-        msock_sender: mpsc::Sender<ActorMessage>,
-    ) {
+    pub fn add_peer_addr(&mut self, peer_addr: PeerAddr, msock_sender: mpsc::Sender<ActorMessage>) {
+        let PeerAddr { peer_id, info } = peer_addr;
         if self.endpoint_for_node_key(&peer_id).is_none() {
             info!(%peer_id, "inserting peer's endpoint in PeerMap");
             self.insert_endpoint(Options {
@@ -1199,11 +1189,28 @@ impl PeerMap {
     }
 
     /// Saves the known peer info to the given path, returning the number of peers persisted.
-    pub(super) fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
-        let known_peers = self.known_peers();
-        let count = known_peers.len();
-        let serialized = postcard::to_stdvec(&known_peers)?;
-        std::fs::write(path, serialized)?;
+    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
+        let (tmp_file, tmp_path) = tempfile::NamedTempFile::new()
+            .context("cannot create temp file to save peer data")?
+            .into_parts();
+
+        let mut tmp = tokio::fs::File::from_std(tmp_file);
+
+        let mut count = 0;
+        for peer_addr in self.known_peer_addresses() {
+            let ser = postcard::to_stdvec(&peer_addr).context("failed to serialize peer data")?;
+            tmp.write_all(&ser)
+                .await
+                .context("failed to persist peer data")?;
+            count += 1;
+        }
+        tmp.flush().await.context("failed to flush peer data")?;
+        drop(tmp);
+
+        // move the file
+        tokio::fs::rename(tmp_path, path)
+            .await
+            .context("failed to save peer data")?;
         Ok(count)
     }
 
@@ -1641,48 +1648,52 @@ mod tests {
     }
 
     /// Test persisting and loading of known peers.
-    #[test]
-    fn load_save_peer_data() {
+    #[tokio::test]
+    async fn load_save_peer_data() {
         let mut peer_map = PeerMap::default();
         let (tx, _rx) = mpsc::channel(1);
 
         let peer_a = SecretKey::generate().public();
         let peer_b = SecretKey::generate().public();
         let peer_c = SecretKey::generate().public();
+        let peer_d = SecretKey::generate().public();
 
-        let region_x = Some(1);
-        let region_y = Some(2);
+        let region_x = 1;
+        let region_y = 2;
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port).into()
         }
 
-        let direct_addresses_a = [addr(4000), addr(4001)].into();
-        let direct_addresses_b = [].into();
-        let direct_addresses_c = [addr(5000)].into();
+        let direct_addresses_a = [addr(4000), addr(4001)];
+        let direct_addresses_c = [addr(5000)];
 
-        let info_a = AddrInfo {
-            derp_region: region_x,
-            direct_addresses: direct_addresses_a,
-        };
-        let info_b = AddrInfo {
-            derp_region: region_y,
-            direct_addresses: direct_addresses_b,
-        };
-        let info_c = AddrInfo {
-            derp_region: None,
-            direct_addresses: direct_addresses_c,
-        };
+        let peer_addr_a = PeerAddr::new(peer_a)
+            .with_derp_region(region_x)
+            .with_direct_addresses(direct_addresses_a);
+        let peer_addr_b = PeerAddr::new(peer_b).with_derp_region(region_y);
+        let peer_addr_c = PeerAddr::new(peer_c).with_direct_addresses(direct_addresses_c);
+        let peer_addr_d = PeerAddr::new(peer_d);
 
-        peer_map.add_known_addr(peer_a, info_a, tx.clone());
-        peer_map.add_known_addr(peer_b, info_b, tx.clone());
-        peer_map.add_known_addr(peer_c, info_c, tx.clone());
+        peer_map.add_peer_addr(peer_addr_a, tx.clone());
+        peer_map.add_peer_addr(peer_addr_b, tx.clone());
+        peer_map.add_peer_addr(peer_addr_c, tx.clone());
+        peer_map.add_peer_addr(peer_addr_d, tx.clone());
 
         let path = temp_dir().join("peers.postcard");
-        peer_map.save_to_file(&path).unwrap();
+        peer_map.save_to_file(&path).await.unwrap();
 
-        let loaded = PeerMap::load_from_file(&path, tx).unwrap();
+        let loaded_peer_map = PeerMap::load_from_file(&path, tx).unwrap();
+        let loaded: HashMap<PublicKey, AddrInfo> = loaded_peer_map
+            .known_peer_addresses()
+            .map(|PeerAddr { peer_id, info }| (peer_id, info))
+            .collect();
+
+        let og: HashMap<PublicKey, AddrInfo> = peer_map
+            .known_peer_addresses()
+            .map(|PeerAddr { peer_id, info }| (peer_id, info))
+            .collect();
         // compare the peer maps via their known peers
-        assert_eq!(peer_map.known_peers(), loaded.known_peers());
+        assert_eq!(og, loaded);
     }
 }

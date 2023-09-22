@@ -51,6 +51,7 @@ surge-ping = "0.8.0"
 thiserror = "1"
 tracing = "0.1"
 trust-dns-resolver = "0.22.0"
+tempfile = "3.4"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }

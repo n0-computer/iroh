@@ -1054,7 +1054,7 @@ impl Actor {
                 }
                 _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
                     let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
-                    match self.peer_map.save_to_file(path) {
+                    match self.peer_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "peers persisted"),
                         Err(e) => error!(%e, "failed to persist known peers"),
                     }
@@ -1095,7 +1095,7 @@ impl Actor {
                     ep.stop_and_reset();
                 }
                 if let Some(path) = self.peers_path.as_ref() {
-                    match self.peer_map.save_to_file(path) {
+                    match self.peer_map.save_to_file(path).await {
                         Ok(count) => {
                             debug!(count, "known peers persisted")
                         }
@@ -2288,9 +2288,8 @@ impl Actor {
 
     #[instrument(skip_all)]
     fn add_known_addr(&mut self, peer_addr: PeerAddr) {
-        let PeerAddr { peer_id, info } = peer_addr;
         self.peer_map
-            .add_known_addr(peer_id, info, self.inner.actor_sender.clone())
+            .add_peer_addr(peer_addr, self.inner.actor_sender.clone())
     }
 
     /// Returns the current IPv4 listener's port number.
