@@ -86,6 +86,7 @@ genawaiter = { version = "0.99", features = ["futures03"] }
 iroh-test = { version = "0.6.0", path = "../iroh-test" }
 nix = "0.26.2"
 proptest = "1.2.0"
+rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
 tempfile = "3.4"
 testdir = "0.8"
