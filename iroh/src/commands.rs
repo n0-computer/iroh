@@ -27,7 +27,7 @@ use iroh_net::{
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::provide::{ProvideOptions, ProviderRpcPort};
+use self::node::{ProvideOptions, ProviderRpcPort};
 use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -39,7 +39,7 @@ pub mod delete;
 pub mod doctor;
 pub mod get;
 pub mod list;
-pub mod provide;
+pub mod node;
 pub mod repl;
 pub mod sync;
 pub mod validate;
@@ -232,7 +232,7 @@ impl FullCommands {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,
                 };
-                self::provide::run(
+                self::node::run(
                     rt,
                     path,
                     in_place,
