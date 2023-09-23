@@ -4,7 +4,7 @@ use futures::{
     future::{self, LocalBoxFuture},
     FutureExt,
 };
-use iroh_io::AsyncSliceReader;
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use std::fmt::Debug;
 
 /// A custom collection parser that allows the user to define what a collection is.
@@ -63,5 +63,67 @@ impl CollectionParser for NoCollectionParser {
         _reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         future::err(anyhow::anyhow!("collections not supported")).boxed_local()
+    }
+}
+
+/// A collection parser that parses a sequence of links.
+#[derive(Debug, Clone)]
+pub struct LinkSeqCollectionParser;
+
+impl CollectionParser for LinkSeqCollectionParser {
+    fn parse<'a, R: AsyncSliceReader + 'a>(
+        &'a self,
+        _format: u64,
+        mut reader: R,
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
+        async move {
+            let bytes = reader.read_to_end().await?;
+            let links = postcard::from_bytes::<Box<[Hash]>>(&bytes)?;
+            let stream: Box<dyn LinkStream> = Box::new(ArrayLinkStream::new(links));
+            Ok((stream, Default::default()))
+        }
+        .boxed_local()
+    }
+}
+
+/// Stream of links that is used by the default collections
+///
+/// Just contains an array of hashes, so it requires at least all hashes to be loaded into memory.
+#[derive(Debug, Clone)]
+pub struct ArrayLinkStream {
+    hashes: Box<[Hash]>,
+    offset: usize,
+}
+
+impl ArrayLinkStream {
+    /// Create a new iterator over the given hashes.
+    pub fn new(hashes: Box<[Hash]>) -> Self {
+        Self { hashes, offset: 0 }
+    }
+}
+
+impl LinkStream for ArrayLinkStream {
+    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
+        let res = if self.offset < self.hashes.len() {
+            let hash = self.hashes[self.offset];
+            self.offset += 1;
+            Some(hash)
+        } else {
+            None
+        };
+        future::ok(res).boxed_local()
+    }
+
+    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
+        let res = if let Some(offset) = self
+            .offset
+            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
+        {
+            self.offset = offset;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("overflow"))
+        };
+        future::ready(res).boxed_local()
     }
 }

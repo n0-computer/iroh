@@ -1,10 +1,7 @@
 //! The collection type used by iroh
 use anyhow::{Context, Result};
-use futures::{
-    future::{self, LocalBoxFuture},
-    FutureExt,
-};
-use iroh_bytes::collection::{CollectionParser, CollectionStats, LinkStream};
+use futures::{future::LocalBoxFuture, FutureExt};
+use iroh_bytes::collection::{ArrayLinkStream, CollectionParser, CollectionStats, LinkStream};
 use iroh_bytes::Hash;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use serde::{Deserialize, Serialize};
@@ -130,48 +127,6 @@ mod tests {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IrohCollectionParser;
 
-/// Stream of links that is used by the default collections
-///
-/// Just contains an array of hashes, so it requires at least all hashes to be loaded into memory.
-#[derive(Debug, Clone)]
-pub struct ArrayLinkStream {
-    hashes: Box<[Hash]>,
-    offset: usize,
-}
-
-impl ArrayLinkStream {
-    /// Create a new iterator over the given hashes.
-    pub fn new(hashes: Box<[Hash]>) -> Self {
-        Self { hashes, offset: 0 }
-    }
-}
-
-impl LinkStream for ArrayLinkStream {
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
-        let res = if self.offset < self.hashes.len() {
-            let hash = self.hashes[self.offset];
-            self.offset += 1;
-            Some(hash)
-        } else {
-            None
-        };
-        future::ok(res).boxed_local()
-    }
-
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
-        let res = if let Some(offset) = self
-            .offset
-            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
-        {
-            self.offset = offset;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("overflow"))
-        };
-        future::ready(res).boxed_local()
-    }
-}
-
 impl CollectionParser for IrohCollectionParser {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
@@ -183,7 +138,7 @@ impl CollectionParser for IrohCollectionParser {
             let data = reader.read_to_end().await?;
             // parse the collection and just take the hashes
             let hashes = postcard::from_bytes::<Box<[Hash]>>(&data)?;
-            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
+            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream::new(hashes));
             Ok((res, CollectionStats::default()))
         }
         .boxed_local()
