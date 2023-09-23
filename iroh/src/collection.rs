@@ -21,6 +21,19 @@ pub struct Collection {
 }
 
 impl Collection {
+    ///
+    pub fn from_parts(links: &[Hash], names: &[String]) -> anyhow::Result<Self> {
+        let blobs = links
+            .iter()
+            .zip(names.iter())
+            .map(|(hash, name)| Blob {
+                name: name.clone(),
+                hash: *hash,
+            })
+            .collect();
+        Self::new(blobs, 0)
+    }
+
     /// Create a new collection from a list of blobs and total size of the raw data
     pub fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> anyhow::Result<Self> {
         let mut blobs = blobs;
@@ -37,6 +50,16 @@ impl Collection {
     /// Serialize this collection to a std `Vec<u8>`
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         Ok(postcard::to_stdvec(self)?)
+    }
+
+    /// Get the links to the blobs in this collection
+    pub fn links(&self) -> Vec<Hash> {
+        self.blobs.iter().map(|x| x.hash).collect()
+    }
+
+    /// Get the names of the blobs in this collection
+    pub fn names(&self) -> Vec<String> {
+        self.blobs.iter().map(|x| x.name.clone()).collect()
     }
 
     /// Deserialize a collection from a byte slice
@@ -159,19 +182,9 @@ impl CollectionParser for IrohCollectionParser {
             // read to end
             let data = reader.read_to_end().await?;
             // parse the collection and just take the hashes
-            let collection = Collection::from_bytes(&data)?;
-            let stats = CollectionStats {
-                num_blobs: Some(collection.blobs.len() as u64),
-                total_blob_size: Some(collection.total_blobs_size),
-            };
-            let hashes = collection
-                .into_inner()
-                .into_iter()
-                .map(|x| x.hash)
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
+            let hashes = postcard::from_bytes::<Box<[Hash]>>(&data)?;
             let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
-            Ok((res, stats))
+            Ok((res, CollectionStats::default()))
         }
         .boxed_local()
     }

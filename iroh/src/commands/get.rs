@@ -218,10 +218,20 @@ async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats>
 }
 
 async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Result<get::Stats> {
-    let (mut next, collection) = {
+    let (next, links) = {
         let curr = curr.next();
-        let (curr, collection_data) = curr.concatenate_into_vec().await?;
-        let collection = Collection::from_bytes(&collection_data)?;
+        let (curr, data) = curr.concatenate_into_vec().await?;
+        let links = postcard::from_bytes::<Box<[Hash]>>(&data)?;
+        (curr.next(), links)
+    };
+    let EndBlobNext::MoreChildren(at_meta) = next else {
+        anyhow::bail!("expected meta");
+    };
+    let (mut next, collection) = {
+        let curr = at_meta.next(links[0]);
+        let (curr, names) = curr.concatenate_into_vec().await?;
+        let names = postcard::from_bytes::<Box<[String]>>(&names)?;
+        let collection = Collection::from_parts(&links[1..], &names)?;
         let count = collection.total_entries();
         let missing_bytes = collection.total_blobs_size();
         write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
@@ -242,11 +252,10 @@ async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Re
             EndBlobNext::Closing(finish) => break finish,
         };
         let child_offset = start.child_offset() as usize;
-        let blob = match collection.get(child_offset) {
+        let blob = match collection.get(child_offset - 1) {
             Some(blob) => blob,
             None => break start.finish(),
         };
-
         let hash = blob.hash;
         let name = &blob.name;
         let name = if name.is_empty() {

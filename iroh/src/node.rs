@@ -1036,12 +1036,20 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 use crate::collection::{Blob, Collection};
                 use crate::util::io::pathbuf_from_name;
                 use iroh_io::AsyncSliceReaderExt;
-                trace!("exporting collection {} to {}", hash, path.display());
                 tokio::fs::create_dir_all(&path).await?;
-                let collection = db.get(&hash).context("collection not there")?;
-                let mut reader = collection.data_reader().await?;
+                let links = db.get(&hash).context("collection not there")?;
+                let mut reader = links.data_reader().await?;
                 let bytes: Bytes = reader.read_to_end().await?;
-                let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
+                let links =
+                    postcard::from_bytes::<Box<[Hash]>>(&bytes).context("invalid collection")?;
+                let names = db.get(&links[0]).context("names not there")?;
+                let mut reader = names.data_reader().await?;
+                let bytes: Bytes = reader.read_to_end().await?;
+                let names =
+                    postcard::from_bytes::<Box<[String]>>(&bytes).context("invalid collection")?;
+
+                let collection =
+                    Collection::from_parts(&links[1..], &names).context("invalid collection")?;
                 for Blob { hash, name } in collection.blobs() {
                     let path = path.join(pathbuf_from_name(name));
                     if let Some(parent) = path.parent() {
@@ -1237,7 +1245,15 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let (blobs, child_tags): (Vec<_>, Vec<_>) =
             result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
         let collection = Collection::new(blobs, total_blobs_size)?;
-        let data = collection.to_bytes()?;
+        let meta = postcard::to_stdvec(&collection.names())?;
+        let meta_tag = self
+            .inner
+            .db
+            .import_bytes(meta.into(), BlobFormat::RAW)
+            .await?;
+        let mut links = collection.links();
+        links.insert(0, *meta_tag.hash());
+        let data = postcard::to_stdvec(&links)?;
         let tag = self
             .inner
             .db
