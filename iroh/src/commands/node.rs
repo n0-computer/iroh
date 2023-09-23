@@ -8,9 +8,10 @@ use std::{
 
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
-    baomap::flat,
+    baomap::flat::{self, Store as BaoFsStore},
     client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
+    dial::Ticket,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
@@ -20,12 +21,12 @@ use iroh_bytes::{
     util::{runtime, SetTagOption},
 };
 use iroh_net::{derp::DerpMap, key::SecretKey};
-use iroh_sync::store::Store as DocStore;
+use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::config::IrohPaths;
+use crate::{commands::add::add_stdin_or_path, config::IrohPaths};
 
 use super::{
     add::{aggregate_add_response, print_add_response},
@@ -56,71 +57,41 @@ pub async fn run(
         );
     }
 
-    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
-    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
-    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
-    tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let db = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
-        .await
-        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let key = Some(IrohPaths::SecretKey.with_env()?);
-    let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
+<<<<<<< HEAD
     let peers = IrohPaths::PeerData.with_env()?;
     let provider = provide(db.clone(), store, rt, key, peers, opts).await?;
     let client = provider.client();
+=======
+>>>>>>> df680573 (refactor: better code reuse)
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
     }
 
+    let node = start_daemon_node(rt, opts).await?;
+    let client = node.client();
+
     // task that will add data to the provider, either from a file or from stdin
-    let fut = {
-        let provider = provider.clone();
+    let add_task = {
         tokio::spawn(
             async move {
-                let (path, tmp_path) = if let Some(path) = path {
-                    let absolute = path.canonicalize()?;
-                    println!("Adding {} as {}...", path.display(), absolute.display());
-                    (absolute, None)
-                } else {
-                    // Store STDIN content into a temporary file
-                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                    let mut file = tokio::fs::File::from_std(file);
-                    let path_buf = path.to_path_buf();
-                    // Copy from stdin to the file, until EOF
-                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                    println!("Adding from stdin...");
-                    // return the TempPath to keep it alive
-                    (path_buf, Some(path))
-                };
-                // tell the provider to add the data
-                let stream = client.blobs.add_from_path(path, in_place, tag).await?;
-                match aggregate_add_response(stream).await {
-                    Ok((hash, entries)) => {
-                        print_add_response(hash, entries);
-                        let ticket = provider.ticket(hash).await?.with_token(token);
-                        println!("All-in-one ticket: {ticket}");
-                        anyhow::Ok(tmp_path)
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to add data: {}", e);
-                        std::process::exit(-1);
-                    }
+                if let Err(e) = add_stdin_or_path(&client, path, tag, in_place, true, token).await {
+                    eprintln!("Failed to add data: {}", e);
+                    std::process::exit(1);
                 }
             }
             .instrument(info_span!("provider-add")),
         )
     };
 
-    let provider2 = provider.clone();
+    let node2 = node.clone();
     tokio::select! {
         biased;
         _ = tokio::signal::ctrl_c() => {
             println!("Shutting down provider...");
-            provider2.shutdown();
+            node2.shutdown();
         }
-        res = provider => {
+        res = node => {
             res?;
         }
     }
@@ -128,15 +99,32 @@ pub async fn run(
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
     // makes this explicit.
-    fut.abort();
-    drop(fut);
+    add_task.abort();
+    drop(add_task);
     Ok(())
 }
 
-async fn provide<B: BaoStore, D: DocStore>(
+async fn start_daemon_node(
+    rt: &runtime::Handle,
+    opts: StartOptions,
+) -> Result<Node<BaoFsStore, DocFsStore>> {
+    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
+    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
+    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
+    tokio::fs::create_dir_all(&blob_dir).await?;
+    tokio::fs::create_dir_all(&partial_blob_dir).await?;
+    let bao_store = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
+        .await
+        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+    let key = Some(IrohPaths::SecretKey.with_env()?);
+    let doc_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
+    spawn_daemon_node(rt, bao_store, doc_store, key, opts).await
+}
+
+async fn spawn_daemon_node<B: BaoStore, D: DocStore>(
+    rt: &runtime::Handle,
     bao_store: B,
     doc_store: D,
-    rt: &runtime::Handle,
     key: Option<PathBuf>,
     peers_data_path: PathBuf,
     opts: StartOptions,

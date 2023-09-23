@@ -307,15 +307,15 @@ impl RpcMsg<ProviderService> for NodeShutdownRequest {
 pub struct NodeStatusRequest;
 
 impl RpcMsg<ProviderService> for NodeStatusRequest {
-    type Response = NodeStatusResponse;
+    type Response = RpcResult<NodeStatusResponse>;
 }
 
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusResponse {
-    /// The peer id of the node
-    pub node_id: Box<PublicKey>,
-    /// The addresses of the node
+    /// The peer id and socket addresses of this node.
+    pub addr: PeerAddr,
+    /// The bound listening addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
     pub version: String,
@@ -766,7 +766,7 @@ pub enum ProviderRequest {
 #[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
-    NodeStatus(NodeStatusResponse),
+    NodeStatus(RpcResult<NodeStatusResponse>),
     NodeStats(RpcResult<NodeStatsResponse>),
     NodeConnections(RpcResult<NodeConnectionsResponse>),
     NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),

@@ -1302,16 +1302,16 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         res
     }
 
-    async fn node_status(self, _: NodeStatusRequest) -> NodeStatusResponse {
-        NodeStatusResponse {
-            node_id: Box::new(self.inner.secret_key.public()),
+    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatusResponse> {
+        Ok(NodeStatusResponse {
+            addr: self.inner.endpoint.my_addr().await?,
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
                 .await
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-        }
+        })
     }
     async fn node_shutdown(self, request: NodeShutdownRequest) {
         if request.force {

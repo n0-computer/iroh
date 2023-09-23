@@ -105,7 +105,7 @@ where
 
     /// Get status information about a node
     pub async fn status(&self) -> Result<NodeStatusResponse> {
-        let response = self.rpc.rpc(NodeStatusRequest).await?;
+        let response = self.rpc.rpc(NodeStatusRequest).await??;
         Ok(response)
     }
 

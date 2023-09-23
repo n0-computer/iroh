@@ -27,7 +27,7 @@ use iroh_net::{
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::node::{StartOptions, RpcPort};
+use self::node::{RpcPort, StartOptions};
 use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -377,7 +377,7 @@ impl NodeCommands {
             Self::Status => {
                 let response = iroh.node.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node public key: {}", response.node_id);
+                println!("Node public key: {}", response.addr.peer_id);
                 println!("Version: {}", response.version);
             }
         }
@@ -438,8 +438,10 @@ impl RpcCommands {
 pub enum BlobCommands {
     /// Add data from PATH to the running provider's database.
     Add {
-        /// The path to the file or folder to add
-        path: PathBuf,
+        /// The path to the file or folder to add.
+        ///
+        /// If no path is specified, data will be read from STDIN.
+        path: Option<PathBuf>,
         /// Add in place
         ///
         /// Set this to true only if you are sure that the data in its current location
@@ -449,6 +451,9 @@ pub enum BlobCommands {
         /// Tag to tag the data with
         #[clap(long)]
         tag: Option<String>,
+        /// Print an all-in-one ticket to get the added data from this node.
+        #[clap(long)]
+        ticket: bool,
     },
     /// Download data to the running provider's database and provide it.
     ///
@@ -574,12 +579,13 @@ impl BlobCommands {
                 path,
                 in_place,
                 tag,
+                ticket,
             } => {
                 let tag = match tag {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,
                 };
-                self::add::run(iroh, path, in_place, tag).await
+                self::add::add_stdin_or_path(iroh, path, tag, in_place, ticket, None).await
             }
         }
     }

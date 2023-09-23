@@ -7,15 +7,44 @@ use std::{
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::client::quic::Iroh;
-use iroh_bytes::{provider::AddProgress, util::SetTagOption, Hash};
+use iroh::{client::Iroh, dial::Ticket, rpc_protocol::ProviderService};
+use iroh_bytes::{protocol::RequestToken, provider::AddProgress, util::SetTagOption, Hash};
+use quic_rpc::ServiceConnection;
 
-pub async fn run(iroh: &Iroh, path: PathBuf, in_place: bool, tag: SetTagOption) -> Result<()> {
-    let absolute = path.canonicalize()?;
-    println!("Adding {} as {}...", path.display(), absolute.display());
-    let stream = iroh.blobs.add_from_path(absolute, in_place, tag).await?;
+/// Add data to iroh, either from a path or, if path is `None`, from STDIN.
+pub async fn add_stdin_or_path<C: ServiceConnection<ProviderService>>(
+    client: &Iroh<C>,
+    path: Option<PathBuf>,
+    tag: SetTagOption,
+    in_place: bool,
+    ticket: bool,
+    token_for_ticket: Option<RequestToken>,
+) -> Result<()> {
+    let (path, _tmp_path) = if let Some(path) = path {
+        let absolute = path.canonicalize()?;
+        println!("Adding {} as {}...", path.display(), absolute.display());
+        (absolute, None)
+    } else {
+        // Store STDIN content into a temporary file
+        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+        let mut file = tokio::fs::File::from_std(file);
+        let path_buf = path.to_path_buf();
+        // Copy from stdin to the file, until EOF
+        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+        println!("Adding from stdin...");
+        // return the TempPath to keep it alive
+        (path_buf, Some(path))
+    };
+
+    // tell the node to add the data
+    let stream = client.blobs.add_from_path(path, in_place, tag).await?;
     let (hash, entries) = aggregate_add_response(stream).await?;
     print_add_response(hash, entries);
+    if ticket {
+        let status = client.node.status().await?;
+        let ticket = Ticket::new(status.addr, hash, token_for_ticket, true)?;
+        println!("All-in-one ticket: {ticket}");
+    }
     Ok(())
 }
 
