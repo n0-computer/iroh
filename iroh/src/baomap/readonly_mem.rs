@@ -41,7 +41,7 @@ use tokio::{io::AsyncWriteExt, sync::mpsc};
 ///
 /// It is therefore useful mostly for testing and sharing static data.
 #[derive(Debug, Clone, Default)]
-pub struct Store(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
+pub struct Store(Arc<HashMap<Hash, (PreOrderMemOutboard<Bytes>, Bytes)>>);
 
 impl<K, V> FromIterator<(K, V)> for Store
 where
@@ -67,13 +67,13 @@ impl Store {
         for (name, data) in entries.into_iter() {
             let name = name.into();
             let data: &[u8] = data.as_ref();
-            // compute the outboard
-            let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
+            // wrap into the right types
+            let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE)
+                .map_data(Bytes::from)
+                .unwrap();
+            let hash = outboard.root();
             // add the name, this assumes that names are unique
             names.insert(name, hash);
-            // wrap into the right types
-            let outboard =
-                PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.into()).unwrap();
             let data = Bytes::from(data.to_vec());
             let hash = Hash::from(hash);
             res.insert(hash, (outboard, data));
@@ -87,10 +87,11 @@ impl Store {
     pub fn insert(&mut self, data: impl AsRef<[u8]>) -> Hash {
         let inner = Arc::make_mut(&mut self.0);
         let data: &[u8] = data.as_ref();
-        // compute the outboard
-        let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
         // wrap into the right types
-        let outboard = PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.into()).unwrap();
+        let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE)
+            .map_data(Bytes::from)
+            .unwrap();
+        let hash = outboard.root();
         let data = Bytes::from(data.to_vec());
         let hash = Hash::from(hash);
         inner.insert(hash, (outboard, data));

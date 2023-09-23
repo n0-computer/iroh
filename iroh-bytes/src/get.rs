@@ -431,9 +431,6 @@ pub mod fsm {
         /// This indicates that the provider does not have the requested data.
         #[error("not found")]
         NotFound,
-        /// The query range was invalid for the blob
-        #[error("invalid query range")]
-        InvalidQueryRange,
         /// Quinn read error when reading the size header
         #[error("read: {0}")]
         Read(quinn::ReadError),
@@ -447,9 +444,6 @@ pub mod fsm {
             match cause {
                 AtBlobHeaderNextError::NotFound => {
                     io::Error::new(io::ErrorKind::UnexpectedEof, cause)
-                }
-                AtBlobHeaderNextError::InvalidQueryRange => {
-                    io::Error::new(io::ErrorKind::InvalidInput, cause)
                 }
                 AtBlobHeaderNextError::Read(cause) => cause.into(),
                 AtBlobHeaderNextError::Io(cause) => cause,
@@ -470,7 +464,6 @@ pub mod fsm {
                 )),
                 Err(cause) => Err(match cause {
                     StartDecodeError::NotFound => AtBlobHeaderNextError::NotFound,
-                    StartDecodeError::InvalidQueryRange => AtBlobHeaderNextError::InvalidQueryRange,
                     StartDecodeError::Io(cause) => {
                         if let Some(inner) = cause.get_ref() {
                             if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
@@ -593,10 +586,6 @@ pub mod fsm {
     /// provider should never do this, so this is an indication that the provider is
     /// not behaving correctly.
     ///
-    /// The [`DecodeError::InvalidQueryRange`] variant indicates that the we requested
-    /// a range that is invalid for the current blob. E.g. we requested chunk 5 for
-    /// a blob that is only 2 chunks large.
-    ///
     /// The [`DecodeError::Io`] variant is just a fallback for any other io error that
     /// is not actually a [`quinn::ReadError`].
     #[derive(Debug, thiserror::Error)]
@@ -616,9 +605,6 @@ pub mod fsm {
         /// The hash of a leaf did not match the expected hash
         #[error("leaf hash mismatch: {0}")]
         LeafHashMismatch(ChunkNum),
-        /// The query range was invalid
-        #[error("invalid query range")]
-        InvalidQueryRange,
         /// Error when reading from the stream
         #[error("read: {0}")]
         Read(quinn::ReadError),
@@ -633,7 +619,6 @@ pub mod fsm {
                 AtBlobHeaderNextError::NotFound => Self::NotFound,
                 AtBlobHeaderNextError::Read(cause) => Self::Read(cause),
                 AtBlobHeaderNextError::Io(cause) => Self::Io(cause),
-                AtBlobHeaderNextError::InvalidQueryRange => Self::InvalidQueryRange,
             }
         }
     }
@@ -702,7 +687,7 @@ pub mod fsm {
         }
 
         /// The geometry of the tree we are currently reading.
-        pub fn tree(&self) -> &bao_tree::BaoTree {
+        pub fn tree(&self) -> bao_tree::BaoTree {
             self.stream.tree()
         }
 

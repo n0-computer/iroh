@@ -355,6 +355,7 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
+use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
 use derive_more::From;
 use quinn::VarInt;
@@ -503,6 +504,31 @@ impl GetRequest {
             hash,
             token: None,
             ranges: RangeSpecSeq::from_ranges([RangeSet2::all()]),
+        }
+    }
+
+    /// Request the last chunk of a single blob
+    ///
+    /// This can be used to get the verified size of a blob.
+    pub fn last_chunk(hash: Hash) -> Self {
+        Self {
+            hash,
+            token: None,
+            ranges: RangeSpecSeq::from_ranges([RangeSet2::from(ChunkNum(u64::MAX)..)]),
+        }
+    }
+
+    /// Request the last chunk for all children
+    ///
+    /// This can be used to get the verified size of all children.
+    pub fn last_chunks(hash: Hash) -> Self {
+        Self {
+            hash,
+            token: None,
+            ranges: RangeSpecSeq::from_ranges_infinite([
+                RangeSet2::all(),
+                RangeSet2::from(ChunkNum(u64::MAX)..),
+            ]),
         }
     }
 

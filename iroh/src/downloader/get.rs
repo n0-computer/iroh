@@ -193,10 +193,6 @@ impl From<iroh_bytes::get::fsm::AtBlobHeaderNextError> for FailureAction {
                 // peer might have the data later, simply retry it
                 FailureAction::RetryLater(e.into())
             }
-            e @ InvalidQueryRange => {
-                // we are doing something wrong with this request, drop it
-                FailureAction::AbortRequest(e.into())
-            }
             Read(e) => e.into(),
             e @ Io(_) => {
                 // io errors are likely recoverable
@@ -224,7 +220,6 @@ impl From<iroh_bytes::get::fsm::DecodeError> for FailureAction {
                 // request?
                 FailureAction::AbortRequest(e.into())
             }
-            e @ InvalidQueryRange => FailureAction::AbortRequest(e.into()),
             Read(e) => e.into(),
             Io(e) => e.into(),
         }
