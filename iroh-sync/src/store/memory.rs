@@ -253,11 +253,13 @@ impl GetFilter {
 }
 
 /// Iterator over all content hashes in the memory store.
+#[derive(Debug)]
 pub struct ContentHashesIterator<'a> {
     records: ReplicaRecords<'a>,
     namespace_i: usize,
     record_i: usize,
 }
+
 impl<'a> Iterator for ContentHashesIterator<'a> {
     type Item = Result<Hash>;
     fn next(&mut self) -> Option<Self::Item> {

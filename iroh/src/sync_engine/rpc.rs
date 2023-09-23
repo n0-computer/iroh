@@ -2,7 +2,10 @@
 
 use anyhow::anyhow;
 use futures::{FutureExt, Stream};
-use iroh_bytes::{baomap::Store as BaoStore, util::RpcError};
+use iroh_bytes::{
+    baomap::Store as BaoStore,
+    util::{BlobFormat, RpcError},
+};
 use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
 use rand::rngs::OsRng;
@@ -174,9 +177,11 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
         let len = value.len();
-        let hash = bao_store.import_bytes(value.into()).await?;
+        let tag = bao_store
+            .import_bytes(value.into(), BlobFormat::RAW)
+            .await?;
         replica
-            .insert(&key, &author, hash, len as u64)
+            .insert(&key, &author, *tag.hash(), len as u64)
             .map_err(anyhow::Error::from)?;
         let entry = self
             .store

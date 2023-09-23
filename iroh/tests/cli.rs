@@ -378,13 +378,13 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     );
     // should have some data now
     let db_path = iroh_data_dir.join(BAO_DIR);
-    let db = Store::load_blocking(&db_path, &db_path, &rt)?;
+    let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 2);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Store::load_blocking(&db_path, &db_path, &rt)?;
+    let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 4);
 

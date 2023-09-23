@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use config::{Environment, File, Value};
+use iroh::node::GcPolicy;
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},
@@ -48,6 +49,9 @@ pub enum IrohPaths {
     /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
     #[strum(serialize = "blobs-partial.v0")]
     BaoFlatStorePartial,
+    /// Path to the node's [flat-file store](iroh::baomap::flat) for metadata such as the tags table.
+    #[strum(serialize = "blobs-meta.v0")]
+    BaoFlatStoreMeta,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
     #[strum(serialize = "docs.redb")]
     DocsDatabase,
@@ -149,6 +153,8 @@ impl ConsolePaths {
 pub struct NodeConfig {
     /// The regions for DERP to use.
     pub derp_regions: Vec<DerpRegion>,
+    /// How often to run garbage collection.
+    pub gc_policy: GcPolicy,
 }
 
 impl Default for NodeConfig {
@@ -156,6 +162,7 @@ impl Default for NodeConfig {
         Self {
             // TODO(ramfox): this should probably just be a derp map
             derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
+            gc_policy: GcPolicy::Disabled,
         }
     }
 }

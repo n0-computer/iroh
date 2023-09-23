@@ -20,13 +20,14 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
-    ExportMode, Map, MapEntry, ReadableStore, Store as BaoStore, ValidateProgress,
+    ExportMode, GcMarkEvent, GcSweepEvent, Map, MapEntry, ReadableStore, Store as BaoStore,
+    ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::RpcResult;
+use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, CustomGetHandler, RequestAuthorizationHandler},
@@ -37,6 +38,7 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
+use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -48,6 +50,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -56,13 +59,14 @@ use tracing::{debug, error, info, trace, warn};
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobAddPathRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadResponse, BlobValidateRequest, BytesGetRequest,
-    DownloadLocation, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
-    ProviderRequest, ProviderResponse, ProviderService,
+    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
+    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
+    ProviderResponse, ProviderService,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -81,6 +85,16 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+
+/// Policy for garbage collection.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GcPolicy {
+    /// Garbage collection is disabled.
+    #[default]
+    Disabled,
+    /// Garbage collection is run at the given interval.
+    Interval(Duration),
+}
 
 /// Builder for the [`Node`].
 ///
@@ -112,6 +126,7 @@ pub struct Builder<
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_map: Option<DerpMap>,
     collection_parser: C,
+    gc_policy: GcPolicy,
     rt: Option<runtime::Handle>,
     docs: S,
 }
@@ -170,6 +185,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: NoCollectionParser,
+            gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
         }
@@ -199,6 +215,7 @@ where
             rpc_endpoint: value,
             derp_map: self.derp_map,
             collection_parser: self.collection_parser,
+            gc_policy: self.gc_policy,
             rt: self.rt,
             docs: self.docs,
         }
@@ -220,9 +237,18 @@ where
             auth_handler: self.auth_handler,
             rpc_endpoint: self.rpc_endpoint,
             derp_map: self.derp_map,
+            gc_policy: self.gc_policy,
             rt: self.rt,
             docs: self.docs,
         }
+    }
+
+    /// Sets the garbage collection policy.
+    ///
+    /// By default garbage collection is disabled.
+    pub fn gc_policy(mut self, gc_policy: GcPolicy) -> Self {
+        self.gc_policy = gc_policy;
+        self
     }
 
     /// Enables using DERP servers to assist in establishing connectivity.
@@ -366,6 +392,7 @@ where
             rt.clone(),
         )
         .await;
+        let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             rt.clone(),
             endpoint.clone(),
@@ -375,6 +402,17 @@ where
             downloader,
         );
 
+        let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
+            tracing::info!("Starting GC task with interval {}s", gc_period.as_secs());
+            let db = self.db.clone();
+            let cp = self.collection_parser.clone();
+            let task = rt
+                .local_pool()
+                .spawn_pinned(move || Self::gc_loop(db, ds, cp, gc_period));
+            Some(AbortingJoinHandle(task))
+        } else {
+            None
+        };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
         let rt3 = rt.clone();
@@ -387,6 +425,7 @@ where
             cancel_token,
             callbacks: callbacks.clone(),
             cb_sender,
+            gc_task,
             rt: rt.clone(),
             sync,
         });
@@ -543,6 +582,71 @@ where
             .await
             .ok();
     }
+
+    async fn gc_loop(db: D, ds: S, cp: C, gc_period: Duration) {
+        'outer: loop {
+            // do delay before the two phases of GC
+            tokio::time::sleep(gc_period).await;
+            db.clear_live();
+            let doc_hashes = match ds.content_hashes() {
+                Ok(hashes) => hashes,
+                Err(err) => {
+                    tracing::error!("Error getting doc hashes: {}", err);
+                    continue 'outer;
+                }
+            };
+            let mut doc_db_error = false;
+            let doc_hashes = doc_hashes.filter_map(|e| {
+                let hash = match e {
+                    Ok(e) => e,
+                    Err(err) => {
+                        tracing::error!("Error getting doc hash: {}", err);
+                        doc_db_error = true;
+                        return None;
+                    }
+                };
+                Some(hash)
+            });
+            db.add_live(doc_hashes);
+            if doc_db_error {
+                tracing::error!("Error getting doc hashes, skipping GC to be safe");
+                continue 'outer;
+            }
+
+            tracing::info!("Starting GC mark phase");
+            let mut stream = db.gc_mark(cp.clone(), None);
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcMarkEvent::CustomInfo(text) => {
+                        tracing::info!("{}", text);
+                    }
+                    GcMarkEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcMarkEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+            tracing::info!("Starting GC sweep phase");
+            let mut stream = db.gc_sweep();
+            while let Some(item) = stream.next().await {
+                match item {
+                    GcSweepEvent::CustomInfo(text) => {
+                        tracing::info!("{}", text);
+                    }
+                    GcSweepEvent::CustomWarning(text, _) => {
+                        tracing::warn!("{}", text);
+                    }
+                    GcSweepEvent::Error(err) => {
+                        tracing::error!("Fatal error during GC mark {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // TODO: Restructure this code to not take all these arguments.
@@ -635,6 +739,8 @@ struct NodeInner<D, S: DocStore> {
     cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
     #[allow(dead_code)]
     callbacks: Callbacks,
+    #[allow(dead_code)]
+    gc_task: Option<AbortingJoinHandle<()>>,
     rt: runtime::Handle,
     pub(crate) sync: SyncEngine<S>,
 }
@@ -827,12 +933,15 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
-        let roots = db.roots();
-        futures::stream::iter(roots).filter_map(move |hash| {
+        let tags = db.tags();
+        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat(hash, format))| {
             let db = db.clone();
             let local = local.clone();
             let cp = self.collection_parser.clone();
             async move {
+                if !format.is_collection() {
+                    return None;
+                }
                 let entry = db.get(&hash)?;
                 let stats = local
                     .spawn_pinned(|| async move {
@@ -843,12 +952,39 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     .await
                     .ok()??;
                 Some(BlobListCollectionsResponse {
+                    tag: name,
                     hash,
                     total_blobs_count: stats.num_blobs,
                     total_blobs_size: stats.total_blob_size,
                 })
             }
         })
+    }
+
+    async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
+        self.inner.db.set_tag(msg.name, None).await?;
+        Ok(())
+    }
+
+    async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
+        self.inner.db.delete(&msg.hash).await?;
+        Ok(())
+    }
+
+    fn blob_list_tags(
+        self,
+        _msg: ListTagsRequest,
+    ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
+        tracing::info!("blob_list_tags");
+        futures::stream::iter(
+            self.inner
+                .db
+                .tags()
+                .map(|(name, HashAndFormat(hash, format))| {
+                    tracing::info!("{:?} {} {:?}", name, hash, format);
+                    ListTagsResponse { name, hash, format }
+                }),
+        )
     }
 
     /// Invoke validate on the database and stream out the result
@@ -951,6 +1087,14 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
         debug!("share: {:?}", msg);
+        let format = if msg.recursive {
+            BlobFormat::COLLECTION
+        } else {
+            BlobFormat::RAW
+        };
+        let db = self.inner.db.clone();
+        let haf = HashAndFormat(hash, format);
+        let temp_pin = db.temp_tag(haf);
         let conn = self
             .inner
             .endpoint
@@ -960,10 +1104,11 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let progress2 = progress.clone();
         let progress3 = progress.clone();
         let db = self.inner.db.clone();
+        let db2 = db.clone();
         let collection_parser = self.collection_parser.clone();
         let download = local.spawn_pinned(move || async move {
             crate::get::get(
-                &db,
+                &db2,
                 &collection_parser,
                 conn,
                 hash,
@@ -991,6 +1136,15 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     progress.send(GetProgress::Abort(cause.into())).await?;
                 }
             }
+            match msg.tag {
+                SetTagOption::Named(tag) => {
+                    db.set_tag(tag, Some(haf)).await?;
+                }
+                SetTagOption::Auto => {
+                    db.create_tag(haf).await?;
+                }
+            }
+            drop(temp_pin);
             progress.send(GetProgress::AllDone).await?;
             anyhow::Ok(())
         });
@@ -1017,7 +1171,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, ImportProgress};
+        use iroh_bytes::baomap::{ImportMode, ImportProgress, TempTag};
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = FlumeProgressSender::new(progress);
@@ -1055,28 +1209,53 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             ImportMode::Copy
         };
         const IO_PARALLELISM: usize = 4;
-        let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
+        let result: Vec<(Blob, u64, TempTag)> = futures::stream::iter(data_sources)
             .map(|source| {
                 let import_progress = import_progress.clone();
                 let db = self.inner.db.clone();
                 async move {
                     let name = source.name().to_string();
-                    let (hash, size) = db
-                        .import(source.path().to_owned(), mode, import_progress)
+                    let (tag, size) = db
+                        .import(
+                            source.path().to_owned(),
+                            mode,
+                            BlobFormat::RAW,
+                            import_progress,
+                        )
                         .await?;
-                    io::Result::Ok((Blob { hash, name }, size))
+                    let blob = Blob {
+                        hash: *tag.hash(),
+                        name,
+                    };
+                    io::Result::Ok((blob, size, tag))
                 }
             })
             .buffered(IO_PARALLELISM)
             .try_collect::<Vec<_>>()
             .await?;
-        let total_blobs_size = result.iter().map(|(_, size)| *size).sum();
-        let blobs = result.into_iter().map(|(blob, _)| blob).collect::<Vec<_>>();
+        let total_blobs_size = result.iter().map(|(_, size, _)| *size).sum();
+        let (blobs, child_tags): (Vec<_>, Vec<_>) =
+            result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
         let collection = Collection::new(blobs, total_blobs_size)?;
         let data = collection.to_bytes()?;
-        let hash = self.inner.db.import_bytes(data.into()).await?;
+        let tag = self
+            .inner
+            .db
+            .import_bytes(data.into(), BlobFormat::COLLECTION)
+            .await?;
+        let hash = *tag.hash();
         progress.send(AddProgress::AllDone { hash }).await?;
-
+        let haf = *tag.inner();
+        match msg.tag {
+            SetTagOption::Named(tag) => {
+                self.inner.db.set_tag(tag, Some(haf)).await?;
+            }
+            SetTagOption::Auto => {
+                self.inner.db.create_tag(haf).await?;
+            }
+        }
+        drop(tag);
+        drop(child_tags);
         self.inner
             .callbacks
             .send(Event::ByteProvide(
@@ -1263,6 +1442,12 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_collections)
                     .await
             }
+            ListTags(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_list_tags)
+                    .await
+            }
+            DeleteTag(msg) => chan.rpc(msg, handler, RpcHandler::blob_delete_tag).await,
+            BlobDeleteBlob(msg) => chan.rpc(msg, handler, RpcHandler::blob_delete_blob).await,
             BlobAddPath(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_add_from_path)
                     .await
@@ -1474,6 +1659,8 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
+        use iroh_bytes::util::SetTagOption;
+
         let rt = runtime::Handle::from_current(1)?;
         let db = crate::baomap::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
@@ -1505,6 +1692,7 @@ mod tests {
                 .server_streaming(BlobAddPathRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                     in_place: false,
+                    tag: SetTagOption::Auto,
                 })
                 .await?;
 

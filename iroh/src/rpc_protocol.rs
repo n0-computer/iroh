@@ -11,6 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
+use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -50,6 +51,8 @@ pub struct BlobAddPathRequest {
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
+    /// Tag to tag the data with.
+    pub tag: SetTagOption,
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {
@@ -73,6 +76,8 @@ pub struct BlobDownloadRequest {
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,
+    /// Optional tag to tag the data with.
+    pub tag: SetTagOption,
     /// This field contains the location to store the data at.
     pub out: DownloadLocation,
 }
@@ -174,6 +179,9 @@ pub struct BlobListCollectionsRequest;
 /// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListCollectionsResponse {
+    /// Tag of the collection
+    pub tag: Tag,
+
     /// Hash of the collection
     pub hash: Hash,
     /// Number of children in the collection
@@ -192,6 +200,53 @@ impl Msg<ProviderService> for BlobListCollectionsRequest {
 
 impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
     type Response = BlobListCollectionsResponse;
+}
+
+/// List all collections
+///
+/// Lists all collections that have been explicitly added to the database.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListTagsRequest;
+
+/// A response to a list collections request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListTagsResponse {
+    /// Name of the tag
+    pub name: Tag,
+    /// Format of the data
+    pub format: BlobFormat,
+    /// Hash of the data
+    pub hash: Hash,
+}
+
+impl Msg<ProviderService> for ListTagsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ListTagsRequest {
+    type Response = ListTagsResponse;
+}
+
+/// Delete a blob
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobDeleteBlobRequest {
+    /// Name of the tag
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for BlobDeleteBlobRequest {
+    type Response = RpcResult<()>;
+}
+
+/// Delete a tag
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteTagRequest {
+    /// Name of the tag
+    pub name: Tag,
+}
+
+impl RpcMsg<ProviderService> for DeleteTagRequest {
+    type Response = RpcResult<()>;
 }
 
 /// List connection information about all the nodes we know about
@@ -684,7 +739,11 @@ pub enum ProviderRequest {
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
+    BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
+
+    DeleteTag(DeleteTagRequest),
+    ListTags(ListTagsRequest),
 
     DocInfo(DocInfoRequest),
     DocList(DocListRequest),
@@ -721,6 +780,9 @@ pub enum ProviderResponse {
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
     BlobValidate(ValidateProgress),
+
+    ListTags(ListTagsResponse),
+    DeleteTag(RpcResult<()>),
 
     DocInfo(RpcResult<DocInfoResponse>),
     DocList(RpcResult<DocListResponse>),

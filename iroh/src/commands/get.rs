@@ -12,7 +12,7 @@ use iroh::{
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress};
+use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress, util::SetTagOption};
 use iroh_bytes::{
     get::{
         self,
@@ -68,7 +68,7 @@ impl GetInteractive {
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
         let db: iroh::baomap::flat::Store =
-            iroh::baomap::flat::Store::load(temp_dir.clone(), temp_dir.clone(), &self.rt).await?;
+            iroh::baomap::flat::Store::load(&temp_dir, &temp_dir, &temp_dir, &self.rt).await?;
         // TODO: we don't need sync here, maybe disable completely?
         let doc_store = iroh_sync::store::memory::Store::default();
         // spin up temp node and ask it to download the data for us
@@ -100,6 +100,7 @@ impl GetInteractive {
                     path: out,
                     in_place: true,
                 },
+                tag: SetTagOption::Auto,
             })
             .await?;
         let pb = make_download_pb();

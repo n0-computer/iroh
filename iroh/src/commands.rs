@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
+use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use comfy_table::presets::NOTHING;
 use comfy_table::{Cell, Table};
@@ -10,6 +11,7 @@ use human_time::ToHumanTimeString;
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
+use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::PeerAddr;
 use iroh_net::{
@@ -28,6 +30,7 @@ const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
 pub mod add;
+pub mod delete;
 pub mod doctor;
 pub mod get;
 pub mod list;
@@ -151,6 +154,9 @@ pub enum FullCommands {
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Fetch data from a provider
     ///
@@ -210,16 +216,22 @@ impl FullCommands {
                 addr,
                 rpc_port,
                 request_token,
+                tag,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
                     Some(RequestTokenOptions::Token(token)) => Some(token),
                     None => None,
                 };
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
                 self::provide::run(
                     rt,
                     path,
                     in_place,
+                    tag,
                     ProvideOptions {
                         addr,
                         rpc_port,
@@ -302,6 +314,11 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
+    /// Manage a running Iroh node
+    Tag {
+        #[clap(subcommand)]
+        command: TagCommands,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -363,6 +380,42 @@ impl NodeCommands {
     }
 }
 
+#[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum TagCommands {
+    /// List all tags
+    List,
+    /// Delete a tag
+    Delete {
+        tag: String,
+        #[clap(long, default_value_t = false)]
+        hex: bool,
+    },
+}
+
+impl TagCommands {
+    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+        match self {
+            Self::List => {
+                let mut response = iroh.tags.list().await?;
+                while let Some(res) = response.next().await {
+                    let res = res?;
+                    println!("{}: {} ({:?})", res.name, res.hash, res.format,);
+                }
+            }
+            Self::Delete { tag, hex } => {
+                let tag = if hex {
+                    Tag::from(Bytes::from(hex::decode(tag)?))
+                } else {
+                    Tag::from(tag)
+                };
+                iroh.tags.delete(tag).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl RpcCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
@@ -370,6 +423,7 @@ impl RpcCommands {
             Self::Blob { command } => command.run(iroh).await,
             Self::Doc { command } => command.run(iroh, env).await,
             Self::Author { command } => command.run(iroh, env).await,
+            Self::Tag { command } => command.run(iroh).await,
         }
     }
 }
@@ -387,6 +441,9 @@ pub enum BlobCommands {
         /// will not change.
         #[clap(long, default_value_t = false)]
         in_place: bool,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Download data to the running provider's database and provide it.
     ///
@@ -430,6 +487,9 @@ pub enum BlobCommands {
         /// and iroh will assume that it will not change.
         #[clap(long, default_value_t = false)]
         stable: bool,
+        /// Tag to tag the data with
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// List availble content on the node.
     #[clap(subcommand)]
@@ -440,6 +500,9 @@ pub enum BlobCommands {
         #[clap(long, default_value_t = false)]
         repair: bool,
     },
+    /// Delete content on the node.
+    #[clap(subcommand)]
+    Delete(self::delete::Commands),
 }
 
 impl BlobCommands {
@@ -455,6 +518,7 @@ impl BlobCommands {
                 derp_region,
                 mut out,
                 stable: in_place,
+                tag,
             } => {
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
@@ -479,6 +543,10 @@ impl BlobCommands {
                         in_place,
                     },
                 };
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
@@ -487,6 +555,7 @@ impl BlobCommands {
                         peer,
                         token,
                         out,
+                        tag,
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -496,8 +565,19 @@ impl BlobCommands {
                 Ok(())
             }
             Self::List(cmd) => cmd.run(iroh).await,
+            Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { repair } => self::validate::run(iroh, repair).await,
-            Self::Add { path, in_place } => self::add::run(iroh, path, in_place).await,
+            Self::Add {
+                path,
+                in_place,
+                tag,
+            } => {
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
+                self::add::run(iroh, path, in_place, tag).await
+            }
         }
     }
 }

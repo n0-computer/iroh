@@ -121,12 +121,14 @@
 //!
 //! Once the download is complete, the partial data and partial outboard files are renamed
 //! to the final partial data and partial outboard files.
+#![allow(clippy::mutable_key_type)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::SystemTime;
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
@@ -138,10 +140,11 @@ use futures::future::Either;
 use futures::{Future, FutureExt};
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
-    self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-    PartialMapEntry, ReadableStore, ValidateProgress,
+    self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
+    PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
+use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use rand::Rng;
@@ -160,6 +163,10 @@ struct State {
     outboard: BTreeMap<Hash, Bytes>,
     // data, cached for all complete entries that are small enough
     data: BTreeMap<Hash, Bytes>,
+    // in memory tracking of live set
+    live: BTreeSet<Hash>,
+    // temp tags
+    temp: BTreeMap<HashAndFormat, u64>,
 }
 
 #[derive(Debug, Default)]
@@ -327,10 +334,23 @@ impl PartialMap for Store {
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
         let mut state = self.0.state.write().unwrap();
-        let entry = state.partial.entry(hash).or_insert_with(|| {
-            let uuid = rand::thread_rng().gen::<[u8; 16]>();
-            PartialEntryData::new(size, uuid)
-        });
+        // this protects the entry from being deleted until the next mark phase
+        //
+        // example: a collection containing this hash is temp tagged, but
+        // we did not have the collection at the time of the mark phase.
+        //
+        // now we get the collection and it's child between the mark and the sweep
+        // phase. the child is not in the live set and will be deleted.
+        //
+        // this prevents this from happening until the live set is cleared at the
+        // beginning of the next mark phase, at which point this hash is normally
+        // reachable.
+        tracing::info!("protecting partial hash {}", hash);
+        state.live.insert(hash);
+        let entry = state
+            .partial
+            .entry(hash)
+            .or_insert_with(|| PartialEntryData::new(size, new_uuid()));
         let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
         let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
         Ok(PartialEntry {
@@ -342,31 +362,13 @@ impl PartialMap for Store {
     }
 
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
-        let hash = entry.hash.into();
-        let data_path = self.0.options.owned_data_path(&hash);
-        async move {
-            let size = entry.size;
-            let temp_data_path = entry.data_path;
-            let temp_outboard_path = entry.outboard_path;
-            // for a short time we will have neither partial nor complete
-            self.0.state.write().unwrap().partial.remove(&hash);
-            tokio::fs::rename(temp_data_path, &data_path).await?;
-            let outboard = if tokio::fs::try_exists(&temp_outboard_path).await? {
-                let outboard_path = self.0.options.owned_outboard_path(&hash);
-                tokio::fs::rename(temp_outboard_path, &outboard_path).await?;
-                Some(tokio::fs::read(&outboard_path).await?.into())
-            } else {
-                None
-            };
-            let mut state = self.0.state.write().unwrap();
-            let entry = state.complete.entry(hash).or_default();
-            entry.union_with(CompleteEntry::new_default(size))?;
-            if let Some(outboard) = outboard {
-                state.outboard.insert(hash, outboard);
-            }
-            Ok(())
-        }
-        .boxed()
+        let this = self.clone();
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.insert_complete_sync(entry))
+            .map(flatten_to_io)
+            .boxed()
     }
 }
 
@@ -374,6 +376,7 @@ impl PartialMap for Store {
 struct Options {
     complete_path: PathBuf,
     partial_path: PathBuf,
+    meta_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
     rt: tokio::runtime::Handle,
@@ -402,12 +405,23 @@ impl Options {
     fn paths_path(&self, hash: Hash) -> PathBuf {
         self.complete_path.join(FileName::Paths(hash).to_string())
     }
+
+    fn temp_paths_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
+        self.complete_path
+            .join(FileName::TempPaths(hash, *uuid).to_string())
+    }
 }
 
 #[derive(Debug)]
 struct Inner {
     options: Options,
     state: RwLock<State>,
+    tags: RwLock<BTreeMap<Tag, HashAndFormat>>,
+    // mutex for async access to complete files
+    //
+    // complete files are never written to. They come into existence when a partial
+    // entry is completed, and are deleted as a whole.
+    complete_io_mutex: Mutex<()>,
 }
 
 /// Flat file database implementation.
@@ -632,8 +646,19 @@ impl ReadableStore for Store {
         Box::new(items.into_iter())
     }
 
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        unimplemented!()
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
+        let inner = self.0.state.read().unwrap();
+        let items = inner.temp.keys().copied().collect::<Vec<_>>();
+        Box::new(items.into_iter())
+    }
+
+    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
+        let inner = self.0.tags.read().unwrap();
+        let items = inner
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect::<Vec<_>>();
+        Box::new(items.into_iter())
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -668,25 +693,99 @@ impl baomap::Store for Store {
         &self,
         path: PathBuf,
         mode: ImportMode,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let this = self.clone();
         self.0
             .options
             .rt
-            .spawn_blocking(move || this.import_sync(path, mode, progress))
+            .spawn_blocking(move || this.import_sync(path, mode, format, progress))
             .map(flatten_to_io)
             .boxed()
     }
 
-    fn import_bytes(&self, data: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+    fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let this = self.clone();
         self.0
             .options
             .rt
-            .spawn_blocking(move || this.import_bytes_sync(data))
+            .spawn_blocking(move || this.import_bytes_sync(data, format))
             .map(flatten_to_io)
             .boxed()
+    }
+
+    fn create_tag(&self, value: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+        let this = self.clone();
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.create_tag_sync(value))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
+    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+        let this = self.clone();
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.set_tag_sync(name, value))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
+    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
+        TempTag::new(inner, Some(self.0.clone()))
+    }
+
+    fn clear_live(&self) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.clear();
+    }
+
+    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
+        let mut state = self.0.state.write().unwrap();
+        state.live.extend(elements);
+    }
+
+    fn is_live(&self, hash: &Hash) -> bool {
+        let state = self.0.state.read().unwrap();
+        let res = state.live.contains(hash);
+        tracing::debug!("is_live: {:?} {}", hash, res);
+        res
+    }
+
+    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+        tracing::debug!("delete: {:?}", hash);
+        let this = self.clone();
+        let hash = *hash;
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.delete_sync(hash))
+            .map(flatten_to_io)
+            .boxed()
+    }
+}
+
+impl LivenessTracker for Inner {
+    fn on_clone(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tagging: {:?}", inner);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*inner).or_default();
+        // panic if we overflow an u64
+        *entry = entry.checked_add(1).unwrap();
+    }
+
+    fn on_drop(&self, inner: &HashAndFormat) {
+        tracing::info!("temp tag drop: {:?}", inner);
+        let mut state = self.state.write().unwrap();
+        let entry = state.temp.entry(*inner).or_default();
+        *entry = entry.saturating_sub(1);
+        if *entry == 0 {
+            state.temp.remove(inner);
+        }
     }
 }
 
@@ -709,8 +808,9 @@ impl Store {
         self,
         path: PathBuf,
         mode: ImportMode,
+        format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<(Hash, u64)> {
+    ) -> io::Result<(TempTag, u64)> {
         if !path.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -723,12 +823,13 @@ impl Store {
                 "path is not a file or symlink",
             ));
         }
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::Found {
             id,
             path: path.clone(),
         })?;
-        let (hash, new, outboard) = match mode {
+        let (tag, new, outboard) = match mode {
             ImportMode::TryReference => {
                 // compute outboard and hash from the data in place, since we assume that it is stable
                 let size = path.metadata()?.len();
@@ -738,10 +839,12 @@ impl Store {
                     Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-                (hash, CompleteEntry::new_external(size, path), outboard)
+                use baomap::Store;
+                let tag = self.temp_tag(HashAndFormat(hash, format));
+                (tag, CompleteEntry::new_external(size, path), outboard)
             }
             ImportMode::Copy => {
-                let uuid = rand::thread_rng().gen::<[u8; 16]>();
+                let uuid = new_uuid();
                 let temp_data_path = self
                     .0
                     .options
@@ -759,10 +862,16 @@ impl Store {
                 })?;
                 progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
                 let data_path = self.owned_data_path(&hash);
+                use baomap::Store;
+                // the blob must be pinned before we move the file, otherwise there is a race condition
+                // where it might be deleted here.
+                let tag = self.temp_tag(HashAndFormat(hash, BlobFormat::RAW));
                 std::fs::rename(temp_data_path, data_path)?;
-                (hash, CompleteEntry::new_default(size), outboard)
+                (tag, CompleteEntry::new_default(size), outboard)
             }
         };
+        // all writes here are protected by the temp tag
+        let hash = *tag.hash();
         if let Some(outboard) = outboard.as_ref() {
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::write(outboard_path, outboard)?;
@@ -773,18 +882,70 @@ impl Store {
         let n = entry.external.len();
         entry.union_with(new)?;
         if entry.external.len() != n {
-            let path = self.0.options.paths_path(hash);
-            std::fs::write(path, entry.external_to_bytes())?;
+            let temp_path = self.0.options.temp_paths_path(hash, &new_uuid());
+            let final_path = self.0.options.paths_path(hash);
+            write_atomic(&temp_path, &final_path, &entry.external_to_bytes())?;
         }
         if let Some(outboard) = outboard {
             state.outboard.insert(hash, outboard.into());
         }
-        Ok((hash, size))
+        drop(complete_io_guard);
+        Ok((tag, size))
     }
 
-    fn import_bytes_sync(&self, data: Bytes) -> io::Result<Hash> {
+    fn set_tag_sync(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
+        tracing::info!("set_tag {} {:?}", name, value);
+        let mut tags = self.0.tags.write().unwrap();
+        let mut new_tags = tags.clone();
+        let changed = if let Some(value) = value {
+            if let Some(old_value) = new_tags.insert(name, value) {
+                value != old_value
+            } else {
+                true
+            }
+        } else {
+            new_tags.remove(&name).is_some()
+        };
+        if changed {
+            let serialized = postcard::to_stdvec(&new_tags).unwrap();
+            let temp_path = self
+                .0
+                .options
+                .meta_path
+                .join(format!("tags-{}.meta", hex::encode(new_uuid())));
+            let final_path = self.0.options.meta_path.join("tags.meta");
+            write_atomic(&temp_path, &final_path, &serialized)?;
+            *tags = new_tags;
+        }
+        drop(tags);
+        Ok(())
+    }
+
+    fn create_tag_sync(&self, value: HashAndFormat) -> io::Result<Tag> {
+        tracing::info!("create_tag {:?}", value);
+        let mut tags = self.0.tags.write().unwrap();
+        let mut new_tags = tags.clone();
+        let tag = Tag::auto(SystemTime::now(), |x| new_tags.contains_key(x));
+        new_tags.insert(tag.clone(), value);
+        let serialized = postcard::to_stdvec(&new_tags).unwrap();
+        let temp_path = self
+            .0
+            .options
+            .meta_path
+            .join(format!("tags-{}.meta", hex::encode(new_uuid())));
+        let final_path = self.0.options.meta_path.join("tags.meta");
+        write_atomic(&temp_path, &final_path, &serialized)?;
+        *tags = new_tags;
+        drop(tags);
+        Ok(tag)
+    }
+
+    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         let hash = hash.into();
+        use baomap::Store;
+        let tag = self.temp_tag(HashAndFormat(hash, format));
         let data_path = self.owned_data_path(&hash);
         std::fs::write(data_path, &data)?;
         if outboard.len() > 8 {
@@ -799,7 +960,94 @@ impl Store {
         if size < self.0.options.inline_threshold {
             state.data.insert(hash, data.to_vec().into());
         }
-        Ok(hash)
+        drop(complete_io_guard);
+        Ok(tag)
+    }
+
+    fn delete_sync(&self, hash: Hash) -> io::Result<()> {
+        let mut data = None;
+        let mut outboard = None;
+        let mut external = None;
+        let mut partial_data = None;
+        let mut partial_outboard = None;
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
+        let mut state = self.0.state.write().unwrap();
+        if let Some(entry) = state.complete.remove(&hash) {
+            if entry.owned_data {
+                data = Some(self.owned_data_path(&hash));
+            }
+            if needs_outboard(entry.size) {
+                outboard = Some(self.owned_outboard_path(&hash));
+            }
+            if !entry.external.is_empty() {
+                external = Some(self.0.options.paths_path(hash));
+            }
+        }
+        if let Some(partial) = state.partial.remove(&hash) {
+            partial_data = Some(self.0.options.partial_data_path(hash, &partial.uuid));
+            if needs_outboard(partial.size) {
+                partial_outboard = Some(self.0.options.partial_outboard_path(hash, &partial.uuid));
+            }
+        }
+        state.outboard.remove(&hash);
+        state.data.remove(&hash);
+        drop(state);
+        if let Some(data) = data {
+            if let Err(cause) = std::fs::remove_file(data) {
+                tracing::warn!("failed to delete data file: {}", cause);
+            }
+        }
+        if let Some(external) = external {
+            if let Err(cause) = std::fs::remove_file(external) {
+                tracing::warn!("failed to delete partial outboard file: {}", cause);
+            }
+        }
+        if let Some(outboard) = outboard {
+            if let Err(cause) = std::fs::remove_file(outboard) {
+                tracing::warn!("failed to delete outboard file: {}", cause);
+            }
+        }
+        drop(complete_io_guard);
+        // deleting the partial data and outboard files can happen at any time.
+        // there is no race condition since these are unique names.
+        if let Some(partial_data) = partial_data {
+            if let Err(cause) = std::fs::remove_file(partial_data) {
+                tracing::warn!("failed to delete partial data file: {}", cause);
+            }
+        }
+        if let Some(partial_outboard) = partial_outboard {
+            if let Err(cause) = std::fs::remove_file(partial_outboard) {
+                tracing::warn!("failed to delete partial outboard file: {}", cause);
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_complete_sync(&self, entry: PartialEntry) -> io::Result<()> {
+        let hash = entry.hash.into();
+        let data_path = self.0.options.owned_data_path(&hash);
+        let size = entry.size;
+        let temp_data_path = entry.data_path;
+        let temp_outboard_path = entry.outboard_path;
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
+        // for a short time we will have neither partial nor complete
+        self.0.state.write().unwrap().partial.remove(&hash);
+        std::fs::rename(temp_data_path, data_path)?;
+        let outboard = if temp_outboard_path.exists() {
+            let outboard_path = self.0.options.owned_outboard_path(&hash);
+            std::fs::rename(temp_outboard_path, &outboard_path)?;
+            Some(std::fs::read(&outboard_path)?.into())
+        } else {
+            None
+        };
+        let mut state = self.0.state.write().unwrap();
+        let entry = state.complete.entry(hash).or_default();
+        entry.union_with(CompleteEntry::new_default(size))?;
+        if let Some(outboard) = outboard {
+            state.outboard.insert(hash, outboard);
+        }
+        drop(complete_io_guard);
+        Ok(())
     }
 
     fn export_sync(
@@ -892,6 +1140,7 @@ impl Store {
     pub(crate) fn load_sync(
         complete_path: PathBuf,
         partial_path: PathBuf,
+        meta_path: PathBuf,
         rt: iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         tracing::info!(
@@ -899,6 +1148,9 @@ impl Store {
             complete_path.display(),
             partial_path.display()
         );
+        std::fs::create_dir_all(&complete_path)?;
+        std::fs::create_dir_all(&partial_path)?;
+        std::fs::create_dir_all(&meta_path)?;
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
         let mut full_index =
@@ -1125,20 +1377,32 @@ impl Store {
         for hash in partial.keys() {
             tracing::info!("partial {}", hash);
         }
+        let tags_path = meta_path.join("tags.meta");
+        let mut tags = BTreeMap::new();
+        if tags_path.exists() {
+            let data = std::fs::read(tags_path)?;
+            tags = postcard::from_bytes(&data)?;
+            tracing::info!("loaded tags. {} entries", tags.len());
+        };
         Ok(Self(Arc::new(Inner {
             state: RwLock::new(State {
                 complete,
                 partial,
                 outboard,
                 data: Default::default(),
+                live: Default::default(),
+                temp: Default::default(),
             }),
+            tags: RwLock::new(tags),
             options: Options {
                 complete_path,
                 partial_path,
+                meta_path,
                 move_threshold: 1024 * 128,
                 inline_threshold: 1024 * 16,
                 rt: rt.main().clone(),
             },
+            complete_io_mutex: Mutex::new(()),
         })))
     }
 
@@ -1146,12 +1410,14 @@ impl Store {
     pub fn load_blocking(
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
+        meta_path: impl AsRef<Path>,
         rt: &iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
+        let meta_path = meta_path.as_ref().to_path_buf();
         let rt = rt.clone();
-        let db = Self::load_sync(complete_path, partial_path, rt)?;
+        let db = Self::load_sync(complete_path, partial_path, meta_path, rt)?;
         Ok(db)
     }
 
@@ -1159,14 +1425,16 @@ impl Store {
     pub async fn load(
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
+        meta_path: impl AsRef<Path>,
         rt: &iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
+        let meta_path = meta_path.as_ref().to_path_buf();
         let rtc = rt.clone();
         let db = rt
             .main()
-            .spawn_blocking(move || Self::load_sync(complete_path, partial_path, rtc))
+            .spawn_blocking(move || Self::load_sync(complete_path, partial_path, meta_path, rtc))
             .await??;
         Ok(db)
     }
@@ -1221,6 +1489,10 @@ fn compute_outboard(
     Ok((hash.into(), ob))
 }
 
+fn new_uuid() -> [u8; 16] {
+    rand::thread_rng().gen::<[u8; 16]>()
+}
+
 pub(crate) struct ProgressReader2<R, F: Fn(u64) -> io::Result<()>> {
     inner: R,
     offset: u64,
@@ -1261,6 +1533,8 @@ pub enum FileName {
     /// We can have multiple files with the same outboard, in case the outboard
     /// does not contain hashes. But we don't store those outboards.
     Outboard(Hash),
+    /// Temporary paths file
+    TempPaths(Hash, [u8; 16]),
     /// External paths for the hash
     Paths(Hash),
     /// File is going to be used to store metadata
@@ -1297,6 +1571,9 @@ impl fmt::Display for FileName {
                     hex::encode(uuid),
                     OUTBOARD_EXT
                 )
+            }
+            Self::TempPaths(hash, uuid) => {
+                write!(f, "{}-{}.paths", hex::encode(hash), hex::encode(uuid))
             }
             Self::Paths(hash) => {
                 write!(f, "{}.paths", hex::encode(hash))
@@ -1349,6 +1626,16 @@ impl FromStr for FileName {
     }
 }
 
+/// Write data to a file, and then atomically rename it to the final path.
+///
+/// This assumes that the directories for both files already exist.
+fn write_atomic(temp_path: &Path, final_path: &Path, data: &[u8]) -> io::Result<()> {
+    let mut file = std::fs::File::create(temp_path)?;
+    file.write_all(data)?;
+    std::fs::rename(temp_path, final_path)?;
+    Ok(())
+}
+
 struct DD<T: fmt::Display>(T);
 
 impl<T: fmt::Display> fmt::Debug for DD<T> {
@@ -1377,6 +1664,11 @@ impl fmt::Debug for FileName {
                 .debug_tuple("Paths")
                 .field(&DD(hex::encode(arg0)))
                 .finish(),
+            Self::TempPaths(hash, guid) => f
+                .debug_tuple("TempPaths")
+                .field(&DD(hash))
+                .field(&DD(hex::encode(guid)))
+                .finish(),
         }
     }
 }
@@ -1390,19 +1682,8 @@ impl FileName {
             FileName::PartialOutboard(_, _) => true,
             FileName::Outboard(_) => false,
             FileName::Meta(_) => false,
+            FileName::TempPaths(_, _) => true,
             FileName::Paths(_) => false,
-        }
-    }
-
-    /// some bytes that can be used as a hint for the name of the file
-    pub fn name_hint(&self) -> &[u8] {
-        match self {
-            FileName::PartialData(hash, _) => hash.as_bytes(),
-            FileName::Data(hash) => hash.as_bytes(),
-            FileName::PartialOutboard(hash, _) => hash.as_bytes(),
-            FileName::Meta(data) => data.as_slice(),
-            FileName::Outboard(_) => &[],
-            FileName::Paths(_) => &[],
         }
     }
 }

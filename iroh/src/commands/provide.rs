@@ -14,7 +14,11 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
+use iroh_bytes::{
+    baomap::Store as BaoStore,
+    protocol::RequestToken,
+    util::{runtime, SetTagOption},
+};
 use iroh_net::{derp::DerpMap, key::SecretKey};
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
@@ -41,6 +45,7 @@ pub async fn run(
     rt: &runtime::Handle,
     path: Option<PathBuf>,
     in_place: bool,
+    tag: SetTagOption,
     opts: ProvideOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {
@@ -53,9 +58,10 @@ pub async fn run(
 
     let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
     let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
+    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
     tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let db = flat::Store::load(&blob_dir, &partial_blob_dir, rt)
+    let db = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let key = Some(IrohPaths::SecretKey.with_env()?);
@@ -88,7 +94,7 @@ pub async fn run(
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let stream = client.blobs.add_from_path(path, in_place).await?;
+                let stream = client.blobs.add_from_path(path, in_place, tag).await?;
                 match aggregate_add_response(stream).await {
                     Ok((hash, entries)) => {
                         print_add_response(hash, entries);
