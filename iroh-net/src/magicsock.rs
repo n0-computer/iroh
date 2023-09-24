@@ -343,6 +343,18 @@ impl MagicSock {
             peers_path,
         } = opts;
 
+        let peers_path = match peers_path {
+            Some(path) => {
+                let path = path.canonicalize().unwrap_or(path);
+                let parent = path.parent().ok_or_else(|| {
+                    anyhow::anyhow!("no parent directory found for '{}'", path.display())
+                })?;
+                tokio::fs::create_dir_all(&parent).await?;
+                Some(path)
+            }
+            None => None,
+        };
+
         let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
 
         let (pconn4, pconn6) = bind(port).await?;
@@ -1056,7 +1068,7 @@ impl Actor {
                     let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
                     match self.peer_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "peers persisted"),
-                        Err(e) => error!(%e, "failed to persist known peers"),
+                        Err(e) => debug!(%e, "failed to persist known peers"),
                     }
                 }
                 else => {
@@ -1099,7 +1111,7 @@ impl Actor {
                         Ok(count) => {
                             debug!(count, "known peers persisted")
                         }
-                        Err(e) => error!(%e, "failed to persist known peers"),
+                        Err(e) => debug!(%e, "failed to persist known peers"),
                     }
                 }
                 self.port_mapper.deactivate();

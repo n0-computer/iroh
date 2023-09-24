@@ -1191,6 +1191,11 @@ impl PeerMap {
 
     /// Saves the known peer info to the given path, returning the number of peers persisted.
     pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
+        let mut known_peers = self.known_peer_addresses().peekable();
+        if known_peers.peek().is_none() {
+            // prevent file handling if unnecesary
+            return Ok(0);
+        }
         let (tmp_file, tmp_path) = tempfile::NamedTempFile::new()
             .context("cannot create temp file to save peer data")?
             .into_parts();
@@ -1198,7 +1203,7 @@ impl PeerMap {
         let mut tmp = tokio::fs::File::from_std(tmp_file);
 
         let mut count = 0;
-        for peer_addr in self.known_peer_addresses() {
+        for peer_addr in known_peers {
             let ser = postcard::to_stdvec(&peer_addr).context("failed to serialize peer data")?;
             tmp.write_all(&ser)
                 .await
@@ -1211,7 +1216,7 @@ impl PeerMap {
         // move the file
         tokio::fs::rename(tmp_path, path)
             .await
-            .context("failed to save peer data")?;
+            .context("failed renaming peer data file")?;
         Ok(count)
     }
 
