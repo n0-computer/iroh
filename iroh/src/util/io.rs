@@ -1,18 +1,8 @@
 //! Utilities for working with tokio io
+use bao_tree::io::EncodeError;
 use derive_more::Display;
-use iroh_bytes::baomap::range_collections::RangeSet2;
-use std::{io::Write, path::PathBuf, result};
+use std::{io::Write, path::PathBuf};
 use thiserror::Error;
-
-use bao_tree::blake3;
-use bao_tree::io::sync::encode_ranges_validated;
-use bao_tree::io::{
-    sync::{ReadAt, Size},
-    EncodeError,
-};
-use bytes::Bytes;
-use iroh_bytes::Hash;
-use iroh_bytes::IROH_BLOCK_SIZE;
 
 /// Create a pathbuf from a name.
 pub fn pathbuf_from_name(name: &str) -> PathBuf {
@@ -32,27 +22,6 @@ pub enum BaoValidationError {
     IoError(#[from] std::io::Error),
     /// The data failed to validate
     EncodeError(#[from] EncodeError),
-}
-
-/// Validate that the data matches the outboard.
-pub fn validate_bao<F: Fn(u64)>(
-    hash: Hash,
-    data_reader: impl ReadAt + Size,
-    outboard: Bytes,
-    progress: F,
-) -> result::Result<(), BaoValidationError> {
-    let hash = blake3::Hash::from(hash);
-    let outboard =
-        bao_tree::io::outboard::PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, &outboard)?;
-
-    // do not wrap the data_reader in a BufReader, that is slow wnen seeking
-    encode_ranges_validated(
-        data_reader,
-        outboard,
-        &RangeSet2::all(),
-        DevNull(0, progress),
-    )?;
-    Ok(())
 }
 
 /// little util that discards data but prints progress every 1MB

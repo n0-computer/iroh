@@ -14,7 +14,7 @@ rust-version = "1.70"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.7.0", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.8.0-rc1", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
