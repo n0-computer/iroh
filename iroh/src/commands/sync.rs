@@ -83,6 +83,23 @@ pub enum DocCommands {
         #[clap(short, long)]
         content: bool,
     },
+    /// Delete an entry from the document.
+    DeleteEntry {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Author of the entry.
+        ///
+        /// Required unless the author is set through the IROH_AUTHOR environment variable.
+        /// Within the Iroh console, the active author can also set with `author switch`.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
+        /// Key to the entry (parsed as UTF-8 string).
+        key: String,
+    },
     /// List all keys in a document.
     #[clap(alias = "ls")]
     Keys {
@@ -180,6 +197,18 @@ impl DocCommands {
                 let value = value.as_bytes().to_vec();
                 let hash = doc.set_bytes(author, key, value).await?;
                 println!("{}", hash);
+            }
+            Self::DeleteEntry { doc, author, key } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let author = env.author(author)?;
+                let key = key.as_bytes().to_vec();
+                let res = doc.delete_entry(author, key).await?;
+                if let Some(entry) = res {
+                    println!("Deleted entry:");
+                    print_entry(&doc, &entry, false).await?;
+                } else {
+                    println!("Entry not found");
+                }
             }
             Self::Get {
                 doc,

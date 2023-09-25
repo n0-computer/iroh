@@ -110,6 +110,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         }
     }
 
+    /// Remove an entry from the store.
+    pub fn remove(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>, S::Error> {
+        self.inner.write().peer.store.remove(id)
+    }
+
     /// Subscribe to insert events.
     ///
     /// Only one subscription can be active at a time. If a previous subscription was created, this
