@@ -1,5 +1,6 @@
 //! traits related to collections of blobs
 use crate::util::Hash;
+use bytes::Bytes;
 use futures::{
     future::{self, LocalBoxFuture},
     FutureExt,
@@ -40,6 +41,132 @@ pub trait LinkStream: Debug {
     fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>>;
 }
 
+/// A sequence of links, backed by a [`Bytes`] object.
+#[derive(Debug, Clone)]
+pub struct LinkSeq(Bytes);
+
+impl FromIterator<Hash> for LinkSeq {
+    fn from_iter<T: IntoIterator<Item = Hash>>(iter: T) -> Self {
+        let iter = iter.into_iter();
+        let (lower, _upper) = iter.size_hint();
+        let mut bytes = Vec::with_capacity(lower * 32);
+        for hash in iter {
+            bytes.extend_from_slice(hash.as_ref());
+        }
+        Self(bytes.into())
+    }
+}
+
+impl TryFrom<Bytes> for LinkSeq {
+    type Error = anyhow::Error;
+
+    fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
+        Self::new(bytes).ok_or_else(|| anyhow::anyhow!("invalid link sequence"))
+    }
+}
+
+impl IntoIterator for LinkSeq {
+    type Item = Hash;
+    type IntoIter = LinkSeqIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        LinkSeqIter(self)
+    }
+}
+
+impl LinkStream for LinkSeqIter {
+    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
+        futures::future::ok(self.0.pop_front()).boxed_local()
+    }
+
+    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
+        let ok = self.0.drop_front(n as usize);
+        if ok {
+            futures::future::ok(())
+        } else {
+            futures::future::err(anyhow::anyhow!("out of bounds"))
+        }
+        .boxed_local()
+    }
+}
+
+impl LinkSeq {
+    /// Create a new sequence of links.
+    pub fn new(bytes: Bytes) -> Option<Self> {
+        if bytes.len() % 32 == 0 {
+            Some(Self(bytes))
+        } else {
+            None
+        }
+    }
+
+    fn drop_front(&mut self, n: usize) -> bool {
+        let start = n * 32;
+        if start > self.0.len() {
+            false
+        } else {
+            self.0 = self.0.slice(start..);
+            true
+        }
+    }
+
+    /// Iterate over the hashes in this sequence.
+    pub fn iter(&self) -> impl Iterator<Item = Hash> + '_ {
+        self.0.chunks_exact(32).map(|chunk| {
+            let hash: [u8; 32] = chunk.try_into().unwrap();
+            hash.into()
+        })
+    }
+
+    /// Get the number of hashes in this sequence.
+    pub fn len(&self) -> usize {
+        self.0.len() / 32
+    }
+
+    /// Check if this sequence is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Get the hash at the given index.
+    pub fn get(&self, index: usize) -> Option<Hash> {
+        if index < self.len() {
+            let hash: [u8; 32] = self.0[index * 32..(index + 1) * 32].try_into().unwrap();
+            Some(hash.into())
+        } else {
+            None
+        }
+    }
+
+    /// Get and remove the first hash in this sequence.
+    pub fn pop_front(&mut self) -> Option<Hash> {
+        if self.is_empty() {
+            None
+        } else {
+            let hash = self.get(0).unwrap();
+            self.0 = self.0.slice(32..);
+            Some(hash)
+        }
+    }
+
+    /// Get the underlying bytes.
+    pub fn into_inner(self) -> Bytes {
+        self.0
+    }
+}
+
+/// Iterator over the hashes in a [`LinkSeq`].
+#[derive(Debug, Clone)]
+pub struct LinkSeqIter(LinkSeq);
+
+impl Iterator for LinkSeqIter {
+    type Item = Hash;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.pop_front()
+    }
+}
+
 /// Information about a collection.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CollectionStats {
@@ -78,52 +205,10 @@ impl CollectionParser for LinkSeqCollectionParser {
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         async move {
             let bytes = reader.read_to_end().await?;
-            let links = postcard::from_bytes::<Box<[Hash]>>(&bytes)?;
-            let stream: Box<dyn LinkStream> = Box::new(ArrayLinkStream::new(links));
+            let links = LinkSeq::try_from(bytes)?;
+            let stream: Box<dyn LinkStream> = Box::new(links.into_iter());
             Ok((stream, Default::default()))
         }
         .boxed_local()
-    }
-}
-
-/// Stream of links that is used by the default collections
-///
-/// Just contains an array of hashes, so it requires at least all hashes to be loaded into memory.
-#[derive(Debug, Clone)]
-pub struct ArrayLinkStream {
-    hashes: Box<[Hash]>,
-    offset: usize,
-}
-
-impl ArrayLinkStream {
-    /// Create a new iterator over the given hashes.
-    pub fn new(hashes: Box<[Hash]>) -> Self {
-        Self { hashes, offset: 0 }
-    }
-}
-
-impl LinkStream for ArrayLinkStream {
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
-        let res = if self.offset < self.hashes.len() {
-            let hash = self.hashes[self.offset];
-            self.offset += 1;
-            Some(hash)
-        } else {
-            None
-        };
-        future::ok(res).boxed_local()
-    }
-
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
-        let res = if let Some(offset) = self
-            .offset
-            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
-        {
-            self.offset = offset;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("overflow"))
-        };
-        future::ready(res).boxed_local()
     }
 }

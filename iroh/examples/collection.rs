@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         .collect();
     // create a collection and add it to the db as well
     let collection = Collection::new(blobs, 0)?;
-    let hash = db.insert(collection.to_bytes()?);
+    let hash = db.insert_many(collection.to_blobs()).unwrap();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_current(1)?;
 

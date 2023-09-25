@@ -218,33 +218,19 @@ async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats>
 }
 
 async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Result<get::Stats> {
-    let (next, links) = {
-        let curr = curr.next();
-        let (curr, data) = curr.concatenate_into_vec().await?;
-        let links = postcard::from_bytes::<Box<[Hash]>>(&data)?;
-        (curr.next(), links)
-    };
-    let EndBlobNext::MoreChildren(at_meta) = next else {
-        anyhow::bail!("expected meta");
-    };
-    let (mut next, collection) = {
-        let curr = at_meta.next(links[0]);
-        let (curr, names) = curr.concatenate_into_vec().await?;
-        let names = postcard::from_bytes::<Box<[String]>>(&names)?;
-        let collection = Collection::from_parts(&links[1..], &names)?;
-        let count = collection.total_entries();
-        let missing_bytes = collection.total_blobs_size();
-        write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
-        write(format!(
-            "  {} file(s) with total transfer size {}",
-            count,
-            HumanBytes(missing_bytes)
-        ));
-        pb.set_length(missing_bytes);
-        pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
-        (curr.next(), collection.into_inner())
-    };
+    let (mut next, _links, collection) = Collection::read_fsm(curr).await?;
+    let count = collection.total_entries();
+    let missing_bytes = collection.total_blobs_size();
+    write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
+    write(format!(
+        "  {} file(s) with total transfer size {}",
+        count,
+        HumanBytes(missing_bytes)
+    ));
+    pb.set_length(missing_bytes);
+    pb.reset();
+    pb.set_draw_target(ProgressDrawTarget::stderr());
+    let collection = collection.into_inner();
     // read all the children
     let finishing = loop {
         let start = match next {

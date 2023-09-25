@@ -15,7 +15,7 @@ use futures::{
     FutureExt,
 };
 use iroh::{
-    collection::{Blob, Collection, IrohCollectionParser},
+    collection::{Blob, Collection},
     node::{Builder, Event, Node, StaticTokenAuthHandler},
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
@@ -31,9 +31,7 @@ use tokio::sync::mpsc;
 use bao_tree::{blake3, ChunkNum};
 use iroh_bytes::{
     baomap::{PartialMap, Store},
-    collection::{
-        ArrayLinkStream, CollectionParser, CollectionStats, LinkSeqCollectionParser, LinkStream,
-    },
+    collection::{CollectionParser, CollectionStats, LinkSeq, LinkSeqCollectionParser, LinkStream},
     get::{
         fsm::ConnectedNext,
         fsm::{self, DecodeError},
@@ -175,7 +173,7 @@ async fn multiple_clients() -> Result<()> {
         }],
         0,
     )?;
-    let hash = db.insert(collection.to_bytes()?);
+    let hash = db.insert_many(collection.to_blobs()).unwrap();
     let rt = test_runtime();
     let node = test_node(db, addr).runtime(&rt).spawn().await?;
 
@@ -261,12 +259,7 @@ where
         expects.push((name, path, hash));
     }
     let collection = Collection::new(blobs, total_blobs_size)?;
-    let meta_bytes = postcard::to_stdvec(&collection.names())?;
-    let meta_hash = mdb.insert(&meta_bytes);
-    let mut links = collection.links();
-    links.insert(0, meta_hash);
-    let collection_bytes = postcard::to_stdvec(&links)?;
-    let collection_hash = mdb.insert(collection_bytes);
+    let collection_hash = mdb.insert_many(collection.to_blobs()).unwrap();
 
     // sort expects by name to match the canonical order of blobs
     expects.sort_by(|a, b| a.0.cmp(&b.0));
@@ -377,12 +370,7 @@ async fn test_server_close() {
         0,
     )
     .unwrap();
-    let meta_bytes = postcard::to_stdvec(&collection.names()).unwrap();
-    let meta_hash = db.insert(&meta_bytes);
-    let mut links = collection.links();
-    links.insert(0, meta_hash);
-    let links_bytes = postcard::to_stdvec(&links).unwrap();
-    let hash = db.insert(&links_bytes);
+    let hash = db.insert_many(collection.to_blobs()).unwrap();
     let addr = "127.0.0.1:0".parse().unwrap();
     let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
@@ -446,12 +434,7 @@ fn create_test_db(
         0,
     )
     .unwrap();
-    let meta_bytes = postcard::to_stdvec(&collection.names()).unwrap();
-    let meta_hash = db.insert(&meta_bytes);
-    let mut links = collection.links();
-    links.insert(0, meta_hash);
-    let links_bytes = postcard::to_stdvec(&links).unwrap();
-    let hash = db.insert(&links_bytes);
+    let hash = db.insert_many(collection.to_blobs()).unwrap();
     (db, hash)
 }
 
@@ -475,7 +458,7 @@ async fn test_ipv6() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::all(hash).into();
-        run_get_request(opts, request).await
+        run_collection_get_request(opts, request).await
     })
     .await
     .expect("timeout")
@@ -504,7 +487,7 @@ async fn test_not_found() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::single(hash).into();
-        let res = run_get_request(opts, request).await;
+        let res = run_collection_get_request(opts, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
                 if let DecodeError::NotFound = e {
@@ -548,7 +531,7 @@ async fn test_chunk_not_found_1() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::single(hash).into();
-        let res = run_get_request(opts, request).await;
+        let res = run_collection_get_request(opts, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
                 if let DecodeError::ParentNotFound(_) = e {
@@ -589,7 +572,7 @@ async fn test_run_ticket() {
             Some(iroh_net::defaults::default_derp_map()),
         );
         let request = GetRequest::all(no_token_ticket.hash()).into();
-        let response = run_get_request(opts, request).await;
+        let response = run_collection_get_request(opts, request).await;
         assert!(response.is_err());
         anyhow::Result::<_>::Ok(())
     })
@@ -602,7 +585,7 @@ async fn test_run_ticket() {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
             .into();
-        run_get_request(
+        run_collection_get_request(
             ticket.as_get_options(
                 SecretKey::generate(),
                 Some(iroh_net::defaults::default_derp_map()),
@@ -628,31 +611,17 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
     Ok(())
 }
 
-/// Run a get request with the default collection parser
-async fn run_get_request(
-    opts: iroh::dial::Options,
-    request: Request,
-) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
-    run_custom_get_request(opts, request, IrohCollectionParser).await
-}
-
 async fn run_collection_get_request(
     opts: iroh::dial::Options,
     request: Request,
 ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
-    let (root, children, stats) =
-        run_custom_get_request(opts, request, LinkSeqCollectionParser).await?;
-    let links = postcard::from_bytes::<Box<[Hash]>>(&root)?;
-    let meta = children.get(&0).context("missing metadata")?;
-    let names = postcard::from_bytes::<Box<[String]>>(meta)?;
-    let collection = Collection::from_parts(&links[1..], &names)?;
-    let mut children1 = BTreeMap::new();
-    for (i, child) in children {
-        if let Some(x) = i.checked_sub(1) {
-            children1.insert(x, child);
-        }
-    }
-    Ok((collection, children1, stats))
+    let connection = iroh::dial::dial(opts).await?;
+    let initial = fsm::start(connection, request);
+    let connected = initial.next().await?;
+    let ConnectedNext::StartRoot(fsm_at_start_root) = connected.next().await? else {
+        anyhow::bail!("request did not include collection");
+    };
+    Collection::read_fsm_all(fsm_at_start_root).await
 }
 
 /// Run a get request with a custom collection parser
@@ -736,7 +705,8 @@ impl CollectionParser for CollectionsAreJustLinks {
         async move {
             let data = reader.read_to_end().await?;
             let collection = postcard::from_bytes::<Vec<Hash>>(&data)?;
-            let iter: Box<dyn LinkStream> = Box::new(ArrayLinkStream::new(collection.into()));
+            let links = LinkSeq::from_iter(collection);
+            let iter: Box<dyn LinkStream> = Box::new(links.into_iter());
             Ok((iter, Default::default()))
         }
         .boxed_local()

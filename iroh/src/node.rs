@@ -1035,21 +1035,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             {
                 use crate::collection::{Blob, Collection};
                 use crate::util::io::pathbuf_from_name;
-                use iroh_io::AsyncSliceReaderExt;
                 tokio::fs::create_dir_all(&path).await?;
-                let links = db.get(&hash).context("collection not there")?;
-                let mut reader = links.data_reader().await?;
-                let bytes: Bytes = reader.read_to_end().await?;
-                let links =
-                    postcard::from_bytes::<Box<[Hash]>>(&bytes).context("invalid collection")?;
-                let names = db.get(&links[0]).context("names not there")?;
-                let mut reader = names.data_reader().await?;
-                let bytes: Bytes = reader.read_to_end().await?;
-                let names =
-                    postcard::from_bytes::<Box<[String]>>(&bytes).context("invalid collection")?;
-
-                let collection =
-                    Collection::from_parts(&links[1..], &names).context("invalid collection")?;
+                let collection = Collection::load(db, &hash).await?;
                 for Blob { hash, name } in collection.blobs() {
                     let path = path.join(pathbuf_from_name(name));
                     if let Some(parent) = path.parent() {
@@ -1245,20 +1232,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let (blobs, child_tags): (Vec<_>, Vec<_>) =
             result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
         let collection = Collection::new(blobs, total_blobs_size)?;
-        let meta = postcard::to_stdvec(&collection.names())?;
-        let meta_tag = self
-            .inner
-            .db
-            .import_bytes(meta.into(), BlobFormat::RAW)
-            .await?;
-        let mut links = collection.links();
-        links.insert(0, *meta_tag.hash());
-        let data = postcard::to_stdvec(&links)?;
-        let tag = self
-            .inner
-            .db
-            .import_bytes(data.into(), BlobFormat::COLLECTION)
-            .await?;
+        let tag = collection.store(&self.inner.db).await?;
         let hash = *tag.hash();
         progress.send(AddProgress::AllDone { hash }).await?;
         let haf = *tag.inner();

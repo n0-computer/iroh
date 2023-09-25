@@ -15,7 +15,6 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
-use iroh::collection::Collection;
 use iroh::dial::Ticket;
 use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
@@ -38,9 +37,7 @@ pub fn setup_logging() {
 /// blocks.
 ///
 /// This will stream the root blob and close the connection.
-fn stream_blob(
-    initial: AtInitial,
-) -> impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static {
+fn stream_blob(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> + 'static {
     async fn inner(initial: AtInitial, co: &Co<io::Result<Bytes>>) -> io::Result<()> {
         // connect
         let connected = initial.next().await?;
@@ -91,9 +88,7 @@ fn stream_blob(
 /// blocks.
 ///
 /// The root blob is not streamed. It must be fully included in the response.
-fn stream_children(
-    initial: AtInitial,
-) -> impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static {
+fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> + 'static {
     async fn inner(initial: AtInitial, co: &Co<io::Result<Bytes>>) -> io::Result<()> {
         // connect
         let connected = initial.next().await?;
@@ -113,21 +108,24 @@ fn stream_children(
         }
         // move to the header
         let header: iroh_bytes::get::fsm::AtBlobHeader = start_root.next();
-        let (root_end, collection) = header.concatenate_into_vec().await?;
-        let Ok(collection) = Collection::from_bytes(&collection) else {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failed to parse collection",
-            ));
+        let (root_end, links_bytes) = header.concatenate_into_vec().await?;
+        let EndBlobNext::MoreChildren(at_meta) = root_end.next() else {
+            return Err(io::Error::new(io::ErrorKind::Other, "missing meta blob"));
         };
-        let mut curr = root_end.next();
+        let links: Box<[iroh_bytes::Hash]> = postcard::from_bytes(&links_bytes)
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to parse links"))?;
+        let meta_link = *links
+            .get(0)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing meta link"))?;
+        let (meta_end, _meta_bytes) = at_meta.next(meta_link).concatenate_into_vec().await?;
+        let mut curr = meta_end.next();
         let closing = loop {
             match curr {
                 EndBlobNext::MoreChildren(more) => {
-                    let Some(blob) = collection.blobs().get(more.child_offset() as usize) else {
+                    let Some(hash) = links.get(more.child_offset() as usize) else {
                         break more.finish();
                     };
-                    let header = more.next(blob.hash);
+                    let header = more.next(*hash);
                     let (mut content, _size) = header.next().await?;
                     // manually loop over the content and yield all data
                     let done = loop {
