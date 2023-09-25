@@ -70,7 +70,7 @@ pub enum BlobAddPath {
         path: PathBuf,
         /// If `true` create a collection with the single file in it,
         /// if `false` only import the single blob.
-        create_collection: bool,
+        wrap_in_collection: bool,
     },
     /// Add a directory recursively.
     Directory {
@@ -87,12 +87,12 @@ impl BlobAddPath {
             BlobAddPath::Directory { path } => path.as_path(),
         }
     }
-    /// Whether to create a collection.
-    pub fn create_collection(&self) -> bool {
+    /// Whether this will create a collection.
+    pub fn creates_collection(&self) -> bool {
         match self {
             BlobAddPath::File {
-                create_collection, ..
-            } => *create_collection,
+                wrap_in_collection, ..
+            } => *wrap_in_collection,
             BlobAddPath::Directory { .. } => true,
         }
     }

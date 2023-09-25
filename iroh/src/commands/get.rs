@@ -8,11 +8,10 @@ use iroh::{
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-<<<<<<< HEAD
-use iroh_bytes::{baomap::range_collections::RangeSet2, util::SetTagOption};
-=======
-use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress, util::{SetTagOption, BlobFormat}};
->>>>>>> a18f3439 (feat: support BlobFormat and raw blobs properly)
+use iroh_bytes::{
+    baomap::range_collections::RangeSet2,
+    util::{BlobFormat, SetTagOption},
+};
 use iroh_bytes::{
     get::{
         self,

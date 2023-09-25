@@ -23,7 +23,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDeleteBlobRequest,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPath, BlobAddPathRequest, BlobDeleteBlobRequest,
     BlobDownloadRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
     BlobReadResponse, BlobValidateRequest, BytesGetRequest, CounterStats, DeleteTagRequest,
@@ -32,7 +32,7 @@ use crate::rpc_protocol::{
     DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, BlobAddPath,
+    ShareMode,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 

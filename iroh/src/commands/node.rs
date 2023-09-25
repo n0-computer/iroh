@@ -25,11 +25,12 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::{commands::add::{self, BlobSource, TicketOption}, config::IrohPaths};
-
-use super::{
-    MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
+use crate::{
+    commands::add::{self, BlobSource, TicketOption},
+    config::IrohPaths,
 };
+
+use super::{MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 
 #[derive(Debug)]
 pub struct StartOptions {
@@ -56,12 +57,6 @@ pub async fn run(
     }
 
     let token = opts.request_token.clone();
-<<<<<<< HEAD
-    let peers = IrohPaths::PeerData.with_env()?;
-    let provider = provide(db.clone(), store, rt, key, peers, opts).await?;
-    let client = provider.client();
-=======
->>>>>>> df680573 (refactor: better code reuse)
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
     }
@@ -111,6 +106,7 @@ async fn start_daemon_node(
     let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
     let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
     let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
+    let peer_data_path = IrohPaths::PeerData.with_env()?;
     tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::fs::create_dir_all(&partial_blob_dir).await?;
     let bao_store = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
@@ -118,7 +114,7 @@ async fn start_daemon_node(
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let key = Some(IrohPaths::SecretKey.with_env()?);
     let doc_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
-    spawn_daemon_node(rt, bao_store, doc_store, key, opts).await
+    spawn_daemon_node(rt, bao_store, doc_store, key, peer_data_path, opts).await
 }
 
 async fn spawn_daemon_node<B: BaoStore, D: DocStore>(

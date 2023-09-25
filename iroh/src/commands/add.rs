@@ -27,7 +27,7 @@ pub enum BlobSource {
     LocalFs {
         path: PathBuf,
         in_place: bool,
-        create_collection: bool,
+        wrap_in_collection: bool,
     },
     /// Data passed via STDIN.
     Stdin,
@@ -37,14 +37,14 @@ impl BlobSource {
     pub fn from_path_or_stdin(
         path: Option<PathBuf>,
         in_place: bool,
-        create_collection: bool,
+        wrap_in_collection: bool,
     ) -> Self {
         match path {
             None => BlobSource::Stdin,
             Some(path) => BlobSource::LocalFs {
                 path,
                 in_place,
-                create_collection,
+                wrap_in_collection,
             },
         }
     }
@@ -70,7 +70,7 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
         BlobSource::LocalFs {
             path,
             in_place,
-            create_collection: collection,
+            wrap_in_collection,
         } => {
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
@@ -79,7 +79,7 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
             } else {
                 BlobAddPath::File {
                     path,
-                    create_collection: collection,
+                    wrap_in_collection,
                 }
             };
             (path, in_place)
@@ -94,7 +94,7 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
             println!("Adding from stdin...");
             let path = BlobAddPath::File {
                 path: path_buf,
-                create_collection: false,
+                wrap_in_collection: false,
             };
             (path, false)
         }

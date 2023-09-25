@@ -1217,7 +1217,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             ImportMode::Copy
         };
 
-        let temp_tag = if root.create_collection() {
+        let temp_tag = if root.creates_collection() {
             // import all files below root recursively
             let data_sources = crate::util::fs::scan_path(root.path().to_owned())?;
             const IO_PARALLELISM: usize = 4;
@@ -1730,7 +1730,7 @@ mod tests {
                 .server_streaming(BlobAddPathRequest {
                     path: BlobAddPath::File {
                         path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
-                        create_collection: false,
+                        wrap_in_collection: false,
                     },
                     in_place: false,
                     tag: SetTagOption::Auto,

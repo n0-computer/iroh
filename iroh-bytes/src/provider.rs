@@ -15,7 +15,7 @@ use tracing_futures::Instrument;
 use crate::baomap::*;
 use crate::collection::CollectionParser;
 use crate::protocol::{write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken};
-use crate::util::{RpcError, BlobFormat, Tag};
+use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
 
 /// Events emitted by the provider informing about the current status.
@@ -28,7 +28,7 @@ pub enum Event {
         /// The format of the added data
         format: BlobFormat,
         /// The tag of the added data
-        tag: Tag
+        tag: Tag,
     },
     /// A new client connected to the node.
     ClientConnected {
@@ -130,7 +130,7 @@ pub enum AddProgress {
         /// The format of the added data.
         format: BlobFormat,
         /// The tag of the added data.
-        tag: Tag
+        tag: Tag,
     },
     /// We got an error and need to abort.
     ///
