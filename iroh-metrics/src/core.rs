@@ -5,16 +5,18 @@ use prometheus_client::{encoding::text::encode, registry::Registry};
 #[cfg(not(feature = "metrics"))]
 type Registry = ();
 
-static CORE: OnceCell<Core> = OnceCell::new();
+pub(crate) static CORE: OnceCell<Core> = OnceCell::new();
 
 /// Core is the base metrics struct.
 /// It manages the mapping between the metrics name and the actual metrics.
 /// It also carries a single prometheus registry to be used by all metrics.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Core {
     #[cfg(feature = "metrics")]
     registry: Registry,
     metrics_map: ErasedSyncSet,
+    event_bus_tx: tokio::sync::mpsc::UnboundedSender<crate::Event>,
+    _h: Option<tokio::task::JoinHandle<()>>,
 }
 /// Open Metrics [`Counter`] to measure discrete events.
 ///
@@ -23,7 +25,7 @@ pub struct Core {
 pub struct Counter {
     /// The actual prometheus counter.
     #[cfg(feature = "metrics")]
-    pub counter: prometheus_client::metrics::counter::Counter,
+    pub counter: prometheus_client::metrics::family::Family::<Vec<(String, String)>, prometheus_client::metrics::counter::Counter>,
     /// What this counter measures.
     pub description: &'static str,
 }
@@ -39,24 +41,23 @@ impl Counter {
     }
 
     /// Increase the [`Counter`] by 1, returning the previous value.
-    pub fn inc(&self) -> u64 {
+    pub fn inc(&self, labels: Vec<(String, String)>) -> u64 {
         #[cfg(feature = "metrics")]
         {
-            self.counter.inc()
+            self.counter.get_or_create(&labels).inc()
         }
         #[cfg(not(feature = "metrics"))]
         0
     }
 
     /// Increase the [`Counter`] by `u64`, returning the previous value.
-    #[cfg(feature = "metrics")]
     pub fn inc_by(&self, v: u64) -> u64 {
-        self.counter.inc_by(v)
-    }
-
-    /// Increase the [`Counter`] by `u64`, returning the previous value.
-    #[cfg(not(feature = "metrics"))]
-    pub fn inc_by(&self, _v: u64) -> u64 {
+        #[cfg(feature = "metrics")]
+        {
+            self.counter.inc_by(v)
+        }
+        #[cfg(not(feature = "metrics"))]
+	 pub fn inc_by(&self, _v: u64) -> u64 {
         0
     }
 
@@ -64,7 +65,17 @@ impl Counter {
     pub fn get(&self) -> u64 {
         #[cfg(feature = "metrics")]
         {
-            self.counter.get()
+            self.get_with_labels(vec![])
+        }
+        #[cfg(not(feature = "metrics"))]
+        0
+    }
+
+    /// Get the current value of the [`Counter`] with expected labels.
+    pub fn get_with_labels(&self, labels: Vec<(String, String)>) -> u64 {
+        #[cfg(feature = "metrics")]
+        {
+            self.counter.get_or_create(&labels).get()
         }
         #[cfg(not(feature = "metrics"))]
         0
@@ -131,10 +142,24 @@ impl Core {
         let mut metrics_map = ErasedSyncSet::new();
         f(&mut registry, &mut metrics_map);
 
+        let (event_bus_tx, mut event_bus_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        tracing::info!("Starting event bus");
+        let eb_handle = tokio::task::spawn_blocking(move ||{
+             tokio::task::spawn(async move {
+            while let Some(event) = event_bus_rx.recv().await {
+                tracing::error!("Event: {:?}", event);
+            }
+            tracing::error!("Event bus died");
+        });
+        });
+
         CORE.set(Core {
             metrics_map,
             #[cfg(feature = "metrics")]
             registry,
+            event_bus_tx: event_bus_tx.clone(),
+            _h: Some(eb_handle),
         })
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "already set"))
     }
@@ -148,6 +173,11 @@ impl Core {
     #[cfg(feature = "metrics")]
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    /// Returns a reference to the event bus sender.
+    pub fn event_bus(&self) -> &tokio::sync::mpsc::UnboundedSender<crate::Event> {
+        &self.event_bus_tx
     }
 
     /// Returns a reference to the mapped metrics instance.

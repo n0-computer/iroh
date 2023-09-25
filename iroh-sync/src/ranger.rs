@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
+use iroh_metrics::send_event;
 use serde::{Deserialize, Serialize};
 
 use crate::ContentStatus;
@@ -340,6 +341,11 @@ where
         F2: Fn(&S, &E) -> ContentStatus,
     {
         let mut out = Vec::new();
+
+        send_event(iroh_metrics::Event {
+            event_type: "test".to_string(),
+            data: "process_message".to_string(),
+        });
 
         // TODO: can these allocs be avoided?
         let mut items = Vec::new();

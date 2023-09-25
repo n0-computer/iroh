@@ -457,6 +457,10 @@ pub async fn handle_get<D: Map, E: EventSender>(
         })
         .await;
 
+        iroh_metrics::send_event(iroh_metrics::Event {
+                event_type: "test".to_string(),
+                data: "handle_get".to_string(),
+            });
     // 4. Attempt to find hash
     match db.get(&hash) {
         // Collection or blob request

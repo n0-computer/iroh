@@ -16,12 +16,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use bytes::{Bytes, BytesMut};
-use derive_more::Deref;
 #[cfg(feature = "metrics")]
-use iroh_metrics::{inc, inc_by};
+use iroh_metrics::{inc, inc_by, inc_with_labels, inc_by_with_labels};
 
 use parking_lot::RwLock;
 
@@ -262,6 +262,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         origin: InsertOrigin,
     ) -> Result<usize, InsertError<S>> {
         let expected_namespace = self.namespace();
+        let e = entry.clone();
 
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
@@ -291,14 +292,36 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
         #[cfg(feature = "metrics")]
         {
+            let author_id = e.author().clone().to_string();
+            let ns_id = e.namespace().clone().to_string();
             match origin {
                 InsertOrigin::Local => {
                     inc!(Metrics, new_entries_local);
                     inc_by!(Metrics, new_entries_local_size, len);
+
+                    inc_with_labels!(Metrics, new_entries_local, vec![
+                        ("namespace".to_string(), ns_id.clone().to_string()),
+                        ("author".to_string(), author_id.clone().to_string()),
+                    ]);
+
+                    inc_by_with_labels!(Metrics, new_entries_local_size, len, vec![
+                        ("namespace".to_string(), ns_id.clone().to_string()),
+                        ("author".to_string(), author_id.clone().to_string()),
+                    ]);
                 }
                 InsertOrigin::Sync { .. } => {
                     inc!(Metrics, new_entries_remote);
                     inc_by!(Metrics, new_entries_remote_size, len);
+
+                    inc_with_labels!(Metrics, new_entries_remote, vec![
+                        ("namespace".to_string(), ns_id.clone().to_string()),
+                        ("author".to_string(), author_id.clone().to_string()),
+                    ]);
+
+                    inc_by_with_labels!(Metrics, new_entries_remote_size, len, vec![
+                        ("namespace".to_string(), ns_id.clone().to_string()),
+                        ("author".to_string(), author_id.clone().to_string()),
+                    ]);
                 }
             }
         }

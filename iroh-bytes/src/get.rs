@@ -767,6 +767,10 @@ pub mod fsm {
                 reader.stop(0u8.into()).ok();
                 error!("Received unexpected data from the provider: {chunk:?}");
             }
+            iroh_metrics::send_event(iroh_metrics::Event {
+                event_type: "test".to_string(),
+                data: "finish_get".to_string(),
+            });
             Ok(Stats {
                 elapsed: self.misc.start.elapsed(),
                 bytes_written: self.misc.bytes_written,
