@@ -1,3 +1,34 @@
+# [v0.6.0](https://github.com/n0-computer/iroh/compare/v0.6.0-alpha.1...v0.6.0) (2023-09-25)
+
+v0.6.0 is a big step toward iroh 1.0. It introduces documents, the See our [docs pages](https://iroh.computer/docs) for a detailed look at the new iroh.
+
+## Introducing documents
+
+Documents are mutable key-value stores that authors read from, write to, and sync with, subscribing to live updates in real time. For more on documents, see the [docmuents, uh, documentation](https://iroh.computer/docs/layers/documents)
+
+## Iroh console is here to help
+
+this release includes `iroh console` an admin, debugging, and API exploration tool. It's a REPL that can give live feedback as documents change, users sync, etc. For a detailed rundown on console commands, see the [iroh command documentation](https://iroh.computer/docs/commands)
+
+
+### Bug Fixes
+
+* avoid double conns, better state tracking ([#1505](https://github.com/n0-computer/iroh/issues/1505)) ([d8cc9df](https://github.com/n0-computer/iroh/commit/d8cc9df6262f805f9cfd205973e67cb960879472)), closes [#1491](https://github.com/n0-computer/iroh/issues/1491)
+* Debug for BlobReader ([#1479](https://github.com/n0-computer/iroh/issues/1479)) ([c6935bd](https://github.com/n0-computer/iroh/commit/c6935bddbef652982d58145c7936cb9efb1023a3))
+* **iroh:** do not log full messages for rpc ([#1453](https://github.com/n0-computer/iroh/issues/1453)) ([d4983c5](https://github.com/n0-computer/iroh/commit/d4983c536e4ae6ed0750653509184fc56379617a))
+* print enum variant name for RPC debug logs ([#1503](https://github.com/n0-computer/iroh/issues/1503)) ([39a3a33](https://github.com/n0-computer/iroh/commit/39a3a33ad680bacd7a690a0f1d8ed183facb64d8))
+* **sync:** fix `PeerData` encoding, neighbor events, better & predictable tests ([#1513](https://github.com/n0-computer/iroh/issues/1513)) ([779e470](https://github.com/n0-computer/iroh/commit/779e47053b9f22ea0ff23755c75174f118f30087)), closes [#1506](https://github.com/n0-computer/iroh/issues/1506) [#1512](https://github.com/n0-computer/iroh/issues/1512)
+
+
+### Features
+
+* content hashes iterator for sync store ([#1501](https://github.com/n0-computer/iroh/issues/1501)) ([8fe3f71](https://github.com/n0-computer/iroh/commit/8fe3f710685c5f960e20a332924dcee3abdfbfa8)), closes [#1496](https://github.com/n0-computer/iroh/issues/1496)
+* Improve content propagation in sync ([#1480](https://github.com/n0-computer/iroh/issues/1480)) ([49bde4f](https://github.com/n0-computer/iroh/commit/49bde4fdbdca82a4cd2864ea41866f3334d728f4))
+* **iroh-net:** implement network monitoring ([#1472](https://github.com/n0-computer/iroh/issues/1472)) ([a89078f](https://github.com/n0-computer/iroh/commit/a89078f5ede5ee918df1d917337342cc9206dbf2))
+* **iroh:** downloader ([#1420](https://github.com/n0-computer/iroh/issues/1420)) ([c217283](https://github.com/n0-computer/iroh/commit/c21728346378d6aa780e60001c0858061d2f55df)), closes [#1334](https://github.com/n0-computer/iroh/issues/1334) [#1362](https://github.com/n0-computer/iroh/issues/1362) [#1413](https://github.com/n0-computer/iroh/issues/1413)
+* streaming blob reads over RPC ([#1477](https://github.com/n0-computer/iroh/issues/1477)) ([6397d46](https://github.com/n0-computer/iroh/commit/6397d469000218183855e61ad22c14f4e44879f9))
+* **sync:** track incoming sync requests, allow subscriptions without sync, close inactive replicas ([#1491](https://github.com/n0-computer/iroh/issues/1491)) ([6c07ad3](https://github.com/n0-computer/iroh/commit/6c07ad3f2a673ef3f49731386d527dc21d828c5a))
+
 # [v0.6.0-alpha.1](https://github.com/n0-computer/iroh/compare/v0.6.0-alpha.0...v0.6.0-alpha.1) (2023-09-05)
 
 This release includes important fixes and improvements based on recent testing. Document sync is now more correct and faster!
