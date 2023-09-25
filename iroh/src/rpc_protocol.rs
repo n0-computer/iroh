@@ -7,7 +7,13 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -47,12 +53,62 @@ pub struct BlobAddPathRequest {
     /// This should be an absolute path valid for the file system on which
     /// the node runs. Usually the cli will run on the same machine as the
     /// node, so this should be an absolute path on the cli machine.
-    pub path: PathBuf,
+    pub path: BlobAddPath,
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
     /// Tag to tag the data with.
     pub tag: SetTagOption,
+}
+
+/// The type of path for [`BlobAddPathRequest`]
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BlobAddPath {
+    /// Add a single file
+    File {
+        /// Path to the file.
+        path: PathBuf,
+        /// If `true` create a collection with the single file in it,
+        /// if `false` only import the single blob.
+        create_collection: bool,
+    },
+    /// Add a directory recursively.
+    Directory {
+        /// The path to the directory.
+        path: PathBuf,
+    },
+}
+
+impl BlobAddPath {
+    /// Path to the file or directory.
+    pub fn path(&self) -> &Path {
+        match self {
+            BlobAddPath::File { path, .. } => path.as_path(),
+            BlobAddPath::Directory { path } => path.as_path(),
+        }
+    }
+    /// Whether to create a collection.
+    pub fn create_collection(&self) -> bool {
+        match self {
+            BlobAddPath::File {
+                create_collection, ..
+            } => *create_collection,
+            BlobAddPath::Directory { .. } => true,
+        }
+    }
+
+    /// Check that the path is absolute and points to a valid file or directory.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let path = self.path();
+        anyhow::ensure!(path.is_absolute(), "path must be absolute");
+        match self {
+            BlobAddPath::File { .. } => anyhow::ensure!(path.is_file(), "path must be a File"),
+            BlobAddPath::Directory { path } => {
+                anyhow::ensure!(path.is_dir(), "path must be a Directory")
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {
@@ -68,9 +124,9 @@ impl ServerStreamingMsg<ProviderService> for BlobAddPathRequest {
 pub struct BlobDownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
-    /// If this flag is true, the hash is assumed to be a collection and all
-    /// children are downloaded and shared as well.
-    pub recursive: bool,
+    /// If the format is [`BlobFormat::COLLECTION`], all children are downloaded and shared as
+    /// well.
+    pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
     pub peer: PeerAddr,
     /// This optional field contains a request token that can be used to authorize

@@ -8,6 +8,7 @@
 //!     $ cargo run -p collection
 use iroh::bytes::util::runtime;
 use iroh::collection::{Blob, Collection, IrohCollectionParser};
+use iroh_bytes::util::BlobFormat;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -53,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     // create a ticket
     // tickets wrap all details needed to get a collection
-    let ticket = node.ticket(hash).await?;
+    let ticket = node.ticket(hash, BlobFormat::COLLECTION).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.node_addr().peer_id);

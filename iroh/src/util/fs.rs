@@ -4,7 +4,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use walkdir::WalkDir;
 
 /// A data source
@@ -78,10 +78,18 @@ pub fn scan_path(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
             .collect::<anyhow::Result<Vec<_>>>()?
     } else {
         // A single file, use the file name as the name of the blob.
-        vec![DataSource {
-            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-            path: root,
-        }]
+        vec![scan_file(root)?]
+    })
+}
+
+/// Create a single file data source from a path to a file.
+pub fn scan_file(path: PathBuf) -> anyhow::Result<DataSource> {
+    if !path.is_file() {
+        bail!("Expected {} to be a file", path.to_string_lossy());
+    }
+    Ok(DataSource {
+        name: canonicalize_path(path.file_name().context("path must be a file")?)?,
+        path,
     })
 }
 

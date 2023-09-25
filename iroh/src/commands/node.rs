@@ -11,7 +11,6 @@ use iroh::{
     baomap::flat::{self, Store as BaoFsStore},
     client::quic::RPC_ALPN,
     collection::IrohCollectionParser,
-    dial::Ticket,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
@@ -26,10 +25,9 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::{commands::add::add_stdin_or_path, config::IrohPaths};
+use crate::{commands::add::{self, BlobSource, TicketOption}, config::IrohPaths};
 
 use super::{
-    add::{aggregate_add_response, print_add_response},
     MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
 };
 
@@ -71,11 +69,13 @@ pub async fn run(
     let node = start_daemon_node(rt, opts).await?;
     let client = node.client();
 
+    let source = BlobSource::from_path_or_stdin(path, in_place, true);
+    let ticket = TicketOption::Print(token);
     // task that will add data to the provider, either from a file or from stdin
     let add_task = {
         tokio::spawn(
             async move {
-                if let Err(e) = add_stdin_or_path(&client, path, tag, in_place, true, token).await {
+                if let Err(e) = add::run(&client, source, tag, ticket).await {
                     eprintln!("Failed to add data: {}", e);
                     std::process::exit(1);
                 }

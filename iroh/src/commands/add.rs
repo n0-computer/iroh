@@ -7,42 +7,105 @@ use std::{
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::{client::Iroh, dial::Ticket, rpc_protocol::ProviderService};
-use iroh_bytes::{protocol::RequestToken, provider::AddProgress, util::SetTagOption, Hash};
+use iroh::{
+    client::Iroh,
+    dial::Ticket,
+    rpc_protocol::{BlobAddPath, ProviderService},
+};
+use iroh_bytes::{
+    protocol::RequestToken,
+    provider::AddProgress,
+    util::{BlobFormat, HashAndFormat, SetTagOption},
+    Hash,
+};
 use quic_rpc::ServiceConnection;
 
-/// Add data to iroh, either from a path or, if path is `None`, from STDIN.
-pub async fn add_stdin_or_path<C: ServiceConnection<ProviderService>>(
-    client: &Iroh<C>,
-    path: Option<PathBuf>,
-    tag: SetTagOption,
-    in_place: bool,
-    ticket: bool,
-    token_for_ticket: Option<RequestToken>,
-) -> Result<()> {
-    let (path, _tmp_path) = if let Some(path) = path {
-        let absolute = path.canonicalize()?;
-        println!("Adding {} as {}...", path.display(), absolute.display());
-        (absolute, None)
-    } else {
-        // Store STDIN content into a temporary file
-        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-        let mut file = tokio::fs::File::from_std(file);
-        let path_buf = path.to_path_buf();
-        // Copy from stdin to the file, until EOF
-        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-        println!("Adding from stdin...");
-        // return the TempPath to keep it alive
-        (path_buf, Some(path))
-    };
+/// Data source for adding data to iroh.
+#[derive(Debug, Clone)]
+pub enum BlobSource {
+    /// A file or directory on the node's local file system.
+    LocalFs {
+        path: PathBuf,
+        in_place: bool,
+        create_collection: bool,
+    },
+    /// Data passed via STDIN.
+    Stdin,
+}
 
+impl BlobSource {
+    pub fn from_path_or_stdin(
+        path: Option<PathBuf>,
+        in_place: bool,
+        create_collection: bool,
+    ) -> Self {
+        match path {
+            None => BlobSource::Stdin,
+            Some(path) => BlobSource::LocalFs {
+                path,
+                in_place,
+                create_collection,
+            },
+        }
+    }
+}
+
+/// Whether to print an all-in-one ticket.
+#[derive(Debug, Clone)]
+pub enum TicketOption {
+    /// Do not print an all-in-one ticket
+    None,
+    /// Print an all-in-oone ticket. Optionally include a request token in the ticket.
+    Print(Option<RequestToken>),
+}
+
+/// Add data to iroh, either from a path or, if path is `None`, from STDIN.
+pub async fn run<C: ServiceConnection<ProviderService>>(
+    client: &Iroh<C>,
+    source: BlobSource,
+    tag: SetTagOption,
+    ticket: TicketOption,
+) -> Result<()> {
+    let (path, in_place) = match source {
+        BlobSource::LocalFs {
+            path,
+            in_place,
+            create_collection: collection,
+        } => {
+            let absolute = path.canonicalize()?;
+            println!("Adding {} as {}...", path.display(), absolute.display());
+            let path = if absolute.is_dir() {
+                BlobAddPath::Directory { path: absolute }
+            } else {
+                BlobAddPath::File {
+                    path,
+                    create_collection: collection,
+                }
+            };
+            (path, in_place)
+        }
+        BlobSource::Stdin => {
+            // Store STDIN content into a temporary file
+            let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+            let mut file = tokio::fs::File::from_std(file);
+            let path_buf = path.to_path_buf();
+            // Copy from stdin to the file, until EOF
+            tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+            println!("Adding from stdin...");
+            let path = BlobAddPath::File {
+                path: path_buf,
+                create_collection: false,
+            };
+            (path, false)
+        }
+    };
     // tell the node to add the data
     let stream = client.blobs.add_from_path(path, in_place, tag).await?;
-    let (hash, entries) = aggregate_add_response(stream).await?;
-    print_add_response(hash, entries);
-    if ticket {
+    let (hash, format, entries) = aggregate_add_response(stream).await?;
+    print_add_response(hash, format, entries);
+    if let TicketOption::Print(token) = ticket {
         let status = client.node.status().await?;
-        let ticket = Ticket::new(status.addr, hash, token_for_ticket, true)?;
+        let ticket = Ticket::new(status.addr, hash, format, token)?;
         println!("All-in-one ticket: {ticket}");
     }
     Ok(())
@@ -57,8 +120,8 @@ pub struct ProvideResponseEntry {
 
 pub async fn aggregate_add_response(
     mut stream: impl Stream<Item = Result<AddProgress>> + Unpin,
-) -> Result<(Hash, Vec<ProvideResponseEntry>)> {
-    let mut collection_hash = None;
+) -> Result<(Hash, BlobFormat, Vec<ProvideResponseEntry>)> {
+    let mut hash_and_format = None;
     let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
     let mut mp = Some(ProvideProgressState::new());
     while let Some(item) = stream.next().await {
@@ -90,12 +153,12 @@ pub async fn aggregate_add_response(
                     }
                 }
             }
-            AddProgress::AllDone { hash } => {
+            AddProgress::AllDone { hash, format, .. } => {
                 tracing::trace!("AllDone({hash:?})");
                 if let Some(mp) = mp.take() {
                     mp.all_done();
                 }
-                collection_hash = Some(hash);
+                hash_and_format = Some(HashAndFormat(hash, format));
                 break;
             }
             AddProgress::Abort(e) => {
@@ -106,7 +169,8 @@ pub async fn aggregate_add_response(
             }
         }
     }
-    let hash = collection_hash.context("Missing hash for collection")?;
+    let HashAndFormat(hash, format) =
+        hash_and_format.context("Missing hash for collection or blob")?;
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
@@ -114,10 +178,10 @@ pub async fn aggregate_add_response(
             Ok(ProvideResponseEntry { name, size, hash })
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok((hash, entries))
+    Ok((hash, format, entries))
 }
 
-pub fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
+pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
     for ProvideResponseEntry { name, size, hash } in entries {
         total_size += size;
@@ -125,7 +189,11 @@ pub fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
     }
     println!("Total: {}", HumanBytes(total_size));
     println!();
-    println!("Collection: {}", hash);
+    match format {
+        BlobFormat::RAW => println!("Blob: {}", hash),
+        BlobFormat::COLLECTION => println!("Collection: {}", hash),
+        _ => println!("Hash (unsupported format): {}", hash),
+    }
 }
 
 #[derive(Debug)]

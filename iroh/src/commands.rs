@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::util::{SetTagOption, Tag};
+use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::PeerAddr;
 use iroh_net::{
@@ -27,6 +27,7 @@ use iroh_net::{
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
+use self::add::{BlobSource, TicketOption};
 use self::node::{RpcPort, StartOptions};
 use self::sync::{AuthorCommands, DocCommands};
 
@@ -200,9 +201,9 @@ pub enum FullCommands {
         /// Ticket containing everything to retrieve the data from a provider.
         #[clap(long)]
         ticket: Option<Ticket>,
-        /// True to download a single blob, false (default) to download a collection and its children.
+        /// If set assume that the hash refers to a collection and download it with all children.
         #[clap(long, default_value_t = false)]
-        single: bool,
+        collection: bool,
     },
     /// Diagnostic commands for the derp relay protocol.
     Doctor {
@@ -255,7 +256,7 @@ impl FullCommands {
                 ticket,
                 token,
                 out,
-                single,
+                collection,
             } => {
                 let get = if let Some(ticket) = ticket {
                     self::get::GetInteractive {
@@ -263,9 +264,13 @@ impl FullCommands {
                         hash: ticket.hash(),
                         opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()?),
                         token: ticket.token().cloned(),
-                        single: !ticket.recursive(),
+                        format: ticket.format(),
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
+                    let format = match collection {
+                        true => BlobFormat::COLLECTION,
+                        false => BlobFormat::RAW,
+                    };
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash,
@@ -276,7 +281,7 @@ impl FullCommands {
                             secret_key: SecretKey::generate(),
                         },
                         token,
-                        single,
+                        format,
                     }
                 } else {
                     anyhow::bail!("Either ticket or hash and peer must be specified")
@@ -536,14 +541,18 @@ impl BlobCommands {
                     tracing::info!("output path is {} -> {}", out.display(), absolute.display());
                     *out = absolute;
                 }
-                let (peer, hash, token, recursive) = if let Some(ticket) = ticket {
+                let (peer, hash, format, token) = if let Some(ticket) = ticket {
                     ticket.into_parts()
                 } else {
+                    let format = match recursive {
+                        Some(false) | None => BlobFormat::RAW,
+                        Some(true) => BlobFormat::COLLECTION,
+                    };
                     (
                         PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
                         hash.unwrap(),
+                        format,
                         token,
-                        recursive.unwrap_or_default(),
                     )
                 };
                 let out = match out {
@@ -561,7 +570,7 @@ impl BlobCommands {
                     .blobs
                     .download(BlobDownloadRequest {
                         hash,
-                        recursive,
+                        format,
                         peer,
                         token,
                         out,
@@ -585,7 +594,14 @@ impl BlobCommands {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,
                 };
-                self::add::add_stdin_or_path(iroh, path, tag, in_place, ticket, None).await
+                let ticket = match ticket {
+                    false => TicketOption::None,
+                    // TODO: This is where we are missing the request token from the running
+                    // node.
+                    true => TicketOption::Print(None),
+                };
+                let source = BlobSource::from_path_or_stdin(path, in_place, true);
+                self::add::run(iroh, source, tag, ticket).await
             }
         }
     }

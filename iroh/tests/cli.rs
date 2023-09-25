@@ -639,7 +639,6 @@ fn test_provide_get_loop_single(
     }
     args.push("--region");
     args.push(&region);
-    args.push("--single");
     let hash_str = hash.to_string();
     args.push(&hash_str);
     let cmd = cmd(iroh_bin(), args)

@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::task::{Context, Poll};
@@ -33,7 +32,7 @@ use crate::rpc_protocol::{
     DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode,
+    ShareMode, BlobAddPath,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -251,7 +250,7 @@ where
     /// place without copying to the Iroh data directory.
     pub async fn add_from_path(
         &self,
-        path: PathBuf,
+        path: BlobAddPath,
         in_place: bool,
         tag: SetTagOption,
     ) -> Result<impl Stream<Item = Result<AddProgress>>> {

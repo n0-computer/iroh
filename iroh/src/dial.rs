@@ -9,6 +9,7 @@ use std::str::FromStr;
 use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
+use iroh_bytes::util::BlobFormat;
 use iroh_net::derp::DerpMap;
 use iroh_net::key::SecretKey;
 use iroh_net::PeerAddr;
@@ -55,12 +56,12 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
 pub struct Ticket {
     /// The provider to get a file from.
     peer: PeerAddr,
+    /// The format of the blob.
+    format: BlobFormat,
     /// The hash to retrieve.
     hash: Hash,
     /// Optional Request token.
     token: Option<RequestToken>,
-    /// True to treat the hash as a collection and retrieve all blobs in it.
-    recursive: bool,
 }
 
 impl Ticket {
@@ -68,8 +69,8 @@ impl Ticket {
     pub fn new(
         peer: PeerAddr,
         hash: Hash,
+        format: BlobFormat,
         token: Option<RequestToken>,
-        recursive: bool,
     ) -> Result<Self> {
         ensure!(
             !peer.info.direct_addresses.is_empty(),
@@ -77,9 +78,9 @@ impl Ticket {
         );
         Ok(Self {
             hash,
+            format,
             peer,
             token,
-            recursive,
         })
     }
 
@@ -113,6 +114,11 @@ impl Ticket {
         self.token.as_ref()
     }
 
+    /// The [`BlobFormat`] for this ticket.
+    pub fn format(&self) -> BlobFormat {
+        self.format
+    }
+
     /// Set the [`RequestToken`] for this ticket.
     pub fn with_token(self, token: Option<RequestToken>) -> Self {
         Self { token, ..self }
@@ -120,23 +126,18 @@ impl Ticket {
 
     /// True if the ticket is for a collection and should retrieve all blobs in it.
     pub fn recursive(&self) -> bool {
-        self.recursive
-    }
-
-    /// Set recursive to for this ticket
-    pub fn with_recursive(self, recursive: bool) -> Self {
-        Self { recursive, ..self }
+        self.format.is_collection()
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (PeerAddr, Hash, Option<RequestToken>, bool) {
+    pub fn into_parts(self) -> (PeerAddr, Hash, BlobFormat, Option<RequestToken>) {
         let Ticket {
             peer,
             hash,
+            format,
             token,
-            recursive,
         } = self;
-        (peer, hash, token, recursive)
+        (peer, hash, format, token)
     }
 
     /// Convert this ticket into a [`Options`], adding the given secret key.
@@ -191,7 +192,7 @@ mod tests {
             hash,
             peer: PeerAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
-            recursive: true,
+            format: BlobFormat::COLLECTION,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");
