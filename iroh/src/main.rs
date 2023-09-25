@@ -5,7 +5,6 @@ use clap::Parser;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod commands;
-mod config;
 
 use crate::commands::Cli;
 

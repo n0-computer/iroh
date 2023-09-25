@@ -2055,7 +2055,7 @@ dependencies = [
  "genawaiter",
  "hex",
  "http-body",
- "iroh-io 0.3.0",
+ "iroh-io",
  "iroh-test",
  "multibase",
  "num_cpus",
@@ -2139,6 +2139,7 @@ dependencies = [
 name = "iroh-metrics"
 version = "0.7.0"
 dependencies = [
+ "anyhow",
  "erased_set",
  "hyper",
  "once_cell",
@@ -4466,7 +4467,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.31",
+ "syn 2.0.29",
 ]
 
 [[package]]

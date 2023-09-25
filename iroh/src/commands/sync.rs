@@ -27,7 +27,7 @@ use iroh_bytes::{
 };
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
-use crate::config::ConsoleEnv;
+use iroh::config::ConsoleEnv;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
 

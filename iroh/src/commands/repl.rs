@@ -5,10 +5,9 @@ use iroh::client::quic::Iroh;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{
-    commands::{sync::fmt_short, RpcCommands},
-    config::{ConsoleEnv, ConsolePaths},
-};
+use crate::commands::{sync::fmt_short, RpcCommands};
+
+use iroh::config::{ConsoleEnv, ConsolePaths};
 
 pub async fn run(iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
     println!("{}", "Welcome to the Iroh console!".purple().bold());
