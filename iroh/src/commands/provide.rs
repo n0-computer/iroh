@@ -10,7 +10,6 @@ use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     baomap::flat,
     client::quic::RPC_ALPN,
-    collection::IrohCollectionParser,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
@@ -142,7 +141,6 @@ async fn provide<B: BaoStore, D: DocStore>(
     let secret_key = get_secret_key(key).await?;
 
     let mut builder = Node::builder(bao_store, doc_store)
-        .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {

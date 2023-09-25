@@ -7,7 +7,7 @@
 //! run this example from the project root:
 //!     $ cargo run -p collection
 use iroh::bytes::util::runtime;
-use iroh::collection::{Blob, Collection, IrohCollectionParser};
+use iroh::collection::{Blob, Collection};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -47,7 +47,6 @@ async fn main() -> anyhow::Result<()> {
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
     let node = iroh::node::Node::builder(db, doc_store)
-        .collection_parser(IrohCollectionParser)
         .runtime(&rt)
         .spawn()
         .await?;

@@ -23,7 +23,7 @@ use iroh_bytes::baomap::{
     ExportMode, GcMarkEvent, GcSweepEvent, Map, MapEntry, ReadableStore, Store as BaoStore,
     ValidateProgress,
 };
-use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
+use iroh_bytes::collection::{CollectionParser, LinkSeqCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
@@ -110,7 +110,7 @@ pub struct Builder<
     D,
     S = iroh_sync::store::memory::Store,
     E = DummyServerEndpoint,
-    C = NoCollectionParser,
+    C = LinkSeqCollectionParser,
 > where
     D: Map,
     S: DocStore,
@@ -184,7 +184,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
-            collection_parser: NoCollectionParser,
+            collection_parser: LinkSeqCollectionParser,
             gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
@@ -946,7 +946,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 let stats = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
-                        let (_collection, stats) = cp.parse(0, reader).await.ok()?;
+                        let (_collection, stats) = cp.parse(reader).await.ok()?;
                         Some(stats)
                     })
                     .await
@@ -1038,7 +1038,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 tokio::fs::create_dir_all(&path).await?;
                 let collection = Collection::load(db, &hash).await?;
                 for Blob { hash, name } in collection.blobs() {
-                    let path = path.join(pathbuf_from_name(name));
+                    #[allow(clippy::needless_borrow)]
+                    let path = path.join(pathbuf_from_name(&name));
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }

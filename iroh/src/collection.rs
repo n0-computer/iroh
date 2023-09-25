@@ -4,14 +4,13 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use bao_tree::blake3;
 use bytes::Bytes;
-use futures::{future::LocalBoxFuture, FutureExt};
 use iroh_bytes::baomap::{MapEntry, TempTag};
-use iroh_bytes::collection::{CollectionParser, CollectionStats, LinkSeq, LinkStream};
+use iroh_bytes::collection::LinkSeq;
 use iroh_bytes::get::fsm::EndBlobNext;
 use iroh_bytes::get::Stats;
 use iroh_bytes::util::BlobFormat;
 use iroh_bytes::{baomap, Hash};
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
+use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 
 /// A collection of blobs
@@ -251,31 +250,5 @@ mod tests {
         postcard::to_slice(&b, &mut buf).unwrap();
         let deserialize_b: Blob = postcard::from_bytes(&buf).unwrap();
         assert_eq!(b, deserialize_b);
-    }
-}
-
-/// Parser for the current iroh default collections
-///
-/// This is a custom collection parser that supports the current iroh default collections.
-/// It loads the entire collection into memory and then extracts an array of hashes.
-/// So this will not work for extremely large collections.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IrohCollectionParser;
-
-impl CollectionParser for IrohCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        mut reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        async move {
-            // read to end
-            let data = reader.read_to_end().await?;
-            // parse the collection and just take the hashes
-            let hashes = LinkSeq::try_from(data)?;
-            let res: Box<dyn LinkStream> = Box::new(hashes.into_iter());
-            Ok((res, CollectionStats::default()))
-        }
-        .boxed_local()
     }
 }

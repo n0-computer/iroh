@@ -1,10 +1,7 @@
 //! traits related to collections of blobs
 use crate::util::Hash;
 use bytes::Bytes;
-use futures::{
-    future::{self, LocalBoxFuture},
-    FutureExt,
-};
+use futures::{future::LocalBoxFuture, FutureExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use std::fmt::Debug;
 
@@ -25,7 +22,6 @@ pub trait CollectionParser: Send + Debug + Clone + 'static {
     /// Parse a collection with this parser
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
-        format: u64,
         reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
 }
@@ -176,23 +172,6 @@ pub struct CollectionStats {
     pub total_blob_size: Option<u64>,
 }
 
-/// A collection parser that just disables collections entirely.
-#[derive(Debug, Clone)]
-pub struct NoCollectionParser;
-
-/// A CustomCollection for NoCollectionParser.
-///
-/// This is useful for when you don't want to support collections at all.
-impl CollectionParser for NoCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        _reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        future::err(anyhow::anyhow!("collections not supported")).boxed_local()
-    }
-}
-
 /// A collection parser that parses a sequence of links.
 #[derive(Debug, Clone)]
 pub struct LinkSeqCollectionParser;
@@ -200,14 +179,20 @@ pub struct LinkSeqCollectionParser;
 impl CollectionParser for LinkSeqCollectionParser {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
-        _format: u64,
         mut reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         async move {
             let bytes = reader.read_to_end().await?;
             let links = LinkSeq::try_from(bytes)?;
+            let num_blobs = links.len().saturating_sub(1);
             let stream: Box<dyn LinkStream> = Box::new(links.into_iter());
-            Ok((stream, Default::default()))
+            Ok((
+                stream,
+                CollectionStats {
+                    num_blobs: Some(num_blobs as u64),
+                    total_blob_size: None,
+                },
+            ))
         }
         .boxed_local()
     }

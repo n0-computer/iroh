@@ -642,7 +642,7 @@ async fn run_custom_get_request<C: CollectionParser>(
         };
         let (done, data) = sc.next().concatenate_into_vec().await?;
         let mut data = Bytes::from(data);
-        let (stream, _stats) = collection_parser.parse(0, &mut data).await?;
+        let (stream, _stats) = collection_parser.parse(&mut data).await?;
         (done.next(), data, stream)
     };
     // the previous *overall* offset, not child offset
@@ -699,7 +699,6 @@ pub struct CollectionsAreJustLinks;
 impl CollectionParser for CollectionsAreJustLinks {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
-        _format: u64,
         mut reader: R,
     ) -> LocalBoxFuture<'_, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         async move {

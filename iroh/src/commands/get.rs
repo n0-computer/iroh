@@ -8,7 +8,7 @@ use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
 use iroh::{
-    collection::{Collection, IrohCollectionParser},
+    collection::Collection,
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
@@ -72,8 +72,7 @@ impl GetInteractive {
         // TODO: we don't need sync here, maybe disable completely?
         let doc_store = iroh_sync::store::memory::Store::default();
         // spin up temp node and ask it to download the data for us
-        let mut provider =
-            iroh::node::Node::builder(db, doc_store).collection_parser(IrohCollectionParser);
+        let mut provider = iroh::node::Node::builder(db, doc_store);
         if let Some(ref dm) = self.opts.derp_map {
             provider = provider.enable_derp(dm.clone());
         }

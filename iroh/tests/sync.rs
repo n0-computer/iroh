@@ -6,7 +6,6 @@ use anyhow::{anyhow, bail, Result};
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh::{
     client::mem::Doc,
-    collection::IrohCollectionParser,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
     sync_engine::{LiveEvent, SyncEvent},
@@ -33,16 +32,10 @@ fn test_runtime() -> runtime::Handle {
 fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
-) -> Builder<
-    iroh::baomap::mem::Store,
-    store::memory::Store,
-    DummyServerEndpoint,
-    IrohCollectionParser,
-> {
+) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
     let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
-        .collection_parser(IrohCollectionParser)
         .enable_derp(iroh_net::defaults::default_derp_map())
         .runtime(&rt)
         .bind_addr(addr)
