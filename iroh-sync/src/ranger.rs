@@ -7,11 +7,12 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::ContentStatus;
 
 /// Store entries that can be fingerprinted and put into ranges.
-pub trait RangeEntry: Debug + Clone + PartialOrd {
+pub trait RangeEntry: Debug + Clone + PartialOrd + Ord {
     /// The key for this entry, to be used in ranges.
     type Key: RangeKey + PartialEq + Clone + Default + Debug;
     /// Get the key for this entry.
@@ -192,6 +193,16 @@ impl<E: RangeEntry> Message<E> {
 pub trait Store<E: RangeEntry>: Sized {
     type Error: Debug + Send + Sync + Into<anyhow::Error>;
 
+    type RangeIterator<'a>: Iterator<Item = Result<E, Self::Error>>
+    where
+        Self: 'a,
+        E: 'a;
+
+    type ParentIterator<'a>: Iterator<Item = Result<E, Self::Error>>
+    where
+        Self: 'a,
+        E: 'a;
+
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<E::Key, Self::Error>;
     fn get(&self, key: &E::Key) -> Result<Option<E>, Self::Error>;
@@ -203,13 +214,11 @@ pub trait Store<E: RangeEntry>: Sized {
     /// Insert the given key value pair.
     fn put(&mut self, entry: E) -> Result<(), Self::Error>;
 
-    type RangeIterator<'a>: Iterator<Item = Result<E, Self::Error>>
-    where
-        Self: 'a,
-        E: 'a;
-
     /// Returns all items in the given range
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
+
+    /// Returns all items that share a prefix with `key`.
+    fn get_with_parents(&self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
 
     /// Get all entries in the store
     fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error>;
@@ -339,7 +348,7 @@ where
             // Store incoming values
             for (entry, content_status) in values {
                 if validate_cb(&self.store, &entry, content_status) {
-                    self.store.put(entry)?;
+                    self.put(entry)?;
                 }
             }
 
@@ -495,8 +504,50 @@ where
     }
 
     /// Insert a key value pair.
-    pub fn put(&mut self, entry: E) -> Result<(), S::Error> {
-        self.store.put(entry)
+    ///
+    /// Entries are inserted if they compare strictly greater than all entries in the set of
+    /// entries which have the same key as `entry` or have a key which is a prefix of `entry`.
+    ///
+    /// Additionally, entries that have a key which is a prefix of the entry's key and whose
+    /// timestamp is not strictly greater than that of the new entry are deleted
+    ///
+    /// Note: The deleted entries are simply dropped right now. We might want to make this return
+    /// an iterator, to potentially log or expose the deleted entries.
+    ///
+    /// Returns `true` if the entry was inserted.
+    /// Returns `false` if it was not inserted.
+    pub fn put(&mut self, entry: E) -> Result<bool, S::Error> {
+        // Construct the set of entries to compare against
+        let current = {
+            let mut set = vec![];
+            // Take the entry with the same key and author, if available.
+            if let Some(entry) = self.store.get(entry.key())? {
+                set.push(entry);
+            }
+            // Take all "parent" entries (same author, key is a prefix of our key).
+            let parents = self.store.get_with_parents(entry.key())?;
+            for parent in parents {
+                set.push(parent?);
+            }
+            set
+        };
+
+        // First we check if our entry is strictly greater than all elements in the current set.
+        for e in &current {
+            if !(&entry > e) {
+                return Ok(false);
+            }
+        }
+
+        // Now we're good!
+        // Delete all lesser entries.
+        for e in &current {
+            debug!("Remove obsolete entry {:?}", e.key());
+            self.store.remove(e.key())?;
+        }
+        // Insert our new entry.
+        self.store.put(entry)?;
+        Ok(true)
     }
 
     /// List all existing key value pairs.
@@ -545,7 +596,7 @@ mod tests {
     impl<K, V> RangeEntry for (K, V)
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        V: Debug + Clone + PartialOrd + Ord,
     {
         type Key = K;
 
@@ -564,9 +615,10 @@ mod tests {
     impl<K, V> Store<(K, V)> for SimpleStore<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        V: Debug + Clone + PartialOrd + Ord,
     {
         type Error = Infallible;
+        type ParentIterator<'a> = Result<std::vec::IntoIter<Result<(K, V), Infallible>>, Infallible>;
 
         fn get_first(&self) -> Result<K, Self::Error> {
             if let Some((k, _)) = self.data.first_key_value() {
@@ -628,6 +680,11 @@ mod tests {
             let iter = self.data.iter();
 
             Ok(SimpleRangeIterator { iter, range: None })
+        }
+
+        // TODO: Not horrible.
+        fn get_with_parents(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>> {
+            unimplemented!()
         }
     }
 
@@ -910,7 +967,7 @@ mod tests {
     struct SyncResult<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        V: Debug + Clone + PartialOrd + Ord,
     {
         alice: Peer<(K, V), SimpleStore<K, V>>,
         bob: Peer<(K, V), SimpleStore<K, V>>,
@@ -921,7 +978,7 @@ mod tests {
     impl<K, V> SyncResult<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + PartialEq,
+        V: Debug + Clone + PartialOrd + PartialEq + Ord,
     {
         fn print_messages(&self) {
             let len = std::cmp::max(self.alice_to_bob.len(), self.bob_to_alice.len());
@@ -1010,7 +1067,7 @@ mod tests {
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        V: Debug + Clone + PartialOrd + Ord,
     {
         let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
@@ -1025,7 +1082,7 @@ mod tests {
     ) -> SyncResult<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        V: Debug + Clone + PartialOrd + Ord,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
@@ -1107,7 +1164,7 @@ mod tests {
     ) -> SyncResult<K, V>
     where
         K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        V: Debug + Clone + PartialOrd + Ord,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {

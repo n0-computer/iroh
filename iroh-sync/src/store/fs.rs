@@ -237,6 +237,26 @@ impl super::Store for Store {
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
     }
+
+    // TODO: Not horrible.
+    // type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry>>;
+    // fn get_parents(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>> {
+    //     let mut key = id.as_bytes().to_vec();
+    //     key.pop();
+    //     let mut entries = vec![];
+    //     while !key.is_empty() {
+    //         match self.get_one(id.namespace(), id.author(), &key) {
+    //             Ok(entry) => {
+    //                 if let Some(entry) = entry {
+    //                     entries.push(Ok(entry))
+    //                 }
+    //             }
+    //             Err(err) => entries.push(Err(err)),
+    //         }
+    //         key.pop();
+    //     }
+    //     Ok(entries.into_iter())
+    // }
 }
 
 impl Store {
@@ -512,6 +532,23 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let iter = RangeIterator::namespace(&self.store.db, &self.namespace, RangeFilter::None)?;
         let iter2 = RangeIterator::empty(&self.store.db)?;
         Ok(iter.chain(iter2))
+    }
+
+    // TODO: Not horrible
+    type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry>>;
+    fn get_with_parents(&self, id: &RecordIdentifier) -> std::result::Result<Self::ParentIterator<'_>, Self::Error> {
+        let mut entries = vec![];
+        let mut key = id.key().to_vec();
+        while !key.is_empty() {
+            let id = RecordIdentifier::new(id.namespace(), id.author(), &key);
+            match self.get(&id) {
+                Ok(Some(entry)) => entries.push(Ok(entry)),
+                Ok(None) => {}
+                Err(err) => entries.push(Err(err)),
+            }
+            key.pop();
+        }
+        Ok(entries.into_iter())
     }
 }
 

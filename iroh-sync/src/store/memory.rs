@@ -472,6 +472,26 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
             range: None,
         })
     }
+
+    // TODO: Not horrible.
+    type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry, Infallible>>;
+    fn get_with_parents(
+        &self,
+        id: &RecordIdentifier,
+    ) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        let mut entries = vec![];
+        let mut key = id.key().to_vec();
+        while !key.is_empty() {
+            let id = RecordIdentifier::new(id.namespace(), id.author(), &key);
+            match self.get(&id) {
+                Ok(Some(entry)) => entries.push(Ok(entry)),
+                Ok(None) => {}
+                Err(err) => entries.push(Err(err)),
+            }
+            key.pop();
+        }
+        Ok(entries.into_iter())
+    }
 }
 
 /// Range iterator for a [`ReplicaStoreInstance`]

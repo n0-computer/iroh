@@ -344,26 +344,6 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
     if entry.timestamp() > now + MAX_TIMESTAMP_FUTURE_SHIFT {
         return Err(ValidationFailure::TooFarInTheFuture);
     }
-
-    // If an existing entry exists, make sure it's older than the new entry.
-    let existing = store.get(entry.id());
-    if let Ok(Some(existing)) = existing {
-        match existing.timestamp().cmp(&entry.timestamp()) {
-            Ordering::Less => {
-                // Existing is older than next, all good, insert!
-            }
-            Ordering::Greater => {
-                // Existing is newer than next, abort!
-                return Err(ValidationFailure::OlderThanExisting);
-            }
-            Ordering::Equal => {
-                // Timestamps are equal, check if new hash is strictly greater than old hash.
-                if !(entry.content_hash() > existing.content_hash()) {
-                    return Err(ValidationFailure::EqualTimestampLowerHash);
-                }
-            }
-        }
-    }
     Ok(())
 }
 
@@ -413,13 +393,17 @@ impl From<SignedEntry> for Entry {
 
 impl PartialOrd for SignedEntry {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.entry.id.partial_cmp(&other.entry.id)
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for SignedEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.entry.id.cmp(&other.entry.id)
+        match self.entry.id.cmp(&other.entry.id) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Equal => self.entry.content_hash().cmp(&other.entry.content_hash()),
+        }
     }
 }
 
