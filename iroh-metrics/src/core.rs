@@ -89,7 +89,7 @@ pub trait Metric:
 
     /// Initializes this metric group.
     #[cfg(not(feature = "metrics"))]
-    fn new(_: ()) -> Self {
+    fn new(_: &mut ()) -> Self {
         Self::default()
     }
 
