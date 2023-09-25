@@ -111,3 +111,11 @@ required-features = ["mem-db"]
 [[example]]
 name = "sync"
 required-features = ["example-sync"]
+
+[[example]]
+name = "rpc"
+required-features = ["clap"]
+
+[[example]]
+name = "client"
+required-features = ["cli"]
