@@ -18,6 +18,7 @@ use iroh_bytes::provider::AddProgress;
 use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
+use iroh_sync::RecordIdentifier;
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -28,12 +29,12 @@ use crate::rpc_protocol::{
     BlobDownloadRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
     BlobReadResponse, BlobValidateRequest, BytesGetRequest, CounterStats, DeleteTagRequest,
-    DocCreateRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
-    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, WrapOption,
+    DocCreateRequest, DocDeleteEntryRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
+    DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
+    DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -439,6 +440,14 @@ where
             .await?
             .read_to_bytes()
             .await
+    }
+
+    /// Delete an entry.
+    pub async fn delete_entry(&self, author_id: AuthorId, key: Vec<u8>) -> Result<Option<Entry>> {
+        let id = RecordIdentifier::new(self.id(), author_id, key);
+        let res = self.rpc.rpc(DocDeleteEntryRequest { id }).await??;
+        let entry = res.entry.map(|e| e.into());
+        Ok(entry)
     }
 
     /// Get the latest entry for a key and author.

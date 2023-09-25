@@ -22,7 +22,7 @@ use iroh_net::{
 use iroh_sync::{
     store::GetFilter,
     sync::{NamespaceId, SignedEntry},
-    AuthorId,
+    AuthorId, RecordIdentifier,
 };
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -630,6 +630,24 @@ pub struct DocSetResponse {
     pub entry: SignedEntry,
 }
 
+/// Delete entries in a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDeleteEntryRequest {
+    /// The entry to delete.
+    pub id: RecordIdentifier,
+}
+
+impl RpcMsg<ProviderService> for DocDeleteEntryRequest {
+    type Response = RpcResult<DocDeleteEntryResponse>;
+}
+
+/// Response to [`DocDeleteEntryRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDeleteEntryResponse {
+    /// The deleted entry. `None` if the entry could not be found.
+    pub entry: Option<SignedEntry>,
+}
+
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyRequest {
@@ -766,6 +784,7 @@ pub enum ProviderRequest {
     DocSet(DocSetRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
+    DocDeleteEntry(DocDeleteEntryRequest),
     DocStartSync(DocStartSyncRequest),
     DocStopSync(DocStopSyncRequest),
     DocShare(DocShareRequest),
@@ -805,6 +824,7 @@ pub enum ProviderResponse {
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
+    DocDeleteEntry(RpcResult<DocDeleteEntryResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),

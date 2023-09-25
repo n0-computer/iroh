@@ -220,7 +220,7 @@ pub trait Store<E: RangeEntry>: Sized {
 
 #[derive(Debug)]
 pub struct Peer<E: RangeEntry, S: Store<E>> {
-    store: S,
+    pub(crate) store: S,
     /// Up to how many values to send immediately, before sending only a fingerprint.
     max_set_size: usize,
     /// `k` in the protocol, how many splits to generate. at least 2

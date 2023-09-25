@@ -309,6 +309,44 @@ async fn sync_subscribe_stop() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn doc_delete() -> Result<()> {
+    let rt = test_runtime();
+    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let store = iroh_sync::store::memory::Store::default();
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = Node::builder(db, store)
+        .collection_parser(IrohCollectionParser)
+        .enable_derp(iroh_net::defaults::default_derp_map())
+        .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
+        .runtime(&rt)
+        .bind_addr(addr)
+        .spawn()
+        .await?;
+    let client = node.client();
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
+    let hash = doc
+        .set_bytes(author, b"foo".to_vec(), b"hi".to_vec())
+        .await?;
+    assert_latest(&doc, b"foo", b"hi").await;
+    let deleted = doc.delete_entry(author, b"foo".to_vec()).await?;
+    assert!(deleted.is_some());
+    let entry = deleted.unwrap();
+    assert_eq!(entry.content_hash(), hash);
+    assert_eq!(entry.author(), author);
+    assert_eq!(entry.key(), b"foo");
+    let entry = doc.get_one(author, b"foo".to_vec()).await?;
+    assert!(entry.is_none());
+    // wait for gc
+    // TODO: allow to manually trigger gc
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let bytes = client.blobs.read_to_bytes(hash).await;
+    assert!(bytes.is_err());
+    node.shutdown();
+    Ok(())
+}
+
 async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());

@@ -13,12 +13,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
-        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
-        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocDeleteEntryRequest, DocDeleteEntryResponse,
+        DocGetManyRequest, DocGetManyResponse, DocGetOneRequest, DocGetOneResponse,
+        DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest,
+        DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse,
+        DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -188,6 +188,16 @@ impl<S: Store> SyncEngine<S> {
             .get_one(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
+    }
+
+    pub async fn doc_delete_entry(
+        &self,
+        req: DocDeleteEntryRequest,
+    ) -> RpcResult<DocDeleteEntryResponse> {
+        let DocDeleteEntryRequest { id } = req;
+        let replica = self.get_replica(&id.namespace())?;
+        let entry = replica.remove(&id).map_err(Into::into)?;
+        Ok(DocDeleteEntryResponse { entry })
     }
 
     pub fn doc_get_many(
