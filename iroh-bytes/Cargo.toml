@@ -13,7 +13,7 @@ rust-version = "1.70"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
+bao-tree = { git = "https://github.com/Arqu/bao-tree", branch= "main", features = ["tokio_fsm"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
 data-encoding = "2.3.3"
