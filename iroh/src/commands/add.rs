@@ -78,7 +78,7 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
                 BlobAddPath::Directory { path: absolute }
             } else {
                 BlobAddPath::File {
-                    path,
+                    path: absolute,
                     wrap_in_collection,
                 }
             };
