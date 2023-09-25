@@ -375,6 +375,11 @@ where
         self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
         Ok(())
     }
+
+    /// Get the raw RPC client.
+    pub async fn raw(&self) -> &RpcClient<ProviderService, C> {
+        &self.rpc
+    }
 }
 
 /// Outcome of a blob add operation.
