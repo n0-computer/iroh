@@ -7,6 +7,7 @@
 // This is going to change!
 
 use std::{
+    cmp::Ordering,
     fmt::Debug,
     sync::Arc,
     time::{Duration, SystemTime},
@@ -347,8 +348,20 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
     // If an existing entry exists, make sure it's older than the new entry.
     let existing = store.get(entry.id());
     if let Ok(Some(existing)) = existing {
-        if existing.timestamp() >= entry.timestamp() {
-            return Err(ValidationFailure::OlderThanExisting);
+        match existing.timestamp().cmp(&entry.timestamp()) {
+            Ordering::Less => {
+                // Existing is older than next, all good, insert!
+            }
+            Ordering::Greater => {
+                // Existing is newer than next, abort!
+                return Err(ValidationFailure::OlderThanExisting);
+            }
+            Ordering::Equal => {
+                // Timestamps are equal, check if new hash is strictly greater than old hash.
+                if !(entry.content_hash() > existing.content_hash()) {
+                    return Err(ValidationFailure::EqualTimestampLowerHash);
+                }
+            }
         }
     }
     Ok(())
@@ -380,6 +393,9 @@ pub enum ValidationFailure {
     /// Entry timestamp is too far in the future.
     #[error("Entry timestamp is too far in the future.")]
     TooFarInTheFuture,
+    /// Entry has identical timestamp to existing entry but not a higher hash value.
+    #[error("Entry has identical timestamp to existing entry but not a higher hash value.")]
+    EqualTimestampLowerHash,
 }
 
 /// A signed entry.
@@ -396,13 +412,13 @@ impl From<SignedEntry> for Entry {
 }
 
 impl PartialOrd for SignedEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.entry.id.partial_cmp(&other.entry.id)
     }
 }
 
 impl Ord for SignedEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.entry.id.cmp(&other.entry.id)
     }
 }
