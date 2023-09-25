@@ -1,6 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
@@ -69,7 +69,7 @@ impl From<(PublicKey, Option<u16>, &[SocketAddr])> for PeerAddr {
             peer_id,
             info: AddrInfo {
                 derp_region,
-                direct_addresses: direct_addresses_iter.to_vec(),
+                direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
         }
     }
@@ -81,7 +81,7 @@ pub struct AddrInfo {
     /// The peer's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: Vec<SocketAddr>,
+    pub direct_addresses: HashSet<SocketAddr>,
 }
 
 impl AddrInfo {
@@ -102,7 +102,7 @@ impl PeerAddr {
             peer_id,
             info: AddrInfo {
                 derp_region,
-                direct_addresses,
+                direct_addresses: direct_addresses.into_iter().collect(),
             },
         }
     }
@@ -118,6 +118,8 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
+    /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
+    peers_path: Option<PathBuf>,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -130,6 +132,7 @@ impl Default for MagicEndpointBuilder {
             concurrent_connections: Default::default(),
             keylog: Default::default(),
             callbacks: Default::default(),
+            peers_path: None,
         }
     }
 }
@@ -234,6 +237,15 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Optionally set the path where peer info should be stored.
+    ///
+    /// If the file exists, it will be used to populate an initial set of peers. Peers will be
+    /// saved periodically and on shutdown to this path.
+    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
+        self.peers_path = Some(path);
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -258,15 +270,14 @@ impl MagicEndpointBuilder {
         if let Some(c) = self.concurrent_connections {
             server_config.concurrent_connections(c);
         }
-        MagicEndpoint::bind(
+        let msock_opts = magicsock::Options {
+            port: bind_port,
             secret_key,
-            bind_port,
-            Some(server_config),
-            self.derp_map.unwrap_or_default(),
-            Some(self.callbacks),
-            self.keylog,
-        )
-        .await
+            derp_map: self.derp_map.unwrap_or_default(),
+            callbacks: self.callbacks,
+            peers_path: self.peers_path,
+        };
+        MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
 }
 
@@ -299,23 +310,15 @@ impl MagicEndpoint {
 
     /// Create a quinn endpoint backed by a magicsock.
     ///
-    /// This is for internal use, the public interface is the [MagicEndpointBuilder] obtained from
+    /// This is for internal use, the public interface is the [`MagicEndpointBuilder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
-        secret_key: SecretKey,
-        bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
-        derp_map: DerpMap,
-        callbacks: Option<Callbacks>,
+        msock_opts: magicsock::Options,
         keylog: bool,
     ) -> Result<Self> {
-        let msock = magicsock::MagicSock::new(magicsock::Options {
-            port: bind_port,
-            derp_map,
-            secret_key: secret_key.clone(),
-            callbacks: callbacks.unwrap_or_default(),
-        })
-        .await?;
+        let secret_key = msock_opts.secret_key.clone();
+        let msock = magicsock::MagicSock::new(msock_opts).await?;
         trace!("created magicsock");
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(

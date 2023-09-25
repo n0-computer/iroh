@@ -67,7 +67,8 @@ pub async fn run(
     let key = Some(IrohPaths::SecretKey.with_env()?);
     let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
-    let provider = provide(db.clone(), store, rt, key, opts).await?;
+    let peers = IrohPaths::PeerData.with_env()?;
+    let provider = provide(db.clone(), store, rt, key, peers, opts).await?;
     let client = provider.client();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -137,6 +138,7 @@ async fn provide<B: BaoStore, D: DocStore>(
     doc_store: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
+    peers_data_path: PathBuf,
     opts: ProvideOptions,
 ) -> Result<Node<B, D>> {
     let secret_key = get_secret_key(key).await?;
@@ -144,6 +146,7 @@ async fn provide<B: BaoStore, D: DocStore>(
     let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
+        .peers_data_path(peers_data_path)
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
         builder = builder.enable_derp(dm);

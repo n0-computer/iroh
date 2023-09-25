@@ -129,6 +129,8 @@ pub struct Builder<
     gc_policy: GcPolicy,
     rt: Option<runtime::Handle>,
     docs: S,
+    /// Path to store peer data. If `None`, peer data will not be persisted.
+    peers_data_path: Option<PathBuf>,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -188,6 +190,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
+            peers_data_path: None,
         }
     }
 }
@@ -218,6 +221,7 @@ where
             gc_policy: self.gc_policy,
             rt: self.rt,
             docs: self.docs,
+            peers_data_path: self.peers_data_path,
         }
     }
 
@@ -240,6 +244,7 @@ where
             gc_policy: self.gc_policy,
             rt: self.rt,
             docs: self.docs,
+            peers_data_path: self.peers_data_path,
         }
     }
 
@@ -319,6 +324,12 @@ where
         self
     }
 
+    /// Set the path where known peer data is loaded on start-up and later persisted.
+    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
+        self.peers_data_path = Some(path);
+        self
+    }
+
     /// Sets the tokio runtime to use.
     ///
     /// If not set, the current runtime will be picked up.
@@ -369,6 +380,10 @@ where
                     endpoints_update_s.send(eps.to_vec()).ok();
                 }
             }));
+        let endpoint = match self.peers_data_path {
+            Some(path) => endpoint.peers_data_path(path),
+            None => endpoint,
+        };
         let endpoint = match self.derp_map {
             Some(derp_map) => endpoint.enable_derp(derp_map),
             None => endpoint,

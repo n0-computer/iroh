@@ -58,6 +58,9 @@ pub enum IrohPaths {
     /// Path to the console state
     #[strum(serialize = "console")]
     Console,
+    #[strum(serialize = "peers.postcard")]
+    /// Path to store known peer data.
+    PeerData,
 }
 
 impl AsRef<Path> for IrohPaths {
