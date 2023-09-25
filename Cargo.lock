@@ -246,9 +246,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.8.0-rc1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "799048dafad7b53a352f6a1c56768aef549b6b7683771834cbbdd954c20abea7"
+checksum = "9282899b0068a806644365e8416beb676203c471ade24b711c825817a2968e9f"
 dependencies = [
  "bytes",
  "futures",
