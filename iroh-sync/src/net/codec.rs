@@ -92,9 +92,9 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     writer: &mut W,
     reader: &mut R,
     alice: &Replica<S::Instance>,
-    other_peer_id: PublicKey,
+    peer: PublicKey,
 ) -> Result<SyncProgress, ConnectError> {
-    let other_peer_id = *other_peer_id.as_bytes();
+    let peer = *peer.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
 
@@ -106,7 +106,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
         namespace: alice.namespace(),
         message: alice.sync_initial_message().map_err(ConnectError::sync)?,
     };
-    trace!("alice -> bob: {:#?}", init_message);
+    trace!(?peer, "run_alice: send init message");
     writer
         .send(init_message)
         .await
@@ -115,16 +115,17 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     // Sync message loop
     while let Some(msg) = reader.next().await {
         let msg = msg.map_err(ConnectError::sync)?;
+        trace!(?peer, "run_alice: recv process message");
         match msg {
             Message::Init { .. } => {
                 return Err(ConnectError::sync(anyhow!("unexpected init message")));
             }
             Message::Sync(msg) => {
                 if let Some(msg) = alice
-                    .sync_process_message(msg, other_peer_id, &mut progress)
+                    .sync_process_message(msg, peer, &mut progress)
                     .map_err(ConnectError::sync)?
                 {
-                    trace!("alice -> bob: {:#?}", msg);
+                    trace!(?peer, "run_alice: send process message");
                     writer
                         .send(Message::Sync(msg))
                         .await
@@ -218,7 +219,7 @@ impl<S: store::Store> BobState<S> {
                             });
                         }
                     };
-                    trace!(?namespace, peer = ?self.peer, "run_bob: recv initial message {message:#?}");
+                    trace!(?namespace, peer = ?self.peer, "run_bob: recv init message");
                     let next = replica.sync_process_message(
                         message,
                         *self.peer.as_bytes(),
@@ -228,7 +229,7 @@ impl<S: store::Store> BobState<S> {
                     next
                 }
                 (Message::Sync(msg), Some(replica)) => {
-                    trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv {msg:#?}");
+                    trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv process message");
                     replica.sync_process_message(msg, *self.peer.as_bytes(), &mut self.progress)
                 }
                 (Message::Init { .. }, Some(_)) => {
@@ -244,7 +245,7 @@ impl<S: store::Store> BobState<S> {
             let next = next.map_err(|e| self.fail(e))?;
             match next {
                 Some(msg) => {
-                    trace!(namespace = ?self.namespace(), peer = ?self.peer, "run_bob: send {msg:#?}");
+                    trace!(namespace = ?self.namespace(), peer = ?self.peer, "run_bob: send process message");
                     writer
                         .send(Message::Sync(msg))
                         .await

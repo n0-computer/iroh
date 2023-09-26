@@ -46,6 +46,7 @@ fn test_node(
     Node::builder(db, store)
         .secret_key(secret_key)
         .collection_parser(IrohCollectionParser)
+        .disable_derp()
         // .enable_derp(iroh_net::defaults::default_derp_map())
         .runtime(&rt)
         .bind_addr(addr)
