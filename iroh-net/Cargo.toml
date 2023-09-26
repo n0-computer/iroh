@@ -1,6 +1,6 @@
 [package]
 name = "iroh-net"
-version = "0.6.0-alpha.1"
+version = "0.6.0"
 edition = "2021"
 readme = "README.md"
 description = "networking support for iroh"
@@ -51,6 +51,7 @@ surge-ping = "0.8.0"
 thiserror = "1"
 tracing = "0.1"
 trust-dns-resolver = "0.22.0"
+tempfile = "3.4"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
@@ -77,7 +78,7 @@ toml = { version = "0.7.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # metrics
-iroh-metrics = { version = "0.6.0-alpha.1", path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.6.0", path = "../iroh-metrics", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -98,7 +99,7 @@ proptest = "1.2.0"
 rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-iroh-test = { version = "0.6.0-alpha.1", path = "../iroh-test" }
+iroh-test = { version = "0.6.0", path = "../iroh-test" }
 
 [[bench]]
 name = "key"

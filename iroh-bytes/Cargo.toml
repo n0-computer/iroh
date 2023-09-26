@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bytes"
-version = "0.6.0-alpha.1"
+version = "0.6.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
@@ -13,14 +13,14 @@ rust-version = "1.70"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.8.0-rc1", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.8.0", features = ["tokio_fsm"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
 data-encoding = "2.3.3"
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "into"] }
 flume = "0.10.14"
 futures = "0.3.25"
-genawaiter = "0.99.1"
+genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
 iroh-io = { version = "0.2.2" }
 multibase = "0.9.1"

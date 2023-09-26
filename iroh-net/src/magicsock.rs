@@ -23,6 +23,7 @@ use std::{
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
@@ -80,6 +81,9 @@ pub use self::timer::Timer;
 const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How often to save peer data.
+const SAVE_PEERS_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum CurrentPortFate {
@@ -143,6 +147,9 @@ pub struct Options {
 
     /// Callbacks to emit on various socket events
     pub callbacks: Callbacks,
+
+    /// Path to store known peers.
+    pub peers_path: Option<std::path::PathBuf>,
 }
 
 /// Contains options for `MagicSock::listen`.
@@ -169,6 +176,7 @@ impl Default for Options {
             secret_key: SecretKey::generate(),
             derp_map: Default::default(),
             callbacks: Default::default(),
+            peers_path: None,
         }
     }
 }
@@ -332,7 +340,20 @@ impl MagicSock {
                     on_derp_active,
                     on_net_info,
                 },
+            peers_path,
         } = opts;
+
+        let peers_path = match peers_path {
+            Some(path) => {
+                let path = path.canonicalize().unwrap_or(path);
+                let parent = path.parent().ok_or_else(|| {
+                    anyhow::anyhow!("no parent directory found for '{}'", path.display())
+                })?;
+                tokio::fs::create_dir_all(&parent).await?;
+                Some(path)
+            }
+            None => None,
+        };
 
         let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
 
@@ -400,6 +421,24 @@ impl MagicSock {
             .instrument(info_span!("derp.actor")),
         );
 
+        // load the peer data
+        let peer_map = match peers_path.as_ref() {
+            Some(path) if path.exists() => {
+                match PeerMap::load_from_file(path, actor_sender.clone()) {
+                    Ok(peer_map) => {
+                        let count = peer_map.node_count();
+                        debug!(count, "loaded peer map");
+                        peer_map
+                    }
+                    Err(e) => {
+                        debug!(%e, "failed to load peer map: using default");
+                        PeerMap::default()
+                    }
+                }
+            }
+            _ => PeerMap::default(),
+        };
+
         let inner2 = inner.clone();
         let main_actor_task = tokio::task::spawn(
             async move {
@@ -419,7 +458,8 @@ impl MagicSock {
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     disco_info: HashMap::new(),
-                    peer_map: Default::default(),
+                    peer_map,
+                    peers_path,
                     port_mapper,
                     pconn4,
                     pconn6,
@@ -898,6 +938,8 @@ struct Actor {
     disco_info: HashMap<PublicKey, DiscoInfo>,
     /// Tracks the networkmap node entity for each peer discovery key.
     peer_map: PeerMap,
+    /// Path where connection info from [`Self::peer_map`] is persisted.
+    peers_path: Option<PathBuf>,
 
     // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
@@ -956,6 +998,14 @@ impl Actor {
         );
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
+        let mut save_peers_timer = if self.peers_path.is_some() {
+            tokio::time::interval_at(
+                time::Instant::now() + SAVE_PEERS_INTERVAL,
+                SAVE_PEERS_INTERVAL,
+            )
+        } else {
+            tokio::time::interval(Duration::MAX)
+        };
 
         loop {
             tokio::select! {
@@ -1014,6 +1064,13 @@ impl Actor {
                         self.update_endpoints(reason).await;
                     }
                 }
+                _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
+                    let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
+                    match self.peer_map.save_to_file(path).await {
+                        Ok(count) => debug!(count, "peers persisted"),
+                        Err(e) => debug!(%e, "failed to persist known peers"),
+                    }
+                }
                 else => {
                     trace!("tick: other");
                 }
@@ -1048,6 +1105,14 @@ impl Actor {
                 debug!("shutting down");
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
+                }
+                if let Some(path) = self.peers_path.as_ref() {
+                    match self.peer_map.save_to_file(path).await {
+                        Ok(count) => {
+                            debug!(count, "known peers persisted")
+                        }
+                        Err(e) => debug!(%e, "failed to persist known peers"),
+                    }
                 }
                 self.port_mapper.deactivate();
                 self.derp_actor_sender
@@ -2234,28 +2299,9 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn add_known_addr(&mut self, n: PeerAddr) {
-        let PeerAddr { peer_id, info } = n;
-        if self.peer_map.endpoint_for_node_key(&peer_id).is_none() {
-            info!(
-                peer = ?n.peer_id,
-                "inserting peer's endpoint in PeerMap"
-            );
-            self.peer_map.insert_endpoint(EndpointOptions {
-                msock_sender: self.inner.actor_sender.clone(),
-                public_key: peer_id,
-                derp_region: info.derp_region,
-            });
-        }
-
-        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&peer_id) {
-            ep.update_from_node_addr(&info);
-            let id = ep.id;
-            for endpoint in &info.direct_addresses {
-                self.peer_map
-                    .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
-            }
-        }
+    fn add_known_addr(&mut self, peer_addr: PeerAddr) {
+        self.peer_map
+            .add_peer_addr(peer_addr, self.inner.actor_sender.clone())
     }
 
     /// Returns the current IPv4 listener's port number.
