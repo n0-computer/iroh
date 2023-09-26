@@ -35,8 +35,10 @@ pub mod metrics;
 #[cfg(feature = "net")]
 pub mod net;
 mod ranger;
+mod state_vector;
 pub mod store;
 pub mod sync;
 
 pub use keys::*;
+pub use state_vector::*;
 pub use sync::*;

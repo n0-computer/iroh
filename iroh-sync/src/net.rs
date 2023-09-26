@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::{
-    net::codec::{run_alice, run_bob},
+    net::codec::{run_alice, BobState},
     store,
     sync::Replica,
-    NamespaceId,
+    NamespaceId, SyncProgress,
 };
 
 #[cfg(feature = "metrics")]
@@ -28,7 +28,7 @@ pub async fn connect_and_sync<S: store::Store>(
     endpoint: &MagicEndpoint,
     doc: &Replica<S::Instance>,
     peer: PeerAddr,
-) -> Result<(), ConnectError> {
+) -> Result<SyncFinished, ConnectError> {
     let peer_id = peer.peer_id;
     debug!(?peer_id, "sync[dial]: connect");
     let namespace = doc.namespace();
@@ -55,7 +55,15 @@ pub async fn connect_and_sync<S: store::Store>(
     }
 
     debug!(?peer_id, ?namespace, ?res, "sync[dial]: done");
-    res
+    let progress = res?;
+
+    let res = SyncFinished {
+        namespace,
+        peer: peer_id,
+        progress,
+    };
+
+    Ok(res)
 }
 
 /// What to do with incoming sync requests
@@ -65,7 +73,7 @@ pub type AcceptOutcome<S> = Result<Replica<<S as store::Store>::Instance>, Abort
 pub async fn handle_connection<S, F, Fut>(
     connecting: quinn::Connecting,
     accept_cb: F,
-) -> Result<(NamespaceId, PublicKey), AcceptError>
+) -> Result<SyncFinished, AcceptError>
 where
     S: store::Store,
     F: Fn(NamespaceId, PublicKey) -> Fut,
@@ -81,7 +89,10 @@ where
         .map_err(|e| AcceptError::open(peer, e))?;
     debug!(?peer, "sync[accept]: handle");
 
-    let res = run_bob::<S, _, _, _, _>(&mut send_stream, &mut recv_stream, accept_cb, peer).await;
+    let mut state = BobState::<S>::new(peer);
+    let res = state
+        .run(&mut send_stream, &mut recv_stream, accept_cb)
+        .await;
 
     #[cfg(feature = "metrics")]
     if res.is_ok() {
@@ -90,10 +101,8 @@ where
         inc!(Metrics, sync_via_accept_failure);
     }
 
-    let namespace = match &res {
-        Ok(namespace) => Some(*namespace),
-        Err(err) => err.namespace(),
-    };
+    let namespace = state.namespace();
+    let progress = state.into_progress();
 
     send_stream
         .finish()
@@ -103,11 +112,28 @@ where
         .read_to_end(0)
         .await
         .map_err(|error| AcceptError::close(peer, namespace, error))?;
+
     let namespace = res?;
 
     debug!(?peer, ?namespace, "sync[accept]: done");
 
-    Ok((namespace, peer))
+    let res = SyncFinished {
+        namespace,
+        progress,
+        peer,
+    };
+
+    Ok(res)
+}
+
+///
+pub struct SyncFinished {
+    ///
+    pub namespace: NamespaceId,
+    ///
+    pub peer: PublicKey,
+    ///
+    pub progress: SyncProgress,
 }
 
 /// Errors that may occur on handling incoming sync connections.
