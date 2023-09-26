@@ -9,6 +9,7 @@ use iroh::{
     rpc_protocol::{DocTicket, ShareMode},
     sync_engine::{LiveEvent, Origin},
 };
+use iroh_bytes::util::SetTagOption;
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
 use crate::{commands::add::aggregate_add_response, config::ConsoleEnv};
@@ -302,7 +303,8 @@ impl DocCommands {
 
                         let stream = iroh
                             .blobs
-                            .add_from_path(file.path().into(), in_place)
+                            // TODO: what should the name be
+                            .add_from_path(file.path().into(), in_place, SetTagOption::Auto)
                             .await?;
                         // TODO(b5): horrible hack b/c add_from_path creates a collection
                         // and we really just want the raw blob
