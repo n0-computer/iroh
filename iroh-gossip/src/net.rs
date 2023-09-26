@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, PeerData, Scope, TopicId};
+use crate::proto::{self, PeerData, Scope, TopicId, util::base32};
 
 pub mod util;
 
@@ -349,6 +349,7 @@ impl Actor {
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
+                    trace!(?i, "tick: to_actor_rx");
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
@@ -371,6 +372,7 @@ impl Actor {
                     }
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
+                    trace!(?i, "tick: dialer");
                     match res {
                         Ok(conn) => {
                             debug!(peer = ?peer_id, "dial successfull");
@@ -382,6 +384,7 @@ impl Actor {
                     }
                 }
                 event = self.in_event_rx.recv() => {
+                    trace!(?i, "tick: in_event_rx");
                     match event {
                         Some(event) => {
                             self.handle_in_event(event, Instant::now()).await.context("in_event_rx.recv -> handle_in_event")?;
@@ -390,6 +393,7 @@ impl Actor {
                     }
                 }
                 drain = self.timers.wait_and_drain() => {
+                    trace!(?i, "tick: timers");
                     let now = Instant::now();
                     for (_instant, timer) in drain {
                         self.handle_in_event(InEvent::TimerExpired(timer), now).await.context("timers.drain_expired -> handle_in_event")?;
@@ -426,7 +430,7 @@ impl Actor {
                         .send(InEvent::PeerDisconnected(peer_id))
                         .await
                         .ok();
-                });
+                }.instrument(trace_span!("conn_in", peer = ?peer_id)));
 
                 // Forward queued pending sends
                 if let Some(send_queue) = self.pending_sends.remove(&peer_id) {
