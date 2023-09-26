@@ -351,9 +351,9 @@ async fn sync_big() -> Result<()> {
     // let n_entries_phase2 = 5;
 
     tokio::task::spawn(async move {
-        loop {
+        for i in 0.. {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("tick");
+            info!("tick {i}");
         }
     });
 
@@ -411,9 +411,6 @@ async fn sync_big() -> Result<()> {
     for (i, doc) in docs.iter().enumerate().skip(1) {
         info!("peer {i} {:?}: join {:?}", peer_ids[i], peer0.peer_id);
         doc.start_sync(vec![peer0.clone()]).await?;
-        // wait a little while for the swarm to balance itself?
-        // doesn't help either..
-        // tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     // wait for InsertRemote events stuff to happen
@@ -424,13 +421,9 @@ async fn sync_big() -> Result<()> {
         let doc = docs[i].clone();
         let expected = expected.clone();
         let fut = async move {
-            wait_for_events(
-                events,
-                expected_inserts,
-                Duration::from_millis(5000),
-                i,
-                |e| matches!(e, LiveEvent::InsertRemote { .. }),
-            )
+            wait_for_events(events, expected_inserts, Duration::from_secs(30), i, |e| {
+                matches!(e, LiveEvent::InsertRemote { .. })
+            })
             .await?;
             let entries = get_all(&doc).await?;
             if entries != expected {

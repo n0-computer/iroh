@@ -8,7 +8,7 @@ use iroh_gossip::net::Gossip;
 use iroh_net::{MagicEndpoint, PeerAddr};
 use iroh_sync::{
     store::Store,
-    sync::{Author, AuthorId, NamespaceId, AsyncReplica as Replica},
+    sync::{AsyncReplica as Replica, Author, AuthorId, NamespaceId},
 };
 
 use crate::downloader::Downloader;

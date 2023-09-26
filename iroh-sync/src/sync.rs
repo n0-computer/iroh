@@ -202,7 +202,6 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + S
     }
 }
 
-
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
