@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
+    state_vector::StateVector,
     sync::{Author, Namespace, Replica, SignedEntry},
     AuthorId, NamespaceId,
 };
@@ -93,6 +94,22 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get all content hashes of all replicas in the store.
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
+
+    /// Check if a state vector contains pointers that we do not have locally.
+    // TODO: This default impl is horrifyingly inefficient. Remove.
+    fn has_news_for_us(&self, namespace: NamespaceId, state_vector: &StateVector) -> Result<bool> {
+        let our_state_vector = {
+            let mut sv = StateVector::default();
+            let all = self.get_many(namespace, GetFilter::All)?;
+            for e in all {
+                let e = e?;
+                sv.insert(e.author(), e.timestamp());
+            }
+            sv
+        };
+        let has_news_for_us = state_vector.has_news_for(&our_state_vector);
+        Ok(has_news_for_us)
+    }
 }
 
 /// Filter a get query onto a namespace

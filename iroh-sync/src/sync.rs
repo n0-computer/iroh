@@ -25,11 +25,11 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::store;
 use crate::{
     ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
     store::PublicKeyStore,
 };
+use crate::{state_vector::SyncProgress, store};
 
 pub use crate::keys::*;
 
@@ -267,11 +267,20 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         &self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
+        state: &mut SyncProgress,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
         let expected_namespace = self.namespace();
         let now = system_time_now();
+
+        // update state with incoming data.
+        state.entries_recv += message.value_count();
+        for (entry, _content_status) in message.values() {
+            state.state_vector.insert(entry.author(), entry.timestamp());
+        }
+
         let reply = self.inner.write().peer.process_message(
             message,
+            // validate callback: validate incoming entries, and send to on_insert channel
             |store, entry, content_status| {
                 let origin = InsertOrigin::Sync {
                     from: from_peer,
@@ -286,6 +295,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                     false
                 }
             },
+            // content_status callback: get content status for outgoing entries
             |_store, entry| {
                 if let Some(cb) = self.content_status_cb.read().as_ref() {
                     cb(entry.content_hash())
@@ -294,6 +304,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 }
             },
         )?;
+
+        // update state with outgoing data.
+        if let Some(ref reply) = reply {
+            state.entries_sent += reply.value_count();
+        }
 
         Ok(reply)
     }
@@ -797,6 +812,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
+        state_vector::StateVector,
         store::{self, GetFilter, Store},
     };
 
@@ -1328,6 +1344,8 @@ mod tests {
     ) -> Result<()> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
+        let mut alice_state = SyncProgress::default();
+        let mut bob_state = SyncProgress::default();
         // Sync alice - bob
         let mut next_to_bob = Some(alice.sync_initial_message().map_err(Into::into)?);
         let mut rounds = 0;
@@ -1336,11 +1354,11 @@ mod tests {
             rounds += 1;
             println!("round {}", rounds);
             if let Some(msg) = bob
-                .sync_process_message(msg, alice_peer_id)
+                .sync_process_message(msg, alice_peer_id, &mut bob_state)
                 .map_err(Into::into)?
             {
                 next_to_bob = alice
-                    .sync_process_message(msg, bob_peer_id)
+                    .sync_process_message(msg, bob_peer_id, &mut alice_state)
                     .map_err(Into::into)?;
             }
         }

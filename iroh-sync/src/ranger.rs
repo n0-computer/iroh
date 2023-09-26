@@ -187,6 +187,14 @@ impl<E: RangeEntry> Message<E> {
     pub fn parts(&self) -> &[MessagePart<E>] {
         &self.parts
     }
+
+    pub fn values(&self) -> impl Iterator<Item = &(E, ContentStatus)> {
+        self.parts().iter().filter_map(|p| p.values()).flatten()
+    }
+
+    pub fn value_count(&self) -> usize {
+        self.values().count()
+    }
 }
 
 pub trait Store<E: RangeEntry>: Sized {

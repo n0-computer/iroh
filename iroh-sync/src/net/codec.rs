@@ -12,7 +12,7 @@ use tracing::trace;
 
 use crate::{
     net::{AbortReason, AcceptError, AcceptOutcome, ConnectError},
-    store, NamespaceId, Replica,
+    store, NamespaceId, Replica, SyncProgress,
 };
 
 #[derive(Debug, Default)]
@@ -93,10 +93,12 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     reader: &mut R,
     alice: &Replica<S::Instance>,
     other_peer_id: PublicKey,
-) -> Result<(), ConnectError> {
+) -> Result<SyncProgress, ConnectError> {
     let other_peer_id = *other_peer_id.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
+
+    let mut progress = SyncProgress::default();
 
     // Init message
 
@@ -119,7 +121,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
             }
             Message::Sync(msg) => {
                 if let Some(msg) = alice
-                    .sync_process_message(msg, other_peer_id)
+                    .sync_process_message(msg, other_peer_id, &mut progress)
                     .map_err(ConnectError::sync)?
                 {
                     trace!("alice -> bob: {:#?}", msg);
@@ -137,16 +139,17 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
         }
     }
 
-    Ok(())
+    Ok(progress)
 }
 
 /// Runs the receiver side of the sync protocol.
+#[cfg(test)]
 pub(super) async fn run_bob<S, R, W, F, Fut>(
     writer: &mut W,
     reader: &mut R,
     accept_cb: F,
     other_peer_id: PublicKey,
-) -> Result<NamespaceId, AcceptError>
+) -> Result<(NamespaceId, SyncProgress), AcceptError>
 where
     S: store::Store,
     R: AsyncRead + Unpin,
@@ -155,27 +158,33 @@ where
     Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
 {
     let mut state = BobState::<S>::new(other_peer_id);
-    state.run(writer, reader, accept_cb).await
+    let namespace = state.run(writer, reader, accept_cb).await?;
+    Ok((namespace, state.progress))
 }
 
-struct BobState<S: store::Store> {
+/// State for the receiver side of the sync protocol.
+pub struct BobState<S: store::Store> {
     replica: Option<Replica<S::Instance>>,
     peer: PublicKey,
+    progress: SyncProgress,
 }
 
 impl<S: store::Store> BobState<S> {
+    /// Create a new state for a single connection.
     pub fn new(peer: PublicKey) -> Self {
         Self {
             peer,
             replica: None,
+            progress: Default::default(),
         }
     }
 
-    pub fn fail(&self, reason: impl Into<anyhow::Error>) -> AcceptError {
+    fn fail(&self, reason: impl Into<anyhow::Error>) -> AcceptError {
         AcceptError::sync(self.peer, self.namespace(), reason.into())
     }
 
-    async fn run<R, W, F, Fut>(
+    /// Handle connection and run to end.
+    pub async fn run<R, W, F, Fut>(
         &mut self,
         writer: W,
         reader: R,
@@ -210,13 +219,17 @@ impl<S: store::Store> BobState<S> {
                         }
                     };
                     trace!(?namespace, peer = ?self.peer, "run_bob: recv initial message {message:#?}");
-                    let next = replica.sync_process_message(message, *self.peer.as_bytes());
+                    let next = replica.sync_process_message(
+                        message,
+                        *self.peer.as_bytes(),
+                        &mut self.progress,
+                    );
                     self.replica = Some(replica);
                     next
                 }
                 (Message::Sync(msg), Some(replica)) => {
                     trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv {msg:#?}");
-                    replica.sync_process_message(msg, *self.peer.as_bytes())
+                    replica.sync_process_message(msg, *self.peer.as_bytes(), &mut self.progress)
                 }
                 (Message::Init { .. }, Some(_)) => {
                     return Err(self.fail(anyhow!("double init message")))
@@ -247,8 +260,14 @@ impl<S: store::Store> BobState<S> {
             .ok_or_else(|| self.fail(anyhow!("Stream closed before init message")))
     }
 
-    fn namespace(&self) -> Option<NamespaceId> {
+    /// Get the namespace that is synced, if available.
+    pub fn namespace(&self) -> Option<NamespaceId> {
         self.replica.as_ref().map(|r| r.namespace()).to_owned()
+    }
+
+    /// Consume self and get the [`SyncProgress`] for this connection.
+    pub fn into_progress(self) -> SyncProgress {
+        self.progress
     }
 }
 
