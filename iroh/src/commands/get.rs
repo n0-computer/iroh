@@ -1,18 +1,14 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use console::style;
-use futures::StreamExt;
-use indicatif::{
-    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
-};
+use indicatif::{HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget};
 use iroh::{
     collection::{Collection, IrohCollectionParser},
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-use iroh_bytes::{baomap::range_collections::RangeSet2, provider::GetProgress, util::SetTagOption};
+use iroh_bytes::{baomap::range_collections::RangeSet2, util::SetTagOption};
 use iroh_bytes::{
     get::{
         self,
@@ -24,6 +20,10 @@ use iroh_bytes::{
 use iroh_io::ConcatenateSliceWriter;
 use tokio::sync::mpsc;
 
+use crate::commands::show_download_progress;
+
+use super::make_download_pb;
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub struct GetInteractive {
@@ -32,11 +32,6 @@ pub struct GetInteractive {
     pub opts: iroh::dial::Options,
     pub token: Option<RequestToken>,
     pub single: bool,
-}
-
-/// Write the given data.
-pub fn write(data: impl AsRef<str>) {
-    eprintln!("{}", data.as_ref());
 }
 
 impl GetInteractive {
@@ -86,9 +81,7 @@ impl GetInteractive {
             .context("out_dir is not valid utf8")?
             .to_owned();
         let hash = self.hash;
-        write(format!("Fetching: {}", hash));
-        write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-        let mut stream = provider
+        let stream = provider
             .client()
             .blobs
             .download(BlobDownloadRequest {
@@ -103,60 +96,7 @@ impl GetInteractive {
                 tag: SetTagOption::Auto,
             })
             .await?;
-        let pb = make_download_pb();
-        let mut sizes = BTreeMap::new();
-        while let Some(x) = stream.next().await {
-            match x? {
-                GetProgress::Connected => {
-                    write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
-                }
-                GetProgress::FoundCollection {
-                    total_blobs_size,
-                    num_blobs,
-                    ..
-                } => {
-                    init_download_progress(
-                        &pb,
-                        num_blobs.unwrap_or_default(),
-                        total_blobs_size.unwrap_or_default(),
-                    )?;
-                }
-                GetProgress::Found { id, size, .. } => {
-                    sizes.insert(id, (size, 0));
-                }
-                GetProgress::Progress { id, offset } => {
-                    if let Some((_, current)) = sizes.get_mut(&id) {
-                        *current = offset;
-                        let total = sizes.values().map(|(_, current)| current).sum::<u64>();
-                        pb.set_position(total);
-                    }
-                }
-                GetProgress::Done { id } => {
-                    if let Some((size, current)) = sizes.get_mut(&id) {
-                        *current = *size;
-                        let total = sizes.values().map(|(_, current)| current).sum::<u64>();
-                        pb.set_position(total);
-                    }
-                }
-                GetProgress::NetworkDone {
-                    bytes_read,
-                    elapsed,
-                    ..
-                } => {
-                    pb.finish_and_clear();
-                    write(format!(
-                        "Transferred {} in {}, {}/s",
-                        HumanBytes(bytes_read),
-                        HumanDuration(elapsed),
-                        HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
-                    ));
-                }
-                GetProgress::AllDone => {
-                    break;
-                }
-                _ => {}
-            }
-        }
+        show_download_progress(hash, stream).await?;
         tokio::fs::remove_dir_all(temp_dir).await?;
         Ok(())
     }
@@ -171,8 +111,9 @@ impl GetInteractive {
 
     /// Get to stdout, no resume possible.
     async fn get_to_stdout(self) -> Result<()> {
-        write(format!("Fetching: {}", self.hash));
-        write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+        eprintln!("Fetching: {}", self.hash);
+        let pb = make_download_pb();
+        pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let query = if self.single {
             // just get the entire first item
             RangeSpecSeq::from_ranges([RangeSet2::all()])
@@ -181,12 +122,11 @@ impl GetInteractive {
             RangeSpecSeq::all()
         };
 
-        let pb = make_download_pb();
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = iroh::dial::dial(self.opts).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
-        write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+        pb.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
             anyhow::bail!("expected root to be present");
         };
@@ -196,12 +136,12 @@ impl GetInteractive {
             get_to_stdout_multi(curr, pb.clone()).await?
         };
         pb.finish_and_clear();
-        write(format!(
+        eprintln!(
             "Transferred {} in {}, {}/s",
             HumanBytes(stats.bytes_read),
             HumanDuration(stats.elapsed),
             HumanBytes((stats.bytes_read as f64 / stats.elapsed.as_secs_f64()) as u64)
-        ));
+        );
 
         Ok(())
     }
@@ -224,8 +164,8 @@ async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Re
         let collection = Collection::from_bytes(&collection_data)?;
         let count = collection.total_entries();
         let missing_bytes = collection.total_blobs_size();
-        write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
-        write(format!(
+        pb.set_message(format!("{} Downloading ...", style("[3/3]").bold().dim()));
+        pb.set_message(format!(
             "  {} file(s) with total transfer size {}",
             count,
             HumanBytes(missing_bytes)
@@ -275,38 +215,4 @@ async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Re
         next = curr.next();
     };
     Ok(finishing.next().await?)
-}
-
-const PROGRESS_STYLE: &str =
-    "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
-
-fn make_download_pb() -> ProgressBar {
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
-    pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
-    pb
-}
-
-fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) -> Result<()> {
-    write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
-    write(format!(
-        "  {} file(s) with total transfer size {}",
-        count,
-        HumanBytes(missing_bytes)
-    ));
-    pb.set_length(missing_bytes);
-    pb.reset();
-    pb.set_draw_target(ProgressDrawTarget::stderr());
-
-    Ok(())
 }
