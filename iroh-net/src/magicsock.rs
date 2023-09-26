@@ -1172,7 +1172,7 @@ impl Actor {
             }
             ActorMessage::AddKnownAddr(addr, s) => {
                 self.add_known_addr(addr);
-                s.send(()).unwrap();
+                s.send(()).ok();
             }
             ActorMessage::ReceiveDerp(read_result) => {
                 let passthroughs = self.process_derp_read_result(read_result).await;
