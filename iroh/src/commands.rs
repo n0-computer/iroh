@@ -685,6 +685,7 @@ const PROGRESS_STYLE: &str =
 
 fn make_download_pb() -> ProgressBar {
     let pb = ProgressBar::hidden();
+    pb.set_draw_target(ProgressDrawTarget::stderr());
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
     pb.set_style(
         ProgressStyle::with_template(PROGRESS_STYLE)
@@ -709,7 +710,6 @@ fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) -> R
     ));
     pb.set_length(missing_bytes);
     pb.reset();
-    pb.set_draw_target(ProgressDrawTarget::stderr());
 
     Ok(())
 }

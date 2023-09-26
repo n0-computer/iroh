@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use console::style;
-use indicatif::{HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget};
+use indicatif::{HumanBytes, HumanDuration, ProgressBar};
 use iroh::{
     collection::{Collection, IrohCollectionParser},
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
@@ -172,7 +172,6 @@ async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Re
         ));
         pb.set_length(missing_bytes);
         pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
         (curr.next(), collection.into_inner())
     };
     // read all the children
