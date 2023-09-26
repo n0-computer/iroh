@@ -8,7 +8,7 @@ use iroh_gossip::net::Gossip;
 use iroh_net::{MagicEndpoint, PeerAddr};
 use iroh_sync::{
     store::Store,
-    sync::{Author, AuthorId, NamespaceId, Replica},
+    sync::{Author, AuthorId, NamespaceId, AsyncReplica as Replica},
 };
 
 use crate::downloader::Downloader;
@@ -93,6 +93,7 @@ impl<S: Store> SyncEngine<S> {
     pub fn get_replica(&self, id: &NamespaceId) -> anyhow::Result<Replica<S::Instance>> {
         self.store
             .open_replica(id)?
+            .map(|r| r.into_async())
             .ok_or_else(|| anyhow!("doc not found"))
     }
 
