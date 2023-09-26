@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::downloader::{DownloadKind, Downloader, PeerRole};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use flume::r#async::RecvStream;
 use futures::{
     future::{BoxFuture, Shared},
@@ -25,9 +25,11 @@ use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use iroh_sync::{
     net::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
+        SyncFinished,
     },
     store,
     sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
+    StateVector,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -50,6 +52,16 @@ pub enum Op {
     Put(SignedEntry),
     /// A peer now has content available for a hash.
     ContentReady(Hash),
+    /// We synced with another peer, here's the news.
+    DidSync(SyncReport),
+}
+
+/// Report of a successful sync with the new heads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncReport {
+    peer: PublicKey,
+    namespace: NamespaceId,
+    heads: StateVector,
 }
 
 #[derive(Debug, Clone)]
@@ -70,7 +82,7 @@ pub struct LiveStatus {
     pub subscriptions: u64,
 }
 
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, strum::Display)]
 enum ToActor<S: store::Store> {
     Status {
         namespace: NamespaceId,
@@ -124,7 +136,7 @@ pub type OnLiveEventCallback =
     Box<dyn Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static>;
 
 /// Events informing about actions of the live sync progres.
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 #[allow(clippy::large_enum_variant)]
 pub enum LiveEvent {
     /// A local insertion.
@@ -299,6 +311,17 @@ impl<S: store::Store> LiveSync<S> {
     }
 }
 
+type SyncConnectFut = BoxFuture<
+    'static,
+    (
+        NamespaceId,
+        PublicKey,
+        SyncReason,
+        Result<SyncFinished, ConnectError>,
+    ),
+>;
+type SyncAcceptFut = BoxFuture<'static, Result<SyncFinished, AcceptError>>;
+
 // Currently peers might double-sync in both directions.
 struct Actor<S: store::Store, B: baomap::Store> {
     endpoint: MagicEndpoint,
@@ -329,12 +352,9 @@ struct Actor<S: store::Store, B: baomap::Store> {
 
     /// Running sync futures (from connect).
     #[allow(clippy::type_complexity)]
-    running_sync_connect: FuturesUnordered<
-        BoxFuture<'static, (NamespaceId, PublicKey, SyncReason, Result<(), ConnectError>)>,
-    >,
+    running_sync_connect: FuturesUnordered<SyncConnectFut>,
     /// Running sync futures (from accept).
-    running_sync_accept:
-        FuturesUnordered<BoxFuture<'static, Result<(NamespaceId, PublicKey), AcceptError>>>,
+    running_sync_accept: FuturesUnordered<SyncAcceptFut>,
     /// Runnning download futures.
     pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
     /// Running gossip join futures.
@@ -385,68 +405,95 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn run(&mut self) -> Result<()> {
+        let res = self.run_inner().await;
+        if let Err(err) = self.shutdown().await {
+            error!(?err, "Error during shutdown");
+        }
+        res
+    }
+
+    async fn run_inner(&mut self) -> Result<()> {
+        let mut i = 0;
         loop {
+            i += 1;
+            trace!(?i, "loop tick");
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
+                    trace!(?i, "loop to_actor");
+                    let msg = msg.context("to_actor closed")?;
                     match msg {
                         // received shutdown signal, or livesync handle was dropped:
                         // break loop and exit
-                        Some(ToActor::Shutdown) | None => {
-                            self.shutdown().await?;
+                        ToActor::Shutdown => {
                             break;
                         }
-                        Some(ToActor::StartSync { namespace, peers, reply }) => {
+                        ToActor::StartSync { namespace, peers, reply } => {
                             let res = self.start_sync(namespace, peers).await;
                             reply.send(res).ok();
                         },
-                        Some(ToActor::StopSync { namespace }) => {
+                        ToActor::StopSync { namespace } => {
                             self.stop_sync(namespace).await?;
                         }
-                        Some(ToActor::JoinPeers { namespace, peers }) => {
+                        ToActor::JoinPeers { namespace, peers } => {
                             self.join_peers(namespace, peers).await?;
                         },
-                        Some(ToActor::Subscribe { namespace, cb, s }) => {
+                        ToActor::Subscribe { namespace, cb, s } => {
                             let result = self.subscribe(namespace, cb).await;
                             s.send(result).ok();
                         },
-                        Some(ToActor::Unsubscribe { namespace, token, s }) => {
+                        ToActor::Unsubscribe { namespace, token, s } => {
                             let result = self.unsubscribe(namespace, token).await;
                             s.send(result).ok();
                         },
-                        Some(ToActor::Status { namespace , s }) => {
+                        ToActor::Status { namespace , s } => {
                             let result = self.status(namespace).await;
                             s.send(result).ok();
                         },
-                        Some(ToActor::HandleConnection { conn }) => {
+                        ToActor::HandleConnection { conn } => {
                              self.handle_connection(conn).await;
                         },
-                        Some(ToActor::AcceptSyncRequest { namespace, peer, reply }) => {
+                        ToActor::AcceptSyncRequest { namespace, peer, reply } => {
                             let outcome = self.accept_sync_request(namespace, peer);
                             reply.send(outcome).ok();
                         },
                     };
                 }
                 // new gossip message
-                Some(event) = self.gossip_events.next() => {
-                    let (topic, event) = event?;
+                event = self.gossip_events.next() => {
+                    trace!(?i, "loop gossip_event");
+                    let (topic, event) = event.context("gossip_events closed")??;
                     if let Err(err) = self.on_gossip_event(topic, event).await {
-                        error!("Failed to process gossip event: {err:?}");
+                        let namespace: NamespaceId = topic.as_bytes().into();
+                        error!(?namespace, ?err, "Failed to process gossip event");
                     }
                 },
-                Some((origin, entry))  = self.replica_events.next() => {
+                event = self.replica_events.next(), if !self.replica_events.is_empty() => {
+                    trace!(?i, "loop replica_event");
+                    let (origin, entry) = event.context("replica_events closed")?;
+                    let namespace = entry.namespace();
                     if let Err(err) = self.on_replica_event(origin, entry).await {
-                        error!("Failed to process replica event: {err:?}");
+                        error!(?namespace, ?err, "Failed to process replica event");
                     }
                 }
-                Some((namespace, peer, reason, res)) = self.running_sync_connect.next() => {
-                    self.on_sync_via_connect_finished(namespace, peer, reason, res).await;
+                res = self.running_sync_connect.next(), if !self.running_sync_connect.is_empty() => {
+                    trace!(?i, "loop on_sync_via_connect_finished");
+                    let (namespace, peer, reason, res) = res.context("running_sync_connect closed")?;
+                    if let Err(err) = self.on_sync_via_connect_finished(namespace, peer, reason, res).await {
+                        error!(?namespace, ?err, "Failed to process outgoing sync request");
+                    }
 
                 }
-                Some(res) = self.running_sync_accept.next() => {
-                    self.on_sync_via_accept_finished(res).await;
+                res = self.running_sync_accept.next(), if !self.running_sync_accept.is_empty() => {
+                    trace!(?i, "loop on_sync_via_accept_finished");
+                    let res = res.context("running_sync_accept closed")?;
+                    if let Err(err) = self.on_sync_via_accept_finished(res).await {
+                        error!(?err, "Failed to process incoming sync request");
+                    }
                 }
-                Some((namespace, res)) = self.pending_joins.next() => {
+                res = self.pending_joins.next(), if !self.pending_joins.is_empty() => {
+                    trace!(?i, "loop pending_joins");
+                    let (namespace, res )= res.context("pending_joins closed")?;
                     if let Err(err) = res {
                         error!(?namespace, %err, "failed to join gossip");
                     } else {
@@ -454,7 +501,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     }
                     // TODO: maintain some join state
                 }
-                Some(res) = self.pending_downloads.next() => {
+                res = self.pending_downloads.next(), if !self.pending_downloads.is_empty() => {
+                    trace!(?i, "loop pending_downloads");
+                    let res = res.context("pending_downloads closed")?;
                     if let Some((namespace, hash)) = res {
                         if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
                             let event = LiveEvent::ContentReady { hash };
@@ -470,6 +519,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
             }
         }
+        debug!("close (shutdown)");
         Ok(())
     }
 
@@ -505,11 +555,17 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         // TODO: Track finished time and potentially re-run sync on finished state if enough time
         // passed.
         match self.get_sync_state(namespace, peer) {
-            SyncState::Accepting | SyncState::Dialing(_) | SyncState::Finished => {
-                return;
-            }
+            // never run two syncs at the same time
+            SyncState::Accepting | SyncState::Dialing(_) => return,
+            // always rerun if we failed or did not run yet
             SyncState::Failed | SyncState::None => {}
+            // if we finished previously, only re-run if explicitly requested.
+            SyncState::Finished => match reason {
+                SyncReason::ResyncAfterReport => {}
+                _ => return,
+            },
         };
+        debug!(?namespace, ?peer, ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: queue");
 
         let cancel = CancellationToken::new();
         self.set_sync_state(namespace, peer, SyncState::Dialing(cancel.clone()));
@@ -690,8 +746,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         peer: PublicKey,
         reason: SyncReason,
-        result: Result<(), ConnectError>,
-    ) {
+        result: Result<SyncFinished, ConnectError>,
+    ) -> Result<()> {
         match result {
             Err(ConnectError::RemoteAbort(AbortReason::AlreadySyncing)) => {
                 debug!(
@@ -700,6 +756,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     ?reason,
                     "sync[dial]: remote abort, already syncing"
                 );
+                Ok(())
             }
             Err(ConnectError::Cancelled) => {
                 // In case the remote aborted with already running: do nothing
@@ -709,26 +766,28 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     ?reason,
                     "sync[dial]: cancelled, already syncing"
                 );
+                Ok(())
             }
-            Err(err) => {
-                self.on_sync_finished(namespace, peer, Origin::Connect(reason), Err(err.into()))
-                    .await;
-            }
-            Ok(()) => {
-                self.on_sync_finished(namespace, peer, Origin::Connect(reason), Ok(()))
-                    .await;
+            res => {
+                self.on_sync_finished(
+                    namespace,
+                    peer,
+                    Origin::Connect(reason),
+                    res.map_err(Into::into),
+                )
+                .await
             }
         }
     }
 
     async fn on_sync_via_accept_finished(
         &mut self,
-        res: Result<(NamespaceId, PublicKey), AcceptError>,
-    ) {
+        res: Result<SyncFinished, AcceptError>,
+    ) -> Result<()> {
         match res {
-            Ok((namespace, peer)) => {
-                self.on_sync_finished(namespace, peer, Origin::Accept, Ok(()))
-                    .await;
+            Ok(state) => {
+                self.on_sync_finished(state.namespace, state.peer, Origin::Accept, Ok(state))
+                    .await
             }
             Err(AcceptError::Abort {
                 peer,
@@ -737,6 +796,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             }) if reason == AbortReason::AlreadySyncing => {
                 // In case we aborted the sync: do nothing (our outgoing sync is in progress)
                 debug!(?peer, ?namespace, ?reason, "sync[accept]: aborted by us");
+                Ok(())
             }
             Err(err) => {
                 if let (Some(peer), Some(namespace)) = (err.peer(), err.namespace()) {
@@ -746,9 +806,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         Origin::Accept,
                         Err(anyhow::Error::from(err)),
                     )
-                    .await;
+                    .await?;
+                    Ok(())
                 } else {
                     debug!("sync[accept]: failed {err:?}");
+                    Err(err.into())
                 }
             }
         }
@@ -759,12 +821,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         namespace: NamespaceId,
         peer: PublicKey,
         origin: Origin,
-        result: anyhow::Result<()>,
-    ) {
+        result: Result<SyncFinished>,
+    ) -> Result<()> {
         // debug log the result, warn in case of errors
         match (&origin, &result) {
-            (Origin::Accept, Ok(())) => debug!(?peer, ?namespace, "sync[accept]: done"),
-            (Origin::Connect(reason), Ok(())) => {
+            (Origin::Accept, Ok(_)) => debug!(?peer, ?namespace, "sync[accept]: done"),
+            (Origin::Connect(reason), Ok(_)) => {
                 debug!(?peer, ?namespace, ?reason, "sync[dial]: done")
             }
             (Origin::Accept, Err(err)) => warn!(?peer, ?namespace, ?err, "sync[accept]: failed"),
@@ -777,17 +839,48 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             Err(_) => SyncState::Failed,
         };
         self.set_sync_state(namespace, peer, state);
+
+        // Broadcast a sync report to our neighbors, but only if we received new entries.
+        if let Ok(state) = &result {
+            if state.progress.entries_recv > 0 {
+                let report = SyncReport {
+                    peer,
+                    namespace,
+                    heads: state.progress.state_vector.clone(),
+                };
+                let op = Op::DidSync(report);
+                debug!(?namespace, "broadcast to neighbors: DidSync(peer={peer:?})");
+                let msg = postcard::to_stdvec(&op)?;
+                // TODO: We should debounce and merge these neighbor announcements likely.
+                if let Err(err) = self
+                    .gossip
+                    .broadcast_neighbors(namespace.into(), msg.into())
+                    .await
+                {
+                    error!(
+                        ?namespace,
+                        ?err,
+                        "Failed to broadcast SyncReport to neighbors"
+                    );
+                }
+            }
+        }
+
         let event = SyncEvent {
             namespace,
             peer,
             origin,
-            result: result.map_err(|err| format!("{err:?}")),
+            result: result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|err| format!("{err:?}")),
             finished: SystemTime::now(),
         };
         let subs = self.event_subscriptions.get_mut(&event.namespace);
         if let Some(subs) = subs {
             notify_all(subs, LiveEvent::SyncFinished(event)).await;
         }
+        Ok(())
     }
 
     async fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
@@ -827,6 +920,22 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         self.downloader
                             .peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()])
                             .await;
+                    }
+                    Op::DidSync(report) => {
+                        let peer = msg.delivered_from;
+                        if self
+                            .replica_store
+                            .has_news_for_us(report.namespace, &report.heads)?
+                        {
+                            debug!(?namespace, ?peer, "Recv SyncReport: have news, sync now");
+                            self.sync_with_peer(
+                                report.namespace,
+                                peer,
+                                SyncReason::ResyncAfterReport,
+                            );
+                        } else {
+                            debug!(?namespace, ?peer, "Recv SyncReport: no news, no sync");
+                        }
                     }
                 }
             }
@@ -887,6 +996,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 let entry_status = self.bao_store.contains(&hash);
+
+                // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
                     let role = match content_status {
                         ContentStatus::Complete => PeerRole::Provider,
@@ -998,6 +1109,8 @@ pub enum SyncReason {
     DirectJoin,
     /// Peer showed up as new neighbor in the gossip swarm
     NewNeighbor,
+    ///
+    ResyncAfterReport,
 }
 
 /// Why we performed a sync exchange
