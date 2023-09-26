@@ -9,7 +9,7 @@ use tracing::debug;
 use crate::{
     net::codec::{run_alice, BobState},
     store,
-    sync::Replica,
+    sync::AsyncReplica as Replica,
     NamespaceId, SyncProgress,
 };
 

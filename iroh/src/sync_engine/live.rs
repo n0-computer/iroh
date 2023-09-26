@@ -28,7 +28,7 @@ use iroh_sync::{
         SyncFinished,
     },
     store,
-    sync::{Entry, InsertOrigin, NamespaceId, Replica, SignedEntry},
+    sync::{AsyncReplica as Replica, Entry, InsertOrigin, NamespaceId, SignedEntry},
     StateVector,
 };
 use serde::{Deserialize, Serialize};
@@ -538,7 +538,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             None
         } else {
             match self.replica_store.open_replica(namespace) {
-                Ok(replica) => replica,
+                Ok(replica) => replica.map(|r| r.into_async()),
                 Err(err) => {
                     warn!("Failed to get previously opened replica from the store: {err:?}");
                     None
@@ -905,14 +905,13 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             true => ContentStatus::Complete,
                             false => ContentStatus::Missing,
                         };
-                        tokio::task::spawn_blocking(move || {
-                            replica.insert_remote_entry(
+                        replica
+                            .insert_remote_entry(
                                 entry,
                                 *msg.delivered_from.as_bytes(),
                                 content_status,
                             )
-                        })
-                        .await??;
+                            .await?
                     }
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content

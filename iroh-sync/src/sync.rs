@@ -71,6 +71,105 @@ pub enum ContentStatus {
     Missing,
 }
 
+///
+#[derive(Debug, Clone, derive_more::From)]
+pub struct AsyncReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
+    inner: Replica<S>,
+    namespace: NamespaceId,
+}
+
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + Sync>
+    AsyncReplica<S>
+{
+    ///
+    pub fn new(replica: Replica<S>) -> Self {
+        let namespace = replica.namespace();
+        Self {
+            inner: replica,
+            namespace,
+        }
+    }
+    ///
+    pub async fn insert(
+        &self,
+        key: impl AsRef<[u8]>,
+        author: &Author,
+        hash: Hash,
+        len: u64,
+    ) -> Result<(), InsertError<S>> {
+        let key = key.as_ref().to_vec();
+        let author = author.clone();
+        self.blocking(move |r| r.insert(key, &author, hash, len))
+            .await
+    }
+    ///
+    pub async fn insert_remote_entry(
+        &self,
+        entry: SignedEntry,
+        received_from: PeerIdBytes,
+        content_status: ContentStatus,
+    ) -> Result<(), InsertError<S>> {
+        self.blocking(move |r| r.insert_remote_entry(entry, received_from, content_status))
+            .await
+    }
+
+    /// Get the identifier for an entry in this replica.
+    pub async fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
+        let key = key.as_ref().to_vec();
+        let author = author.clone();
+        self.blocking(move |r| r.id(key, &author)).await
+    }
+
+    /// Create the initial message for the set reconciliation flow with a remote peer.
+    pub async fn sync_initial_message(
+        &self,
+    ) -> Result<crate::ranger::Message<SignedEntry>, S::Error> {
+        self.blocking(move |r| r.sync_initial_message()).await
+    }
+
+    /// Process a set reconciliation message from a remote peer.
+    ///
+    /// Returns the next message to be sent to the peer, if any.
+    pub async fn sync_process_message(
+        &self,
+        message: crate::ranger::Message<SignedEntry>,
+        from_peer: PeerIdBytes,
+        state: &mut SyncProgress,
+    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
+        // todo fix
+        let mut state2 = state.clone();
+        let (res, state3) = self
+            .blocking(move |r| {
+                let res = r.sync_process_message(message, from_peer, &mut state2);
+                (res, state2)
+            })
+            .await;
+        *state = state3;
+        res
+    }
+
+    /// Get the namespace identifier for this [`Replica`].
+    pub fn namespace(&self) -> NamespaceId {
+        self.namespace
+    }
+
+    /// Get the byte represenation of the [`Namespace`] key for this replica.
+    // TODO: Why return [u8; 32] and not `Namespace` here?
+    pub async fn secret_key(&self) -> [u8; 32] {
+        self.blocking(|r| r.secret_key()).await
+    }
+
+    async fn blocking<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(Replica<S>) -> T + Send + 'static,
+    ) -> T {
+        let r = self.inner.clone();
+        tokio::task::spawn_blocking(move || f(r))
+            .await
+            .expect("blocking task crashed")
+    }
+}
+
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
@@ -95,6 +194,14 @@ struct ReplicaData {
     entries: Vec<SignedEntry>,
     namespace: Namespace,
 }
+
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + Sync> Replica<S> {
+    ///
+    pub fn into_async(self) -> AsyncReplica<S> {
+        AsyncReplica::new(self)
+    }
+}
+
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.

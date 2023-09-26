@@ -12,7 +12,7 @@ use tracing::trace;
 
 use crate::{
     net::{AbortReason, AcceptError, AcceptOutcome, ConnectError},
-    store, NamespaceId, Replica, SyncProgress,
+    store, AsyncReplica as Replica, NamespaceId, SyncProgress,
 };
 
 #[derive(Debug, Default)]
@@ -104,7 +104,10 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
 
     let init_message = Message::Init {
         namespace: alice.namespace(),
-        message: alice.sync_initial_message().map_err(ConnectError::sync)?,
+        message: alice
+            .sync_initial_message()
+            .await
+            .map_err(ConnectError::sync)?,
     };
     trace!(?peer, "run_alice: send init message");
     writer
@@ -115,16 +118,17 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     // Sync message loop
     while let Some(msg) = reader.next().await {
         let msg = msg.map_err(ConnectError::sync)?;
-        trace!(?peer, "run_alice: recv process message");
         match msg {
             Message::Init { .. } => {
                 return Err(ConnectError::sync(anyhow!("unexpected init message")));
             }
             Message::Sync(msg) => {
-                if let Some(msg) = alice
+                trace!(?peer, "run_alice: recv process message");
+                let reply = alice
                     .sync_process_message(msg, peer, &mut progress)
-                    .map_err(ConnectError::sync)?
-                {
+                    .await
+                    .map_err(ConnectError::sync)?;
+                if let Some(msg) = reply {
                     trace!(?peer, "run_alice: send process message");
                     writer
                         .send(Message::Sync(msg))
@@ -220,17 +224,17 @@ impl<S: store::Store> BobState<S> {
                         }
                     };
                     trace!(?namespace, peer = ?self.peer, "run_bob: recv init message");
-                    let next = replica.sync_process_message(
-                        message,
-                        *self.peer.as_bytes(),
-                        &mut self.progress,
-                    );
+                    let next = replica
+                        .sync_process_message(message, *self.peer.as_bytes(), &mut self.progress)
+                        .await;
                     self.replica = Some(replica);
                     next
                 }
                 (Message::Sync(msg), Some(replica)) => {
                     trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv process message");
-                    replica.sync_process_message(msg, *self.peer.as_bytes(), &mut self.progress)
+                    replica
+                        .sync_process_message(msg, *self.peer.as_bytes(), &mut self.progress)
+                        .await
                 }
                 (Message::Init { .. }, Some(_)) => {
                     return Err(self.fail(anyhow!("double init message")))

@@ -98,7 +98,7 @@ impl<S: Store> SyncEngine<S> {
                 // *replica.namespace().as_bytes()
                 return Err(anyhow!("creating read-only shares is not yet supported").into());
             }
-            ShareMode::Write => replica.secret_key(),
+            ShareMode::Write => replica.secret_key().await,
         };
         Ok(DocShareResponse(DocTicket {
             key,
@@ -182,6 +182,7 @@ impl<S: Store> SyncEngine<S> {
             .await?;
         replica
             .insert(&key, &author, *tag.hash(), len as u64)
+            .await
             .map_err(anyhow::Error::from)?;
         let entry = self
             .store
