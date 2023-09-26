@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -6,8 +7,12 @@ use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use comfy_table::presets::NOTHING;
 use comfy_table::{Cell, Table};
+use console::style;
 use futures::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
+use indicatif::{
+    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+};
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
@@ -558,10 +563,8 @@ impl BlobCommands {
                         tag,
                     })
                     .await?;
-                while let Some(item) = stream.next().await {
-                    let item = item?;
-                    println!("{:?}", item);
-                }
+
+                show_download_progress(hash, &mut stream).await?;
                 Ok(())
             }
             Self::List(cmd) => cmd.run(iroh).await,
@@ -675,4 +678,101 @@ fn fmt_latency(latency: Option<Duration>) -> String {
         Some(latency) => latency.to_human_time_string(),
         None => String::from("unknown"),
     }
+}
+
+const PROGRESS_STYLE: &str =
+    "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
+
+fn make_download_pb() -> ProgressBar {
+    let pb = ProgressBar::hidden();
+    pb.set_draw_target(ProgressDrawTarget::stderr());
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template(PROGRESS_STYLE)
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+    pb
+}
+
+fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) -> Result<()> {
+    pb.set_message(format!(
+        "{} Downloading {} file(s) with total transfer size {}",
+        style("[3/3]").bold().dim(),
+        count,
+        HumanBytes(missing_bytes),
+    ));
+    pb.set_length(missing_bytes);
+    pb.reset();
+
+    Ok(())
+}
+
+pub async fn show_download_progress(
+    hash: Hash,
+    mut stream: impl Stream<Item = Result<GetProgress>> + Unpin,
+) -> Result<()> {
+    eprintln!("Fetching: {}", hash);
+    let pb = make_download_pb();
+    pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+    let mut sizes = BTreeMap::new();
+    while let Some(x) = stream.next().await {
+        match x? {
+            GetProgress::Connected => {
+                pb.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+            }
+            GetProgress::FoundCollection {
+                total_blobs_size,
+                num_blobs,
+                ..
+            } => {
+                init_download_progress(
+                    &pb,
+                    num_blobs.unwrap_or_default(),
+                    total_blobs_size.unwrap_or_default(),
+                )?;
+            }
+            GetProgress::Found { id, size, .. } => {
+                sizes.insert(id, (size, 0));
+            }
+            GetProgress::Progress { id, offset } => {
+                if let Some((_, current)) = sizes.get_mut(&id) {
+                    *current = offset;
+                    let total = sizes.values().map(|(_, current)| current).sum::<u64>();
+                    pb.set_position(total);
+                }
+            }
+            GetProgress::Done { id } => {
+                if let Some((size, current)) = sizes.get_mut(&id) {
+                    *current = *size;
+                    let total = sizes.values().map(|(_, current)| current).sum::<u64>();
+                    pb.set_position(total);
+                }
+            }
+            GetProgress::NetworkDone {
+                bytes_read,
+                elapsed,
+                ..
+            } => {
+                pb.finish_and_clear();
+                eprintln!(
+                    "Transferred {} in {}, {}/s",
+                    HumanBytes(bytes_read),
+                    HumanDuration(elapsed),
+                    HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
+                );
+            }
+            GetProgress::AllDone => {
+                break;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
