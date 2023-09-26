@@ -81,6 +81,7 @@ example-sync = ["cli"]
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
+console-subscriber = "0.1.10"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh-test = { version = "0.6.0", path = "../iroh-test" }
