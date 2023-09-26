@@ -197,7 +197,9 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), InsertError<S>> {
         let expected_namespace = self.namespace();
 
+        #[cfg(feature = "metrics")]
         let len = entry.content_len();
+
         let mut inner = self.inner.write();
         let store = inner.peer.store();
         validate_entry(
@@ -401,6 +403,7 @@ impl Ord for SignedEntry {
 }
 
 impl SignedEntry {
+    #[cfg(feature = "fs-store")]
     pub(crate) fn new(signature: EntrySignature, entry: Entry) -> Self {
         SignedEntry { signature, entry }
     }
@@ -538,6 +541,7 @@ impl EntrySignature {
         Ok(())
     }
 
+    #[cfg(feature = "fs-store")]
     pub(crate) fn from_parts(namespace_sig: &[u8; 64], author_sig: &[u8; 64]) -> Self {
         let namespace_signature = Signature::from_bytes(namespace_sig);
         let author_signature = Signature::from_bytes(author_sig);
@@ -548,10 +552,12 @@ impl EntrySignature {
         }
     }
 
+    #[cfg(feature = "fs-store")]
     pub(crate) fn author_signature(&self) -> &Signature {
         &self.author_signature
     }
 
+    #[cfg(feature = "fs-store")]
     pub(crate) fn namespace_signature(&self) -> &Signature {
         &self.namespace_signature
     }
@@ -782,6 +788,8 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(feature = "fs-store")]
     use std::collections::HashSet;
 
     use anyhow::Result;
@@ -966,6 +974,7 @@ mod tests {
         test_content_hashes_iterator(store)
     }
 
+    #[cfg(feature = "fs-store")]
     fn test_content_hashes_iterator<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let mut expected = HashSet::new();

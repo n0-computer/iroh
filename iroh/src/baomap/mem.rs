@@ -490,7 +490,7 @@ impl baomap::Store for Store {
                     size: bytes.len() as u64,
                 })?;
                 let size = bytes.len() as u64;
-                let tag = this.import_bytes_sync(bytes, format, progress)?;
+                let tag = this.import_bytes_sync(id, bytes, format, progress)?;
                 Ok((tag, size))
             })
             .map(flatten_to_io)
@@ -503,7 +503,7 @@ impl baomap::Store for Store {
             .rt
             .main()
             .spawn_blocking(move || {
-                this.import_bytes_sync(bytes, format, IgnoreProgressSender::default())
+                this.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())
             })
             .map(flatten_to_io)
             .boxed()
@@ -555,7 +555,7 @@ impl baomap::Store for Store {
 
 impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
-        tracing::info!("temp tagging: {:?}", inner);
+        tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
         let entry = state.temp.entry(*inner).or_default();
         // panic if we overflow an u64
@@ -563,7 +563,7 @@ impl LivenessTracker for Inner {
     }
 
     fn on_drop(&self, inner: &HashAndFormat) {
-        tracing::info!("temp tag drop: {:?}", inner);
+        tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
         let entry = state.temp.entry(*inner).or_default();
         *entry = entry.saturating_sub(1);
@@ -584,12 +584,12 @@ impl Store {
 
     fn import_bytes_sync(
         &self,
+        id: u64,
         bytes: Bytes,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<TempTag> {
         let size = bytes.len() as u64;
-        let id = progress.new_id();
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
         let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
         progress.blocking_send(ImportProgress::OutboardDone {
