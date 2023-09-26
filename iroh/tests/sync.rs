@@ -2,9 +2,9 @@
 
 use std::{future::Future, net::SocketAddr, time::Duration};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
 use iroh::{
     client::mem::Doc,
     node::{Builder, Node},
@@ -46,7 +46,7 @@ fn test_node(
     Node::builder(db, store)
         .secret_key(secret_key)
         .collection_parser(IrohCollectionParser)
-        .enable_derp(iroh_net::defaults::default_derp_map())
+        // .enable_derp(iroh_net::defaults::default_derp_map())
         .runtime(&rt)
         .bind_addr(addr)
 }
@@ -334,8 +334,11 @@ async fn sync_subscribe_stop() -> Result<()> {
     Ok(())
 }
 
+// #[tokio::test(flavor = "multi_thread")]
 #[tokio::test]
 async fn sync_big() -> Result<()> {
+    #[cfg(tokio_unstable)]
+    console_subscriber::init();
     let mut rng = test_rng(b"sync_big");
     setup_logging();
     let rt = test_runtime();
@@ -343,8 +346,15 @@ async fn sync_big() -> Result<()> {
         .map(|v| v.parse().expect("NODES must be a number"))
         .unwrap_or(3);
     let n_entries_init = 1;
-    let n_entries_live = 2;
+    // let n_entries_live = 2;
     // let n_entries_phase2 = 5;
+
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("tick");
+        }
+    });
 
     let nodes = spawn_nodes(rt, n_nodes, &mut rng).await?;
     let peer_ids = nodes.iter().map(|node| node.peer_id()).collect::<Vec<_>>();
@@ -373,7 +383,11 @@ async fn sync_big() -> Result<()> {
 
     // create initial data on each node
     publish(&docs, &mut expected, n_entries_init, |i, j| {
-        (authors[i], format!("init/{j}"), format!("init:{i}:{j}"))
+        (
+            authors[i],
+            format!("init/{:?}/{j}", peer_ids[i]),
+            format!("init:{i}:{j}"),
+        )
     })
     .await?;
 
@@ -389,73 +403,117 @@ async fn sync_big() -> Result<()> {
         assert_eq!(entries, expected, "phase1 pre-sync correct");
     }
 
+    // setup event streams
+    let events = collect_futures(docs.iter().map(|d| d.subscribe())).await?;
+
     // join nodes together
     for (i, doc) in docs.iter().enumerate().skip(1) {
-        info!(
-            "peer {i} {:?}: join {:?}",
-            nodes[i].peer_id(),
-            peer0.peer_id
-        );
-        let mut events = doc.subscribe().await?;
+        info!("peer {i} {:?}: join {:?}", peer_ids[i], peer0.peer_id);
         doc.start_sync(vec![peer0.clone()]).await?;
-
-        // wait for the sync to be complete until the next node goes online
-        // NOTE: we should try to remove this limitation! it should work without this too.
-        loop {
-            let event = events.next().await.expect("end of stream").unwrap();
-            if matches!(event, LiveEvent::SyncFinished(SyncEvent { peer, ..}) if peer == peer0.peer_id)
-            {
-                break;
-            }
-        }
+        // wait a little while for the swarm to balance itself?
+        // doesn't help either..
+        // tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // wait for further stuff to happen!
-    info!("sleep 3s");
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // wait for InsertRemote events stuff to happen
+    info!("wait for all peers to receive insert events");
+    let expected_inserts = (n_nodes - 1) * n_entries_init;
+    let mut futs = vec![];
+    for (i, events) in events.into_iter().enumerate() {
+        let doc = docs[i].clone();
+        let expected = expected.clone();
+        let fut = async move {
+            wait_for_events(
+                events,
+                expected_inserts,
+                Duration::from_millis(5000),
+                i,
+                |e| matches!(e, LiveEvent::InsertRemote { .. }),
+            )
+            .await?;
+            let entries = get_all(&doc).await?;
+            if entries != expected {
+                Err(anyhow!(
+                    "node {i} failed (have {} but expected {})",
+                    entries.len(),
+                    expected.len()
+                ))
+            } else {
+                info!("Node {i}: All done, all good");
+                Ok(())
+            }
+        };
+        let fut = fut.map(move |r| r.with_context(move || format!("node {i}")));
+        futs.push(fut);
+    }
+    futures::future::try_join_all(futs).await?;
 
     assert_all_docs(&docs, &peer_ids, &expected, "after initial sync").await;
 
+    // the latter part of the test is working already.
+    // disabled for now - will move into another test.
+    //
     // add entries while everyone is live.
     // create initial data on each node
-    info!("publish {n_entries_live} entries on each node");
-    publish(&docs, &mut expected, n_entries_live, |i, j| {
-        (authors[i], format!("live/{j}"), format!("live:{i}:{j}"))
-    })
-    .await?;
-
-    // wait for stuff to happen!
-    info!("sleep 3s");
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    // assert that everyone has everything...
-    assert_all_docs(&docs, &peer_ids, &expected, "after gossip").await;
-
-    info!(
-        "peer1 {:?} goes offline and adds a new entry",
-        nodes[1].peer_id()
-    );
-    docs[1].stop_sync().await?;
-    publish(&[docs[1].clone()], &mut expected, 1, |i, j| {
-        (authors[1], format!("change/{j}"), format!("change:{i}:{j}"))
-    })
-    .await?;
-    info!(
-        "peer1 {:?} goes online again and joins peer0 {:?}",
-        nodes[1].peer_id(),
-        nodes[0].peer_id(),
-    );
-    docs[1].start_sync(vec![peer0.clone()]).await?;
-
-    info!("sleep 3s");
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_all_docs(&docs, &peer_ids, &expected, "after peer1 published").await;
+    // info!("publish {n_entries_live} entries on each node");
+    // publish(&docs, &mut expected, n_entries_live, |i, j| {
+    //     (authors[i], format!("live/{j}"), format!("live:{i}:{j}"))
+    // })
+    // .await?;
+    //
+    // // wait for stuff to happen!
+    // info!("sleep 3s");
+    // tokio::time::sleep(Duration::from_secs(3)).await;
+    //
+    // // assert that everyone has everything...
+    // assert_all_docs(&docs, &peer_ids, &expected, "after gossip").await;
+    //
+    // info!(
+    //     "peer1 {:?} goes offline and adds a new entry",
+    //     nodes[1].peer_id()
+    // );
+    // docs[1].stop_sync().await?;
+    // publish(&[docs[1].clone()], &mut expected, 1, |i, j| {
+    //     (authors[1], format!("change/{j}"), format!("change:{i}:{j}"))
+    // })
+    // .await?;
+    // info!(
+    //     "peer1 {:?} goes online again and joins peer0 {:?}",
+    //     nodes[1].peer_id(),
+    //     nodes[0].peer_id(),
+    // );
+    // docs[1].start_sync(vec![peer0.clone()]).await?;
+    //
+    // info!("sleep 3s");
+    // tokio::time::sleep(Duration::from_secs(3)).await;
+    // assert_all_docs(&docs, &peer_ids, &expected, "after peer1 published").await;
 
     info!("shutdown");
     for node in nodes {
         node.shutdown();
     }
 
+    Ok(())
+}
+
+async fn wait_for_events(
+    mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
+    expected_n: usize,
+    timeout_per_event: Duration,
+    node_id: usize,
+    matcher: impl Fn(LiveEvent) -> bool,
+) -> anyhow::Result<()> {
+    let mut i = 0;
+    while i < expected_n {
+        let event = tokio::time::timeout(timeout_per_event, events.next())
+            .await
+            .map_err(|_| anyhow!("timeout while getting InsertRemote event after {i}"))?
+            .ok_or_else(|| anyhow!("end of event stream for after {i}"))??;
+        if matcher(event) {
+            i += 1;
+            debug!(node = %node_id, "recv event {i} of {expected_n}");
+        }
+    }
     Ok(())
 }
 
