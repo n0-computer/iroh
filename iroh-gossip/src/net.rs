@@ -12,10 +12,10 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
 };
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace, trace_span, warn, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, PeerData, Scope, TopicId};
+use crate::proto::{self, PeerData, Scope, TopicId, util::base32};
 
 pub mod util;
 
@@ -85,6 +85,7 @@ impl Gossip {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
         let (on_endpoints_tx, on_endpoints_rx) = watch::channel(Default::default());
+        let me = base32::fmt_short(endpoint.peer_id());
         let actor = Actor {
             endpoint,
             state,
@@ -101,7 +102,8 @@ impl Gossip {
             subscribers_topic: Default::default(),
         };
         let actor_handle = tokio::spawn(async move {
-            if let Err(err) = actor.run().await {
+            let span = trace_span!("gossip", %me);
+            if let Err(err) = actor.run().instrument(span).await {
                 warn!("gossip actor closed with error: {err:?}");
                 Err(err)
             } else {
@@ -333,36 +335,42 @@ struct Actor {
 
 impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
-        let me = *self.state.me();
+        let mut i = 0;
         loop {
+            i += 1;
+            trace!(?i, "tick");
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
+                    trace!(?i, "tick: to_actor_rx");
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
-                            debug!(?me, "all gossip handles dropped, stop gossip actor");
+                            debug!("all gossip handles dropped, stop gossip actor");
                             break;
                         }
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
+                    trace!(?i, "tick: on_endpoints_rx");
                     let addr = self.endpoint.my_addr().await?;
                     let peer_data = encode_peer_data(&addr.info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
+                    trace!(?i, "tick: dialer");
                     match res {
                         Ok(conn) => {
-                            debug!(?me, peer = ?peer_id, "dial successfull");
+                            debug!(peer = ?peer_id, "dial successfull");
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
-                            warn!(?me, peer = ?peer_id, "dial failed: {err}");
+                            warn!(peer = ?peer_id, "dial failed: {err}");
                         }
                     }
                 }
                 event = self.in_event_rx.recv() => {
+                    trace!(?i, "tick: in_event_rx");
                     match event {
                         Some(event) => {
                             self.handle_in_event(event, Instant::now()).await.context("in_event_rx.recv -> handle_in_event")?;
@@ -371,6 +379,7 @@ impl Actor {
                     }
                 }
                 drain = self.timers.wait_and_drain() => {
+                    trace!(?i, "tick: timers");
                     let now = Instant::now();
                     for (_instant, timer) in drain {
                         self.handle_in_event(InEvent::TimerExpired(timer), now).await.context("timers.drain_expired -> handle_in_event")?;
@@ -383,8 +392,7 @@ impl Actor {
     }
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
-        let me = *self.state.me();
-        trace!(?me, "handle to_actor  {msg:?}");
+        trace!("handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -395,20 +403,20 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(?me, peer = ?peer_id, "connection established");
+                    debug!(peer = ?peer_id, "connection established");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
-                            debug!(?me, peer = ?peer_id, "connection closed without error")
+                            debug!(peer = ?peer_id, "connection closed without error")
                         }
                         Err(err) => {
-                            debug!(?me, peer = ?peer_id, "connection closed with error {err:?}")
+                            debug!(peer = ?peer_id, "connection closed with error {err:?}")
                         }
                     }
                     in_event_tx
                         .send(InEvent::PeerDisconnected(peer_id))
                         .await
                         .ok();
-                });
+                }.instrument(trace_span!("conn_in", peer = ?peer_id)));
 
                 // Forward queued pending sends
                 if let Some(send_queue) = self.pending_sends.remove(&peer_id) {
@@ -458,11 +466,10 @@ impl Actor {
     }
 
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
-        let me = *self.state.me();
         if matches!(event, InEvent::TimerExpired(_)) {
-            trace!(?me, "handle in_event  {event:?}");
+            trace!("handle in_event  {event:?}");
         } else {
-            debug!(?me, "handle in_event  {event:?}");
+            debug!("handle in_event  {event:?}");
         };
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
@@ -470,9 +477,9 @@ impl Actor {
         let out = self.state.handle(event, now);
         for event in out {
             if matches!(event, OutEvent::ScheduleTimer(_, _)) {
-                trace!(?me, "handle out_event {event:?}");
+                trace!("handle out_event {event:?}");
             } else {
-                debug!(?me, "handle out_event {event:?}");
+                debug!("handle out_event {event:?}");
             };
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
@@ -482,7 +489,7 @@ impl Actor {
                             self.conn_send_tx.remove(&peer_id);
                         }
                     } else {
-                        debug!(?me, peer = ?peer_id, "dial");
+                        debug!(peer = ?peer_id, "dial");
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         // TODO: Enforce max length
                         self.pending_sends.entry(peer_id).or_default().push(message);
@@ -516,13 +523,13 @@ impl Actor {
                 OutEvent::PeerData(peer, data) => match decode_peer_data(&data) {
                     Err(err) => warn!("Failed to decode {data:?} from {peer}: {err}"),
                     Ok(info) => {
-                        debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
+                        debug!(peer = ?peer, "add known addrs: {info:?}");
                         let peer_addr = PeerAddr {
                             peer_id: peer,
                             info,
                         };
                         if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
-                            debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
+                            debug!(peer = ?peer, "add known failed: {err:?}");
                         }
                     }
                 },

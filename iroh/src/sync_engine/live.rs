@@ -414,11 +414,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         let mut i = 0;
         loop {
             i += 1;
-            trace!(?i, "loop tick");
+            trace!(?i, "tick");
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
-                    trace!(?i, "loop to_actor");
+                    trace!(?i, "tick: to_actor");
                     let msg = msg.context("to_actor closed")?;
                     match msg {
                         // received shutdown signal, or livesync handle was dropped:
@@ -459,7 +459,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
                 // new gossip message
                 event = self.gossip_events.next() => {
-                    trace!(?i, "loop gossip_event");
+                    trace!(?i, "tick: gossip_event");
                     let (topic, event) = event.context("gossip_events closed")??;
                     if let Err(err) = self.on_gossip_event(topic, event).await {
                         let namespace: NamespaceId = topic.as_bytes().into();
@@ -467,7 +467,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     }
                 },
                 event = self.replica_events.next(), if !self.replica_events.is_empty() => {
-                    trace!(?i, "loop replica_event");
+                    trace!(?i, "tick: replica_event");
                     let (origin, entry) = event.context("replica_events closed")?;
                     let namespace = entry.namespace();
                     if let Err(err) = self.on_replica_event(origin, entry).await {
@@ -475,7 +475,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     }
                 }
                 res = self.running_sync_connect.next(), if !self.running_sync_connect.is_empty() => {
-                    trace!(?i, "loop on_sync_via_connect_finished");
+                    trace!(?i, "tick: on_sync_via_connect_finished");
                     let (namespace, peer, reason, res) = res.context("running_sync_connect closed")?;
                     if let Err(err) = self.on_sync_via_connect_finished(namespace, peer, reason, res).await {
                         error!(?namespace, ?err, "Failed to process outgoing sync request");
@@ -483,14 +483,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
                 }
                 res = self.running_sync_accept.next(), if !self.running_sync_accept.is_empty() => {
-                    trace!(?i, "loop on_sync_via_accept_finished");
+                    trace!(?i, "tick: on_sync_via_accept_finished");
                     let res = res.context("running_sync_accept closed")?;
                     if let Err(err) = self.on_sync_via_accept_finished(res).await {
                         error!(?err, "Failed to process incoming sync request");
                     }
                 }
                 res = self.pending_joins.next(), if !self.pending_joins.is_empty() => {
-                    trace!(?i, "loop pending_joins");
+                    trace!(?i, "tick: pending_joins");
                     let (namespace, res )= res.context("pending_joins closed")?;
                     if let Err(err) = res {
                         error!(?namespace, %err, "failed to join gossip");
@@ -500,7 +500,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     // TODO: maintain some join state
                 }
                 res = self.pending_downloads.next(), if !self.pending_downloads.is_empty() => {
-                    trace!(?i, "loop pending_downloads");
+                    trace!(?i, "tick: pending_downloads");
                     let res = res.context("pending_downloads closed")?;
                     if let Some((namespace, hash)) = res {
                         if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
