@@ -555,7 +555,7 @@ impl baomap::Store for Store {
 
 impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
-        tracing::info!("temp tagging: {:?}", inner);
+        tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
         let entry = state.temp.entry(*inner).or_default();
         // panic if we overflow an u64
@@ -563,7 +563,7 @@ impl LivenessTracker for Inner {
     }
 
     fn on_drop(&self, inner: &HashAndFormat) {
-        tracing::info!("temp tag drop: {:?}", inner);
+        tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
         let entry = state.temp.entry(*inner).or_default();
         *entry = entry.saturating_sub(1);
