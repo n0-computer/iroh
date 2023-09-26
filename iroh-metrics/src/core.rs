@@ -49,12 +49,14 @@ impl Counter {
     }
 
     /// Increase the [`Counter`] by `u64`, returning the previous value.
+    #[cfg(feature = "metrics")]
     pub fn inc_by(&self, v: u64) -> u64 {
-        #[cfg(feature = "metrics")]
-        {
-            self.counter.inc_by(v)
-        }
-        #[cfg(not(feature = "metrics"))]
+        self.counter.inc_by(v)
+    }
+
+    /// Increase the [`Counter`] by `u64`, returning the previous value.
+    #[cfg(not(feature = "metrics"))]
+    pub fn inc_by(&self, _v: u64) -> u64 {
         0
     }
 
@@ -105,7 +107,7 @@ pub trait Metric:
 
     /// Access to this metrics group to record a metric.
     #[cfg(not(feature = "metrics"))]
-    fn with_metric<T, F: FnOnce(&Self) -> T>(f: F) {
+    fn with_metric<T, F: FnOnce(&Self) -> T>(_f: F) {
         // nothing to do
     }
 
