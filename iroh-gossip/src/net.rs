@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, trace, trace_span, warn, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, PeerData, Scope, TopicId, util::base32};
+use crate::proto::{self, util::base32, PeerData, Scope, TopicId};
 
 pub mod util;
 
@@ -402,21 +402,24 @@ impl Actor {
 
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
-                tokio::spawn(async move {
-                    debug!(peer = ?peer_id, "connection established");
-                    match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
-                        Ok(()) => {
-                            debug!(peer = ?peer_id, "connection closed without error")
+                tokio::spawn(
+                    async move {
+                        debug!(peer = ?peer_id, "connection established");
+                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                            Ok(()) => {
+                                debug!(peer = ?peer_id, "connection closed without error")
+                            }
+                            Err(err) => {
+                                debug!(peer = ?peer_id, "connection closed with error {err:?}")
+                            }
                         }
-                        Err(err) => {
-                            debug!(peer = ?peer_id, "connection closed with error {err:?}")
-                        }
+                        in_event_tx
+                            .send(InEvent::PeerDisconnected(peer_id))
+                            .await
+                            .ok();
                     }
-                    in_event_tx
-                        .send(InEvent::PeerDisconnected(peer_id))
-                        .await
-                        .ok();
-                }.instrument(trace_span!("conn_in", peer = ?peer_id)));
+                    .instrument(trace_span!("conn_in", peer = ?peer_id)),
+                );
 
                 // Forward queued pending sends
                 if let Some(send_queue) = self.pending_sends.remove(&peer_id) {
