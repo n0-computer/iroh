@@ -1272,6 +1272,7 @@ impl Actor {
                     msock_sender: self.inner.actor_sender.clone(),
                     public_key: dm.src,
                     derp_region: Some(region_id),
+                    active: true,
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
@@ -2168,6 +2169,7 @@ impl Actor {
                         msock_sender: self.inner.actor_sender.clone(),
                         public_key: sender,
                         derp_region: src.derp_region(),
+                        active: true,
                     });
                 }
                 self.handle_ping(ping, &sender, src, derp_node_src).await;

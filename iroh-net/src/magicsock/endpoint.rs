@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -12,7 +12,7 @@ use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
-use tokio::{sync::mpsc, time::Instant};
+use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
@@ -92,6 +92,8 @@ pub(super) struct Options {
     pub(super) msock_sender: mpsc::Sender<ActorMessage>,
     pub(super) public_key: PublicKey,
     pub(super) derp_region: Option<u16>,
+    /// Is this endpoint currently active (sending data)?
+    pub(super) active: bool,
 }
 
 impl Endpoint {
@@ -117,7 +119,7 @@ impl Endpoint {
             endpoint_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            last_active: None,
+            last_active: options.active.then(|| Instant::now()),
         }
     }
 
@@ -1086,6 +1088,7 @@ impl PeerMap {
                 msock_sender,
                 public_key: peer_id,
                 derp_region: info.derp_region,
+                active: false,
             });
         }
 
