@@ -193,7 +193,10 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         prefix: impl AsRef<[u8]>,
         author: &Author,
     ) -> Result<usize, InsertError<S>> {
-        self.insert(prefix, author, Hash::EMPTY, 0)
+        let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
+        let entry = Entry::new_empty(id);
+        let signed_entry = entry.sign(&self.inner.read().namespace, author);
+        self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
     /// Insert an entry into this replica which was received from a remote peer.
@@ -627,6 +630,14 @@ impl Entry {
     /// Create a new entry
     pub fn new(id: RecordIdentifier, record: Record) -> Self {
         Entry { id, record }
+    }
+
+    /// Create a new empty entry with the current timestamp.
+    pub fn new_empty(id: RecordIdentifier) -> Self {
+        Entry {
+            id,
+            record: Record::empty_current(),
+        }
     }
 
     /// Get the [`RecordIdentifier`] for this entry.
