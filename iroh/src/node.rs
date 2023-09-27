@@ -1543,7 +1543,7 @@ fn handle_rpc_request<
                 })
                 .await
             }
-            DocDeletePrefix(msg) => {
+            DocWipeAtPrefix(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_wipe_at_prefix(req).await
                 })
