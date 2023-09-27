@@ -163,7 +163,10 @@ impl futures::Stream for Dialer {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.pending.poll_next_unpin(cx) {
-            std::task::Poll::Ready(res) if res.is_some() => std::task::Poll::Ready(res),
+            std::task::Poll::Ready(Some((peer_id, result))) => {
+                self.pending_peers.remove(&peer_id);
+                std::task::Poll::Ready(Some((peer_id, result)))
+            }
             _ => std::task::Poll::Pending,
         }
     }
