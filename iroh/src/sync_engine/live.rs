@@ -53,7 +53,7 @@ pub enum Op {
     /// A peer now has content available for a hash.
     ContentReady(Hash),
     /// We synced with another peer, here's the news.
-    DidSync(SyncReport),
+    SyncReport(SyncReport),
 }
 
 /// Report of a successful sync with the new heads.
@@ -840,8 +840,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     namespace,
                     heads: state.progress.state_vector.clone(),
                 };
-                let op = Op::DidSync(report);
-                debug!(?namespace, "broadcast to neighbors: DidSync(peer={peer:?})");
+                let op = Op::SyncReport(report);
+                debug!(
+                    ?namespace,
+                    "broadcast to neighbors: sync report from {peer:?})"
+                );
                 let msg = postcard::to_stdvec(&op)?;
                 // TODO: We should debounce and merge these neighbor announcements likely.
                 if let Err(err) = self
@@ -912,20 +915,20 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             .peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()])
                             .await;
                     }
-                    Op::DidSync(report) => {
+                    Op::SyncReport(report) => {
                         let peer = msg.delivered_from;
                         if self
                             .replica_store
                             .has_news_for_us(report.namespace, &report.heads)?
                         {
-                            debug!(?namespace, ?peer, "Recv SyncReport: have news, sync now");
+                            debug!(?namespace, ?peer, "recv sync report: have news, sync now");
                             self.sync_with_peer(
                                 report.namespace,
                                 peer,
                                 SyncReason::ResyncAfterReport,
                             );
                         } else {
-                            debug!(?namespace, ?peer, "Recv SyncReport: no news, no sync");
+                            debug!(?namespace, ?peer, "recv sync report: no news");
                         }
                     }
                 }
