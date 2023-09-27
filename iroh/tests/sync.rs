@@ -409,7 +409,7 @@ async fn sync_big() -> Result<()> {
 
     // join nodes together
     for (i, doc) in docs.iter().enumerate().skip(1) {
-        info!("peer {i} {:?}: join {:?}", peer_ids[i], peer0.peer_id);
+        info!(me = ?peer_ids[i], peer = ?peer0.peer_id, "join");
         doc.start_sync(vec![peer0.clone()]).await?;
     }
 
@@ -420,8 +420,9 @@ async fn sync_big() -> Result<()> {
     for (i, events) in events.into_iter().enumerate() {
         let doc = docs[i].clone();
         let expected = expected.clone();
+        let me = peer_ids[i];
         let fut = async move {
-            wait_for_events(events, expected_inserts, Duration::from_secs(30), i, |e| {
+            wait_for_events(events, expected_inserts, Duration::from_secs(30), me, |e| {
                 matches!(e, LiveEvent::InsertRemote { .. })
             })
             .await?;
@@ -433,7 +434,7 @@ async fn sync_big() -> Result<()> {
                     expected.len()
                 ))
             } else {
-                info!("Node {i}: All done, all good");
+                info!(?me, "All done, all good");
                 Ok(())
             }
         };
@@ -494,7 +495,7 @@ async fn wait_for_events(
     mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
     expected_n: usize,
     timeout_per_event: Duration,
-    node_id: usize,
+    me: PublicKey,
     matcher: impl Fn(LiveEvent) -> bool,
 ) -> anyhow::Result<()> {
     let mut i = 0;
@@ -505,7 +506,7 @@ async fn wait_for_events(
             .ok_or_else(|| anyhow!("end of event stream for after {i}"))??;
         if matcher(event) {
             i += 1;
-            debug!(node = %node_id, "recv event {i} of {expected_n}");
+            debug!(?me, "recv event {i} of {expected_n}");
         }
     }
     Ok(())
