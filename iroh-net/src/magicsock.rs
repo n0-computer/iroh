@@ -58,7 +58,7 @@ use crate::{
 
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
-    endpoint::{Options as EndpointOptions, PeerMap},
+    endpoint::{Options as EndpointOptions, PeerMap, PingAction},
     metrics::Metrics as MagicsockMetrics,
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
@@ -893,11 +893,6 @@ enum ActorMessage {
         derp_region: u16,
         endpoint_id: usize,
     },
-    SendPing {
-        dst: SendAddr,
-        dst_key: PublicKey,
-        tx_id: stun::TransactionId,
-    },
     SendCallMeMaybe {
         dst: SendAddr,
         dst_key: PublicKey,
@@ -1053,9 +1048,11 @@ impl Actor {
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
+                    let mut msgs = Vec::new();
                     for (_, ep) in self.peer_map.endpoints_mut() {
-                        ep.stayin_alive().await;
+                        msgs.extend(ep.stayin_alive());
                     }
+                    self.handle_ping_actions(msgs).await;
                 }
                 _ = endpoints_update_receiver.changed() => {
                     let reason = *endpoints_update_receiver.borrow();
@@ -1073,6 +1070,30 @@ impl Actor {
                 }
                 else => {
                     trace!("tick: other");
+                }
+            }
+        }
+    }
+
+    async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
+        for msg in msgs {
+            match msg {
+                PingAction::EnqueueCallMeMaybe {
+                    derp_region,
+                    endpoint_id,
+                } => {
+                    self.enqueue_call_me_maybe(derp_region, endpoint_id).await;
+                }
+                PingAction::SendPing {
+                    dst,
+                    dst_key,
+                    tx_id,
+                } => {
+                    let msg = disco::Message::Ping(disco::Ping {
+                        tx_id,
+                        node_key: self.inner.public_key(),
+                    });
+                    let _res = self.send_disco_message(dst, dst_key, msg).await;
                 }
             }
         }
@@ -1154,17 +1175,6 @@ impl Actor {
             ActorMessage::SetPreferredPort(port, s) => {
                 self.set_preferred_port(port).await;
                 let _ = s.send(());
-            }
-            ActorMessage::SendPing {
-                dst,
-                dst_key,
-                tx_id,
-            } => {
-                let msg = disco::Message::Ping(disco::Ping {
-                    tx_id,
-                    node_key: self.inner.public_key(),
-                });
-                let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
             ActorMessage::SendCallMeMaybe { dst, dst_key, msg } => {
                 let msg = disco::Message::CallMeMaybe(msg);
@@ -1377,7 +1387,9 @@ impl Actor {
                     public_key
                 );
 
-                match ep.get_send_addrs().await {
+                let (udp_addr, derp_region, msgs) = ep.get_send_addrs();
+                self.handle_ping_actions(msgs).await;
+                match (udp_addr, derp_region) {
                     (Some(udp_addr), Some(derp_region)) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
                         self.send_derp(derp_region, public_key, Self::split_packets(transmits));
