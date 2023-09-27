@@ -22,8 +22,8 @@ pub trait RangeEntry: Debug + Clone {
 
     /// The value type for this entry. See
     ///
-    /// The type must implement [`Ord`] to define the ordering when comparing entries
-    /// with an equal key or matching prefix.
+    /// The type must implement [`Ord`] to define the time ordering of entries used in the prefix
+    /// deletion algorithm.
     ///
     /// See [`RangeValue`] for details.
     type Value: RangeValue;
