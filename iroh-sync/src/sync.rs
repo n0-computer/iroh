@@ -71,7 +71,7 @@ pub enum ContentStatus {
     Missing,
 }
 
-///
+/// A wrapper around [`Replica`] with async methods for use in async contexts.
 #[derive(Debug, Clone, derive_more::From)]
 pub struct AsyncReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     inner: Replica<S>,
@@ -81,15 +81,12 @@ pub struct AsyncReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + Sync>
     AsyncReplica<S>
 {
+    /// Insert a new record at the given key.
     ///
-    pub fn new(replica: Replica<S>) -> Self {
-        let namespace = replica.namespace();
-        Self {
-            inner: replica,
-            namespace,
-        }
-    }
+    /// The entry will by signed by the provided `author`.
+    /// The `len` must be the byte length of the data identified by `hash`.
     ///
+    /// Returns an error either if the entry failed to validate or if a store operation failed.
     pub async fn insert(
         &self,
         key: impl AsRef<[u8]>,
@@ -102,7 +99,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + S
         self.blocking(move |r| r.insert(key, &author, hash, len))
             .await
     }
+
+    /// Insert an entry into this replica which was received from a remote peer.
     ///
+    /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
+    /// event, and insert the entry into the replica store.
+    ///
+    /// Returns an error if the entry failed to validate or if a store operation failed.
     pub async fn insert_remote_entry(
         &self,
         entry: SignedEntry,
@@ -136,7 +139,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + S
         from_peer: PeerIdBytes,
         state: &mut SyncProgress,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
-        // todo fix
+        // TODO: no clones
         let mut state2 = state.clone();
         let (res, state3) = self
             .blocking(move |r| {
@@ -159,6 +162,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + S
         self.blocking(|r| r.secret_key()).await
     }
 
+    /// Run a closure on a thread where blocking is allowed.
     async fn blocking<T: Send + 'static>(
         &self,
         f: impl FnOnce(Replica<S>) -> T + Send + 'static,
@@ -189,16 +193,13 @@ struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     peer: Peer<SignedEntry, S>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ReplicaData {
-    entries: Vec<SignedEntry>,
-    namespace: Namespace,
-}
-
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + Sync> Replica<S> {
-    ///
+    /// Turn this [`Replica`] into an [`AsyncReplica`] for usage in async contexts.
     pub fn into_async(self) -> AsyncReplica<S> {
-        AsyncReplica::new(self)
+        AsyncReplica {
+            namespace: self.namespace(),
+            inner: self,
+        }
     }
 }
 

@@ -37,7 +37,7 @@ use tokio::{
     task::JoinError,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace, trace_span, warn, Instrument};
+use tracing::{debug, debug_span, error, trace, trace_span, warn, Instrument};
 
 pub use iroh_sync::ContentStatus;
 
@@ -205,7 +205,7 @@ impl<S: store::Store> LiveSync<S> {
             to_actor_rx,
             to_actor_tx.clone(),
         );
-        let span = trace_span!("sync", %me);
+        let span = debug_span!("sync", %me);
         let task = rt.main().spawn(async move {
             if let Err(err) = actor.run().instrument(span).await {
                 error!("live sync failed: {err:?}");
@@ -563,25 +563,16 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 _ => return,
             },
         };
-        debug!(?namespace, ?peer, ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: queue");
+        debug!(?namespace, ?peer, ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: start");
 
         let cancel = CancellationToken::new();
         self.set_sync_state(namespace, peer, SyncState::Dialing(cancel.clone()));
-        let fut = {
-            let endpoint = self.endpoint.clone();
-            let replica = replica.clone();
-            async move {
-                debug!(?peer, ?namespace, ?reason, "sync[dial]: start");
-                let fut = connect_and_sync::<S>(&endpoint, &replica, PeerAddr::new(peer));
-                let res = tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => Err(ConnectError::Cancelled),
-                    res = fut => res
-                };
-                (namespace, peer, reason, res)
-            }
-            .boxed()
-        };
+        let endpoint = self.endpoint.clone();
+        let fut = async move {
+            let res = connect_and_sync::<S>(&endpoint, &replica, PeerAddr::new(peer), cancel).await;
+            (namespace, peer, reason, res)
+        }
+        .boxed();
         self.running_sync_connect.push(fut);
     }
 
@@ -797,6 +788,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 Ok(())
             }
             Err(err) => {
+                // If we have a sync in the other direction going on, do not treat as error.
                 if let (Some(peer), Some(namespace)) = (err.peer(), err.namespace()) {
                     self.on_sync_finished(
                         namespace,
