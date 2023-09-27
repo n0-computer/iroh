@@ -549,8 +549,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         Ok(iter.chain(iter2))
     }
 
-    fn remove_prefix_filtered<'a>(
-        &'a mut self,
+    fn remove_prefix_filtered(
+        &mut self,
         prefix: &RecordIdentifier,
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize> {
@@ -563,8 +563,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             let cb = |_k: RecordsId, v: RecordsValue| {
                 let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
                 let record = Record::new(hash.into(), len, timestamp);
-                let remove = predicate(&record);
-                remove
+
+                predicate(&record)
             };
             let iter = match end {
                 Some(end) => table.drain_filter(start..(&end.0, &end.1, &end.2), cb)?,

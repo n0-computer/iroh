@@ -331,11 +331,7 @@ async fn doc_delete() -> Result<()> {
         .await?;
     assert_latest(&doc, b"foo", b"hi").await;
     let deleted = doc.delete_prefix(author, b"foo".to_vec()).await?;
-    assert!(deleted.is_some());
-    let entry = deleted.unwrap();
-    assert_eq!(entry.content_hash(), hash);
-    assert_eq!(entry.author(), author);
-    assert_eq!(entry.key(), b"foo");
+    assert_eq!(deleted, 1);
     let entry = doc.get_one(author, b"foo".to_vec()).await?;
     assert!(entry.is_none());
     // wait for gc

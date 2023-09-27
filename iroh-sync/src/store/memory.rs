@@ -503,8 +503,8 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         })
     }
 
-    fn remove_prefix_filtered<'a>(
-        &'a mut self,
+    fn remove_prefix_filtered(
+        &mut self,
         prefix: &RecordIdentifier,
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize, Self::Error> {

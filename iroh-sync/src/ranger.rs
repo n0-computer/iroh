@@ -45,7 +45,7 @@ pub trait RangeKey: Sized + Debug + Ord + PartialEq + Default + Clone + 'static 
 
     /// Returns true if `other` is a prefix of `self`.
     fn has_prefix(&self, other: &Self) -> bool {
-        other.is_prefix_of(&self)
+        other.is_prefix_of(self)
     }
 }
 
@@ -763,14 +763,14 @@ mod tests {
             })
         }
 
-        fn remove_prefix_filtered<'a>(
-            &'a mut self,
+        fn remove_prefix_filtered(
+            &mut self,
             prefix: &K,
             predicate: impl Fn(&V) -> bool,
         ) -> Result<usize, Self::Error> {
             let old_len = self.data.len();
             self.data.retain(|k, v| {
-                let remove = prefix.is_prefix_of(k) && predicate(&v);
+                let remove = prefix.is_prefix_of(k) && predicate(v);
                 !remove
             });
             Ok(old_len - self.data.len())

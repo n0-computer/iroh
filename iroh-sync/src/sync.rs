@@ -1412,20 +1412,17 @@ mod tests {
         );
 
         // delete
-        replica.delete_prefix(b"foo", &alice)?;
-
+        let deleted = replica.delete_prefix(b"foo", &alice)?;
+        assert_eq!(deleted, 2);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
         assert_eq!(
             get_content_hash(&store, myspace.id(), alice.id(), b"foo")?,
             Hash::EMPTY,
         );
-        assert_eq!(
-            get_entry(&store, myspace.id(), alice.id(), b"foo")?
-                .entry()
-                .is_empty(),
-            true
-        );
+        assert!(get_entry(&store, myspace.id(), alice.id(), b"foo")?
+            .entry()
+            .is_empty());
 
         Ok(())
     }

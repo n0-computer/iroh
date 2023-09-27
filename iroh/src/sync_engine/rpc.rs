@@ -202,8 +202,8 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
         let removed = replica
-            .delete_prefix(&prefix, &author)
-            .map_err(|e| anyhow::Error::from(e))?;
+            .delete_prefix(prefix, &author)
+            .map_err(anyhow::Error::from)?;
         Ok(DocDeletePrefixResponse { removed })
     }
 
