@@ -48,6 +48,7 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(super) enum PingAction {
     EnqueueCallMeMaybe {
         derp_region: u16,
