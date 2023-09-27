@@ -7,19 +7,50 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 use crate::ContentStatus;
 
 /// Store entries that can be fingerprinted and put into ranges.
-pub trait RangeEntry: Debug + Clone + PartialOrd + Ord {
-    /// The key for this entry, to be used in ranges.
-    type Key: RangeKey + PartialEq + Clone + Default + Debug;
+pub trait RangeEntry: Debug + Clone {
+    /// The key type for this entry.
+    ///
+    /// This type must implement [`Ord`] to define the range ordering used in the set
+    /// reconciliation algorithm.
+    ///
+    /// See [`RangeKey`] for details.
+    type Key: RangeKey;
+
+    /// The value type for this entry. See
+    ///
+    /// The type must implement [`Ord`] to define the ordering when comparing entries
+    /// with an equal key or matching prefix.
+    ///
+    /// See [`RangeValue`] for details.
+    type Value: RangeValue;
+
     /// Get the key for this entry.
     fn key(&self) -> &Self::Key;
+
+    /// Get the value for this entry.
+    fn value(&self) -> &Self::Value;
+
     /// Get the fingerprint for this entry.
     fn as_fingerprint(&self) -> Fingerprint;
 }
+
+/// A trait constraining types that are valid entry keys.
+pub trait RangeKey: Sized + Debug + Ord + PartialEq + Default + Clone + 'static {
+    /// Returns `true` if `self` is a prefix of `other`.
+    fn is_prefix_of(&self, other: &Self) -> bool;
+
+    /// Returns true if `other` is a prefix of `self`.
+    fn has_prefix(&self, other: &Self) -> bool {
+        other.is_prefix_of(&self)
+    }
+}
+
+/// A trait constraining types that are valid entry values.
+pub trait RangeValue: Sized + Debug + Ord + PartialEq + Clone + 'static {}
 
 /// Stores a range.
 ///
@@ -72,13 +103,6 @@ impl<K> From<(K, K)> for Range<K> {
         Range { x, y }
     }
 }
-
-pub trait RangeKey: Sized + Ord + Debug {}
-
-impl RangeKey for &str {}
-impl RangeKey for &[u8] {}
-impl RangeKey for Vec<u8> {}
-impl RangeKey for String {}
 
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fingerprint(pub [u8; 32]);
@@ -205,19 +229,29 @@ pub trait Store<E: RangeEntry>: Sized {
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<E::Key, Self::Error>;
+
+    /// Get a single entry.
     fn get(&self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+
+    /// Get the number of entries in the store.
     fn len(&self) -> Result<usize, Self::Error>;
+
+    /// Returns `true` if the vector contains no elements.
     fn is_empty(&self) -> Result<bool, Self::Error>;
+
     /// Calculate the fingerprint of the given range.
     fn get_fingerprint(&self, range: &Range<E::Key>) -> Result<Fingerprint, Self::Error>;
 
     /// Insert the given key value pair.
     fn put(&mut self, entry: E) -> Result<(), Self::Error>;
 
-    /// Returns all items in the given range
+    /// Returns all entries in the given range
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
-    /// Returns all items that share a prefix with `key`.
+    /// Returns all entries whose key starts with the given `prefix`.
+    fn get_prefix(&self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
+
+    /// Returns all entries that share a prefix with `key`, including the entry for `key` itself.
     fn get_with_parents(&self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
 
     /// Get all entries in the store
@@ -225,6 +259,18 @@ pub trait Store<E: RangeEntry>: Sized {
 
     /// Remove an entry from the store.
     fn remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+
+    /// Remove all entries whose key start with a prefix and for which the `predicate` callback
+    /// returns true.
+    ///
+    /// Returns the number of elements removed.
+    // TODO: We might want to return an iterator with the removed elements instead to emit as
+    // events to the application potentially.
+    fn remove_prefix_filtered(
+        &mut self,
+        prefix: &E::Key,
+        predicate: impl Fn(&E::Value) -> bool,
+    ) -> Result<usize, Self::Error>;
 }
 
 #[derive(Debug)]
@@ -516,38 +562,28 @@ where
     ///
     /// Returns `true` if the entry was inserted.
     /// Returns `false` if it was not inserted.
-    pub fn put(&mut self, entry: E) -> Result<bool, S::Error> {
-        // Construct the set of entries to compare against
-        let current = {
-            let mut set = vec![];
-            // Take the entry with the same key and author, if available.
-            if let Some(entry) = self.store.get(entry.key())? {
-                set.push(entry);
-            }
-            // Take all "parent" entries (same author, key is a prefix of our key).
-            let parents = self.store.get_with_parents(entry.key())?;
-            for parent in parents {
-                set.push(parent?);
-            }
-            set
-        };
-
-        // First we check if our entry is strictly greater than all elements in the current set.
-        for e in &current {
-            if !(&entry > e) {
-                return Ok(false);
+    pub fn put(&mut self, entry: E) -> Result<InsertOutcome, S::Error> {
+        let parents = self.store.get_with_parents(entry.key())?;
+        // First we check if our entry is strictly greater than all parent elements.
+        // From the willow spec:
+        // "Remove all entries whose timestamp is strictly less than the timestamp of any other entry [..]
+        // whose path is a prefix of p." and then "remove all but those whose record has the greatest hash component".
+        // This is the contract of the `Ord` impl for `E::Value`.
+        for e in parents {
+            let e = e?;
+            if entry.value() < e.value() {
+                return Ok(InsertOutcome::NotInserted);
             }
         }
 
-        // Now we're good!
-        // Delete all lesser entries.
-        for e in &current {
-            debug!("Remove obsolete entry {:?}", e.key());
-            self.store.remove(e.key())?;
-        }
+        // Now we remove all entries that have our key as a prefix and are older than our entry.
+        let removed = self
+            .store
+            .remove_prefix_filtered(entry.key(), |value| value < entry.value())?;
+
         // Insert our new entry.
         self.store.put(entry)?;
-        Ok(true)
+        Ok(InsertOutcome::Inserted { removed })
     }
 
     /// List all existing key value pairs.
@@ -557,19 +593,23 @@ where
         self.store.all()
     }
 
-    // /// Get the entry for the given key.
-    // pub fn get(&self, k: &K) -> Result<Option<V>, S::Error> {
-    //     self.store.get(k)
-    // }
-    // /// Remove the given key.
-    // pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
-    //     self.store.remove(k)
-    // }
-
     /// Returns a refernce to the underlying store.
     pub(crate) fn store(&self) -> &S {
         &self.store
     }
+}
+
+/// The outcome of a [`Store::put`] operation.
+pub enum InsertOutcome {
+    /// The entry was not inserted because a newer entry for its key or a
+    /// prefix of its key exists.
+    NotInserted,
+    /// The entry was inserted.
+    Inserted {
+        /// Number of entries that were removed as a consequence of this insert operation.
+        /// The removed entries had a key that starts with the new entry's key and a lower value.
+        removed: usize,
+    },
 }
 
 #[cfg(test)]
@@ -595,13 +635,18 @@ mod tests {
 
     impl<K, V> RangeEntry for (K, V)
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + Ord,
+        K: RangeKey,
+        V: RangeValue,
     {
         type Key = K;
+        type Value = V;
 
         fn key(&self) -> &Self::Key {
             &self.0
+        }
+
+        fn value(&self) -> &Self::Value {
+            &self.1
         }
 
         fn as_fingerprint(&self) -> Fingerprint {
@@ -612,13 +657,28 @@ mod tests {
         }
     }
 
+    impl RangeKey for &'static str {
+        fn is_prefix_of(&self, other: &Self) -> bool {
+            self.starts_with(other)
+        }
+    }
+    impl RangeKey for String {
+        fn is_prefix_of(&self, other: &Self) -> bool {
+            self.starts_with(other)
+        }
+    }
+
+    impl RangeValue for &'static [u8] {}
+    impl RangeValue for i32 {}
+    impl RangeValue for () {}
+
     impl<K, V> Store<(K, V)> for SimpleStore<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + Ord,
+        K: RangeKey,
+        V: RangeValue,
     {
         type Error = Infallible;
-        type ParentIterator<'a> = Result<std::vec::IntoIter<Result<(K, V), Infallible>>, Infallible>;
+        type ParentIterator<'a> = std::vec::IntoIter<Result<(K, V), Infallible>>;
 
         fn get_first(&self) -> Result<K, Self::Error> {
             if let Some((k, _)) = self.data.first_key_value() {
@@ -667,7 +727,7 @@ mod tests {
 
             Ok(SimpleRangeIterator {
                 iter,
-                range: Some(range),
+                filter: SimpleFilter::Range(range),
             })
         }
 
@@ -678,25 +738,61 @@ mod tests {
 
         fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
             let iter = self.data.iter();
-
-            Ok(SimpleRangeIterator { iter, range: None })
+            Ok(SimpleRangeIterator {
+                iter,
+                filter: SimpleFilter::None,
+            })
         }
 
         // TODO: Not horrible.
-        fn get_with_parents(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>> {
-            unimplemented!()
+        fn get_with_parents(&self, key: &K) -> Result<Self::ParentIterator<'_>, Self::Error> {
+            let mut res = vec![];
+            for (k, v) in self.data.iter() {
+                if k.is_prefix_of(key) {
+                    res.push(Ok((k.clone(), v.clone())));
+                }
+            }
+            Ok(res.into_iter())
+        }
+
+        fn get_prefix(&self, prefix: &K) -> Result<Self::RangeIterator<'_>, Self::Error> {
+            let iter = self.data.iter();
+            Ok(SimpleRangeIterator {
+                iter,
+                filter: SimpleFilter::Prefix(prefix.clone()),
+            })
+        }
+
+        fn remove_prefix_filtered<'a>(
+            &'a mut self,
+            prefix: &K,
+            predicate: impl Fn(&V) -> bool,
+        ) -> Result<usize, Self::Error> {
+            let old_len = self.data.len();
+            self.data.retain(|k, v| {
+                let remove = prefix.is_prefix_of(k) && predicate(&v);
+                !remove
+            });
+            Ok(old_len - self.data.len())
         }
     }
 
     #[derive(Debug)]
     pub struct SimpleRangeIterator<'a, K, V> {
         iter: std::collections::btree_map::Iter<'a, K, V>,
-        range: Option<Range<K>>,
+        filter: SimpleFilter<K>,
+    }
+
+    #[derive(Debug)]
+    enum SimpleFilter<K> {
+        None,
+        Range(Range<K>),
+        Prefix(K),
     }
 
     impl<'a, K, V> Iterator for SimpleRangeIterator<'a, K, V>
     where
-        K: Clone + Ord,
+        K: RangeKey,
         V: Clone,
     {
         type Item = Result<(K, V), Infallible>;
@@ -704,9 +800,10 @@ mod tests {
         fn next(&mut self) -> Option<Self::Item> {
             let mut next = self.iter.next()?;
 
-            let filter = |x: &K| match &self.range {
-                None => true,
-                Some(ref range) => range.contains(x),
+            let filter = |x: &K| match &self.filter {
+                SimpleFilter::None => true,
+                SimpleFilter::Range(range) => range.contains(x),
+                SimpleFilter::Prefix(prefix) => prefix.is_prefix_of(x),
             };
 
             loop {
@@ -845,13 +942,18 @@ mod tests {
 
     #[test]
     fn test_multikey() {
+        /// Uses the blanket impl of [`RangeKey]` for `T: AsRef<[u8]>` in this module.
         #[derive(Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
         struct Multikey {
             author: [u8; 4],
             key: Vec<u8>,
         }
 
-        impl RangeKey for Multikey {}
+        impl RangeKey for Multikey {
+            fn is_prefix_of(&self, other: &Self) -> bool {
+                self.author == other.author && self.key.starts_with(&other.key)
+            }
+        }
 
         impl Debug for Multikey {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -966,8 +1068,8 @@ mod tests {
 
     struct SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + Ord,
+        K: RangeKey,
+        V: RangeValue,
     {
         alice: Peer<(K, V), SimpleStore<K, V>>,
         bob: Peer<(K, V), SimpleStore<K, V>>,
@@ -977,8 +1079,8 @@ mod tests {
 
     impl<K, V> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + PartialEq + Ord,
+        K: RangeKey,
+        V: RangeValue,
     {
         fn print_messages(&self) {
             let len = std::cmp::max(self.alice_to_bob.len(), self.bob_to_alice.len());
@@ -1066,12 +1168,22 @@ mod tests {
 
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + Ord,
+        K: RangeKey,
+        V: RangeValue,
     {
         let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
+    }
+
+    fn insert_if_larger<K: Ord, V: Ord>(map: &mut BTreeMap<K, V>, k: K, v: V) {
+        let insert = match map.get(&k) {
+            None => true,
+            Some(v2) => v > *v2,
+        };
+        if insert {
+            map.insert(k, v);
+        }
     }
 
     fn sync_with_validate_cb_and_assert<K, V, F1, F2>(
@@ -1081,26 +1193,23 @@ mod tests {
         bob_validate_cb: F2,
     ) -> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + Ord,
+        K: RangeKey,
+        V: RangeValue,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
-        let mut expected_set_alice = BTreeMap::new();
-        let mut expected_set_bob = BTreeMap::new();
+        let mut expected_set = BTreeMap::new();
 
         let mut alice = Peer::<(K, V), SimpleStore<K, V>>::default();
         for e in alice_set {
             alice.put(e.clone()).unwrap();
-            expected_set_bob.insert(e.key().clone(), e.1.clone());
-            expected_set_alice.insert(e.key().clone(), e.1.clone());
+            insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
         }
 
         let mut bob = Peer::<(K, V), SimpleStore<K, V>>::default();
         for e in bob_set {
             bob.put(e.clone()).unwrap();
-            expected_set_bob.insert(e.key().clone(), e.1.clone());
-            expected_set_alice.insert(e.key().clone(), e.1.clone());
+            insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
         }
 
         let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
@@ -1110,14 +1219,14 @@ mod tests {
         let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
         assert_eq!(
             alice_now.into_iter().collect::<Vec<_>>(),
-            expected_set_alice.into_iter().collect::<Vec<_>>(),
+            expected_set.clone().into_iter().collect::<Vec<_>>(),
             "alice"
         );
 
         let bob_now: Vec<_> = res.bob.all().unwrap().collect::<Result<_, _>>().unwrap();
         assert_eq!(
             bob_now.into_iter().collect::<Vec<_>>(),
-            expected_set_bob.into_iter().collect::<Vec<_>>(),
+            expected_set.into_iter().collect::<Vec<_>>(),
             "bob"
         );
 
@@ -1163,8 +1272,8 @@ mod tests {
         max_rounds: usize,
     ) -> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + Ord,
+        K: RangeKey,
+        V: RangeValue,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {

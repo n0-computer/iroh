@@ -330,7 +330,7 @@ async fn doc_delete() -> Result<()> {
         .set_bytes(author, b"foo".to_vec(), b"hi".to_vec())
         .await?;
     assert_latest(&doc, b"foo", b"hi").await;
-    let deleted = doc.delete_entry(author, b"foo".to_vec()).await?;
+    let deleted = doc.delete_prefix(author, b"foo".to_vec()).await?;
     assert!(deleted.is_some());
     let entry = deleted.unwrap();
     assert_eq!(entry.content_hash(), hash);

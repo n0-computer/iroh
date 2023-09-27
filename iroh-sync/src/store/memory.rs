@@ -14,7 +14,7 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Author, Namespace, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, Record,
 };
 
 use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
@@ -454,7 +454,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     ) -> Result<Self::RangeIterator<'_>, Self::Error> {
         Ok(InstanceRangeIterator {
             iter: self.records_iter(),
-            range: Some(range),
+            filter: InstanceRangeFilter::Range(range),
         })
     }
 
@@ -469,7 +469,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
         Ok(InstanceRangeIterator {
             iter: self.records_iter(),
-            range: None,
+            filter: InstanceRangeFilter::None,
         })
     }
 
@@ -492,18 +492,57 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         }
         Ok(entries.into_iter())
     }
+
+    fn get_prefix(
+        &self,
+        prefix: &RecordIdentifier,
+    ) -> std::result::Result<Self::RangeIterator<'_>, Self::Error> {
+        Ok(InstanceRangeIterator {
+            iter: self.records_iter(),
+            filter: InstanceRangeFilter::Prefix(prefix.author(), prefix.key().to_vec()),
+        })
+    }
+
+    fn remove_prefix_filtered<'a>(
+        &'a mut self,
+        prefix: &RecordIdentifier,
+        predicate: impl Fn(&Record) -> bool,
+    ) -> Result<usize, Self::Error> {
+        self.with_records_mut(|records| {
+            let Some(records) = records else {
+                return Ok(0);
+            };
+            let old_len = records.len();
+            records.retain(|(a, k), v| {
+                !(a == &prefix.author() && k.starts_with(prefix.key()) && predicate(v.entry()))
+            });
+            Ok(old_len - records.len())
+        })
+    }
 }
 
 /// Range iterator for a [`ReplicaStoreInstance`]
 #[derive(Debug)]
 pub struct InstanceRangeIterator<'a> {
     iter: RecordsIter<'a>,
-    range: Option<Range<RecordIdentifier>>,
+    filter: InstanceRangeFilter,
 }
 
-impl InstanceRangeIterator<'_> {
+/// Filter for an [`InstanceRangeIterator`]
+#[derive(Debug)]
+enum InstanceRangeFilter {
+    None,
+    Range(Range<RecordIdentifier>),
+    Prefix(AuthorId, Vec<u8>),
+}
+
+impl InstanceRangeFilter {
     fn matches(&self, x: &RecordIdentifier) -> bool {
-        self.range.as_ref().map(|r| r.contains(x)).unwrap_or(true)
+        match self {
+            Self::None => true,
+            Self::Range(range) => range.contains(x),
+            Self::Prefix(author, prefix) => x.author() == *author && x.key().starts_with(prefix),
+        }
     }
 }
 
@@ -514,7 +553,7 @@ impl Iterator for InstanceRangeIterator<'_> {
         let mut next = self.iter.next()?;
         loop {
             let (record_id, v) = next;
-            if self.matches(&record_id) {
+            if self.filter.matches(&record_id) {
                 return Some(Ok(v));
             }
 

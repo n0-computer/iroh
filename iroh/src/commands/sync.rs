@@ -83,8 +83,8 @@ pub enum DocCommands {
         #[clap(short, long)]
         content: bool,
     },
-    /// Delete an entry from the document.
-    DeleteEntry {
+    /// Delete all entries below a key prefix.
+    DeletePrefix {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
@@ -97,8 +97,9 @@ pub enum DocCommands {
         /// Within the Iroh console, the active author can also set with `author switch`.
         #[clap(short, long)]
         author: Option<AuthorId>,
-        /// Key to the entry (parsed as UTF-8 string).
-        key: String,
+        /// Prefix to delete. All entries whose key starts with or is equal to the prefix will be
+        /// deleted.
+        prefix: String,
     },
     /// List all keys in a document.
     #[clap(alias = "ls")]
@@ -198,17 +199,16 @@ impl DocCommands {
                 let hash = doc.set_bytes(author, key, value).await?;
                 println!("{}", hash);
             }
-            Self::DeleteEntry { doc, author, key } => {
+            Self::DeletePrefix {
+                doc,
+                author,
+                prefix,
+            } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
-                let key = key.as_bytes().to_vec();
-                let res = doc.delete_entry(author, key).await?;
-                if let Some(entry) = res {
-                    println!("Deleted entry:");
-                    print_entry(&doc, &entry, false).await?;
-                } else {
-                    println!("Entry not found");
-                }
+                let key = prefix.as_bytes().to_vec();
+                let removed = doc.delete_prefix(author, key).await?;
+                println!("Deleted {removed} entries.")
             }
             Self::Get {
                 doc,

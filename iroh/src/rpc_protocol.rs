@@ -22,7 +22,7 @@ use iroh_net::{
 use iroh_sync::{
     store::GetFilter,
     sync::{NamespaceId, SignedEntry},
-    AuthorId, RecordIdentifier,
+    AuthorId,
 };
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -632,20 +632,24 @@ pub struct DocSetResponse {
 
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocDeleteEntryRequest {
-    /// The entry to delete.
-    pub id: RecordIdentifier,
+pub struct DocDeletePrefixRequest {
+    /// The document id.
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Prefix to delete.
+    pub prefix: Vec<u8>,
 }
 
-impl RpcMsg<ProviderService> for DocDeleteEntryRequest {
-    type Response = RpcResult<DocDeleteEntryResponse>;
+impl RpcMsg<ProviderService> for DocDeletePrefixRequest {
+    type Response = RpcResult<DocDeletePrefixResponse>;
 }
 
 /// Response to [`DocDeleteEntryRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocDeleteEntryResponse {
-    /// The deleted entry. `None` if the entry could not be found.
-    pub entry: Option<SignedEntry>,
+pub struct DocDeletePrefixResponse {
+    /// The number of entries that were removed.
+    pub removed: usize,
 }
 
 /// Get entries from a document
@@ -784,7 +788,7 @@ pub enum ProviderRequest {
     DocSet(DocSetRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
-    DocDeleteEntry(DocDeleteEntryRequest),
+    DocDeletePrefix(DocDeletePrefixRequest),
     DocStartSync(DocStartSyncRequest),
     DocStopSync(DocStopSyncRequest),
     DocShare(DocShareRequest),
@@ -824,7 +828,7 @@ pub enum ProviderResponse {
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
-    DocDeleteEntry(RpcResult<DocDeleteEntryResponse>),
+    DocDeletePrefix(RpcResult<DocDeletePrefixResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),

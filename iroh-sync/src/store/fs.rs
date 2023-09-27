@@ -237,26 +237,6 @@ impl super::Store for Store {
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
     }
-
-    // TODO: Not horrible.
-    // type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry>>;
-    // fn get_parents(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>> {
-    //     let mut key = id.as_bytes().to_vec();
-    //     key.pop();
-    //     let mut entries = vec![];
-    //     while !key.is_empty() {
-    //         match self.get_one(id.namespace(), id.author(), &key) {
-    //             Ok(entry) => {
-    //                 if let Some(entry) = entry {
-    //                     entries.push(Ok(entry))
-    //                 }
-    //             }
-    //             Err(err) => entries.push(Err(err)),
-    //         }
-    //         key.pop();
-    //     }
-    //     Ok(entries.into_iter())
-    // }
 }
 
 impl Store {
@@ -536,7 +516,10 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     // TODO: Not horrible
     type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry>>;
-    fn get_with_parents(&self, id: &RecordIdentifier) -> std::result::Result<Self::ParentIterator<'_>, Self::Error> {
+    fn get_with_parents(
+        &self,
+        id: &RecordIdentifier,
+    ) -> std::result::Result<Self::ParentIterator<'_>, Self::Error> {
         let mut entries = vec![];
         let mut key = id.key().to_vec();
         while !key.is_empty() {
@@ -549,6 +532,48 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             key.pop();
         }
         Ok(entries.into_iter())
+    }
+
+    fn get_prefix(&self, prefix: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
+        let start = prefix.as_byte_tuple();
+        let end = prefix_range_end(&start);
+        let iter = RangeIterator::with_range(
+            &self.store.db,
+            |table| match end {
+                Some(end) => table.range(start..(&end.0, &end.1, &end.2)),
+                None => table.range(start..),
+            },
+            RangeFilter::None,
+        )?;
+        let iter2 = RangeIterator::empty(&self.store.db)?;
+        Ok(iter.chain(iter2))
+    }
+
+    fn remove_prefix_filtered<'a>(
+        &'a mut self,
+        prefix: &RecordIdentifier,
+        predicate: impl Fn(&Record) -> bool,
+    ) -> Result<usize> {
+        let start = prefix.as_byte_tuple();
+        let end = prefix_range_end(&start);
+
+        let write_tx = self.store.db.begin_write()?;
+        let count = {
+            let mut table = write_tx.open_table(RECORDS_TABLE)?;
+            let cb = |_k: RecordsId, v: RecordsValue| {
+                let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
+                let record = Record::new(hash.into(), len, timestamp);
+                let remove = predicate(&record);
+                remove
+            };
+            let iter = match end {
+                Some(end) => table.drain_filter(start..(&end.0, &end.1, &end.2), cb)?,
+                None => table.drain_filter(start.., cb)?,
+            };
+            iter.count()
+        };
+        write_tx.commit()?;
+        Ok(count)
     }
 }
 

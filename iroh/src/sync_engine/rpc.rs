@@ -13,7 +13,7 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDeleteEntryRequest, DocDeleteEntryResponse,
+        DocCreateRequest, DocCreateResponse, DocDeletePrefixRequest, DocDeletePrefixResponse,
         DocGetManyRequest, DocGetManyResponse, DocGetOneRequest, DocGetOneResponse,
         DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest,
         DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
@@ -190,14 +190,21 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocSetResponse { entry })
     }
 
-    pub async fn doc_delete_entry(
+    pub async fn doc_delete_prefix(
         &self,
-        req: DocDeleteEntryRequest,
-    ) -> RpcResult<DocDeleteEntryResponse> {
-        let DocDeleteEntryRequest { id } = req;
-        let replica = self.get_replica(&id.namespace())?;
-        let entry = replica.remove(&id).map_err(Into::into)?;
-        Ok(DocDeleteEntryResponse { entry })
+        req: DocDeletePrefixRequest,
+    ) -> RpcResult<DocDeletePrefixResponse> {
+        let DocDeletePrefixRequest {
+            doc_id,
+            author_id,
+            prefix,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        let removed = replica
+            .delete_prefix(&prefix, &author)
+            .map_err(|e| anyhow::Error::from(e))?;
+        Ok(DocDeletePrefixResponse { removed })
     }
 
     pub fn doc_get_many(

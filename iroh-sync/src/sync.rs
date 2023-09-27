@@ -26,10 +26,13 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::store;
 use crate::{
     ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
     store::PublicKeyStore,
+};
+use crate::{
+    ranger::{InsertOutcome, RangeValue},
+    store,
 };
 
 pub use crate::keys::*;
@@ -111,11 +114,6 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         }
     }
 
-    /// Remove an entry from the store.
-    pub fn remove(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>, S::Error> {
-        self.inner.write().peer.store.remove(id)
-    }
-
     /// Subscribe to insert events.
     ///
     /// Only one subscription can be active at a time. If a previous subscription was created, this
@@ -165,14 +163,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// The entry will by signed by the provided `author`.
     /// The `len` must be the byte length of the data identified by `hash`.
     ///
-    /// Returns an error either if the entry failed to validate or if a store operation failed.
+    /// Returns the number of entries removed as a consequence of this insertion,
+    /// or an error either if the entry failed to validate or if a store operation failed.
     pub fn insert(
         &self,
         key: impl AsRef<[u8]>,
         author: &Author,
         hash: Hash,
         len: u64,
-    ) -> Result<(), InsertError<S>> {
+    ) -> Result<usize, InsertError<S>> {
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
@@ -180,18 +179,32 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
+    /// Delete entries matching a prefix.
+    ///
+    /// Removes all entries that match `author` and whose key starts with `prefix`.
+    ///
+    /// Returns the number of entries removed as a consequence of this insertion,
+    pub fn delete_prefix(
+        &self,
+        prefix: impl AsRef<[u8]>,
+        author: &Author,
+    ) -> Result<usize, InsertError<S>> {
+        self.insert(prefix, author, Hash::EMPTY, 0)
+    }
+
     /// Insert an entry into this replica which was received from a remote peer.
     ///
     /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
     /// event, and insert the entry into the replica store.
     ///
-    /// Returns an error if the entry failed to validate or if a store operation failed.
+    /// Returns the number of entries removed as a consequence of this insertion,
+    /// or an error if the entry failed to validate or if a store operation failed.
     pub fn insert_remote_entry(
         &self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
-    ) -> Result<(), InsertError<S>> {
+    ) -> Result<usize, InsertError<S>> {
         let origin = InsertOrigin::Sync {
             from: received_from,
             content_status,
@@ -200,7 +213,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Insert a signed entry into the database.
-    fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), InsertError<S>> {
+    ///
+    /// Returns the number of entries removed as a consequence of this insertion.
+    fn insert_entry(
+        &self,
+        entry: SignedEntry,
+        origin: InsertOrigin,
+    ) -> Result<usize, InsertError<S>> {
         let expected_namespace = self.namespace();
 
         #[cfg(feature = "metrics")]
@@ -215,7 +234,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             &entry,
             &origin,
         )?;
-        inner.peer.put(entry.clone()).map_err(InsertError::Store)?;
+
+        let outcome = inner.peer.put(entry.clone()).map_err(InsertError::Store)?;
+
+        let InsertOutcome::Inserted { removed } = outcome else {
+            return Err(InsertError::NewerEntryExists);
+        };
+
         drop(inner);
 
         if let Some(sender) = self.on_insert_sender.read().as_ref() {
@@ -236,7 +261,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             }
         }
 
-        Ok(())
+        Ok(removed)
     }
 
     /// Hashes the given data and inserts it.
@@ -356,6 +381,9 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Validation failure
     #[error("validation failure")]
     Validation(#[from] ValidationFailure),
+    /// A newer entry exists for either this entry's key or a prefix of the key.
+    #[error("A newer entry exists for either this entry's key or a prefix of the key.")]
+    NewerEntryExists,
 }
 
 /// Reason why entry validation failed
@@ -367,15 +395,9 @@ pub enum ValidationFailure {
     /// Entry signature is invalid.
     #[error("Entry signature is invalid")]
     BadSignature,
-    /// Entry timestamp is older than existing entry for the same author and key.
-    #[error("Entry timestamp is older than existing entry for the same author and key.")]
-    OlderThanExisting,
     /// Entry timestamp is too far in the future.
     #[error("Entry timestamp is too far in the future.")]
     TooFarInTheFuture,
-    /// Entry has identical timestamp to existing entry but not a higher hash value.
-    #[error("Entry has identical timestamp to existing entry but not a higher hash value.")]
-    EqualTimestampLowerHash,
 }
 
 /// A signed entry.
@@ -399,11 +421,21 @@ impl PartialOrd for SignedEntry {
 
 impl Ord for SignedEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.entry.id.cmp(&other.entry.id) {
-            Ordering::Less => Ordering::Less,
-            Ordering::Greater => Ordering::Greater,
-            Ordering::Equal => self.entry.content_hash().cmp(&other.entry.content_hash()),
-        }
+        self.entry.cmp(&other.entry)
+    }
+}
+
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id
+            .cmp(&other.id)
+            .then_with(|| self.record.cmp(&other.record))
     }
 }
 
@@ -478,9 +510,14 @@ impl SignedEntry {
 
 impl RangeEntry for SignedEntry {
     type Key = RecordIdentifier;
+    type Value = Record;
 
     fn key(&self) -> &Self::Key {
         &self.entry.id
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.entry.record
     }
 
     fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
@@ -653,7 +690,11 @@ impl Debug for RecordIdentifier {
     }
 }
 
-impl RangeKey for RecordIdentifier {}
+impl RangeKey for RecordIdentifier {
+    fn is_prefix_of(&self, other: &Self) -> bool {
+        self.as_bytes().starts_with(other.as_bytes())
+    }
+}
 
 fn system_time_now() -> u64 {
     SystemTime::now()
@@ -738,14 +779,52 @@ pub struct Record {
     timestamp: u64,
 }
 
+impl RangeValue for Record {}
+
+/// Ordering for entry values.
+///
+/// Compares first the timestamp, then the content hash.
+impl Ord for Record {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timestamp
+            .cmp(&other.timestamp)
+            .then_with(|| self.hash.cmp(&other.hash))
+    }
+}
+
+impl PartialOrd for Record {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Record {
     /// Create a new record.
     pub fn new(hash: Hash, len: u64, timestamp: u64) -> Self {
+        debug_assert!(
+            len != 0 || hash == Hash::EMPTY,
+            "if `len` is 0 then `hash` must be the hash of the empty byte range"
+        );
         Record {
             hash,
             len,
             timestamp,
         }
+    }
+
+    /// Create a tombstone record (empty content)
+    pub fn empty(timestamp: u64) -> Self {
+        Self::new(Hash::EMPTY, 0, timestamp)
+    }
+
+    /// Create a tombstone record with the timestamp set to now.
+    pub fn empty_current() -> Self {
+        Self::new_current(Hash::EMPTY, 0)
+    }
+
+    /// Return `true` if the entry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0 && self.hash == Hash::EMPTY
     }
 
     /// Create a new [`Record`] with the timestamp set to now.
@@ -1138,12 +1217,7 @@ mod tests {
         };
 
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
-        assert!(matches!(
-            res,
-            Err(InsertError::Validation(
-                ValidationFailure::OlderThanExisting
-            ))
-        ));
+        assert!(matches!(res, Err(InsertError::NewerEntryExists)));
         let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
         assert_eq!(res, entry);
 
@@ -1298,6 +1372,60 @@ mod tests {
             ))
         ));
         assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefix_delete_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_prefix_delete(store)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_prefix_delete_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_prefix_delete(store)?;
+        Ok(())
+    }
+
+    fn test_prefix_delete<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let alice = Author::new(&mut rng);
+        let myspace = Namespace::new(&mut rng);
+        let replica = store.new_replica(myspace.clone())?;
+        let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
+        let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
+
+        // sanity checks
+        assert_eq!(
+            get_content_hash(&store, myspace.id(), alice.id(), b"foobar")?,
+            hash1
+        );
+        assert_eq!(
+            get_content_hash(&store, myspace.id(), alice.id(), b"fooboo")?,
+            hash2
+        );
+
+        // delete
+        replica.delete_prefix(b"foo", &alice)?;
+
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
+        assert_eq!(
+            get_content_hash(&store, myspace.id(), alice.id(), b"foo")?,
+            Hash::EMPTY,
+        );
+        assert_eq!(
+            get_entry(&store, myspace.id(), alice.id(), b"foo")?
+                .entry()
+                .is_empty(),
+            true
+        );
 
         Ok(())
     }
