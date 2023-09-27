@@ -15,7 +15,7 @@ use quic_rpc::transport::misc::DummyServerEndpoint;
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::util::runtime;
+use iroh_bytes::{util::runtime, Hash};
 use iroh_sync::{
     store::{self, GetFilter},
     ContentStatus, NamespaceId,
@@ -332,8 +332,15 @@ async fn doc_delete() -> Result<()> {
     assert_latest(&doc, b"foo", b"hi").await;
     let deleted = doc.delete_prefix(author, b"foo".to_vec()).await?;
     assert_eq!(deleted, 1);
+
+    // TODO: This behavior is intended with the current implementation, however it might also be
+    // confusing..?
     let entry = doc.get_one(author, b"foo".to_vec()).await?;
-    assert!(entry.is_none());
+    assert!(entry.is_some());
+    let entry = entry.unwrap();
+    assert_eq!(entry.content_hash(), Hash::EMPTY);
+    assert_eq!(entry.content_len(), 0);
+
     // wait for gc
     // TODO: allow to manually trigger gc
     tokio::time::sleep(Duration::from_millis(200)).await;
