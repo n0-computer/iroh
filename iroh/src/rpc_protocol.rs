@@ -645,7 +645,7 @@ impl RpcMsg<ProviderService> for DocWipeAtPrefixRequest {
     type Response = RpcResult<DocWipeAtPrefixResponse>;
 }
 
-/// Response to [`DocDeleteEntryRequest`]
+/// Response to [`DocWipeAtPrefixRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocWipeAtPrefixResponse {
     /// The number of entries that were removed.

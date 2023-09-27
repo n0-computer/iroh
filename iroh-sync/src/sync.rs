@@ -244,8 +244,9 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
         let outcome = inner.peer.put(entry.clone()).map_err(InsertError::Store)?;
 
-        let InsertOutcome::Inserted { removed } = outcome else {
-            return Err(InsertError::NewerEntryExists);
+        let removed_count = match outcome {
+            InsertOutcome::Inserted { removed } => removed,
+            InsertOutcome::NotInserted => return Err(InsertError::NewerEntryExists),
         };
 
         drop(inner);
@@ -268,7 +269,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             }
         }
 
-        Ok(removed)
+        Ok(removed_count)
     }
 
     /// Hashes the given data and inserts it.
@@ -391,7 +392,7 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// A newer entry exists for either this entry's key or a prefix of the key.
     #[error("A newer entry exists for either this entry's key or a prefix of the key.")]
     NewerEntryExists,
-    /// Attempted to insert an empty entry without calling `delete_prefix`.
+    /// Attempted to insert an empty entry without calling [`Replica::wipe_at_prefix`].
     #[error("Attempted to insert an empty entry")]
     EntryIsEmpty,
 }
