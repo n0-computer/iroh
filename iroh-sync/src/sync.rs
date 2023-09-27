@@ -1411,6 +1411,19 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_insert_empty() -> Result<()> {
+        let store = store::memory::Store::default();
+        let mut rng = rand::thread_rng();
+        let alice = Author::new(&mut rng);
+        let myspace = Namespace::new(&mut rng);
+        let replica = store.new_replica(myspace.clone())?;
+        let hash = Hash::new(b"");
+        let res = replica.insert(b"foo", &alice, hash, 0);
+        assert!(matches!(res, Err(InsertError::EntryIsEmpty)));
+        Ok(())
+    }
+
     fn test_prefix_delete<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
