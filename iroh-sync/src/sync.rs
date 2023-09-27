@@ -172,6 +172,9 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         hash: Hash,
         len: u64,
     ) -> Result<usize, InsertError<S>> {
+        if len == 0 || hash == Hash::EMPTY {
+            return Err(InsertError::EntryIsEmpty);
+        }
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
@@ -384,6 +387,9 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// A newer entry exists for either this entry's key or a prefix of the key.
     #[error("A newer entry exists for either this entry's key or a prefix of the key.")]
     NewerEntryExists,
+    /// Attempted to insert an empty entry without calling `delete_prefix`.
+    #[error("Attempted to insert an empty entry")]
+    EntryIsEmpty,
 }
 
 /// Reason why entry validation failed
