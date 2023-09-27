@@ -1309,11 +1309,11 @@ mod tests {
         sync::<S>(&alice, &bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            bob_hash
+            Some(bob_hash)
         );
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            bob_hash
+            Some(bob_hash)
         );
 
         let alice_value_2 = b"alice2";
@@ -1323,11 +1323,11 @@ mod tests {
         sync::<S>(&alice, &bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            alice_hash_2
+            Some(alice_hash_2)
         );
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            alice_hash_2
+            Some(alice_hash_2)
         );
 
         Ok(())
@@ -1404,11 +1404,11 @@ mod tests {
         // sanity checks
         assert_eq!(
             get_content_hash(&store, myspace.id(), alice.id(), b"foobar")?,
-            hash1
+            Some(hash1)
         );
         assert_eq!(
             get_content_hash(&store, myspace.id(), alice.id(), b"fooboo")?,
-            hash2
+            Some(hash2)
         );
 
         // delete
@@ -1416,13 +1416,7 @@ mod tests {
         assert_eq!(deleted, 2);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
-        assert_eq!(
-            get_content_hash(&store, myspace.id(), alice.id(), b"foo")?,
-            Hash::EMPTY,
-        );
-        assert!(get_entry(&store, myspace.id(), alice.id(), b"foo")?
-            .entry()
-            .is_empty());
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foo")?, None);
 
         Ok(())
     }
@@ -1444,11 +1438,10 @@ mod tests {
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
-    ) -> anyhow::Result<Hash> {
+    ) -> anyhow::Result<Option<Hash>> {
         let hash = store
             .get_one(namespace, author, key)?
-            .unwrap()
-            .content_hash();
+            .map(|e| e.content_hash());
         Ok(hash)
     }
 

@@ -224,6 +224,11 @@ impl super::Store for Store {
             return Ok(None);
         };
         let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
+        // return early if the hash equals the hash of the empty byte range, which we treat as
+        // delete marker (tombstone).
+        if hash == Hash::EMPTY.as_bytes() {
+            return Ok(None);
+        }
 
         let record = Record::new(hash.into(), len, timestamp);
         let id = RecordIdentifier::new(namespace, author, key);
@@ -702,6 +707,9 @@ impl Iterator for RangeIterator<'_> {
 
                 let (namespace, author, key) = next.0.value();
                 let (timestamp, namespace_sig, author_sig, len, hash) = next.1.value();
+                if hash == Hash::EMPTY.as_bytes() {
+                    continue;
+                }
                 let id = RecordIdentifier::new(namespace, author, key);
                 if fields.filter.matches(&id) {
                     let record = Record::new(hash.into(), len, timestamp);

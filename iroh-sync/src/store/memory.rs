@@ -122,8 +122,11 @@ impl super::Store for Store {
         let value = inner
             .get(&namespace)
             .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
-
-        Ok(value.cloned())
+        Ok(match value {
+            None => None,
+            Some(value) if value.is_empty() => None,
+            Some(value) => Some(value.clone()),
+        })
     }
 
     /// Get all content hashes of all replicas in the store.
@@ -292,32 +295,38 @@ impl<'a> Iterator for RangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let records = self.records.get(&self.filter.namespace())?;
-        let entry = match self.filter {
-            GetFilter::All { .. } => records.iter().nth(self.index)?,
-            GetFilter::Key { ref key, .. } => records
-                .iter()
-                .filter(|((_, k), _)| k == key)
-                .nth(self.index)?,
-            GetFilter::Prefix { ref prefix, .. } => records
-                .iter()
-                .filter(|((_, k), _)| k.starts_with(prefix))
-                .nth(self.index)?,
-            GetFilter::Author { ref author, .. } => records
-                .iter()
-                .filter(|((a, _), _)| a == author)
-                .nth(self.index)?,
-            GetFilter::AuthorAndPrefix {
-                ref prefix,
-                ref author,
-                ..
-            } => records
-                .iter()
-                .filter(|((a, k), _)| a == author && k.starts_with(prefix))
-                .nth(self.index)?,
-        };
-        self.index += 1;
-        Some(Ok(entry.1.clone()))
+        loop {
+            let records = self.records.get(&self.filter.namespace())?;
+            let entry = match self.filter {
+                GetFilter::All { .. } => records.iter().nth(self.index)?,
+                GetFilter::Key { ref key, .. } => records
+                    .iter()
+                    .filter(|((_, k), _)| k == key)
+                    .nth(self.index)?,
+                GetFilter::Prefix { ref prefix, .. } => records
+                    .iter()
+                    .filter(|((_, k), _)| k.starts_with(prefix))
+                    .nth(self.index)?,
+                GetFilter::Author { ref author, .. } => records
+                    .iter()
+                    .filter(|((a, _), _)| a == author)
+                    .nth(self.index)?,
+                GetFilter::AuthorAndPrefix {
+                    ref prefix,
+                    ref author,
+                    ..
+                } => records
+                    .iter()
+                    .filter(|((a, k), _)| a == author && k.starts_with(prefix))
+                    .nth(self.index)?,
+            };
+            self.index += 1;
+            if entry.1.is_empty() {
+                continue;
+            } else {
+                return Some(Ok(entry.1.clone()));
+            }
+        }
     }
 }
 
