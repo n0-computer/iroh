@@ -52,7 +52,7 @@ const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 #[derive(Debug)]
 pub(super) struct Endpoint {
     pub(super) id: usize,
-    conn_sender: mpsc::Sender<ActorMessage>,
+    conn_sender: mpsc::UnboundedSender<ActorMessage>,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
     /// Peer public key (for UDP + DERP)
@@ -89,7 +89,7 @@ pub struct PendingCliPing {
 
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) msock_sender: mpsc::Sender<ActorMessage>,
+    pub(super) msock_sender: mpsc::UnboundedSender<ActorMessage>,
     pub(super) public_key: PublicKey,
     pub(super) derp_region: Option<u16>,
 }
@@ -397,7 +397,6 @@ impl Endpoint {
                     dst_key: pub_key,
                     tx_id,
                 })
-                .await
                 .map(|_| true)
                 .unwrap_or_default();
         }
@@ -436,7 +435,6 @@ impl Endpoint {
         let timer = Timer::after(PING_TIMEOUT_DURATION, async move {
             sender
                 .send(ActorMessage::EndpointPingExpired(id, txid))
-                .await
                 .ok();
         });
         self.sent_ping.insert(
@@ -535,7 +533,6 @@ impl Endpoint {
                         derp_region,
                         endpoint_id: id,
                     })
-                    .await
                 {
                     warn!("failed to send enqueue call me maybe: {:?}", err);
                 }
@@ -936,7 +933,10 @@ impl Endpoint {
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_full_ping(&now) {
             debug!("send pings all");
-            return self.send_pings(now, true).await;
+            println!("send pings");
+            let res = self.send_pings(now, true).await;
+            println!("send pings end");
+            return res;
         }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
@@ -954,8 +954,10 @@ impl Endpoint {
                     "stayin alive ping for {}: {:?} {:?}",
                     udp_addr, elapsed, now
                 );
+                println!("start ping");
                 self.start_ping(SendAddr::Udp(udp_addr), now, DiscoPingPurpose::StayinAlive)
                     .await;
+                println!("start ping end");
             }
         }
     }
@@ -1055,7 +1057,7 @@ impl PeerMap {
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(
         path: impl AsRef<Path>,
-        msock_sender: mpsc::Sender<ActorMessage>,
+        msock_sender: mpsc::UnboundedSender<ActorMessage>,
     ) -> anyhow::Result<Self> {
         let mut me = PeerMap::default();
         let contents = std::fs::read(path)?;
@@ -1070,7 +1072,7 @@ impl PeerMap {
     }
 
     /// Add the contact information for a peer.
-    pub fn add_peer_addr(&mut self, peer_addr: PeerAddr, msock_sender: mpsc::Sender<ActorMessage>) {
+    pub fn add_peer_addr(&mut self, peer_addr: PeerAddr, msock_sender: mpsc::UnboundedSender<ActorMessage>) {
         let PeerAddr { peer_id, info } = peer_addr;
         if self.endpoint_for_node_key(&peer_id).is_none() {
             info!(%peer_id, "inserting peer's endpoint in PeerMap");
@@ -1431,7 +1433,7 @@ mod tests {
                     recent_pong: 0,
                 },
             )]);
-            let (send, _) = mpsc::channel(1);
+            let (send, _) = mpsc::unbounded_channel();
             let key = SecretKey::generate();
             (
                 Endpoint {
@@ -1477,7 +1479,7 @@ mod tests {
                     recent_pong: 0,
                 },
             )]);
-            let (send, _) = mpsc::channel(1);
+            let (send, _) = mpsc::unbounded_channel();
             let key = SecretKey::generate();
             Endpoint {
                 id: 1,
@@ -1502,7 +1504,7 @@ mod tests {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
             let now = Instant::now();
             let endpoint_state = HashMap::new();
-            let (send, _) = mpsc::channel(1);
+            let (send, _) = mpsc::unbounded_channel();
             let key = SecretKey::generate();
             Endpoint {
                 id: 2,
@@ -1563,7 +1565,7 @@ mod tests {
                     },
                 ),
             ]);
-            let (send, _) = mpsc::channel(1);
+            let (send, _) = mpsc::unbounded_channel();
             let key = SecretKey::generate();
             (
                 Endpoint {
@@ -1657,7 +1659,7 @@ mod tests {
     #[tokio::test]
     async fn load_save_peer_data() {
         let mut peer_map = PeerMap::default();
-        let (tx, _rx) = mpsc::channel(1);
+        let (tx, _rx) = mpsc::unbounded_channel();
 
         let peer_a = SecretKey::generate().public();
         let peer_b = SecretKey::generate().public();

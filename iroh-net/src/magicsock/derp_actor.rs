@@ -76,11 +76,11 @@ pub(super) struct DerpActor {
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
     derp_route: HashMap<PublicKey, DerpRoute>,
-    msg_sender: mpsc::Sender<ActorMessage>,
+    msg_sender: mpsc::UnboundedSender<ActorMessage>,
 }
 
 impl DerpActor {
-    pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
+    pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::UnboundedSender<ActorMessage>) -> Self {
         DerpActor {
             conn,
             active_derp: HashMap::default(),
@@ -89,7 +89,7 @@ impl DerpActor {
         }
     }
 
-    pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<DerpActorMessage>) {
+    pub(super) async fn run(mut self, mut receiver: mpsc::UnboundedReceiver<DerpActorMessage>) {
         let mut cleanup_timer = time::interval_at(
             time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
             DERP_CLEAN_STALE_INTERVAL,
@@ -139,7 +139,7 @@ impl DerpActor {
                         }
                         ReadResult::Continue => {}
                         ReadResult::Yield(read_result) => {
-                            self.msg_sender.send(ActorMessage::ReceiveDerp(read_result)).await.ok();
+                            self.msg_sender.send(ActorMessage::ReceiveDerp(read_result)).ok();
                         }
                     }
                 }
@@ -345,7 +345,6 @@ impl DerpActor {
                             region_id,
                             "rebind-ping-fail",
                         ))
-                        .await
                         .unwrap();
                     return;
                 }

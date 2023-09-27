@@ -81,7 +81,7 @@ impl UdpActor {
 
     pub(super) async fn run(
         mut self,
-        mut msg_receiver: mpsc::Receiver<UdpActorMessage>,
+        mut msg_receiver: mpsc::UnboundedReceiver<UdpActorMessage>,
         net_checker: netcheck::Client,
         ip_sender: mpsc::Sender<IpPacket>,
     ) {
