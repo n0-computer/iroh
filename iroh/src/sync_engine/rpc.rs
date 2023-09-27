@@ -13,12 +13,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDeletePrefixRequest, DocDeletePrefixResponse,
-        DocGetManyRequest, DocGetManyResponse, DocGetOneRequest, DocGetOneResponse,
-        DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest,
-        DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-        DocStartSyncRequest, DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse,
-        DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
+        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
+        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
+        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
+        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocTicket, DocWipeAtPrefixRequest, DocWipeAtPrefixResponse, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -190,11 +190,11 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocSetResponse { entry })
     }
 
-    pub async fn doc_delete_prefix(
+    pub async fn doc_wipe_at_prefix(
         &self,
-        req: DocDeletePrefixRequest,
-    ) -> RpcResult<DocDeletePrefixResponse> {
-        let DocDeletePrefixRequest {
+        req: DocWipeAtPrefixRequest,
+    ) -> RpcResult<DocWipeAtPrefixResponse> {
+        let DocWipeAtPrefixRequest {
             doc_id,
             author_id,
             prefix,
@@ -202,9 +202,9 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
         let removed = replica
-            .delete_prefix(prefix, &author)
+            .wipe_at_prefix(prefix, &author)
             .map_err(anyhow::Error::from)?;
-        Ok(DocDeletePrefixResponse { removed })
+        Ok(DocWipeAtPrefixResponse { removed })
     }
 
     pub fn doc_get_many(

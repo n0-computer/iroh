@@ -182,12 +182,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
-    /// Delete entries matching a prefix.
+    /// Wipe entries that match the given `author` and key `prefix`.
     ///
-    /// Removes all entries that match `author` and whose key starts with `prefix`.
+    /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
+    /// entries whose key starts with or is equal to the given `prefix`.
     ///
     /// Returns the number of entries removed as a consequence of this insertion,
-    pub fn delete_prefix(
+    pub fn wipe_at_prefix(
         &self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
@@ -1418,7 +1419,7 @@ mod tests {
         );
 
         // delete
-        let deleted = replica.delete_prefix(b"foo", &alice)?;
+        let deleted = replica.wipe_at_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);

@@ -31,9 +31,10 @@ use crate::rpc_protocol::{
     DocCreateRequest, DocDeleteEntryRequest, DocDeletePrefixRequest, DocDeletePrefixResponse,
     DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest,
     DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
-    DocTicket, GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    DocTicket, DocWipeAtPrefixRequest, DocWipeAtPrefixResponse, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -441,21 +442,22 @@ where
             .await
     }
 
-    /// Delete entries matching a prefix.
+    /// Wipe entries that match the given `author` and key `prefix`.
     ///
-    /// Removes all entries that match `author` and whose key starts with `prefix`.
+    /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
+    /// entries whose key starts with or is equal to the given `prefix`.
     ///
     /// Returns the number of entries removed as a consequence of this insertion,
-    pub async fn delete_prefix(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+    pub async fn wipe_at_prefix(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
         let res = self
             .rpc
-            .rpc(DocDeletePrefixRequest {
+            .rpc(DocWipeAtPrefixRequest {
                 doc_id: self.id,
                 author_id,
                 prefix,
             })
             .await??;
-        let DocDeletePrefixResponse { removed } = res;
+        let DocWipeAtPrefixResponse { removed } = res;
         Ok(removed)
     }
 
