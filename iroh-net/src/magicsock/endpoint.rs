@@ -119,7 +119,7 @@ impl Endpoint {
             endpoint_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            last_active: options.active.then(|| Instant::now()),
+            last_active: options.active.then(Instant::now),
         }
     }
 
