@@ -76,8 +76,8 @@ pub(super) struct Endpoint {
 
     sent_ping: HashMap<stun::TransactionId, SentPing>,
 
-    /// Last time this endpoint was used.
-    last_active: Instant,
+    /// Last time this endpoint was used. If set to `None` it is inactive.
+    last_active: Option<Instant>,
 }
 
 #[derive(derive_more::Debug)]
@@ -117,7 +117,7 @@ impl Endpoint {
             endpoint_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            last_active: Instant::now(),
+            last_active: None,
         }
     }
 
@@ -923,13 +923,21 @@ impl Endpoint {
         self.endpoint_state.get(addr).and_then(|ep| ep.last_ping)
     }
 
+    /// Checks if this `Endpoint` is currently actively being used.
+    fn is_active(&self, now: &Instant) -> bool {
+        match self.last_active {
+            Some(last_active) => now.duration_since(last_active) <= SESSION_ACTIVE_TIMEOUT,
+            None => false,
+        }
+    }
+
     /// Send a heartbeat to the peer to keep the connection alive, or trigger a full ping
     /// if necessary.
     pub(super) async fn stayin_alive(&mut self) {
         trace!("stayin_alive");
         let now = Instant::now();
-        if now.duration_since(self.last_active) > SESSION_ACTIVE_TIMEOUT {
-            debug!("skipping stayin alive: session is inactive");
+        if !self.is_active(&now) {
+            trace!("skipping stayin alive: session is inactive");
             return;
         }
 
@@ -962,7 +970,7 @@ impl Endpoint {
 
     pub(crate) async fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>) {
         let now = Instant::now();
-        self.last_active = now;
+        self.last_active.replace(now);
         let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
 
         // Trigger a round of pings if we haven't had any full pings yet.
@@ -1451,7 +1459,7 @@ mod tests {
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
-                    last_active: now,
+                    last_active: Some(now),
                 },
                 socket_addr,
             )
@@ -1493,7 +1501,7 @@ mod tests {
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
-                last_active: now,
+                last_active: Some(now),
             }
         };
 
@@ -1518,7 +1526,7 @@ mod tests {
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
-                last_active: now,
+                last_active: Some(now),
             }
         };
 
@@ -1583,7 +1591,7 @@ mod tests {
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
-                    last_active: now,
+                    last_active: Some(now),
                 },
                 socket_addr,
             )
