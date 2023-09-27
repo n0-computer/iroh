@@ -4,6 +4,7 @@ use std::future::Future;
 
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, PeerAddr};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::{
@@ -24,18 +25,25 @@ pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 mod codec;
 
 /// Connect to a peer and sync a replica
+///
+/// With `cancel` you may abort the request during the connection phase. After having connected to
+/// the peer, `cancel` does not have any effect anymore.
 pub async fn connect_and_sync<S: store::Store>(
     endpoint: &MagicEndpoint,
     doc: &Replica<S::Instance>,
     peer: PeerAddr,
+    cancel: CancellationToken,
 ) -> Result<SyncFinished, ConnectError> {
     let peer_id = peer.peer_id;
     debug!(?peer_id, "sync[dial]: connect");
     let namespace = doc.namespace();
-    let connection = endpoint
-        .connect(peer, SYNC_ALPN)
-        .await
-        .map_err(ConnectError::connect)?;
+    let connection = tokio::select! {
+        biased;
+        _  = cancel.cancelled() => return Err(ConnectError::Cancelled),
+        res = endpoint.connect(peer, SYNC_ALPN) => {
+            res.map_err(ConnectError::connect)?
+        }
+    };
     debug!(?peer_id, ?namespace, "sync[dial]: connected");
     let (mut send_stream, mut recv_stream) =
         connection.open_bi().await.map_err(ConnectError::connect)?;
