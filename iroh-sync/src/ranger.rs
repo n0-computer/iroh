@@ -39,7 +39,7 @@ pub trait RangeEntry: Debug + Clone {
 }
 
 /// A trait constraining types that are valid entry keys.
-pub trait RangeKey: Sized + Debug + Ord + PartialEq + Default + Clone + 'static {
+pub trait RangeKey: Sized + Debug + Ord + PartialEq + Clone + 'static {
     /// Returns `true` if `self` is a prefix of `other`.
     fn is_prefix_of(&self, other: &Self) -> bool;
 
@@ -674,7 +674,7 @@ mod tests {
 
     impl<K, V> Store<(K, V)> for SimpleStore<K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: RangeValue,
     {
         type Error = Infallible;
@@ -792,7 +792,7 @@ mod tests {
 
     impl<'a, K, V> Iterator for SimpleRangeIterator<'a, K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: Clone,
     {
         type Item = Result<(K, V), Infallible>;
@@ -1068,7 +1068,7 @@ mod tests {
 
     struct SyncResult<K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: RangeValue,
     {
         alice: Peer<(K, V), SimpleStore<K, V>>,
@@ -1079,7 +1079,7 @@ mod tests {
 
     impl<K, V> SyncResult<K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: RangeValue,
     {
         fn print_messages(&self) {
@@ -1168,7 +1168,7 @@ mod tests {
 
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: RangeValue,
     {
         let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
@@ -1193,7 +1193,7 @@ mod tests {
         bob_validate_cb: F2,
     ) -> SyncResult<K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: RangeValue,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
@@ -1272,7 +1272,7 @@ mod tests {
         max_rounds: usize,
     ) -> SyncResult<K, V>
     where
-        K: RangeKey,
+        K: RangeKey + Default,
         V: RangeValue,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
