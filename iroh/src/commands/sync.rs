@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
@@ -6,10 +6,10 @@ use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
     client::quic::{Doc, Iroh},
-    rpc_protocol::{DocTicket, ShareMode},
+    rpc_protocol::{DocTicket, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
 };
-use iroh_bytes::util::SetTagOption;
+use iroh_bytes::util::{SetTagOption, Tag};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
 use crate::{commands::add::aggregate_add_response, config::ConsoleEnv};
@@ -106,16 +106,16 @@ pub enum DocCommands {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `doc switch`.
+        /// Within the Iroh console, the active document can also be set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         /// Author of the entry.
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
-        /// Within the Iroh console, the active author can also set with `author switch`.
+        /// Within the Iroh console, the active author can also be set with `author switch`.
         #[clap(short, long)]
         author: Option<AuthorId>,
-        /// Prefex to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
+        /// Prefix to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
         #[clap(long)]
         prefix: Option<String>,
         /// Path to a local file or directory to import
@@ -125,7 +125,7 @@ pub enum DocCommands {
         path: String,
         /// If true, don't copy the file into iroh, reference the existing file instead
         ///
-        /// Moving a file imported with in-place will result in data corruption
+        /// Moving a file imported with `in-place` will result in data corruption
         #[clap(short, long)]
         in_place: bool,
     },
@@ -134,7 +134,7 @@ pub enum DocCommands {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
-        /// Within the Iroh console, the active document can also set with `doc switch`.
+        /// Within the Iroh console, the active document can also be set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string)
@@ -284,6 +284,7 @@ impl DocCommands {
                     prefix.pop();
                 }
                 let root = canonicalize_path(&path)?.canonicalize()?;
+                let tag = tag_from_file_name(&root)?;
                 let files = walkdir::WalkDir::new(&root).into_iter();
                 // TODO: parallelize
                 let mut counts = (0, 0);
@@ -303,19 +304,15 @@ impl DocCommands {
 
                         let stream = iroh
                             .blobs
-                            // TODO: what should the name be
-                            .add_from_path(file.path().into(), in_place, SetTagOption::Auto)
+                            .add_from_path(
+                                file.path().into(),
+                                in_place,
+                                SetTagOption::Named(tag.clone()),
+                                WrapOption::NoWrap,
+                            )
                             .await?;
-                        // TODO(b5): horrible hack b/c add_from_path creates a collection
-                        // and we really just want the raw blob
-                        let (_, entries) = aggregate_add_response(stream).await?;
-                        let hash = entries[0].hash;
+                        let (hash, _, entries) = aggregate_add_response(stream).await?;
                         doc.set_hash(author, key.into(), hash).await?;
-                        // println!(
-                        //     "> imported {relative}: {} ({})",
-                        //     fmt_hash(hash),
-                        //     HumanBytes(len)
-                        // );
                         counts.0 += 1;
                         counts.1 += entries[0].size;
                     }
@@ -479,4 +476,15 @@ async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(shellexpand::tilde(&path).to_string());
     Ok(path)
+}
+
+fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
+    match path.file_name() {
+        Some(name) => name
+            .to_os_string()
+            .into_string()
+            .map(|t| t.into())
+            .map_err(|e| anyhow!("{e:?} contains invalid Unicode")),
+        None => bail!("the given `path` does not have a proper directory or file name"),
+    }
 }
