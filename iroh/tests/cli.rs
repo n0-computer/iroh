@@ -233,7 +233,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     make_rand_file(100000, &file2)?;
     make_rand_file(5000, &file3)?;
     // leave the provider running for the entire test
-    let provider = make_provider_in(&src_iroh_data_dir, &src, Input::Path, None, None)?;
+    let provider = make_provider_in(&src_iroh_data_dir, &src, Input::Path, false, None, None)?;
     let src_db_dir = src_iroh_data_dir.join(BAO_DIR);
     let count = count_input_files(&src);
     let ticket = match_provide_output(&provider, count)?;
@@ -344,6 +344,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
                 "--rpc-port",
                 "disabled",
                 path.to_str().unwrap(),
+                "--wrap",
             ],
         )
         .env("IROH_DATA_DIR", &iroh_data_dir)
@@ -397,7 +398,13 @@ fn cli_provide_addresses() -> Result<()> {
     let path = dir.join("foo");
     make_rand_file(1000, &path)?;
 
-    let mut provider = spawn_provider(&path, Input::Path, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
+    let mut provider = spawn_provider(
+        &path,
+        Input::Path,
+        true,
+        Some("127.0.0.1:4333"),
+        Some(RPC_PORT),
+    )?;
     // wait for the provider to start
     let _ticket = match_provide_output(&mut provider, 1)?;
 
@@ -459,25 +466,27 @@ fn make_provider_in(
     iroh_data_dir: &Path,
     path: &Path,
     input: Input,
+    wrap: bool,
     addr: Option<&str>,
     rpc_port: Option<&str>,
 ) -> Result<ReaderHandle> {
+    let mut args = vec![
+        "start",
+        path.to_str().unwrap(),
+        "--addr",
+        addr.unwrap_or(ADDR),
+        "--rpc-port",
+        rpc_port.unwrap_or("disabled"),
+    ];
+    if wrap {
+        args.push("--wrap");
+    }
     // spawn a provider & optionally provide from stdin
-    let res = cmd(
-        iroh_bin(),
-        [
-            "start",
-            path.to_str().unwrap(),
-            "--addr",
-            addr.unwrap_or(ADDR),
-            "--rpc-port",
-            rpc_port.unwrap_or("disabled"),
-        ],
-    )
-    // .stderr_null()
-    // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
-    // .env("RUST_LOG", "iroh_bytes=debug,iroh_net=warn,iroh=debug,warn")
-    .env("IROH_DATA_DIR", iroh_data_dir);
+    let res = cmd(iroh_bin(), &args)
+        // .stderr_null()
+        // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
+        // .env("RUST_LOG", "iroh_bytes=debug,iroh_net=warn,iroh=debug,warn")
+        .env("IROH_DATA_DIR", iroh_data_dir);
 
     let provider = match input {
         Input::Stdin => res.stdin_path(path),
@@ -493,12 +502,13 @@ fn make_provider_in(
 fn spawn_provider(
     path: &Path,
     input: Input,
+    wrap: bool,
     addr: Option<&str>,
     rpc_port: Option<&str>,
 ) -> Result<ReaderHandle> {
     let home = testdir!();
     let iroh_data_dir = home.join("iroh_data_dir");
-    make_provider_in(&iroh_data_dir, path, input, addr, rpc_port)
+    make_provider_in(&iroh_data_dir, path, input, wrap, addr, rpc_port)
 }
 
 /// Count the number of files in the given path, for matching the output text in
@@ -553,7 +563,8 @@ fn make_get_cmd(ticket: &str, out: Option<PathBuf>) -> duct::Expression {
 /// the "provided" content.
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
     let num_blobs = count_input_files(path);
-    let mut provider = spawn_provider(path, input, None, None)?;
+    let wrap = !path.is_dir();
+    let mut provider = spawn_provider(path, input, wrap, None, None)?;
 
     // test provide output & scrape the ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs)?;
@@ -611,7 +622,7 @@ fn test_provide_get_loop_single(
         1
     };
 
-    let mut provider = spawn_provider(path, input, None, None)?;
+    let mut provider = spawn_provider(path, input, true, None, None)?;
     // test provide output & get all in one ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs)?;
     let ticket = Ticket::from_str(&ticket).unwrap();

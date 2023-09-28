@@ -7,6 +7,8 @@ use std::{
 use anyhow::{bail, Context};
 use walkdir::WalkDir;
 
+use crate::rpc_protocol::WrapOption;
+
 /// A data source
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct DataSource {
@@ -56,41 +58,51 @@ impl From<&std::path::Path> for DataSource {
 }
 
 /// Create data sources from a path.
-pub fn scan_path(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
-    Ok(if root.is_dir() {
-        let files = WalkDir::new(&root).into_iter();
-        let data_sources = files
-            .map(|entry| {
-                let entry = entry?;
-                let root = root.clone();
-                if !entry.file_type().is_file() {
-                    // Skip symlinks. Directories are handled by WalkDir.
-                    return Ok(None);
-                }
-                let path = entry.into_path();
-                let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource { name, path }))
-            })
-            .filter_map(Result::transpose);
-        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
-        data_sources
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?
+pub fn scan_path(path: PathBuf, wrap: WrapOption) -> anyhow::Result<Vec<DataSource>> {
+    if path.is_dir() {
+        scan_dir(path, wrap)
     } else {
-        // A single file, use the file name as the name of the blob.
-        vec![scan_file(root)?]
-    })
+        let name = match wrap {
+            WrapOption::NoWrap => bail!("Cannot scan a file without wrapping"),
+            WrapOption::Wrap { name: None } => file_name(&path)?,
+            WrapOption::Wrap { name: Some(name) } => name,
+        };
+        Ok(vec![DataSource { name, path }])
+    }
 }
 
-/// Create a single file data source from a path to a file.
-pub fn scan_file(path: PathBuf) -> anyhow::Result<DataSource> {
-    if !path.is_file() {
-        bail!("Expected {} to be a file", path.to_string_lossy());
+fn file_name(path: &Path) -> anyhow::Result<String> {
+    canonicalize_path(path.file_name().context("path is invalid")?)
+}
+
+/// Create data sources from a directory.
+pub fn scan_dir(root: PathBuf, wrap: WrapOption) -> anyhow::Result<Vec<DataSource>> {
+    if !root.is_dir() {
+        bail!("Expected {} to be a file", root.to_string_lossy());
     }
-    Ok(DataSource {
-        name: canonicalize_path(path.file_name().context("path must be a file")?)?,
-        path,
-    })
+    let prefix = match wrap {
+        WrapOption::NoWrap => None,
+        WrapOption::Wrap { name: None } => Some(file_name(&root)?),
+        WrapOption::Wrap { name: Some(name) } => Some(name),
+    };
+    let files = WalkDir::new(&root).into_iter();
+    let data_sources = files
+        .map(|entry| {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                // Skip symlinks. Directories are handled by WalkDir.
+                return Ok(None);
+            }
+            let path = entry.into_path();
+            let mut name = canonicalize_path(path.strip_prefix(&root)?)?;
+            if let Some(prefix) = &prefix {
+                name = format!("{prefix}/{name}");
+            }
+            anyhow::Ok(Some(DataSource { name, path }))
+        })
+        .filter_map(Result::transpose);
+    let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
+    data_sources.into_iter().collect::<anyhow::Result<Vec<_>>>()
 }
 
 /// This function converts a canonicalized relative path to a string, returning

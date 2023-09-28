@@ -1180,7 +1180,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use crate::collection::{Blob, Collection};
+        use crate::{
+            collection::{Blob, Collection},
+            rpc_protocol::WrapOption,
+        };
         use futures::TryStreamExt;
         use iroh_bytes::baomap::{ImportMode, ImportProgress, TempTag};
         use std::{collections::BTreeMap, sync::Mutex};
@@ -1207,19 +1210,29 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
             _ => None,
         });
-        let root = msg.path;
-        // Check that the path is absolute, and that the variant refers to to correct kind (file or
-        // directory)
-        root.validate()?;
-        let mode = if msg.in_place {
-            ImportMode::TryReference
-        } else {
-            ImportMode::Copy
+        let BlobAddPathRequest {
+            wrap,
+            path: root,
+            in_place,
+            tag,
+        } = msg;
+        // Check that the path is absolute and exists.
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
+        anyhow::ensure!(root.exists(), "path must exist");
+
+        let import_mode = match in_place {
+            true => ImportMode::TryReference,
+            false => ImportMode::Copy,
         };
 
-        let temp_tag = if root.creates_collection() {
+        let create_collection = match wrap {
+            WrapOption::Wrap { .. } => true,
+            WrapOption::NoWrap => root.is_dir(),
+        };
+
+        let temp_tag = if create_collection {
             // import all files below root recursively
-            let data_sources = crate::util::fs::scan_path(root.path().to_owned())?;
+            let data_sources = crate::util::fs::scan_path(root, wrap)?;
             const IO_PARALLELISM: usize = 4;
             let result: Vec<(Blob, u64, TempTag)> = futures::stream::iter(data_sources)
                 .map(|source| {
@@ -1230,15 +1243,13 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                         let (tag, size) = db
                             .import(
                                 source.path().to_owned(),
-                                mode,
+                                import_mode,
                                 BlobFormat::RAW,
                                 import_progress,
                             )
                             .await?;
-                        let blob = Blob {
-                            hash: *tag.hash(),
-                            name,
-                        };
+                        let hash = *tag.hash();
+                        let blob = Blob { hash, name };
                         io::Result::Ok((blob, size, tag))
                     }
                 })
@@ -1258,23 +1269,17 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 .await?
         } else {
             // import a single file
-            let data_source = crate::util::fs::scan_file(root.path().to_owned())?;
             let (tag, _size) = self
                 .inner
                 .db
-                .import(
-                    data_source.path().to_owned(),
-                    mode,
-                    BlobFormat::RAW,
-                    import_progress,
-                )
+                .import(root, import_mode, BlobFormat::RAW, import_progress)
                 .await?;
             tag
         };
 
         let hash_and_format = temp_tag.inner();
         let HashAndFormat(hash, format) = *hash_and_format;
-        let tag = match msg.tag {
+        let tag = match tag {
             SetTagOption::Named(tag) => {
                 self.inner
                     .db
@@ -1665,8 +1670,9 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::path::Path;
 
+    use crate::rpc_protocol::WrapOption;
+
     use super::*;
-    use crate::rpc_protocol::BlobAddPath;
 
     /// Pick up the tokio runtime from the thread local and add a
     /// thread per core runtime.
@@ -1728,12 +1734,10 @@ mod tests {
             let mut stream = node
                 .controller()
                 .server_streaming(BlobAddPathRequest {
-                    path: BlobAddPath::File {
-                        path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
-                        wrap_in_collection: false,
-                    },
+                    path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                     in_place: false,
                     tag: SetTagOption::Auto,
+                    wrap: WrapOption::NoWrap,
                 })
                 .await?;
 

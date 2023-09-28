@@ -7,13 +7,7 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{
-    collections::HashMap,
-    fmt,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -53,62 +47,26 @@ pub struct BlobAddPathRequest {
     /// This should be an absolute path valid for the file system on which
     /// the node runs. Usually the cli will run on the same machine as the
     /// node, so this should be an absolute path on the cli machine.
-    pub path: BlobAddPath,
+    pub path: PathBuf,
     /// True if the provider can assume that the data will not change, so it
     /// can be shared in place.
     pub in_place: bool,
     /// Tag to tag the data with.
     pub tag: SetTagOption,
+    /// Whether to wrap the added data in a collection
+    pub wrap: WrapOption,
 }
 
-/// The type of path for [`BlobAddPathRequest`]
+/// Whether to wrap the added data in a collection.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum BlobAddPath {
-    /// Add a single file
-    File {
-        /// Path to the file.
-        path: PathBuf,
-        /// If `true` create a collection with the single file in it,
-        /// if `false` only import the single blob.
-        wrap_in_collection: bool,
+pub enum WrapOption {
+    /// Do not wrap the file or directory.
+    NoWrap,
+    /// Wrap the file or directory in a colletion.
+    Wrap {
+        /// Override the filename in the wrapping collection.
+        name: Option<String>,
     },
-    /// Add a directory recursively.
-    Directory {
-        /// The path to the directory.
-        path: PathBuf,
-    },
-}
-
-impl BlobAddPath {
-    /// Path to the file or directory.
-    pub fn path(&self) -> &Path {
-        match self {
-            BlobAddPath::File { path, .. } => path.as_path(),
-            BlobAddPath::Directory { path } => path.as_path(),
-        }
-    }
-    /// Whether this will create a collection.
-    pub fn creates_collection(&self) -> bool {
-        match self {
-            BlobAddPath::File {
-                wrap_in_collection, ..
-            } => *wrap_in_collection,
-            BlobAddPath::Directory { .. } => true,
-        }
-    }
-
-    /// Check that the path is absolute and points to a valid file or directory.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        let path = self.path();
-        anyhow::ensure!(path.is_absolute(), "path must be absolute");
-        match self {
-            BlobAddPath::File { .. } => anyhow::ensure!(path.is_file(), "path must be a File"),
-            BlobAddPath::Directory { path } => {
-                anyhow::ensure!(path.is_dir(), "path must be a Directory")
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {

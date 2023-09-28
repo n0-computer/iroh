@@ -14,23 +14,16 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{
-    baomap::Store as BaoStore,
-    protocol::RequestToken,
-    util::{runtime, SetTagOption},
-};
+use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, key::SecretKey};
 use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::{
-    commands::add::{self, BlobSource, TicketOption},
-    config::IrohPaths,
-};
+use crate::{commands::add, config::IrohPaths};
 
-use super::{MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
+use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 
 #[derive(Debug)]
 pub struct StartOptions {
@@ -41,14 +34,8 @@ pub struct StartOptions {
     pub derp_map: Option<DerpMap>,
 }
 
-pub async fn run(
-    rt: &runtime::Handle,
-    path: Option<PathBuf>,
-    in_place: bool,
-    tag: SetTagOption,
-    opts: StartOptions,
-) -> Result<()> {
-    if let Some(ref path) = path {
+pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOptions) -> Result<()> {
+    if let Some(ref path) = add_opts.path {
         ensure!(
             path.exists(),
             "Cannot provide nonexistent path: {}",
@@ -64,18 +51,15 @@ pub async fn run(
     let node = start_daemon_node(rt, opts).await?;
     let client = node.client();
 
-    let source = BlobSource::from_path_or_stdin(path, in_place, true);
-    let ticket = TicketOption::Print(token);
-    // task that will add data to the provider, either from a file or from stdin
     let add_task = {
         tokio::spawn(
             async move {
-                if let Err(e) = add::run(&client, source, tag, ticket).await {
+                if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
                     eprintln!("Failed to add data: {}", e);
                     std::process::exit(1);
                 }
             }
-            .instrument(info_span!("provider-add")),
+            .instrument(info_span!("node-add")),
         )
     };
 

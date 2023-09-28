@@ -27,7 +27,6 @@ use iroh_net::{
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::add::{BlobSource, TicketOption};
 use self::node::{RpcPort, StartOptions};
 use self::sync::{AuthorCommands, DocCommands};
 
@@ -140,15 +139,6 @@ pub enum FullCommands {
     /// If PATH is a folder all files in that folder will be served.  If no PATH is
     /// specified reads from STDIN.
     Start {
-        /// Path to initial file or directory to provide
-        path: Option<PathBuf>,
-        /// Serve data in place
-        ///
-        /// Set this to true only if you are sure that the data in its current location
-        /// will not change.
-        #[clap(long, default_value_t = false)]
-        in_place: bool,
-        #[clap(long, short)]
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
@@ -160,9 +150,10 @@ pub enum FullCommands {
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
-        /// Tag to tag the data with
-        #[clap(long)]
-        tag: Option<String>,
+
+        /// Add data when starting the node
+        #[clap(flatten)]
+        add_options: BlobAddOptions,
     },
     /// Fetch data from a provider
     ///
@@ -217,27 +208,18 @@ impl FullCommands {
     pub async fn run(self, rt: &runtime::Handle, config: &NodeConfig, keylog: bool) -> Result<()> {
         match self {
             FullCommands::Start {
-                path,
-                in_place,
                 addr,
                 rpc_port,
                 request_token,
-                tag,
+                add_options,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
                     Some(RequestTokenOptions::Token(token)) => Some(token),
                     None => None,
                 };
-                let tag = match tag {
-                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
-                    None => SetTagOption::Auto,
-                };
                 self::node::run(
                     rt,
-                    path,
-                    in_place,
-                    tag,
                     StartOptions {
                         addr,
                         rpc_port,
@@ -245,6 +227,7 @@ impl FullCommands {
                         request_token,
                         derp_map: config.derp_map()?,
                     },
+                    add_options,
                 )
                 .await
             }
@@ -438,29 +421,59 @@ impl RpcCommands {
     }
 }
 
+/// Options for the `blob add` command.
+#[derive(clap::Args, Debug, Clone)]
+pub struct BlobAddOptions {
+    /// The path to the file or folder to add.
+    ///
+    /// If no path is specified, data will be read from STDIN.
+    path: Option<PathBuf>,
+
+    /// Add in place
+    ///
+    /// Set this to true only if you are sure that the data in its current location
+    /// will not change.
+    #[clap(long, default_value_t = false)]
+    in_place: bool,
+
+    /// Tag to tag the data with.
+    #[clap(long)]
+    tag: Option<String>,
+
+    /// Wrap the added file or directory in a collection.
+    ///
+    /// When adding a single file, without `wrap` the file is added as a single blob and no
+    /// collection is created. When enabling `wrap` it also creates a collection with a
+    /// single entry, where the entry's name is the filename and the entry's content is blob.
+    ///
+    /// When adding a directory, a collection is always created.
+    /// Without `wrap`, the collection directly contains the entries from the added direcory.
+    /// With `wrap`, the directory will be nested so that all names in the collection are
+    /// prefixed with the directory name, thus preserving the name of the directory.
+    ///
+    /// When adding content from STDIN and setting `wrap` you also need to set `filename` to name
+    /// the entry pointing to the content from STDIN.
+    #[clap(long, default_value_t = false)]
+    wrap: bool,
+
+    /// Override the filename used for the entry in the created collection.
+    ///
+    /// Only supported `wrap` is set.
+    /// Required when adding content from STDIN and setting `wrap`.
+    #[clap(long)]
+    filename: Option<String>,
+
+    /// Do not print the all-in-one ticket to get the added data from this node.
+    #[clap(long)]
+    no_ticket: bool,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
-    /// Add data from PATH to the running provider's database.
-    Add {
-        /// The path to the file or folder to add.
-        ///
-        /// If no path is specified, data will be read from STDIN.
-        path: Option<PathBuf>,
-        /// Add in place
-        ///
-        /// Set this to true only if you are sure that the data in its current location
-        /// will not change.
-        #[clap(long, default_value_t = false)]
-        in_place: bool,
-        /// Tag to tag the data with
-        #[clap(long)]
-        tag: Option<String>,
-        /// Print an all-in-one ticket to get the added data from this node.
-        #[clap(long)]
-        ticket: bool,
-    },
-    /// Download data to the running provider's database and provide it.
+    /// Add data from PATH to the running node.
+    Add(BlobAddOptions),
+    /// Download data to the running node's database and provide it.
     ///
     /// In addition to downloading the data, you can also specify an optional output directory
     /// where the data will be exported to after it has been downloaded.
@@ -471,7 +484,7 @@ pub enum BlobCommands {
         /// treat as collection, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         recursive: Option<bool>,
-        /// PublicKey of the provider
+        /// PeerID of the provider
         #[clap(
             long,
             short,
@@ -584,24 +597,10 @@ impl BlobCommands {
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { repair } => self::validate::run(iroh, repair).await,
-            Self::Add {
-                path,
-                in_place,
-                tag,
-                ticket,
-            } => {
-                let tag = match tag {
-                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
-                    None => SetTagOption::Auto,
-                };
-                let ticket = match ticket {
-                    false => TicketOption::None,
-                    // TODO: This is where we are missing the request token from the running
-                    // node.
-                    true => TicketOption::Print(None),
-                };
-                let source = BlobSource::from_path_or_stdin(path, in_place, true);
-                self::add::run(iroh, source, tag, ticket).await
+            Self::Add(opts) => {
+                // TODO: This is where we are missing the request token from the running
+                // node (last argument to run_with_opts).
+                self::add::run_with_opts(iroh, opts, None).await
             }
         }
     }

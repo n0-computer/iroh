@@ -4,50 +4,31 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{
     client::Iroh,
     dial::Ticket,
-    rpc_protocol::{BlobAddPath, ProviderService},
+    rpc_protocol::{ProviderService, WrapOption},
 };
 use iroh_bytes::{
     protocol::RequestToken,
     provider::AddProgress,
-    util::{BlobFormat, HashAndFormat, SetTagOption},
+    util::{BlobFormat, HashAndFormat, SetTagOption, Tag},
     Hash,
 };
 use quic_rpc::ServiceConnection;
+
+use super::BlobAddOptions;
 
 /// Data source for adding data to iroh.
 #[derive(Debug, Clone)]
 pub enum BlobSource {
     /// A file or directory on the node's local file system.
-    LocalFs {
-        path: PathBuf,
-        in_place: bool,
-        wrap_in_collection: bool,
-    },
+    LocalFs { path: PathBuf, in_place: bool },
     /// Data passed via STDIN.
     Stdin,
-}
-
-impl BlobSource {
-    pub fn from_path_or_stdin(
-        path: Option<PathBuf>,
-        in_place: bool,
-        wrap_in_collection: bool,
-    ) -> Self {
-        match path {
-            None => BlobSource::Stdin,
-            Some(path) => BlobSource::LocalFs {
-                path,
-                in_place,
-                wrap_in_collection,
-            },
-        }
-    }
 }
 
 /// Whether to print an all-in-one ticket.
@@ -55,8 +36,40 @@ impl BlobSource {
 pub enum TicketOption {
     /// Do not print an all-in-one ticket
     None,
-    /// Print an all-in-oone ticket. Optionally include a request token in the ticket.
+    /// Print an all-in-one ticket. Optionally include a request token in the ticket.
     Print(Option<RequestToken>),
+}
+
+pub async fn run_with_opts<C: ServiceConnection<ProviderService>>(
+    client: &Iroh<C>,
+    opts: BlobAddOptions,
+    request_token: Option<RequestToken>,
+) -> Result<()> {
+    let tag = match opts.tag {
+        Some(tag) => SetTagOption::Named(Tag::from(tag)),
+        None => SetTagOption::Auto,
+    };
+    let ticket = match opts.no_ticket {
+        true => TicketOption::None,
+        false => TicketOption::Print(request_token),
+    };
+    let source = match opts.path {
+        None => BlobSource::Stdin,
+        Some(path) => BlobSource::LocalFs {
+            path,
+            in_place: opts.in_place,
+        },
+    };
+    let wrap = match (opts.wrap, opts.filename) {
+        (true, None) => WrapOption::Wrap { name: None },
+        (true, Some(filename)) => WrapOption::Wrap {
+            name: Some(filename),
+        },
+        (false, None) => WrapOption::NoWrap,
+        (false, Some(_)) => bail!("`--filename` may not be used without `--wrap`"),
+    };
+
+    run(client, source, tag, ticket, wrap).await
 }
 
 /// Add data to iroh, either from a path or, if path is `None`, from STDIN.
@@ -65,24 +78,13 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
     source: BlobSource,
     tag: SetTagOption,
     ticket: TicketOption,
+    wrap: WrapOption,
 ) -> Result<()> {
     let (path, in_place) = match source {
-        BlobSource::LocalFs {
-            path,
-            in_place,
-            wrap_in_collection,
-        } => {
+        BlobSource::LocalFs { path, in_place } => {
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
-            let path = if absolute.is_dir() {
-                BlobAddPath::Directory { path: absolute }
-            } else {
-                BlobAddPath::File {
-                    path: absolute,
-                    wrap_in_collection,
-                }
-            };
-            (path, in_place)
+            (absolute, in_place)
         }
         BlobSource::Stdin => {
             // Store STDIN content into a temporary file
@@ -92,15 +94,14 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
             // Copy from stdin to the file, until EOF
             tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
             println!("Adding from stdin...");
-            let path = BlobAddPath::File {
-                path: path_buf,
-                wrap_in_collection: false,
-            };
-            (path, false)
+            (path_buf, false)
         }
     };
     // tell the node to add the data
-    let stream = client.blobs.add_from_path(path, in_place, tag).await?;
+    let stream = client
+        .blobs
+        .add_from_path(path, in_place, tag, wrap)
+        .await?;
     let (hash, format, entries) = aggregate_add_response(stream).await?;
     print_add_response(hash, format, entries);
     if let TicketOption::Print(token) = ticket {

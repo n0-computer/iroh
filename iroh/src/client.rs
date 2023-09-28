@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::task::{Context, Poll};
@@ -23,7 +24,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BlobAddPath, BlobAddPathRequest, BlobDeleteBlobRequest,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDeleteBlobRequest,
     BlobDownloadRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
     BlobReadResponse, BlobValidateRequest, BytesGetRequest, CounterStats, DeleteTagRequest,
@@ -32,7 +33,7 @@ use crate::rpc_protocol::{
     DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode,
+    ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -250,9 +251,10 @@ where
     /// place without copying to the Iroh data directory.
     pub async fn add_from_path(
         &self,
-        path: BlobAddPath,
+        path: PathBuf,
         in_place: bool,
         tag: SetTagOption,
+        wrap: WrapOption,
     ) -> Result<impl Stream<Item = Result<AddProgress>>> {
         let stream = self
             .rpc
@@ -260,6 +262,7 @@ where
                 path,
                 in_place,
                 tag,
+                wrap,
             })
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
