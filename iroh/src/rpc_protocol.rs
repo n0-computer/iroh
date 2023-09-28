@@ -633,6 +633,8 @@ pub struct DocSetHashRequest {
     pub key: Vec<u8>,
     /// Value of this entry.
     pub hash: Hash,
+    /// Size of the entry.
+    pub size: u64,
 }
 
 impl RpcMsg<ProviderService> for DocSetHashRequest {

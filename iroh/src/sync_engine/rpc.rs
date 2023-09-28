@@ -6,7 +6,6 @@ use itertools::Itertools;
 use rand::rngs::OsRng;
 
 use iroh_bytes::{
-    baomap::MapEntry,
     baomap::Store as BaoStore,
     util::{BlobFormat, RpcError},
 };
@@ -191,26 +190,19 @@ impl<S: Store> SyncEngine<S> {
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
     }
-    pub async fn doc_set_hash<B: BaoStore>(
-        &self,
-        bao_store: &B,
-        req: DocSetHashRequest,
-    ) -> RpcResult<DocSetHashResponse> {
+    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
         let DocSetHashRequest {
             doc_id,
             author_id,
             key,
             hash,
+            size,
         } = req;
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
-        let entry = bao_store
-            .get(&hash)
-            .ok_or_else(|| anyhow!("hash is not present in store"))?;
-        let len = entry.size();
 
         replica
-            .insert(&key, &author, hash, len)
+            .insert(&key, &author, hash, size)
             .map_err(anyhow::Error::from)?;
         let entry = self
             .store

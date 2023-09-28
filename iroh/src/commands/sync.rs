@@ -285,37 +285,33 @@ impl DocCommands {
                 }
                 let root = canonicalize_path(&path)?.canonicalize()?;
                 let tag = tag_from_file_name(&root)?;
-                let files = walkdir::WalkDir::new(&root).into_iter();
-                // TODO: parallelize
                 let mut counts = (0, 0);
-                for file in files {
-                    let file = file?;
-                    if file.file_type().is_file() {
-                        let relative = file.path().strip_prefix(&root)?.to_string_lossy();
-                        if relative.is_empty() {
-                            print!("invalid file path: {:?}", file.path());
-                            continue;
-                        }
-                        let key = if prefix.is_empty() {
-                            relative.to_string()
-                        } else {
-                            format!("{prefix}/{relative}")
-                        };
-
-                        let stream = iroh
-                            .blobs
-                            .add_from_path(
-                                file.path().into(),
-                                in_place,
-                                SetTagOption::Named(tag.clone()),
-                                WrapOption::NoWrap,
-                            )
-                            .await?;
-                        let (hash, _, entries) = aggregate_add_response(stream).await?;
-                        doc.set_hash(author, key.into(), hash).await?;
-                        counts.0 += 1;
-                        counts.1 += entries[0].size;
-                    }
+                let stream = iroh
+                    .blobs
+                    .add_from_path(
+                        root.clone(),
+                        in_place,
+                        SetTagOption::Named(tag.clone()),
+                        WrapOption::NoWrap,
+                    )
+                    .await?;
+                let (_, _, entries) = aggregate_add_response(stream).await?;
+                let root_prefix = match root.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => PathBuf::new(),
+                };
+                for entry in entries.into_iter() {
+                    counts.0 += 1;
+                    counts.1 += entry.size;
+                    // adjust the key so that it does not leak the entire directory structure of
+                    // the importer's machine
+                    let key: Vec<u8> = PathBuf::from(entry.name)
+                        .strip_prefix(root_prefix.clone())?
+                        .to_str()
+                        .map(|p| p.as_bytes())
+                        .ok_or(anyhow!("could not convert path to bytes"))?
+                        .into();
+                    doc.set_hash(author, key, entry.hash, entry.size).await?;
                 }
                 println!(
                     "Imported {} entries totaling {}",

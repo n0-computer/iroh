@@ -1544,9 +1544,8 @@ fn handle_rpc_request<
                 .await
             }
             DocSetHash(msg) => {
-                let bao_store = handler.inner.db.clone();
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_set_hash(&bao_store, req).await
+                    handler.inner.sync.doc_set_hash(req).await
                 })
                 .await
             }

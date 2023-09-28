@@ -410,7 +410,13 @@ where
     }
 
     /// Set the content of a key to a hash value
-    pub async fn set_hash(&self, author_id: AuthorId, key: Vec<u8>, hash: Hash) -> Result<Hash> {
+    pub async fn set_hash(
+        &self,
+        author_id: AuthorId,
+        key: Vec<u8>,
+        hash: Hash,
+        size: u64,
+    ) -> Result<Hash> {
         let res = self
             .rpc
             .rpc(DocSetHashRequest {
@@ -418,6 +424,7 @@ where
                 author_id,
                 key,
                 hash,
+                size,
             })
             .await??;
         Ok(res.entry.content_hash())
