@@ -15,7 +15,7 @@ use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
-use iroh_bytes::util::{SetTagOption, Tag};
+use iroh_bytes::util::{BlobInfo, SetTagOption, Tag};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
@@ -414,8 +414,7 @@ where
         &self,
         author_id: AuthorId,
         key: Vec<u8>,
-        hash: Hash,
-        size: u64,
+        entry: BlobInfo,
     ) -> Result<Hash> {
         let res = self
             .rpc
@@ -423,8 +422,7 @@ where
                 doc_id: self.id,
                 author_id,
                 key,
-                hash,
-                size,
+                entry,
             })
             .await??;
         Ok(res.entry.content_hash())

@@ -304,6 +304,17 @@ impl<'de> Deserialize<'de> for Hash {
     }
 }
 
+/// A convenience struct that contains metadata about a blob
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct BlobInfo {
+    /// name of the blob
+    pub name: String,
+    /// size of the blob
+    pub size: u64,
+    /// hash of the blob
+    pub hash: Hash,
+}
+
 struct HashVisitor;
 
 impl<'de> de::Visitor<'de> for HashVisitor {

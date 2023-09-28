@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
+use iroh_bytes::util::{BlobFormat, BlobInfo, SetTagOption, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -631,10 +631,8 @@ pub struct DocSetHashRequest {
     pub author_id: AuthorId,
     /// Key of this entry.
     pub key: Vec<u8>,
-    /// Value of this entry.
-    pub hash: Hash,
-    /// Size of the entry.
-    pub size: u64,
+    /// Info on the entry to add to the doc
+    pub entry: BlobInfo,
 }
 
 impl RpcMsg<ProviderService> for DocSetHashRequest {

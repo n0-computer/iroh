@@ -7,7 +7,7 @@ use rand::rngs::OsRng;
 
 use iroh_bytes::{
     baomap::Store as BaoStore,
-    util::{BlobFormat, RpcError},
+    util::{BlobFormat, BlobInfo, RpcError},
 };
 use iroh_sync::{store::Store, sync::Namespace};
 
@@ -195,9 +195,9 @@ impl<S: Store> SyncEngine<S> {
             doc_id,
             author_id,
             key,
-            hash,
-            size,
+            entry,
         } = req;
+        let BlobInfo { hash, size, .. } = entry;
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
 

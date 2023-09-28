@@ -15,7 +15,7 @@ use iroh::{
 use iroh_bytes::{
     protocol::RequestToken,
     provider::AddProgress,
-    util::{BlobFormat, HashAndFormat, SetTagOption, Tag},
+    util::{BlobFormat, BlobInfo, HashAndFormat, SetTagOption, Tag},
     Hash,
 };
 use quic_rpc::ServiceConnection;
@@ -112,16 +112,9 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
     Ok(())
 }
 
-#[derive(Debug)]
-pub struct ProvideResponseEntry {
-    pub name: String,
-    pub size: u64,
-    pub hash: Hash,
-}
-
 pub async fn aggregate_add_response(
     mut stream: impl Stream<Item = Result<AddProgress>> + Unpin,
-) -> Result<(Hash, BlobFormat, Vec<ProvideResponseEntry>)> {
+) -> Result<(Hash, BlobFormat, Vec<BlobInfo>)> {
     let mut hash_and_format = None;
     let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
     let mut mp = Some(ProvideProgressState::new());
@@ -176,15 +169,15 @@ pub async fn aggregate_add_response(
         .into_iter()
         .map(|(_, (name, size, hash))| {
             let hash = hash.context(format!("Missing hash for {name}"))?;
-            Ok(ProvideResponseEntry { name, size, hash })
+            Ok(BlobInfo { name, size, hash })
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((hash, format, entries))
 }
 
-pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideResponseEntry>) {
+pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<BlobInfo>) {
     let mut total_size = 0;
-    for ProvideResponseEntry { name, size, hash } in entries {
+    for BlobInfo { name, size, hash } in entries {
         total_size += size;
         println!("- {}: {} {:#}", name, HumanBytes(size), hash);
     }

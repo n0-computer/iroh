@@ -305,13 +305,13 @@ impl DocCommands {
                     counts.1 += entry.size;
                     // adjust the key so that it does not leak the entire directory structure of
                     // the importer's machine
-                    let key: Vec<u8> = PathBuf::from(entry.name)
+                    let key: Vec<u8> = PathBuf::from(entry.name.clone())
                         .strip_prefix(root_prefix.clone())?
                         .to_str()
                         .map(|p| p.as_bytes())
                         .ok_or(anyhow!("could not convert path to bytes"))?
                         .into();
-                    doc.set_hash(author, key, entry.hash, entry.size).await?;
+                    doc.set_hash(author, key, entry).await?;
                 }
                 println!(
                     "Imported {} entries totaling {}",
