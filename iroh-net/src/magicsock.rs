@@ -1075,6 +1075,10 @@ impl Actor {
     }
 
     async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
+        if msgs.is_empty() {
+            return;
+        }
+
         info!("handle_ping_actions ({}): {:?}", msgs.len(), msgs);
         for msg in msgs {
             // Abort sending as soon as we know we are shutting down.
