@@ -423,19 +423,17 @@ impl MagicSock {
 
         // load the peer data
         let peer_map = match peers_path.as_ref() {
-            Some(path) if path.exists() => {
-                match PeerMap::load_from_file(path, actor_sender.clone()) {
-                    Ok(peer_map) => {
-                        let count = peer_map.node_count();
-                        debug!(count, "loaded peer map");
-                        peer_map
-                    }
-                    Err(e) => {
-                        debug!(%e, "failed to load peer map: using default");
-                        PeerMap::default()
-                    }
+            Some(path) if path.exists() => match PeerMap::load_from_file(path) {
+                Ok(peer_map) => {
+                    let count = peer_map.node_count();
+                    debug!(count, "loaded peer map");
+                    peer_map
                 }
-            }
+                Err(e) => {
+                    debug!(%e, "failed to load peer map: using default");
+                    PeerMap::default()
+                }
+            },
             _ => PeerMap::default(),
         };
 
@@ -1106,7 +1104,7 @@ impl Actor {
                     match self.send_disco_message(dst, dst_key, msg).await {
                         Ok(true) => {
                             if let Some(ep) = self.peer_map.by_id_mut(&id) {
-                                ep.ping_sent(dst, tx_id, purpose);
+                                ep.ping_sent(dst, tx_id, purpose, self.msg_sender.clone());
                             }
                         }
                         _ => {
@@ -1298,7 +1296,6 @@ impl Actor {
             None => {
                 info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
-                    msock_sender: self.inner.actor_sender.clone(),
                     public_key: dm.src,
                     derp_region: Some(region_id),
                     active: true,
@@ -2197,7 +2194,6 @@ impl Actor {
                         src.derp_region()
                     );
                     self.peer_map.insert_endpoint(EndpointOptions {
-                        msock_sender: self.inner.actor_sender.clone(),
                         public_key: sender,
                         derp_region: src.derp_region(),
                         active: true,
@@ -2333,8 +2329,7 @@ impl Actor {
 
     #[instrument(skip_all)]
     fn add_known_addr(&mut self, peer_addr: PeerAddr) {
-        self.peer_map
-            .add_peer_addr(peer_addr, self.inner.actor_sender.clone())
+        self.peer_map.add_peer_addr(peer_addr)
     }
 
     /// Returns the current IPv4 listener's port number.

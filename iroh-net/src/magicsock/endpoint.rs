@@ -68,7 +68,6 @@ pub(super) enum PingAction {
 #[derive(Debug)]
 pub(super) struct Endpoint {
     pub(super) id: usize,
-    conn_sender: mpsc::Sender<ActorMessage>,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
     /// Peer public key (for UDP + DERP)
@@ -105,7 +104,6 @@ pub struct PendingCliPing {
 
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) msock_sender: mpsc::Sender<ActorMessage>,
     pub(super) public_key: PublicKey,
     pub(super) derp_region: Option<u16>,
     /// Is this endpoint currently active (sending data)?
@@ -123,7 +121,6 @@ impl Endpoint {
 
         Endpoint {
             id,
-            conn_sender: options.msock_sender,
             quic_mapped_addr,
             public_key: options.public_key,
             last_full_ping: None,
@@ -434,11 +431,11 @@ impl Endpoint {
         to: SendAddr,
         tx_id: stun::TransactionId,
         purpose: DiscoPingPurpose,
+        sender: mpsc::Sender<ActorMessage>,
     ) {
         debug!("disco: sent ping [{}]", tx_id);
 
         let id = self.id;
-        let sender = self.conn_sender.clone();
         let timer = Timer::after(PING_TIMEOUT_DURATION, async move {
             sender
                 .send(ActorMessage::EndpointPingExpired(id, tx_id))
@@ -1072,29 +1069,25 @@ impl PeerMap {
     }
 
     /// Create a new [`PeerMap`] from data stored in `path`.
-    pub fn load_from_file(
-        path: impl AsRef<Path>,
-        msock_sender: mpsc::Sender<ActorMessage>,
-    ) -> anyhow::Result<Self> {
+    pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut me = PeerMap::default();
         let contents = std::fs::read(path)?;
         let mut slice: &[u8] = &contents;
         while !slice.is_empty() {
             let (peer_addr, next_contents) =
                 postcard::take_from_bytes(slice).context("failed to load peer data")?;
-            me.add_peer_addr(peer_addr, msock_sender.clone());
+            me.add_peer_addr(peer_addr);
             slice = next_contents;
         }
         Ok(me)
     }
 
     /// Add the contact information for a peer.
-    pub fn add_peer_addr(&mut self, peer_addr: PeerAddr, msock_sender: mpsc::Sender<ActorMessage>) {
+    pub fn add_peer_addr(&mut self, peer_addr: PeerAddr) {
         let PeerAddr { peer_id, info } = peer_addr;
         if self.endpoint_for_node_key(&peer_id).is_none() {
             info!(%peer_id, "inserting peer's endpoint in PeerMap");
             self.insert_endpoint(Options {
-                msock_sender,
                 public_key: peer_id,
                 derp_region: info.derp_region,
                 active: false,
@@ -1451,12 +1444,10 @@ mod tests {
                     recent_pong: 0,
                 },
             )]);
-            let (send, _) = mpsc::channel(1);
             let key = SecretKey::generate();
             (
                 Endpoint {
                     id: 0,
-                    conn_sender: send,
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     public_key: key.public(),
                     last_full_ping: None,
@@ -1497,11 +1488,9 @@ mod tests {
                     recent_pong: 0,
                 },
             )]);
-            let (send, _) = mpsc::channel(1);
             let key = SecretKey::generate();
             Endpoint {
                 id: 1,
-                conn_sender: send,
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 public_key: key.public(),
                 last_full_ping: None,
@@ -1522,11 +1511,9 @@ mod tests {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
             let now = Instant::now();
             let endpoint_state = HashMap::new();
-            let (send, _) = mpsc::channel(1);
             let key = SecretKey::generate();
             Endpoint {
                 id: 2,
-                conn_sender: send,
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 public_key: key.public(),
                 last_full_ping: None,
@@ -1583,12 +1570,10 @@ mod tests {
                     },
                 ),
             ]);
-            let (send, _) = mpsc::channel(1);
             let key = SecretKey::generate();
             (
                 Endpoint {
                     id: 3,
-                    conn_sender: send,
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     public_key: key.public(),
                     last_full_ping: None,
@@ -1677,7 +1662,6 @@ mod tests {
     #[tokio::test]
     async fn load_save_peer_data() {
         let mut peer_map = PeerMap::default();
-        let (tx, _rx) = mpsc::channel(1);
 
         let peer_a = SecretKey::generate().public();
         let peer_b = SecretKey::generate().public();
@@ -1701,15 +1685,15 @@ mod tests {
         let peer_addr_c = PeerAddr::new(peer_c).with_direct_addresses(direct_addresses_c);
         let peer_addr_d = PeerAddr::new(peer_d);
 
-        peer_map.add_peer_addr(peer_addr_a, tx.clone());
-        peer_map.add_peer_addr(peer_addr_b, tx.clone());
-        peer_map.add_peer_addr(peer_addr_c, tx.clone());
-        peer_map.add_peer_addr(peer_addr_d, tx.clone());
+        peer_map.add_peer_addr(peer_addr_a);
+        peer_map.add_peer_addr(peer_addr_b);
+        peer_map.add_peer_addr(peer_addr_c);
+        peer_map.add_peer_addr(peer_addr_d);
 
         let path = temp_dir().join("peers.postcard");
         peer_map.save_to_file(&path).await.unwrap();
 
-        let loaded_peer_map = PeerMap::load_from_file(&path, tx).unwrap();
+        let loaded_peer_map = PeerMap::load_from_file(&path).unwrap();
         let loaded: HashMap<PublicKey, AddrInfo> = loaded_peer_map
             .known_peer_addresses()
             .map(|PeerAddr { peer_id, info }| (peer_id, info))
