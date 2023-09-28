@@ -399,7 +399,7 @@ async fn gc_mark_task<'a>(
                     warn!("gc: {} creating data reader failed", hash);
                     continue;
                 };
-                let Ok((mut iter, stats)) = cp.parse(format.into(), reader).await else {
+                let Ok((mut iter, stats)) = cp.parse(reader).await else {
                     warn!("gc: {} parse failed", hash);
                     continue;
                 };

@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result};
 use console::style;
 use indicatif::{HumanBytes, HumanDuration, ProgressBar};
 use iroh::{
-    collection::{Collection, IrohCollectionParser},
+    collection::Collection,
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
@@ -70,8 +70,7 @@ impl GetInteractive {
         // TODO: we don't need sync here, maybe disable completely?
         let doc_store = iroh_sync::store::memory::Store::default();
         // spin up temp node and ask it to download the data for us
-        let mut provider =
-            iroh::node::Node::builder(db, doc_store).collection_parser(IrohCollectionParser);
+        let mut provider = iroh::node::Node::builder(db, doc_store);
         if let Some(ref dm) = self.opts.derp_map {
             provider = provider.enable_derp(dm.clone());
         }
@@ -161,22 +160,18 @@ async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats>
 }
 
 async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Result<get::Stats> {
-    let (mut next, collection) = {
-        let curr = curr.next();
-        let (curr, collection_data) = curr.concatenate_into_vec().await?;
-        let collection = Collection::from_bytes(&collection_data)?;
-        let count = collection.total_entries();
-        let missing_bytes = collection.total_blobs_size();
-        pb.set_message(format!("{} Downloading ...", style("[3/3]").bold().dim()));
-        pb.set_message(format!(
-            "  {} file(s) with total transfer size {}",
-            count,
-            HumanBytes(missing_bytes)
-        ));
-        pb.set_length(missing_bytes);
-        pb.reset();
-        (curr.next(), collection.into_inner())
-    };
+    let (mut next, _links, collection) = Collection::read_fsm(curr).await?;
+    let count = collection.total_entries();
+    let missing_bytes = collection.total_blobs_size();
+    pb.set_message(format!(
+        "{} Downloading {} file(s) with total transfer size {}",
+        style("[3/3]").bold().dim(),
+        count,
+        HumanBytes(missing_bytes)
+    ));
+    pb.set_length(missing_bytes);
+    pb.reset();
+    let collection = collection.into_inner();
     // read all the children
     let finishing = loop {
         let start = match next {
@@ -184,11 +179,10 @@ async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Re
             EndBlobNext::Closing(finish) => break finish,
         };
         let child_offset = start.child_offset() as usize;
-        let blob = match collection.get(child_offset) {
+        let blob = match collection.get(child_offset - 1) {
             Some(blob) => blob,
             None => break start.finish(),
         };
-
         let hash = blob.hash;
         let name = &blob.name;
         let name = if name.is_empty() {

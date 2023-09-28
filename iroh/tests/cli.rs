@@ -244,7 +244,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["112.84 KiB"]);
+        assert_eq!(matches, vec!["112.88 KiB"]);
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
@@ -381,13 +381,13 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     let db_path = iroh_data_dir.join(BAO_DIR);
     let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
-    assert_eq!(blobs.len(), 2);
+    assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
     let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
-    assert_eq!(blobs.len(), 4);
+    assert_eq!(blobs.len(), 6);
 
     Ok(())
 }

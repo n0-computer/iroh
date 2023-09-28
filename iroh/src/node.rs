@@ -23,7 +23,7 @@ use iroh_bytes::baomap::{
     ExportMode, GcMarkEvent, GcSweepEvent, Map, MapEntry, ReadableStore, Store as BaoStore,
     ValidateProgress,
 };
-use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
+use iroh_bytes::collection::{CollectionParser, LinkSeqCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
@@ -110,7 +110,7 @@ pub struct Builder<
     D,
     S = iroh_sync::store::memory::Store,
     E = DummyServerEndpoint,
-    C = NoCollectionParser,
+    C = LinkSeqCollectionParser,
 > where
     D: Map,
     S: DocStore,
@@ -186,7 +186,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
-            collection_parser: NoCollectionParser,
+            collection_parser: LinkSeqCollectionParser,
             gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
@@ -961,7 +961,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 let stats = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
-                        let (_collection, stats) = cp.parse(0, reader).await.ok()?;
+                        let (_collection, stats) = cp.parse(reader).await.ok()?;
                         Some(stats)
                     })
                     .await
@@ -1050,15 +1050,11 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             {
                 use crate::collection::{Blob, Collection};
                 use crate::util::io::pathbuf_from_name;
-                use iroh_io::AsyncSliceReaderExt;
-                trace!("exporting collection {} to {}", hash, path.display());
                 tokio::fs::create_dir_all(&path).await?;
-                let collection = db.get(&hash).context("collection not there")?;
-                let mut reader = collection.data_reader().await?;
-                let bytes: Bytes = reader.read_to_end().await?;
-                let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
+                let collection = Collection::load(db, &hash).await?;
                 for Blob { hash, name } in collection.blobs() {
-                    let path = path.join(pathbuf_from_name(name));
+                    #[allow(clippy::needless_borrow)]
+                    let path = path.join(pathbuf_from_name(&name));
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }
@@ -1262,11 +1258,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             let (blobs, _child_tags): (Vec<_>, Vec<_>) =
                 result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
             let collection = Collection::new(blobs, total_blobs_size)?;
-            let data = collection.to_bytes()?;
-            self.inner
-                .db
-                .import_bytes(data.into(), BlobFormat::COLLECTION)
-                .await?
+            let tag = collection.store(&self.inner.db).await?;
+            tag
         } else {
             // import a single file
             let (tag, _size) = self

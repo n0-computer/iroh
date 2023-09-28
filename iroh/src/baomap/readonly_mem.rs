@@ -98,6 +98,18 @@ impl Store {
         hash
     }
 
+    /// Insert multiple entries into the database, and return the hash of the last entry.
+    pub fn insert_many(
+        &mut self,
+        items: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Option<Hash> {
+        let mut hash = None;
+        for item in items.into_iter() {
+            hash = Some(self.insert(item));
+        }
+        hash
+    }
+
     /// Get the bytes associated with a hash, if they exist.
     pub fn get(&self, hash: &Hash) -> Option<Bytes> {
         let entry = self.0.get(hash)?;

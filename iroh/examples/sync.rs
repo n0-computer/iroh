@@ -25,12 +25,12 @@ use iroh::{
     downloader::Downloader,
     sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
-use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
     util::BlobFormat,
 };
+use iroh_bytes::{collection::LinkSeqCollectionParser, util::runtime};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
@@ -230,7 +230,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
-    let collection_parser = iroh::collection::IrohCollectionParser;
+    let collection_parser = LinkSeqCollectionParser;
 
     // create the live syncer
     let downloader =
@@ -1000,11 +1000,10 @@ mod iroh_bytes_handlers {
     use bytes::Bytes;
     use futures::{future::BoxFuture, FutureExt};
     use iroh_bytes::{
+        collection::LinkSeqCollectionParser,
         protocol::{GetRequest, RequestToken},
         provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
     };
-
-    use iroh::collection::IrohCollectionParser;
 
     #[derive(Debug, Clone)]
     pub struct IrohBytesHandlers {
@@ -1029,7 +1028,7 @@ mod iroh_bytes_handlers {
                 conn,
                 self.db.clone(),
                 self.event_sender.clone(),
-                IrohCollectionParser,
+                LinkSeqCollectionParser,
                 self.get_handler.clone(),
                 self.auth_handler.clone(),
                 self.rt.clone(),
