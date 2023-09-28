@@ -1089,15 +1089,26 @@ impl Actor {
                     self.enqueue_call_me_maybe(derp_region, endpoint_id).await;
                 }
                 PingAction::SendPing {
+                    id,
                     dst,
                     dst_key,
                     tx_id,
+                    purpose,
                 } => {
                     let msg = disco::Message::Ping(disco::Ping {
                         tx_id,
                         node_key: self.inner.public_key(),
                     });
-                    let _res = self.send_disco_message(dst, dst_key, msg).await;
+                    match self.send_disco_message(dst, dst_key, msg).await {
+                        Ok(true) => {
+                            if let Some(ep) = self.peer_map.by_id_mut(&id) {
+                                ep.ping_sent(dst, tx_id, purpose);
+                            }
+                        }
+                        _ => {
+                            debug!("failed to send ping to {:?}", dst);
+                        }
+                    }
                 }
             }
         }
