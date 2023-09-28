@@ -2631,7 +2631,6 @@ impl std::fmt::Display for QuicMappedAddr {
 #[cfg(test)]
 pub(crate) mod tests {
     use anyhow::Context;
-    use iroh_test::logging::with_logging;
     use rand::RngCore;
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
