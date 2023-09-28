@@ -2631,11 +2631,12 @@ impl std::fmt::Display for QuicMappedAddr {
 #[cfg(test)]
 pub(crate) mod tests {
     use anyhow::Context;
+    use iroh_test::logging::with_logging;
     use rand::RngCore;
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
-    use tracing_subscriber::{filter, prelude::*};
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::{test_utils::run_derper, tls, MagicEndpoint};
@@ -2868,11 +2869,8 @@ pub(crate) mod tests {
 
     pub fn setup_multithreaded_logging() {
         tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr)
-                    .with_filter(filter::LevelFilter::TRACE),
-            )
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
     }
@@ -2880,7 +2878,6 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
-
         let (derp_map, region, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
