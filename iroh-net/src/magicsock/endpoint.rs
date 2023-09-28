@@ -55,9 +55,11 @@ pub(super) enum PingAction {
         endpoint_id: usize,
     },
     SendPing {
+        id: usize,
         dst: SendAddr,
         dst_key: PublicKey,
         tx_id: stun::TransactionId,
+        purpose: DiscoPingPurpose,
     },
 }
 
@@ -391,43 +393,6 @@ impl Endpoint {
         }
     }
 
-    /// Called by a timer when a ping either fails to send or has taken too long to get a pong reply.
-    fn forget_ping(&mut self, tx_id: stun::TransactionId) {
-        if let Some(ping) = self.sent_ping.remove(&tx_id) {
-            tokio::task::spawn(async move {
-                ping.timer.stop().await;
-            });
-        }
-    }
-
-    /// Sends a ping with the provided txid to ep using self's disco_key.
-    ///
-    /// The caller (start_ping) should've already recorded the ping in
-    /// sent_ping and set up the timer.
-    ///
-    /// The caller should use de.disco_key as the disco_key argument.
-    /// It is passed in so that send_disco_ping doesn't need to lock de.mu.
-    fn send_disco_ping(
-        &mut self,
-        ep: SendAddr,
-        public_key: Option<PublicKey>,
-        tx_id: stun::TransactionId,
-    ) -> Option<PingAction> {
-        debug!("send disco ping: start");
-        let res = public_key.map(|pub_key| PingAction::SendPing {
-            dst: ep,
-            dst_key: pub_key,
-            tx_id,
-        });
-
-        debug!("send disco ping: done: sent? {}", res.is_some());
-        if res.is_none() {
-            self.forget_ping(tx_id);
-        }
-
-        res
-    }
-
     fn start_ping(
         &mut self,
         ep: SendAddr,
@@ -453,27 +418,42 @@ impl Endpoint {
             }
         }
 
-        let txid = stun::TransactionId::default();
-        debug!("disco: sent ping [{}]", txid);
+        let tx_id = stun::TransactionId::default();
+        Some(PingAction::SendPing {
+            id: self.id,
+            dst: ep,
+            dst_key: self.public_key,
+            tx_id,
+            purpose,
+        })
+    }
+
+    /// Record the fact that a ping has been sent out.
+    pub(super) fn ping_sent(
+        &mut self,
+        to: SendAddr,
+        tx_id: stun::TransactionId,
+        purpose: DiscoPingPurpose,
+    ) {
+        debug!("disco: sent ping [{}]", tx_id);
 
         let id = self.id;
         let sender = self.conn_sender.clone();
         let timer = Timer::after(PING_TIMEOUT_DURATION, async move {
             sender
-                .send(ActorMessage::EndpointPingExpired(id, txid))
+                .send(ActorMessage::EndpointPingExpired(id, tx_id))
                 .await
                 .ok();
         });
         self.sent_ping.insert(
-            txid,
+            tx_id,
             SentPing {
-                to: ep,
-                at: now,
+                to,
+                at: Instant::now(),
                 purpose,
                 timer,
             },
         );
-        self.send_disco_ping(ep, Some(self.public_key), txid)
     }
 
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
