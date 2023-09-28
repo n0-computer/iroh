@@ -313,7 +313,7 @@ impl Endpoint {
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
     #[allow(unused)]
-    pub async fn cli_ping<F>(&mut self, mut res: config::PingResult, cb: F)
+    pub async fn cli_ping<F>(&mut self, mut res: config::PingResult, cb: F) -> Vec<PingAction>
     where
         F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
@@ -323,10 +323,11 @@ impl Endpoint {
         });
 
         let now = Instant::now();
+        let mut msgs = Vec::new();
         let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_region) = derp_region {
             if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
-                todo!()
+                msgs.push(msg);
             }
         }
         if let Some(udp_addr) = udp_addr {
@@ -336,13 +337,13 @@ impl Endpoint {
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
                 // IPv6 address, both 1ms away, and it's random who replies first.
                 if let Some(msg) = self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::Cli) {
-                    todo!()
+                    msgs.push(msg);
                 }
             } else {
                 let eps: Vec<_> = self.endpoint_state.keys().cloned().collect();
                 for ep in eps {
                     if let Some(msg) = self.start_ping(ep, DiscoPingPurpose::Cli) {
-                        todo!()
+                        msgs.push(msg);
                     }
                 }
             }
@@ -357,6 +358,8 @@ impl Endpoint {
                 self.public_key
             );
         }
+
+        msgs
     }
 
     /// Cleanup the expired ping for the passed in txid.
