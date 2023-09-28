@@ -35,17 +35,11 @@ fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
     secret_key: SecretKey,
-) -> Builder<
-    iroh::baomap::mem::Store,
-    store::memory::Store,
-    DummyServerEndpoint,
-    IrohCollectionParser,
-> {
+) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
     let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
         .secret_key(secret_key)
-        .collection_parser(IrohCollectionParser)
         .disable_derp()
         // .enable_derp(iroh_net::defaults::default_derp_map())
         .runtime(&rt)
