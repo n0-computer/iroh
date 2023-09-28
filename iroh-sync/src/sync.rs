@@ -920,7 +920,6 @@ mod tests {
     use rand_core::SeedableRng;
 
     use crate::{
-        heads::AuthorHeads,
         ranger::{Range, Store as _},
         store::{self, GetFilter, Store},
     };

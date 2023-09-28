@@ -336,6 +336,7 @@ mod tests {
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
         let replica = alice_replica.clone();
+        let replica = replica.into_async();
         let alice_task = tokio::task::spawn(async move {
             run_alice::<store::memory::Store, _, _>(
                 &mut alice_writer,
@@ -356,7 +357,7 @@ mod tests {
                     futures::future::ready(
                         bob_replica_store_task
                             .open_replica(&namespace)
-                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
+                            .map(|r| r.ok_or(AbortReason::NotAvailable).map(|r| r.into_async())),
                     )
                 },
                 alice_peer_id,
@@ -411,7 +412,7 @@ mod tests {
     fn insert_messages<S: Store>(
         mut rng: impl CryptoRngCore,
         store: &S,
-        replica: &Replica<S::Instance>,
+        replica: &crate::sync::Replica<S::Instance>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
@@ -541,6 +542,7 @@ mod tests {
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
         let alice_replica = alice_store.open_replica(&namespace)?.unwrap();
+        let alice_replica = alice_replica.into_async();
         let alice_task = tokio::task::spawn(async move {
             run_alice::<S, _, _>(
                 &mut alice_writer,
@@ -561,7 +563,8 @@ mod tests {
                     futures::future::ready(
                         bob_store
                             .open_replica(&namespace)
-                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
+                            .map(|r| r.ok_or(AbortReason::NotAvailable))
+                            .map(|r| r.map(|r| r.into_async())),
                     )
                 },
                 alice_node_pubkey,
