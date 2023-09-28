@@ -152,7 +152,7 @@ pub enum FullCommands {
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
         /// RPC port, set to "disabled" to disable RPC
-        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
+        #[clap(long, default_value_t = RpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: RpcPort,
         /// Use a token to authenticate requests for data
         ///
