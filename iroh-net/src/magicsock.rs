@@ -1075,7 +1075,7 @@ impl Actor {
     }
 
     async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
-        eprintln!("handle_ping_actions ({}): {:?}", msgs.len(), msgs);
+        info!("handle_ping_actions ({}): {:?}", msgs.len(), msgs);
         for msg in msgs {
             // Abort sending as soon as we know we are shutting down.
             if self.inner.is_closing() || self.inner.is_closed() {
@@ -2635,7 +2635,7 @@ pub(crate) mod tests {
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tracing_subscriber::{filter, prelude::*};
 
     use super::*;
     use crate::{test_utils::run_derper, tls, MagicEndpoint};
@@ -2868,8 +2868,11 @@ pub(crate) mod tests {
 
     pub fn setup_multithreaded_logging() {
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_filter(filter::LevelFilter::TRACE),
+            )
             .try_init()
             .ok();
     }
