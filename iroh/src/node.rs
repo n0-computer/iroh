@@ -61,12 +61,12 @@ use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadResponse, BlobValidateRequest, BytesGetRequest,
-    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService,
+    BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
+    BlobWriteRequest, BlobWriteResponse, DeleteTagRequest, DownloadLocation, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderResponse, ProviderService,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -1354,9 +1354,21 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
+    fn blob_write(
+        self,
+        req: BlobWriteRequest,
+        updates: impl Stream<Item = BlobWriteUpdate>,
+    ) -> RpcResult<BlobWriteResponse> {
+        while let Some(update) = updates.next().await {
+            match update {
+
+            }
+        }
+    }
+
     fn blob_read(
         self,
-        req: BytesGetRequest,
+        req: BlobReadRequest,
     ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let entry = self.inner.db.get(&req.hash);
@@ -1497,6 +1509,11 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::blob_read)
                     .await
             }
+            BlobWrite(msg) => {
+                chan.client_streaming(msg, handler, RpcHandler::blob_write)
+                    .await
+            }
+            BlobWriteUpdate(_msg) => Err(anyhow!("Unexpected BlobUpdate message")),
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)

@@ -25,7 +25,9 @@ use iroh_sync::{
     AuthorId,
 };
 use quic_rpc::{
-    message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
+    message::{
+        ClientStreaming, ClientStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg,
+    },
     Service,
 };
 use serde::{Deserialize, Serialize};
@@ -678,20 +680,20 @@ pub struct DocGetOneResponse {
 
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BytesGetRequest {
+pub struct BlobReadRequest {
     /// Hash to get bytes for
     pub hash: Hash,
 }
 
-impl Msg<ProviderService> for BytesGetRequest {
+impl Msg<ProviderService> for BlobReadRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for BytesGetRequest {
+impl ServerStreamingMsg<ProviderService> for BlobReadRequest {
     type Response = RpcResult<BlobReadResponse>;
 }
 
-/// Response to [`BytesGetRequest`]
+/// Response to [`BlobReadRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum BlobReadResponse {
     /// The entry header.
@@ -706,6 +708,35 @@ pub enum BlobReadResponse {
         /// The data chunk
         chunk: Bytes,
     },
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BlobWriteRequest {}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub enum BlobWriteUpdate {
+    Chunk(Bytes),
+    Abort
+}
+
+impl Msg<ProviderService> for BlobWriteRequest {
+    type Pattern = ClientStreaming;
+}
+
+impl ClientStreamingMsg<ProviderService> for BlobWriteRequest {
+    type Update = BlobWriteUpdate;
+    type Response = RpcResult<BlobWriteResponse>;
+}
+
+/// Response for [`BlobWriteRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BlobWriteResponse {
+    /// The hash of the created blob
+    pub hash: Hash,
+    /// The length of the created blob
+    pub len: usize,
 }
 
 /// Get stats for the running Iroh node
@@ -747,7 +778,9 @@ pub enum ProviderRequest {
     NodeConnectionInfo(NodeConnectionInfoRequest),
     NodeWatch(NodeWatchRequest),
 
-    BlobRead(BytesGetRequest),
+    BlobRead(BlobReadRequest),
+    BlobWrite(BlobWriteRequest),
+    BlobWriteUpdate(BlobWriteUpdate),
     BlobAddPath(BlobAddPathRequest),
     BlobDownload(BlobDownloadRequest),
     BlobList(BlobListRequest),
@@ -788,6 +821,7 @@ pub enum ProviderResponse {
     NodeWatch(NodeWatchResponse),
 
     BlobRead(RpcResult<BlobReadResponse>),
+    BlobWrite(RpcResult<BlobWriteResponse>),
     BlobAddPath(AddProgress),
     BlobDownload(GetProgress),
     BlobList(BlobListResponse),

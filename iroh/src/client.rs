@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::util::{SetTagOption, Tag};
@@ -20,8 +20,10 @@ use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
-use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
-use tokio_util::io::StreamReader;
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, BufReader, ReadBuf,
+};
+use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDeleteBlobRequest,
@@ -34,6 +36,8 @@ use crate::rpc_protocol::{
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
     ShareMode, WrapOption,
+    BlobWriteRequest, BlobWriteResponse,
+    BlobWriteUpdate, 
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -231,6 +235,34 @@ where
         BlobReader::from_rpc(&self.rpc, hash).await
     }
 
+    pub async fn write(
+        &self,
+        source: impl AsyncRead + Unpin + 'static,
+    ) -> Result<BlobWriteResponse> {
+        const CAP: usize = 1024 * 64; // send 64KB per request by default
+        let map_err = |err| anyhow!("send error: {err:?}");
+
+        let (mut sink, res) = self.rpc.client_streaming(BlobWriteRequest {}).await?;
+
+        let mut input = ReaderStream::with_capacity(source, CAP);
+        while let Some(chunk) = input.next().await {
+            match chunk {
+                Ok(chunk) => sink
+                    .feed(BlobWriteUpdate::Chunk(chunk))
+                    .await
+                    .map_err(map_err)?,
+                Err(err) => {
+                    sink.feed(BlobWriteUpdate::Abort).await.map_err(map_err)?;
+                    sink.flush().await.map_err(map_err)?;
+                    return Err(err.into());
+                }
+            }
+        }
+        sink.flush().await.map_err(map_err)?;
+        let res = res.await??;
+        Ok(res)
+    }
+
     /// Read all bytes of single blob.
     ///
     /// This allocates a buffer for the full blob. Use only if you know that the blob you're
@@ -346,7 +378,7 @@ impl BlobReader {
         rpc: &RpcClient<ProviderService, C>,
         hash: Hash,
     ) -> anyhow::Result<Self> {
-        let stream = rpc.server_streaming(BytesGetRequest { hash }).await?;
+        let stream = rpc.server_streaming(BlobReadRequest { hash }).await?;
         let mut stream = flatten(stream);
 
         let (size, is_complete) = match stream.next().await {
