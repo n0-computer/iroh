@@ -7,8 +7,9 @@ use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use iroh_io::stats::{StreamWriterStats, TrackingSliceReader, SliceReaderStats};
+use iroh_io::AsyncStreamWriter;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWrite;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
@@ -269,6 +270,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     mut data: D::DataReader,
     collection_parser: C,
 ) -> Result<SentStatus> {
+    let t0 = std::time::Instant::now();
     let hash = request.hash;
 
     // if the request is just for the root, we don't need to deserialize the collection
@@ -291,17 +293,20 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     };
 
     let mut prev = 0;
+    let mut write_stats = StreamWriterStats::default();
+    let mut read_stats = SliceReaderStats::default();
     for (offset, ranges) in request.ranges.iter_non_empty() {
+        // create a tracking writer so we can get some stats for writing
+        let mut tw = writer.tracking_writer();
         if offset == 0 {
             debug!("writing ranges '{:?}' of collection {}", ranges, hash);
+            // wrap the data reader in a tracking reader so we can get some stats for reading
+            let mut tracking_reader = TrackingSliceReader::new(&mut data);
             // send the root
-            encode_ranges_validated(
-                &mut data,
-                &mut outboard,
-                &ranges.to_chunk_ranges(),
-                &mut writer.inner,
-            )
-            .await?;
+            encode_ranges_validated(&mut tracking_reader, &mut outboard, &ranges.to_chunk_ranges(), &mut tw)
+                .await?;
+            read_stats += tracking_reader.stats();
+            write_stats += tw.stats();
             debug!(
                 "finished writing ranges '{:?}' of collection {}",
                 ranges, hash
@@ -315,7 +320,9 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
             }
             if let Some(hash) = c.next().await? {
                 tokio::task::yield_now().await;
-                let (status, size) = send_blob(db, hash, ranges, &mut writer.inner).await?;
+                let (status, size, blob_read_stats) = send_blob(db, hash, ranges, &mut tw).await?;
+                write_stats += tw.stats();
+                read_stats += blob_read_stats;
                 if SentStatus::NotFound == status {
                     writer.inner.finish().await?;
                     return Ok(status);
@@ -339,7 +346,13 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
         }
     }
 
+    let total = t0.elapsed();
     debug!("done writing");
+    println!("write_stats {:?}", write_stats.total());
+    println!("read_stats {:?}", read_stats.total());
+    println!("elapsed {:?}", total);
+    let hashing = total - write_stats.total().stats.duration - read_stats.total().stats.duration;
+    println!("reading: {:?} other: {:?} writing: {:?}", read_stats.total().stats.duration, hashing, write_stats.total().stats.duration);
     writer.inner.finish().await?;
     Ok(SentStatus::Sent)
 }
@@ -538,6 +551,13 @@ pub struct ResponseWriter<E> {
 }
 
 impl<E: EventSender> ResponseWriter<E> {
+    fn tracking_writer(
+        &mut self,
+    ) -> iroh_io::stats::TrackingStreamWriter<iroh_io::TokioStreamWriter<&mut quinn::SendStream>>
+    {
+        iroh_io::stats::TrackingStreamWriter::new(iroh_io::TokioStreamWriter(&mut self.inner))
+    }
+
     fn connection_id(&self) -> u64 {
         self.connection_id
     }
@@ -575,18 +595,18 @@ pub enum SentStatus {
 }
 
 /// Send a
-pub async fn send_blob<D: Map, W: AsyncWrite + Unpin + Send + 'static>(
+pub async fn send_blob<D: Map, W: AsyncStreamWriter>(
     db: &D,
     name: Hash,
     ranges: &RangeSpec,
-    writer: &mut W,
-) -> Result<(SentStatus, u64)> {
+    writer: W,
+) -> Result<(SentStatus, u64, SliceReaderStats)> {
     match db.get(&name) {
         Some(entry) => {
             let outboard = entry.outboard().await?;
             let size = outboard.tree().size().0;
-            let mut file_reader = entry.data_reader().await?;
-            let res = bao_tree::io::fsm::encode_ranges_validated(
+            let mut file_reader = TrackingSliceReader::new(entry.data_reader().await?);
+            let res = encode_ranges_validated(
                 &mut file_reader,
                 outboard,
                 &ranges.to_chunk_ranges(),
@@ -596,11 +616,11 @@ pub async fn send_blob<D: Map, W: AsyncWrite + Unpin + Send + 'static>(
             debug!("done sending blob {} {:?}", name, res);
             res?;
 
-            Ok((SentStatus::Sent, size))
+            Ok((SentStatus::Sent, size, file_reader.stats()))
         }
         _ => {
             debug!("blob not found {}", hex::encode(name));
-            Ok((SentStatus::NotFound, 0))
+            Ok((SentStatus::NotFound, 0, SliceReaderStats::default()))
         }
     }
 }

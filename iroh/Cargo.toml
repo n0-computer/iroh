@@ -14,7 +14,7 @@ rust-version = "1.70"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.8.0", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.9.0", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
@@ -23,7 +23,7 @@ futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
 iroh-bytes = { version = "0.6.0", path = "../iroh-bytes" }
-iroh-io = { version = "0.2.2" }
+iroh-io = { version = "0.3.0", features = ["stats"] }
 iroh-metrics = { version = "0.6.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.6.0", path = "../iroh-net" }
 itertools = "0.11.0"

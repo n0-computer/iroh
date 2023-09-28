@@ -174,7 +174,7 @@ impl<W: AsyncSliceWriter + 'static> AsyncSliceWriter for ProgressSliceWriter<W> 
     }
 
     type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
-    fn write_at(&mut self, offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
+    fn write_at<'a>(&'a mut self, offset: u64, bytes: &'a [u8]) -> Self::WriteAtFuture<'a> {
         self.0.write_at(offset, bytes)
     }
 
@@ -221,7 +221,7 @@ impl<W: AsyncSliceWriter + 'static, F: Fn(u64, usize) -> io::Result<()> + 'stati
     }
 
     type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
-    fn write_at(&mut self, offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
+    fn write_at<'a>(&'a mut self, offset: u64, bytes: &'a [u8]) -> Self::WriteAtFuture<'a> {
         self.0.write_at(offset, bytes)
     }
 
