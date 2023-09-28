@@ -25,11 +25,11 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
+use crate::{heads::SyncOutcome, store};
 use crate::{
     ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
     store::PublicKeyStore,
 };
-use crate::{heads::SyncOutcome, store};
 
 pub use crate::keys::*;
 

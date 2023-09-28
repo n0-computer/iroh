@@ -29,16 +29,16 @@
 //! [paper]: https://arxiv.org/abs/2212.13567
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
+mod heads;
 mod keys;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 #[cfg(feature = "net")]
 pub mod net;
 mod ranger;
-mod heads;
 pub mod store;
 pub mod sync;
 
-pub use keys::*;
 pub use heads::*;
+pub use keys::*;
 pub use sync::*;

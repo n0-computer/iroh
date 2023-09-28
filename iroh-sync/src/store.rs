@@ -6,8 +6,8 @@ use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ranger,
     heads::AuthorHeads,
+    ranger,
     sync::{Author, Namespace, Replica, SignedEntry},
     AuthorId, NamespaceId,
 };
