@@ -325,9 +325,7 @@ impl Endpoint {
         let now = Instant::now();
         let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_region) = derp_region {
-            if let Some(msg) =
-                self.start_ping(SendAddr::Derp(derp_region), now, DiscoPingPurpose::Cli)
-            {
+            if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
                 todo!()
             }
         }
@@ -337,15 +335,13 @@ impl Endpoint {
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
                 // IPv6 address, both 1ms away, and it's random who replies first.
-                if let Some(msg) =
-                    self.start_ping(SendAddr::Udp(udp_addr), now, DiscoPingPurpose::Cli)
-                {
+                if let Some(msg) = self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::Cli) {
                     todo!()
                 }
             } else {
                 let eps: Vec<_> = self.endpoint_state.keys().cloned().collect();
                 for ep in eps {
-                    if let Some(msg) = self.start_ping(ep, now, DiscoPingPurpose::Cli) {
+                    if let Some(msg) = self.start_ping(ep, DiscoPingPurpose::Cli) {
                         todo!()
                     }
                 }
@@ -390,31 +386,13 @@ impl Endpoint {
         }
     }
 
-    fn start_ping(
-        &mut self,
-        ep: SendAddr,
-        now: Instant,
-        purpose: DiscoPingPurpose,
-    ) -> Option<PingAction> {
+    fn start_ping(&mut self, ep: SendAddr, purpose: DiscoPingPurpose) -> Option<PingAction> {
         if derp_only_mode() {
             // don't attempt any hole punching in derp only mode
             warn!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
         info!("start ping to {}: {:?}", ep, purpose);
-        if purpose != DiscoPingPurpose::Cli {
-            if let Some(st) = self.endpoint_state.get_mut(&ep) {
-                st.last_ping.replace(now);
-            } else {
-                // Shouldn't happen. But don't ping an endpoint that's not active for us.
-                warn!(
-                    "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
-                    ep
-                );
-                return None;
-            }
-        }
-
         let tx_id = stun::TransactionId::default();
         Some(PingAction::SendPing {
             id: self.id,
@@ -435,6 +413,20 @@ impl Endpoint {
     ) {
         debug!("disco: sent ping [{}]", tx_id);
 
+        let now = Instant::now();
+        if purpose != DiscoPingPurpose::Cli {
+            if let Some(st) = self.endpoint_state.get_mut(&to) {
+                st.last_ping.replace(now);
+            } else {
+                // Shouldn't happen. But don't ping an endpoint that's not active for us.
+                warn!(
+                    "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
+                    to
+                );
+                return;
+            }
+        }
+
         let id = self.id;
         let timer = Timer::after(PING_TIMEOUT_DURATION, async move {
             sender
@@ -446,7 +438,7 @@ impl Endpoint {
             tx_id,
             SentPing {
                 to,
-                at: Instant::now(),
+                at: now,
                 purpose,
                 timer,
             },
@@ -455,7 +447,6 @@ impl Endpoint {
 
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
         let mut msgs = Vec::new();
-
         if derp_only_mode() {
             // don't send or respond to any hole punching pings if we are in
             // derp only mode
@@ -494,16 +485,11 @@ impl Endpoint {
             .endpoint_state
             .iter()
             .filter_map(|(ep, st)| {
-                if st.last_ping.is_some()
-                    && now - *st.last_ping.as_ref().unwrap() < DISCO_PING_INTERVAL
-                {
-                    debug!(
-                        "disco: [{:?}] skipping ping, too new {:?} {:?}",
-                        ep, now, st.last_ping
-                    );
-                    return None;
+                if st.needs_ping(&now) {
+                    return Some(*ep);
                 }
-                Some(*ep)
+
+                None
             })
             .collect();
         let sent_any = !pings.is_empty();
@@ -518,7 +504,7 @@ impl Endpoint {
                 debug!("disco: send, starting discovery for {:?}", self.public_key);
             }
 
-            if let Some(msg) = self.start_ping(ep, now, DiscoPingPurpose::Discovery) {
+            if let Some(msg) = self.start_ping(ep, DiscoPingPurpose::Discovery) {
                 msgs.push(msg);
             }
         }
@@ -560,7 +546,7 @@ impl Endpoint {
             }
         }
 
-        if n.derp_region.is_some() {
+        if n.derp_region.is_some() && n.derp_region != self.derp_region {
             debug!(
                 "Changing derp region for {:?} from {:?} to {:?}",
                 self.public_key, self.derp_region, n.derp_region
@@ -632,6 +618,7 @@ impl Endpoint {
         self.best_addr = None;
         self.best_addr_at = None;
         self.trust_best_addr_until = None;
+
         for es in self.endpoint_state.values_mut() {
             es.last_ping = None;
         }
@@ -967,7 +954,7 @@ impl Endpoint {
                     udp_addr, elapsed, now
                 );
                 if let Some(msg) =
-                    self.start_ping(SendAddr::Udp(udp_addr), now, DiscoPingPurpose::StayinAlive)
+                    self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::StayinAlive)
                 {
                     return vec![msg];
                 }
@@ -1362,6 +1349,20 @@ impl EndpointState {
     /// Returns the most recent pong if available.
     fn recent_pong(&self) -> Option<&PongReply> {
         self.recent_pongs.get(self.recent_pong)
+    }
+
+    fn needs_ping(&self, now: &Instant) -> bool {
+        match self.last_ping {
+            None => true,
+            Some(last_ping) => {
+                let elapsed = now.duration_since(last_ping);
+                let needs_ping = elapsed > DISCO_PING_INTERVAL;
+                if !needs_ping {
+                    debug!("ping is too new: {}ms", elapsed.as_millis());
+                }
+                needs_ping
+            }
+        }
     }
 }
 
