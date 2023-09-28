@@ -43,6 +43,8 @@ use iroh_bytes::{
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
+#[cfg(feature = "log_self")]
+use tracing::instrument;
 use tracing::{debug, trace};
 
 mod get;
@@ -225,6 +227,8 @@ impl Downloader {
         S: Store,
         C: CollectionParser,
     {
+        #[cfg(feature = "log_self")]
+        let me = endpoint.peer_id();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
         let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
 
@@ -235,7 +239,14 @@ impl Downloader {
                 collection_parser,
             };
 
-            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+            let service = Service::new(
+                #[cfg(feature = "log_self")]
+                me,
+                getter,
+                dialer,
+                concurrency_limits,
+                msg_rx,
+            );
 
             service.run()
         };
@@ -441,6 +452,8 @@ type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureActi
 
 #[derive(Debug)]
 struct Service<G: Getter, D: Dialer> {
+    #[cfg(feature = "log_self")]
+    me: PublicKey,
     /// The getter performs individual requests.
     getter: G,
     /// Map to query for peers that we believe have the data we are looking for.
@@ -468,12 +481,15 @@ struct Service<G: Getter, D: Dialer> {
 
 impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn new(
+        #[cfg(feature = "log_self")] me: PublicKey,
         getter: G,
         dialer: D,
         concurrency_limits: ConcurrencyLimits,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
         Service {
+            #[cfg(feature = "log_self")]
+            me,
             getter,
             providers: ProviderMap::default(),
             dialer,
@@ -489,6 +505,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     }
 
     /// Main loop for the service.
+    #[cfg_attr(feature = "log_self", instrument(skip_all, fields(me = %self.me)))]
     async fn run(mut self) {
         loop {
             // check if we have capacity to dequeue another scheduled request

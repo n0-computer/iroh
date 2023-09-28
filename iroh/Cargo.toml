@@ -69,7 +69,7 @@ colored = { version = "2.0.4", optional = true }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional = true }
 
 [features]
-default = ["cli", "metrics"]
+default = ["cli", "metrics", "log_self"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table"]
 metrics = ["iroh-metrics"]
 mem-db = []
@@ -77,6 +77,7 @@ flat-db = []
 iroh-collection = []
 test = []
 example-sync = ["cli"]
+log_self = []
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -110,7 +111,7 @@ required-features = ["mem-db"]
 
 [[example]]
 name = "sync"
-required-features = ["example-sync"]
+required-features = ["example-sync", "log_self"]
 
 [[example]]
 name = "rpc"
