@@ -460,7 +460,7 @@ pub struct BlobAddOptions {
     ///
     /// Only supported `wrap` is set.
     /// Required when adding content from STDIN and setting `wrap`.
-    #[clap(long)]
+    #[clap(long, requires = "wrap")]
     filename: Option<String>,
 
     /// Do not print the all-in-one ticket to get the added data from this node.
