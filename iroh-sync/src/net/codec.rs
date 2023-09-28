@@ -12,7 +12,7 @@ use tracing::trace;
 
 use crate::{
     net::{AbortReason, AcceptError, AcceptOutcome, ConnectError},
-    store, AsyncReplica as Replica, NamespaceId, SyncProgress,
+    store, AsyncReplica as Replica, NamespaceId, SyncOutcome,
 };
 
 #[derive(Debug, Default)]
@@ -93,12 +93,12 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     reader: &mut R,
     alice: &Replica<S::Instance>,
     peer: PublicKey,
-) -> Result<SyncProgress, ConnectError> {
+) -> Result<SyncOutcome, ConnectError> {
     let peer = *peer.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
 
-    let mut progress = SyncProgress::default();
+    let mut progress = SyncOutcome::default();
 
     // Init message
 
@@ -154,7 +154,7 @@ pub(super) async fn run_bob<S, R, W, F, Fut>(
     reader: &mut R,
     accept_cb: F,
     other_peer_id: PublicKey,
-) -> Result<(NamespaceId, SyncProgress), AcceptError>
+) -> Result<(NamespaceId, SyncOutcome), AcceptError>
 where
     S: store::Store,
     R: AsyncRead + Unpin,
@@ -171,7 +171,7 @@ where
 pub struct BobState<S: store::Store> {
     replica: Option<Replica<S::Instance>>,
     peer: PublicKey,
-    progress: SyncProgress,
+    progress: SyncOutcome,
 }
 
 impl<S: store::Store> BobState<S> {
@@ -270,8 +270,8 @@ impl<S: store::Store> BobState<S> {
         self.replica.as_ref().map(|r| r.namespace()).to_owned()
     }
 
-    /// Consume self and get the [`SyncProgress`] for this connection.
-    pub fn into_progress(self) -> SyncProgress {
+    /// Consume self and get the [`SyncOutcome`] for this connection.
+    pub fn into_progress(self) -> SyncOutcome {
         self.progress
     }
 }
