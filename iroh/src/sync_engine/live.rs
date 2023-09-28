@@ -29,7 +29,7 @@ use iroh_sync::{
     },
     store,
     sync::{AsyncReplica as Replica, Entry, InsertOrigin, NamespaceId, SignedEntry},
-    StateVector,
+    AuthorHeads,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -61,7 +61,7 @@ pub enum Op {
 pub struct SyncReport {
     peer: PublicKey,
     namespace: NamespaceId,
-    heads: StateVector,
+    heads: AuthorHeads,
 }
 
 #[derive(Debug, Clone)]
@@ -834,11 +834,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // Broadcast a sync report to our neighbors, but only if we received new entries.
         if let Ok(state) = &result {
-            if state.progress.entries_recv > 0 {
+            if state.progress.num_recv > 0 {
                 let report = SyncReport {
                     peer,
                     namespace,
-                    heads: state.progress.state_vector.clone(),
+                    heads: state.progress.heads_received.clone(),
                 };
                 let op = Op::SyncReport(report);
                 debug!(
@@ -1079,7 +1079,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 }
 
-/// Outcome of a sync operation
+/// Event emitted when a sync operation completes
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct SyncEvent {
     /// Namespace that was synced

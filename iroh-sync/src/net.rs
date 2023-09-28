@@ -11,7 +11,7 @@ use crate::{
     net::codec::{run_alice, BobState},
     store,
     sync::AsyncReplica as Replica,
-    NamespaceId, SyncProgress,
+    NamespaceId, SyncOutcome,
 };
 
 #[cfg(feature = "metrics")]
@@ -141,7 +141,7 @@ pub struct SyncFinished {
     ///
     pub peer: PublicKey,
     ///
-    pub progress: SyncProgress,
+    pub progress: SyncOutcome,
 }
 
 /// Errors that may occur on handling incoming sync connections.

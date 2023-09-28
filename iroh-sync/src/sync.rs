@@ -29,7 +29,7 @@ use crate::{
     ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
     store::PublicKeyStore,
 };
-use crate::{state_vector::SyncProgress, store};
+use crate::{heads::SyncOutcome, store};
 
 pub use crate::keys::*;
 
@@ -137,7 +137,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static + Clone + Send + S
         &self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
-        state: &mut SyncProgress,
+        state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
         // TODO: no clones
         let mut state2 = state.clone();
@@ -374,15 +374,17 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         &self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
-        state: &mut SyncProgress,
+        state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
         let expected_namespace = self.namespace();
         let now = system_time_now();
 
         // update state with incoming data.
-        state.entries_recv += message.value_count();
+        state.num_recv += message.value_count();
         for (entry, _content_status) in message.values() {
-            state.state_vector.insert(entry.author(), entry.timestamp());
+            state
+                .heads_received
+                .insert(entry.author(), entry.timestamp());
         }
 
         let reply = self.inner.write().peer.process_message(
@@ -414,7 +416,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
         // update state with outgoing data.
         if let Some(ref reply) = reply {
-            state.entries_sent += reply.value_count();
+            state.num_sent += reply.value_count();
         }
 
         Ok(reply)
@@ -919,7 +921,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        state_vector::StateVector,
+        state_vector::AuthorHeads,
         store::{self, GetFilter, Store},
     };
 
@@ -1451,8 +1453,8 @@ mod tests {
     ) -> Result<()> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
-        let mut alice_state = SyncProgress::default();
-        let mut bob_state = SyncProgress::default();
+        let mut alice_state = SyncOutcome::default();
+        let mut bob_state = SyncOutcome::default();
         // Sync alice - bob
         let mut next_to_bob = Some(alice.sync_initial_message().map_err(Into::into)?);
         let mut rounds = 0;

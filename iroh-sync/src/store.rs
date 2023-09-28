@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ranger,
-    state_vector::StateVector,
+    heads::AuthorHeads,
     sync::{Author, Namespace, Replica, SignedEntry},
     AuthorId, NamespaceId,
 };
@@ -97,9 +97,9 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Check if a state vector contains pointers that we do not have locally.
     // TODO: This default impl is horrifyingly inefficient. Remove.
-    fn has_news_for_us(&self, namespace: NamespaceId, state_vector: &StateVector) -> Result<bool> {
+    fn has_news_for_us(&self, namespace: NamespaceId, state_vector: &AuthorHeads) -> Result<bool> {
         let our_state_vector = {
-            let mut sv = StateVector::default();
+            let mut sv = AuthorHeads::default();
             let all = self.get_many(namespace, GetFilter::All)?;
             for e in all {
                 let e = e?;
