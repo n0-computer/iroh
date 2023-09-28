@@ -36,11 +36,7 @@ fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
     secret_key: SecretKey,
-) -> Builder<
-    iroh::baomap::mem::Store,
-    store::memory::Store,
-    DummyServerEndpoint,
-> {
+) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
     let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
