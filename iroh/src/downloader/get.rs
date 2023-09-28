@@ -414,7 +414,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, _) = collection_parser.parse(0, reader).await.map_err(|e| {
+        let (mut collection, _) = collection_parser.parse(reader).await.map_err(|e| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection : {e}"
             ))
@@ -509,7 +509,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
             FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
         })?;
         let reader = entry.data_reader().await?;
-        let (mut collection, _) = collection_parser.parse(0, reader).await.map_err(|_| {
+        let (mut collection, _) = collection_parser.parse(reader).await.map_err(|_| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection"
             ))

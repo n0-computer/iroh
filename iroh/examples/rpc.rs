@@ -9,7 +9,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use clap::Parser;
-use iroh::collection::IrohCollectionParser;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
 use iroh_bytes::baomap::Store;
@@ -57,7 +56,6 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
     let doc_store = iroh_sync::store::memory::Store::default();
     let node = iroh::node::Node::builder(db, doc_store)
         .secret_key(secret_key)
-        .collection_parser(IrohCollectionParser)
         .runtime(&rt)
         .rpc_endpoint(rpc_endpoint)
         .spawn()

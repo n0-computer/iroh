@@ -1,12 +1,16 @@
 //! The collection type used by iroh
-use anyhow::{Context, Result};
-use futures::{
-    future::{self, LocalBoxFuture},
-    FutureExt,
-};
-use iroh_bytes::collection::{CollectionParser, CollectionStats, LinkStream};
-use iroh_bytes::Hash;
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
+use std::collections::BTreeMap;
+
+use anyhow::Context;
+use bao_tree::blake3;
+use bytes::Bytes;
+use iroh_bytes::baomap::{MapEntry, TempTag};
+use iroh_bytes::collection::LinkSeq;
+use iroh_bytes::get::fsm::EndBlobNext;
+use iroh_bytes::get::Stats;
+use iroh_bytes::util::BlobFormat;
+use iroh_bytes::{baomap, Hash};
+use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 
 /// A collection of blobs
@@ -20,7 +24,159 @@ pub struct Collection {
     pub(crate) total_blobs_size: u64,
 }
 
+/// Metadata for a collection
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+struct CollectionMeta {
+    names: Vec<String>,
+    total_blobs_size: u64,
+}
+
 impl Collection {
+    /// Convert the collection to an iterator of blobs, with the last being the
+    /// root blob.
+    ///
+    /// To persist the collection, write all the blobs to storage, and use the
+    /// hash of the last blob as the collection hash.
+    pub fn to_blobs(&self) -> impl Iterator<Item = Bytes> {
+        let meta = CollectionMeta {
+            names: self.names(),
+            total_blobs_size: self.total_blobs_size(),
+        };
+        let meta_bytes = postcard::to_stdvec(&meta).unwrap();
+        let meta_bytes_hash = blake3::hash(&meta_bytes).into();
+        let links = std::iter::once(meta_bytes_hash)
+            .chain(self.links())
+            .collect::<LinkSeq>();
+        let links_bytes = links.into_inner();
+        [meta_bytes.into(), links_bytes].into_iter()
+    }
+
+    /// Read the collection from a get fsm.
+    ///
+    /// Returns the fsm at the start of the first child blob (if any),
+    /// the links array, and the collection.
+    pub async fn read_fsm(
+        fsm_at_start_root: iroh_bytes::get::fsm::AtStartRoot,
+    ) -> anyhow::Result<(iroh_bytes::get::fsm::EndBlobNext, LinkSeq, Collection)> {
+        let (next, links) = {
+            let curr = fsm_at_start_root.next();
+            let (curr, data) = curr.concatenate_into_vec().await?;
+            let links = LinkSeq::new(data.into()).context("links could not be parsed")?;
+            (curr.next(), links)
+        };
+        let EndBlobNext::MoreChildren(at_meta) = next else {
+            anyhow::bail!("expected meta");
+        };
+        let (next, collection) = {
+            let mut children = links.clone();
+            let meta_link = children.pop_front().context("meta link not found")?;
+            let curr = at_meta.next(meta_link);
+            let (curr, names) = curr.concatenate_into_vec().await?;
+            let names = postcard::from_bytes::<CollectionMeta>(&names)?;
+            let collection = Collection::from_parts(children, names)?;
+            (curr.next(), collection)
+        };
+        Ok((next, links, collection))
+    }
+
+    /// Read the collection and all it's children from a get fsm.
+    ///
+    /// Returns the collection, a map from blob offsets to bytes, and the stats.
+    pub async fn read_fsm_all(
+        fsm_at_start_root: iroh_bytes::get::fsm::AtStartRoot,
+    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+        let (next, links, collection) = Self::read_fsm(fsm_at_start_root).await?;
+        let mut res = BTreeMap::new();
+        let mut curr = next;
+        let end = loop {
+            match curr {
+                EndBlobNext::MoreChildren(more) => {
+                    let child_offset = more.child_offset();
+                    let Some(hash) = links.get(usize::try_from(child_offset)?) else {
+                        break more.finish();
+                    };
+                    let header = more.next(hash);
+                    let (next, blob) = header.concatenate_into_vec().await?;
+                    res.insert(child_offset - 1, blob.into());
+                    curr = next.next();
+                }
+                EndBlobNext::Closing(closing) => break closing,
+            }
+        };
+        let stats = end.next().await?;
+        Ok((collection, res, stats))
+    }
+
+    /// Load a collection from a store given a root hash
+    ///
+    /// This assumes that both the links and the metadata of the collection is stored in the store.
+    /// It does not require that all child blobs are stored in the store.
+    pub async fn load<D>(db: &D, root: &Hash) -> anyhow::Result<Self>
+    where
+        D: baomap::Map,
+    {
+        let links_entry = db.get(root).context("links not found")?;
+        anyhow::ensure!(links_entry.is_complete(), "links not complete");
+        let links_bytes = links_entry.data_reader().await?.read_to_end().await?;
+        let mut links = LinkSeq::try_from(links_bytes)?;
+        let meta_hash = links.pop_front().context("meta hash not found")?;
+        let meta_entry = db.get(&meta_hash).context("meta not found")?;
+        anyhow::ensure!(links_entry.is_complete(), "links not complete");
+        let meta_bytes = meta_entry.data_reader().await?.read_to_end().await?;
+        let meta: CollectionMeta = postcard::from_bytes(&meta_bytes)?;
+        anyhow::ensure!(
+            meta.names.len() == links.len(),
+            "names and links length mismatch"
+        );
+        Self::from_parts(links, meta)
+    }
+
+    /// Store a collection in a store. returns the root hash of the collection
+    /// as a TempTag.
+    pub async fn store<D>(self, db: &D) -> anyhow::Result<TempTag>
+    where
+        D: baomap::Store,
+    {
+        let (links, meta) = self.into_parts();
+        let meta_bytes = postcard::to_stdvec(&meta)?;
+        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::RAW).await?;
+        let links_bytes = std::iter::once(*meta_tag.hash())
+            .chain(links)
+            .collect::<LinkSeq>();
+        let links_tag = db
+            .import_bytes(links_bytes.into_inner(), BlobFormat::COLLECTION)
+            .await?;
+        Ok(links_tag)
+    }
+
+    /// Split a collection into a sequence of links and metadata
+    fn into_parts(self) -> (Vec<Hash>, CollectionMeta) {
+        let mut names = Vec::with_capacity(self.blobs().len());
+        let mut links = Vec::with_capacity(self.blobs().len());
+        for blob in self.blobs {
+            names.push(blob.name);
+            links.push(blob.hash);
+        }
+        let meta = CollectionMeta {
+            names,
+            total_blobs_size: self.total_blobs_size,
+        };
+        (links, meta)
+    }
+
+    /// Create a new collection from a list of hashes and metadata
+    fn from_parts(
+        links: impl IntoIterator<Item = Hash>,
+        meta: CollectionMeta,
+    ) -> anyhow::Result<Self> {
+        let blobs = links
+            .into_iter()
+            .zip(meta.names)
+            .map(|(hash, name)| Blob { name, hash })
+            .collect();
+        Self::new(blobs, meta.total_blobs_size)
+    }
+
     /// Create a new collection from a list of blobs and total size of the raw data
     pub fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> anyhow::Result<Self> {
         let mut blobs = blobs;
@@ -34,16 +190,14 @@ impl Collection {
         })
     }
 
-    /// Serialize this collection to a std `Vec<u8>`
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        Ok(postcard::to_stdvec(self)?)
+    /// Get the links to the blobs in this collection
+    fn links(&self) -> impl Iterator<Item = Hash> + '_ {
+        self.blobs.iter().map(|x| x.hash)
     }
 
-    /// Deserialize a collection from a byte slice
-    pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        let c: Collection =
-            postcard::from_bytes(data).context("failed to deserialize Collection data")?;
-        Ok(c)
+    /// Get the names of the blobs in this collection
+    fn names(&self) -> Vec<String> {
+        self.blobs.iter().map(|x| x.name.clone()).collect()
     }
 
     /// Blobs in this collection
@@ -96,83 +250,5 @@ mod tests {
         postcard::to_slice(&b, &mut buf).unwrap();
         let deserialize_b: Blob = postcard::from_bytes(&buf).unwrap();
         assert_eq!(b, deserialize_b);
-    }
-}
-
-/// Parser for the current iroh default collections
-///
-/// This is a custom collection parser that supports the current iroh default collections.
-/// It loads the entire collection into memory and then extracts an array of hashes.
-/// So this will not work for extremely large collections.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IrohCollectionParser;
-
-/// Stream of links that is used by the default collections
-///
-/// Just contains an array of hashes, so it requires at least all hashes to be loaded into memory.
-#[derive(Debug, Clone)]
-pub struct ArrayLinkStream {
-    hashes: Box<[Hash]>,
-    offset: usize,
-}
-
-impl ArrayLinkStream {
-    /// Create a new iterator over the given hashes.
-    pub fn new(hashes: Box<[Hash]>) -> Self {
-        Self { hashes, offset: 0 }
-    }
-}
-
-impl LinkStream for ArrayLinkStream {
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
-        let res = if self.offset < self.hashes.len() {
-            let hash = self.hashes[self.offset];
-            self.offset += 1;
-            Some(hash)
-        } else {
-            None
-        };
-        future::ok(res).boxed_local()
-    }
-
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
-        let res = if let Some(offset) = self
-            .offset
-            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
-        {
-            self.offset = offset;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("overflow"))
-        };
-        future::ready(res).boxed_local()
-    }
-}
-
-impl CollectionParser for IrohCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        mut reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        async move {
-            // read to end
-            let data = reader.read_to_end().await?;
-            // parse the collection and just take the hashes
-            let collection = Collection::from_bytes(&data)?;
-            let stats = CollectionStats {
-                num_blobs: Some(collection.blobs.len() as u64),
-                total_blob_size: Some(collection.total_blobs_size),
-            };
-            let hashes = collection
-                .into_inner()
-                .into_iter()
-                .map(|x| x.hash)
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
-            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
-            Ok((res, stats))
-        }
-        .boxed_local()
     }
 }

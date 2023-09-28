@@ -293,7 +293,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(0, reader).await?;
+        let (mut collection, stats) = collection_parser.parse(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
@@ -372,7 +372,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         // read the collection fully for now
         let entry = db.get(root_hash).context("just downloaded")?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(0, reader).await?;
+        let (mut collection, stats) = collection_parser.parse(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
