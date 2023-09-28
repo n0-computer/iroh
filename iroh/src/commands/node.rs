@@ -33,9 +33,9 @@ use super::{
 };
 
 #[derive(Debug)]
-pub struct ProvideOptions {
+pub struct StartOptions {
     pub addr: SocketAddr,
-    pub rpc_port: ProviderRpcPort,
+    pub rpc_port: RpcPort,
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
@@ -46,7 +46,7 @@ pub async fn run(
     path: Option<PathBuf>,
     in_place: bool,
     tag: SetTagOption,
-    opts: ProvideOptions,
+    opts: StartOptions,
 ) -> Result<()> {
     if let Some(ref path) = path {
         ensure!(
@@ -139,7 +139,7 @@ async fn provide<B: BaoStore, D: DocStore>(
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     peers_data_path: PathBuf,
-    opts: ProvideOptions,
+    opts: StartOptions,
 ) -> Result<Node<B, D>> {
     let secret_key = get_secret_key(key).await?;
 
@@ -243,37 +243,37 @@ fn make_rpc_endpoint(
 }
 
 #[derive(Debug, Clone)]
-pub enum ProviderRpcPort {
+pub enum RpcPort {
     Enabled(u16),
     Disabled,
 }
 
-impl From<ProviderRpcPort> for Option<u16> {
-    fn from(value: ProviderRpcPort) -> Self {
+impl From<RpcPort> for Option<u16> {
+    fn from(value: RpcPort) -> Self {
         match value {
-            ProviderRpcPort::Enabled(port) => Some(port),
-            ProviderRpcPort::Disabled => None,
+            RpcPort::Enabled(port) => Some(port),
+            RpcPort::Disabled => None,
         }
     }
 }
 
-impl fmt::Display for ProviderRpcPort {
+impl fmt::Display for RpcPort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProviderRpcPort::Enabled(port) => write!(f, "{port}"),
-            ProviderRpcPort::Disabled => write!(f, "disabled"),
+            RpcPort::Enabled(port) => write!(f, "{port}"),
+            RpcPort::Disabled => write!(f, "disabled"),
         }
     }
 }
 
-impl FromStr for ProviderRpcPort {
+impl FromStr for RpcPort {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "disabled" {
-            Ok(ProviderRpcPort::Disabled)
+            Ok(RpcPort::Disabled)
         } else {
-            Ok(ProviderRpcPort::Enabled(s.parse()?))
+            Ok(RpcPort::Enabled(s.parse()?))
         }
     }
 }

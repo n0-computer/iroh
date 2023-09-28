@@ -27,7 +27,7 @@ use iroh_net::{
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::node::{ProvideOptions, ProviderRpcPort};
+use self::node::{StartOptions, RpcPort};
 use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -153,7 +153,7 @@ pub enum FullCommands {
         addr: SocketAddr,
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
-        rpc_port: ProviderRpcPort,
+        rpc_port: RpcPort,
         /// Use a token to authenticate requests for data
         ///
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
@@ -237,7 +237,7 @@ impl FullCommands {
                     path,
                     in_place,
                     tag,
-                    ProvideOptions {
+                    StartOptions {
                         addr,
                         rpc_port,
                         keylog,
