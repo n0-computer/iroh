@@ -506,10 +506,12 @@ impl Endpoint {
                 Some(*ep)
             })
             .collect();
-        debug!("sending pings to {:?}", pings);
-
         let sent_any = !pings.is_empty();
         let have_endpoints = !self.endpoint_state.is_empty();
+
+        if sent_any {
+            debug!("sending pings to {:?}", pings);
+        }
 
         for (i, ep) in pings.into_iter().enumerate() {
             if i == 0 && send_call_me_maybe {

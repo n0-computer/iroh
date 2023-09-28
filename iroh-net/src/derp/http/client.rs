@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 use url::Url;
@@ -654,45 +654,37 @@ impl Client {
         // TODO: Add support for HTTP proxies.
         debug!("dial node: {:?}", node);
 
-        let mut dials = JoinSet::new();
+        match (node.ipv4.is_enabled(), node.ipv6.is_enabled()) {
+            (true, true) => {
+                let this = self.clone();
+                let node1 = node.clone();
+                let fut1 = Box::pin(
+                    async move { this.start_dial(&node1, UseIp::Ipv4(node.ipv4)).await }
+                        .instrument(info_span!("dial", proto = "ipv4")),
+                );
 
-        if node.ipv4.is_enabled() {
-            let this = self.clone();
-            let node = node.clone();
-            dials.spawn(
-                async move { this.start_dial(&node, UseIp::Ipv4(node.ipv4)).await }
-                    .instrument(info_span!("dial", proto = "ipv4")),
-            );
-        }
-        if node.ipv6.is_enabled() {
-            let this = self.clone();
-            let node = node.clone();
-            dials.spawn(
-                async move { this.start_dial(&node, UseIp::Ipv6(node.ipv6)).await }
-                    .instrument(info_span!("dial", proto = "ipv6")),
-            );
-        }
+                let this = self.clone();
+                let node2 = node.clone();
+                let fut2 = Box::pin(
+                    async move { this.start_dial(&node2, UseIp::Ipv6(node.ipv6)).await }
+                        .instrument(info_span!("dial", proto = "ipv6")),
+                );
 
-        // Return the first successfull dial, otherwise the first error we saw.
-        let mut first_err = None;
-        while let Some(res) = dials.join_next().await {
-            match res.map_err(ClientError::DialTask)? {
-                Ok(conn) => {
-                    // Cancel rest
-                    dials.abort_all();
-                    return Ok(conn);
-                }
-                Err(err) => {
-                    if first_err.is_none() {
-                        first_err = Some(err);
-                    }
-                    if dials.is_empty() {
-                        return Err(first_err.unwrap());
-                    }
+                match futures::future::select(fut1, fut2).await {
+                    futures::future::Either::Left((ipv4, ipv6)) => match ipv4 {
+                        Ok(conn) => Ok(conn),
+                        Err(_) => ipv6.await,
+                    },
+                    futures::future::Either::Right((ipv6, ipv4)) => match ipv6 {
+                        Ok(conn) => Ok(conn),
+                        Err(_) => ipv4.await,
+                    },
                 }
             }
+            (true, false) => self.start_dial(node, UseIp::Ipv4(node.ipv4)).await,
+            (false, true) => self.start_dial(node, UseIp::Ipv6(node.ipv6)).await,
+            (false, false) => Err(ClientError::IPDisabled),
         }
-        Err(ClientError::IPDisabled)
     }
 
     /// Reports whether IPv4 dials should be slightly
