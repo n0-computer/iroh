@@ -825,10 +825,10 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     ///
     /// See [`Ticket`] for more details of how it can be used.
     // TODO: We should not assume `recursive: true` as we do currently. Take as argument instead.
-    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
-        Ticket::new(me, hash, None, true)
+        Ticket::new(me, hash, format, None)
     }
 
     /// Return the [`PeerAddr`] for this node.
@@ -1098,11 +1098,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
         debug!("share: {:?}", msg);
-        let format = if msg.recursive {
-            BlobFormat::COLLECTION
-        } else {
-            BlobFormat::RAW
-        };
+        let format = msg.format;
         let db = self.inner.db.clone();
         let haf = HashAndFormat(hash, format);
         let temp_pin = db.temp_tag(haf);
@@ -1123,7 +1119,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 &collection_parser,
                 conn,
                 hash,
-                msg.recursive,
+                msg.format.is_collection(),
                 progress2,
             )
             .await
@@ -1141,7 +1137,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 .await?;
             if let DownloadLocation::External { path, in_place } = msg.out {
                 if let Err(cause) = this
-                    .blob_export(path, hash, msg.recursive, in_place, progress3)
+                    .blob_export(path, hash, msg.format.is_collection(), in_place, progress3)
                     .await
                 {
                     progress.send(GetProgress::Abort(cause.into())).await?;
@@ -1180,7 +1176,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use crate::collection::{Blob, Collection};
+        use crate::{
+            collection::{Blob, Collection},
+            rpc_protocol::WrapOption,
+        };
         use futures::TryStreamExt;
         use iroh_bytes::baomap::{ImportMode, ImportProgress, TempTag};
         use std::{collections::BTreeMap, sync::Mutex};
@@ -1207,65 +1206,93 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
             _ => None,
         });
-        let root = msg.path;
+        let BlobAddPathRequest {
+            wrap,
+            path: root,
+            in_place,
+            tag,
+        } = msg;
+        // Check that the path is absolute and exists.
         anyhow::ensure!(root.is_absolute(), "path must be absolute");
-        anyhow::ensure!(
-            root.is_dir() || root.is_file(),
-            "path must be either a Directory or a File"
-        );
-        let data_sources = crate::util::fs::scan_path(root)?;
-        let mode = if msg.in_place {
-            ImportMode::TryReference
-        } else {
-            ImportMode::Copy
+        anyhow::ensure!(root.exists(), "path must exist");
+
+        let import_mode = match in_place {
+            true => ImportMode::TryReference,
+            false => ImportMode::Copy,
         };
-        const IO_PARALLELISM: usize = 4;
-        let result: Vec<(Blob, u64, TempTag)> = futures::stream::iter(data_sources)
-            .map(|source| {
-                let import_progress = import_progress.clone();
-                let db = self.inner.db.clone();
-                async move {
-                    let name = source.name().to_string();
-                    let (tag, size) = db
-                        .import(
-                            source.path().to_owned(),
-                            mode,
-                            BlobFormat::RAW,
-                            import_progress,
-                        )
-                        .await?;
-                    let blob = Blob {
-                        hash: *tag.hash(),
-                        name,
-                    };
-                    io::Result::Ok((blob, size, tag))
-                }
-            })
-            .buffered(IO_PARALLELISM)
-            .try_collect::<Vec<_>>()
-            .await?;
-        let total_blobs_size = result.iter().map(|(_, size, _)| *size).sum();
-        let (blobs, child_tags): (Vec<_>, Vec<_>) =
-            result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
-        let collection = Collection::new(blobs, total_blobs_size)?;
-        let tag = collection.store(&self.inner.db).await?;
-        let hash = *tag.hash();
-        progress.send(AddProgress::AllDone { hash }).await?;
-        let haf = *tag.inner();
-        match msg.tag {
+
+        let create_collection = match wrap {
+            WrapOption::Wrap { .. } => true,
+            WrapOption::NoWrap => root.is_dir(),
+        };
+
+        let temp_tag = if create_collection {
+            // import all files below root recursively
+            let data_sources = crate::util::fs::scan_path(root, wrap)?;
+            const IO_PARALLELISM: usize = 4;
+            let result: Vec<(Blob, u64, TempTag)> = futures::stream::iter(data_sources)
+                .map(|source| {
+                    let import_progress = import_progress.clone();
+                    let db = self.inner.db.clone();
+                    async move {
+                        let name = source.name().to_string();
+                        let (tag, size) = db
+                            .import(
+                                source.path().to_owned(),
+                                import_mode,
+                                BlobFormat::RAW,
+                                import_progress,
+                            )
+                            .await?;
+                        let hash = *tag.hash();
+                        let blob = Blob { hash, name };
+                        io::Result::Ok((blob, size, tag))
+                    }
+                })
+                .buffered(IO_PARALLELISM)
+                .try_collect::<Vec<_>>()
+                .await?;
+            let total_blobs_size = result.iter().map(|(_, size, _)| *size).sum();
+
+            // create a collection
+            let (blobs, _child_tags): (Vec<_>, Vec<_>) =
+                result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
+            let collection = Collection::new(blobs, total_blobs_size)?;
+
+            collection.store(&self.inner.db).await?
+        } else {
+            // import a single file
+            let (tag, _size) = self
+                .inner
+                .db
+                .import(root, import_mode, BlobFormat::RAW, import_progress)
+                .await?;
+            tag
+        };
+
+        let hash_and_format = temp_tag.inner();
+        let HashAndFormat(hash, format) = *hash_and_format;
+        let tag = match tag {
             SetTagOption::Named(tag) => {
-                self.inner.db.set_tag(tag, Some(haf)).await?;
+                self.inner
+                    .db
+                    .set_tag(tag.clone(), Some(*hash_and_format))
+                    .await?;
+                tag
             }
-            SetTagOption::Auto => {
-                self.inner.db.create_tag(haf).await?;
-            }
-        }
-        drop(tag);
-        drop(child_tags);
+            SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
+        };
+        progress
+            .send(AddProgress::AllDone {
+                hash,
+                format,
+                tag: tag.clone(),
+            })
+            .await?;
         self.inner
             .callbacks
             .send(Event::ByteProvide(
-                iroh_bytes::provider::Event::CollectionAdded { hash },
+                iroh_bytes::provider::Event::TaggedBlobAdded { hash, format, tag },
             ))
             .await;
 
@@ -1293,16 +1320,16 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         res
     }
 
-    async fn node_status(self, _: NodeStatusRequest) -> NodeStatusResponse {
-        NodeStatusResponse {
-            node_id: Box::new(self.inner.secret_key.public()),
+    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatusResponse> {
+        Ok(NodeStatusResponse {
+            addr: self.inner.endpoint.my_addr().await?,
             listen_addrs: self
                 .inner
                 .local_endpoint_addresses()
                 .await
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-        }
+        })
     }
     async fn node_shutdown(self, request: NodeShutdownRequest) {
         if request.force {
@@ -1636,6 +1663,8 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::path::Path;
 
+    use crate::rpc_protocol::WrapOption;
+
     use super::*;
 
     /// Pick up the tokio runtime from the thread local and add a
@@ -1657,14 +1686,14 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash).await.unwrap();
+        let ticket = node.ticket(hash, BlobFormat::RAW).await.unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
 
     #[cfg(feature = "mem-db")]
     #[tokio::test]
-    async fn test_node_add_collection_event() -> Result<()> {
+    async fn test_node_add_tagged_blob_event() -> Result<()> {
         use iroh_bytes::util::SetTagOption;
 
         let rt = runtime::Handle::from_current(1)?;
@@ -1682,8 +1711,10 @@ mod tests {
         node.subscribe(move |event| {
             let r = r.clone();
             async move {
-                if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
-                    event
+                if let Event::ByteProvide(iroh_bytes::provider::Event::TaggedBlobAdded {
+                    hash,
+                    ..
+                }) = event
                 {
                     r.send(hash).await.ok();
                 }
@@ -1699,12 +1730,13 @@ mod tests {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                     in_place: false,
                     tag: SetTagOption::Auto,
+                    wrap: WrapOption::NoWrap,
                 })
                 .await?;
 
             while let Some(item) = stream.next().await {
                 match item? {
-                    AddProgress::AllDone { hash } => {
+                    AddProgress::AllDone { hash, .. } => {
                         return Ok(hash);
                     }
                     AddProgress::Abort(e) => {
@@ -1719,7 +1751,7 @@ mod tests {
         .context("timeout")?
         .context("get failed")?;
 
-        let event_hash = s.recv().await.expect("missing collection event");
+        let event_hash = s.recv().await.expect("missing add tagged blob event");
         assert_eq!(got_hash, event_hash);
 
         Ok(())

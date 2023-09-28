@@ -8,46 +8,33 @@ use std::{
 
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
-    baomap::flat,
+    baomap::flat::{self, Store as BaoFsStore},
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{
-    baomap::Store as BaoStore,
-    protocol::RequestToken,
-    util::{runtime, SetTagOption},
-};
+use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, key::SecretKey};
-use iroh_sync::store::Store as DocStore;
+use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::config::IrohPaths;
+use crate::{commands::add, config::IrohPaths};
 
-use super::{
-    add::{aggregate_add_response, print_add_response},
-    MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
-};
+use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 
 #[derive(Debug)]
-pub struct ProvideOptions {
+pub struct StartOptions {
     pub addr: SocketAddr,
-    pub rpc_port: ProviderRpcPort,
+    pub rpc_port: RpcPort,
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
 }
 
-pub async fn run(
-    rt: &runtime::Handle,
-    path: Option<PathBuf>,
-    in_place: bool,
-    tag: SetTagOption,
-    opts: ProvideOptions,
-) -> Result<()> {
-    if let Some(ref path) = path {
+pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOptions) -> Result<()> {
+    if let Some(ref path) = add_opts.path {
         ensure!(
             path.exists(),
             "Cannot provide nonexistent path: {}",
@@ -55,71 +42,34 @@ pub async fn run(
         );
     }
 
-    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
-    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
-    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
-    tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let db = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
-        .await
-        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let key = Some(IrohPaths::SecretKey.with_env()?);
-    let store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
     let token = opts.request_token.clone();
-    let peers = IrohPaths::PeerData.with_env()?;
-    let provider = provide(db.clone(), store, rt, key, peers, opts).await?;
-    let client = provider.client();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
     }
 
-    // task that will add data to the provider, either from a file or from stdin
-    let fut = {
-        let provider = provider.clone();
+    let node = start_daemon_node(rt, opts).await?;
+    let client = node.client();
+
+    let add_task = {
         tokio::spawn(
             async move {
-                let (path, tmp_path) = if let Some(path) = path {
-                    let absolute = path.canonicalize()?;
-                    println!("Adding {} as {}...", path.display(), absolute.display());
-                    (absolute, None)
-                } else {
-                    // Store STDIN content into a temporary file
-                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                    let mut file = tokio::fs::File::from_std(file);
-                    let path_buf = path.to_path_buf();
-                    // Copy from stdin to the file, until EOF
-                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                    println!("Adding from stdin...");
-                    // return the TempPath to keep it alive
-                    (path_buf, Some(path))
-                };
-                // tell the provider to add the data
-                let stream = client.blobs.add_from_path(path, in_place, tag).await?;
-                match aggregate_add_response(stream).await {
-                    Ok((hash, entries)) => {
-                        print_add_response(hash, entries);
-                        let ticket = provider.ticket(hash).await?.with_token(token);
-                        println!("All-in-one ticket: {ticket}");
-                        anyhow::Ok(tmp_path)
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to add data: {}", e);
-                        std::process::exit(-1);
-                    }
+                if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
+                    eprintln!("Failed to add data: {}", e);
+                    std::process::exit(1);
                 }
             }
-            .instrument(info_span!("provider-add")),
+            .instrument(info_span!("node-add")),
         )
     };
 
-    let provider2 = provider.clone();
+    let node2 = node.clone();
     tokio::select! {
         biased;
         _ = tokio::signal::ctrl_c() => {
             println!("Shutting down provider...");
-            provider2.shutdown();
+            node2.shutdown();
         }
-        res = provider => {
+        res = node => {
             res?;
         }
     }
@@ -127,18 +77,36 @@ pub async fn run(
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
     // makes this explicit.
-    fut.abort();
-    drop(fut);
+    add_task.abort();
+    drop(add_task);
     Ok(())
 }
 
-async fn provide<B: BaoStore, D: DocStore>(
+async fn start_daemon_node(
+    rt: &runtime::Handle,
+    opts: StartOptions,
+) -> Result<Node<BaoFsStore, DocFsStore>> {
+    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
+    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
+    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
+    let peer_data_path = IrohPaths::PeerData.with_env()?;
+    tokio::fs::create_dir_all(&blob_dir).await?;
+    tokio::fs::create_dir_all(&partial_blob_dir).await?;
+    let bao_store = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
+        .await
+        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+    let key = Some(IrohPaths::SecretKey.with_env()?);
+    let doc_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
+    spawn_daemon_node(rt, bao_store, doc_store, key, peer_data_path, opts).await
+}
+
+async fn spawn_daemon_node<B: BaoStore, D: DocStore>(
+    rt: &runtime::Handle,
     bao_store: B,
     doc_store: D,
-    rt: &runtime::Handle,
     key: Option<PathBuf>,
     peers_data_path: PathBuf,
-    opts: ProvideOptions,
+    opts: StartOptions,
 ) -> Result<Node<B, D>> {
     let secret_key = get_secret_key(key).await?;
 
@@ -241,37 +209,37 @@ fn make_rpc_endpoint(
 }
 
 #[derive(Debug, Clone)]
-pub enum ProviderRpcPort {
+pub enum RpcPort {
     Enabled(u16),
     Disabled,
 }
 
-impl From<ProviderRpcPort> for Option<u16> {
-    fn from(value: ProviderRpcPort) -> Self {
+impl From<RpcPort> for Option<u16> {
+    fn from(value: RpcPort) -> Self {
         match value {
-            ProviderRpcPort::Enabled(port) => Some(port),
-            ProviderRpcPort::Disabled => None,
+            RpcPort::Enabled(port) => Some(port),
+            RpcPort::Disabled => None,
         }
     }
 }
 
-impl fmt::Display for ProviderRpcPort {
+impl fmt::Display for RpcPort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProviderRpcPort::Enabled(port) => write!(f, "{port}"),
-            ProviderRpcPort::Disabled => write!(f, "disabled"),
+            RpcPort::Enabled(port) => write!(f, "{port}"),
+            RpcPort::Disabled => write!(f, "disabled"),
         }
     }
 }
 
-impl FromStr for ProviderRpcPort {
+impl FromStr for RpcPort {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "disabled" {
-            Ok(ProviderRpcPort::Disabled)
+            Ok(RpcPort::Disabled)
         } else {
-            Ok(ProviderRpcPort::Enabled(s.parse()?))
+            Ok(RpcPort::Enabled(s.parse()?))
         }
     }
 }

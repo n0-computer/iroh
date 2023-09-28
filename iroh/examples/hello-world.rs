@@ -6,6 +6,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example hello-world
 use iroh::bytes::util::runtime;
+use iroh_bytes::util::BlobFormat;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -34,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .spawn()
         .await?;
     // create a ticket
-    let ticket = node.ticket(hash).await?.with_recursive(false);
+    let ticket = node.ticket(hash, BlobFormat::RAW).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.node_addr().peer_id);

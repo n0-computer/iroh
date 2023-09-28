@@ -53,6 +53,20 @@ pub struct BlobAddPathRequest {
     pub in_place: bool,
     /// Tag to tag the data with.
     pub tag: SetTagOption,
+    /// Whether to wrap the added data in a collection
+    pub wrap: WrapOption,
+}
+
+/// Whether to wrap the added data in a collection.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum WrapOption {
+    /// Do not wrap the file or directory.
+    NoWrap,
+    /// Wrap the file or directory in a colletion.
+    Wrap {
+        /// Override the filename in the wrapping collection.
+        name: Option<String>,
+    },
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {
@@ -68,9 +82,9 @@ impl ServerStreamingMsg<ProviderService> for BlobAddPathRequest {
 pub struct BlobDownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
-    /// If this flag is true, the hash is assumed to be a collection and all
-    /// children are downloaded and shared as well.
-    pub recursive: bool,
+    /// If the format is [`BlobFormat::COLLECTION`], all children are downloaded and shared as
+    /// well.
+    pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
     pub peer: PeerAddr,
     /// This optional field contains a request token that can be used to authorize
@@ -307,15 +321,15 @@ impl RpcMsg<ProviderService> for NodeShutdownRequest {
 pub struct NodeStatusRequest;
 
 impl RpcMsg<ProviderService> for NodeStatusRequest {
-    type Response = NodeStatusResponse;
+    type Response = RpcResult<NodeStatusResponse>;
 }
 
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusResponse {
-    /// The peer id of the node
-    pub node_id: Box<PublicKey>,
-    /// The addresses of the node
+    /// The peer id and socket addresses of this node.
+    pub addr: PeerAddr,
+    /// The bound listening addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
     pub version: String,
@@ -766,7 +780,7 @@ pub enum ProviderRequest {
 #[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
-    NodeStatus(NodeStatusResponse),
+    NodeStatus(RpcResult<NodeStatusResponse>),
     NodeStats(RpcResult<NodeStatsResponse>),
     NodeConnections(RpcResult<NodeConnectionsResponse>),
     NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),

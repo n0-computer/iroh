@@ -8,7 +8,10 @@ use iroh::{
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-use iroh_bytes::{baomap::range_collections::RangeSet2, util::SetTagOption};
+use iroh_bytes::{
+    baomap::range_collections::RangeSet2,
+    util::{BlobFormat, SetTagOption},
+};
 use iroh_bytes::{
     get::{
         self,
@@ -29,9 +32,9 @@ use super::make_download_pb;
 pub struct GetInteractive {
     pub rt: iroh_bytes::util::runtime::Handle,
     pub hash: Hash,
+    pub format: BlobFormat,
     pub opts: iroh::dial::Options,
     pub token: Option<RequestToken>,
-    pub single: bool,
 }
 
 impl GetInteractive {
@@ -85,7 +88,7 @@ impl GetInteractive {
             .blobs
             .download(BlobDownloadRequest {
                 hash: self.hash,
-                recursive: !self.single,
+                format: self.format,
                 peer: self.opts.peer,
                 token: self.token,
                 out: DownloadLocation::External {
@@ -113,7 +116,7 @@ impl GetInteractive {
         eprintln!("Fetching: {}", self.hash);
         let pb = make_download_pb();
         pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-        let query = if self.single {
+        let query = if self.format.is_raw() {
             // just get the entire first item
             RangeSpecSeq::from_ranges([RangeSet2::all()])
         } else {
@@ -129,7 +132,7 @@ impl GetInteractive {
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
             anyhow::bail!("expected root to be present");
         };
-        let stats = if self.single {
+        let stats = if self.format.is_raw() {
             get_to_stdout_single(curr).await?
         } else {
             get_to_stdout_multi(curr, pb.clone()).await?

@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::util::{SetTagOption, Tag};
+use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::PeerAddr;
 use iroh_net::{
@@ -27,7 +27,7 @@ use iroh_net::{
 use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::provide::{ProvideOptions, ProviderRpcPort};
+use self::node::{RpcPort, StartOptions};
 use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -39,7 +39,7 @@ pub mod delete;
 pub mod doctor;
 pub mod get;
 pub mod list;
-pub mod provide;
+pub mod node;
 pub mod repl;
 pub mod sync;
 pub mod validate;
@@ -139,29 +139,21 @@ pub enum FullCommands {
     /// If PATH is a folder all files in that folder will be served.  If no PATH is
     /// specified reads from STDIN.
     Start {
-        /// Path to initial file or directory to provide
-        path: Option<PathBuf>,
-        /// Serve data in place
-        ///
-        /// Set this to true only if you are sure that the data in its current location
-        /// will not change.
-        #[clap(long, default_value_t = false)]
-        in_place: bool,
-        #[clap(long, short)]
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
         /// RPC port, set to "disabled" to disable RPC
-        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
-        rpc_port: ProviderRpcPort,
+        #[clap(long, default_value_t = RpcPort::Enabled(DEFAULT_RPC_PORT))]
+        rpc_port: RpcPort,
         /// Use a token to authenticate requests for data
         ///
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
         request_token: Option<RequestTokenOptions>,
-        /// Tag to tag the data with
-        #[clap(long)]
-        tag: Option<String>,
+
+        /// Add data when starting the node
+        #[clap(flatten)]
+        add_options: BlobAddOptions,
     },
     /// Fetch data from a provider
     ///
@@ -200,9 +192,9 @@ pub enum FullCommands {
         /// Ticket containing everything to retrieve the data from a provider.
         #[clap(long)]
         ticket: Option<Ticket>,
-        /// True to download a single blob, false (default) to download a collection and its children.
+        /// If set assume that the hash refers to a collection and download it with all children.
         #[clap(long, default_value_t = false)]
-        single: bool,
+        collection: bool,
     },
     /// Diagnostic commands for the derp relay protocol.
     Doctor {
@@ -216,34 +208,26 @@ impl FullCommands {
     pub async fn run(self, rt: &runtime::Handle, config: &NodeConfig, keylog: bool) -> Result<()> {
         match self {
             FullCommands::Start {
-                path,
-                in_place,
                 addr,
                 rpc_port,
                 request_token,
-                tag,
+                add_options,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
                     Some(RequestTokenOptions::Token(token)) => Some(token),
                     None => None,
                 };
-                let tag = match tag {
-                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
-                    None => SetTagOption::Auto,
-                };
-                self::provide::run(
+                self::node::run(
                     rt,
-                    path,
-                    in_place,
-                    tag,
-                    ProvideOptions {
+                    StartOptions {
                         addr,
                         rpc_port,
                         keylog,
                         request_token,
                         derp_map: config.derp_map()?,
                     },
+                    add_options,
                 )
                 .await
             }
@@ -255,7 +239,7 @@ impl FullCommands {
                 ticket,
                 token,
                 out,
-                single,
+                collection,
             } => {
                 let get = if let Some(ticket) = ticket {
                     self::get::GetInteractive {
@@ -263,9 +247,13 @@ impl FullCommands {
                         hash: ticket.hash(),
                         opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()?),
                         token: ticket.token().cloned(),
-                        single: !ticket.recursive(),
+                        format: ticket.format(),
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
+                    let format = match collection {
+                        true => BlobFormat::COLLECTION,
+                        false => BlobFormat::RAW,
+                    };
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash,
@@ -276,7 +264,7 @@ impl FullCommands {
                             secret_key: SecretKey::generate(),
                         },
                         token,
-                        single,
+                        format,
                     }
                 } else {
                     anyhow::bail!("Either ticket or hash and peer must be specified")
@@ -377,7 +365,7 @@ impl NodeCommands {
             Self::Status => {
                 let response = iroh.node.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node public key: {}", response.node_id);
+                println!("Node public key: {}", response.addr.peer_id);
                 println!("Version: {}", response.version);
             }
         }
@@ -433,24 +421,59 @@ impl RpcCommands {
     }
 }
 
+/// Options for the `blob add` command.
+#[derive(clap::Args, Debug, Clone)]
+pub struct BlobAddOptions {
+    /// The path to the file or folder to add.
+    ///
+    /// If no path is specified, data will be read from STDIN.
+    path: Option<PathBuf>,
+
+    /// Add in place
+    ///
+    /// Set this to true only if you are sure that the data in its current location
+    /// will not change.
+    #[clap(long, default_value_t = false)]
+    in_place: bool,
+
+    /// Tag to tag the data with.
+    #[clap(long)]
+    tag: Option<String>,
+
+    /// Wrap the added file or directory in a collection.
+    ///
+    /// When adding a single file, without `wrap` the file is added as a single blob and no
+    /// collection is created. When enabling `wrap` it also creates a collection with a
+    /// single entry, where the entry's name is the filename and the entry's content is blob.
+    ///
+    /// When adding a directory, a collection is always created.
+    /// Without `wrap`, the collection directly contains the entries from the added direcory.
+    /// With `wrap`, the directory will be nested so that all names in the collection are
+    /// prefixed with the directory name, thus preserving the name of the directory.
+    ///
+    /// When adding content from STDIN and setting `wrap` you also need to set `filename` to name
+    /// the entry pointing to the content from STDIN.
+    #[clap(long, default_value_t = false)]
+    wrap: bool,
+
+    /// Override the filename used for the entry in the created collection.
+    ///
+    /// Only supported `wrap` is set.
+    /// Required when adding content from STDIN and setting `wrap`.
+    #[clap(long, requires = "wrap")]
+    filename: Option<String>,
+
+    /// Do not print the all-in-one ticket to get the added data from this node.
+    #[clap(long)]
+    no_ticket: bool,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
-    /// Add data from PATH to the running provider's database.
-    Add {
-        /// The path to the file or folder to add
-        path: PathBuf,
-        /// Add in place
-        ///
-        /// Set this to true only if you are sure that the data in its current location
-        /// will not change.
-        #[clap(long, default_value_t = false)]
-        in_place: bool,
-        /// Tag to tag the data with
-        #[clap(long)]
-        tag: Option<String>,
-    },
-    /// Download data to the running provider's database and provide it.
+    /// Add data from PATH to the running node.
+    Add(BlobAddOptions),
+    /// Download data to the running node's database and provide it.
     ///
     /// In addition to downloading the data, you can also specify an optional output directory
     /// where the data will be exported to after it has been downloaded.
@@ -461,7 +484,7 @@ pub enum BlobCommands {
         /// treat as collection, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         recursive: Option<bool>,
-        /// PublicKey of the provider
+        /// PeerID of the provider
         #[clap(
             long,
             short,
@@ -531,14 +554,18 @@ impl BlobCommands {
                     tracing::info!("output path is {} -> {}", out.display(), absolute.display());
                     *out = absolute;
                 }
-                let (peer, hash, token, recursive) = if let Some(ticket) = ticket {
+                let (peer, hash, format, token) = if let Some(ticket) = ticket {
                     ticket.into_parts()
                 } else {
+                    let format = match recursive {
+                        Some(false) | None => BlobFormat::RAW,
+                        Some(true) => BlobFormat::COLLECTION,
+                    };
                     (
                         PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
                         hash.unwrap(),
+                        format,
                         token,
-                        recursive.unwrap_or_default(),
                     )
                 };
                 let out = match out {
@@ -556,7 +583,7 @@ impl BlobCommands {
                     .blobs
                     .download(BlobDownloadRequest {
                         hash,
-                        recursive,
+                        format,
                         peer,
                         token,
                         out,
@@ -570,16 +597,10 @@ impl BlobCommands {
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { repair } => self::validate::run(iroh, repair).await,
-            Self::Add {
-                path,
-                in_place,
-                tag,
-            } => {
-                let tag = match tag {
-                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
-                    None => SetTagOption::Auto,
-                };
-                self::add::run(iroh, path, in_place, tag).await
+            Self::Add(opts) => {
+                // TODO: This is where we are missing the request token from the running
+                // node (last argument to run_with_opts).
+                self::add::run_with_opts(iroh, opts, None).await
             }
         }
     }

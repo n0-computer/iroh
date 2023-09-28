@@ -33,7 +33,7 @@ use crate::rpc_protocol::{
     DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode,
+    ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -105,7 +105,7 @@ where
 
     /// Get status information about a node
     pub async fn status(&self) -> Result<NodeStatusResponse> {
-        let response = self.rpc.rpc(NodeStatusRequest).await?;
+        let response = self.rpc.rpc(NodeStatusRequest).await??;
         Ok(response)
     }
 
@@ -254,6 +254,7 @@ where
         path: PathBuf,
         in_place: bool,
         tag: SetTagOption,
+        wrap: WrapOption,
     ) -> Result<impl Stream<Item = Result<AddProgress>>> {
         let stream = self
             .rpc
@@ -261,6 +262,7 @@ where
                 path,
                 in_place,
                 tag,
+                wrap,
             })
             .await?;
         Ok(stream.map_err(anyhow::Error::from))

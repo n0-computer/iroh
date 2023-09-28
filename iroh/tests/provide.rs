@@ -39,7 +39,7 @@ use iroh_bytes::{
     },
     protocol::{CustomGetRequest, GetRequest, RangeSpecSeq, Request, RequestToken},
     provider::{self, CustomGetHandler, RequestAuthorizationHandler},
-    util::runtime,
+    util::{runtime, BlobFormat},
     Hash,
 };
 use iroh_sync::store;
@@ -565,7 +565,7 @@ async fn test_run_ticket() {
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let no_token_ticket = node.ticket(hash).await.unwrap();
+    let no_token_ticket = node.ticket(hash, BlobFormat::COLLECTION).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = no_token_ticket.as_get_options(
             SecretKey::generate(),
@@ -580,7 +580,11 @@ async fn test_run_ticket() {
     .expect("timeout")
     .expect("getting without token failed in an unexpected way");
 
-    let ticket = node.ticket(hash).await.unwrap().with_token(token);
+    let ticket = node
+        .ticket(hash, BlobFormat::COLLECTION)
+        .await
+        .unwrap()
+        .with_token(token);
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
