@@ -1258,8 +1258,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             let (blobs, _child_tags): (Vec<_>, Vec<_>) =
                 result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
             let collection = Collection::new(blobs, total_blobs_size)?;
-            let tag = collection.store(&self.inner.db).await?;
-            tag
+
+            collection.store(&self.inner.db).await?
         } else {
             // import a single file
             let (tag, _size) = self
