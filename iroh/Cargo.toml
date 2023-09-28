@@ -111,7 +111,7 @@ required-features = ["mem-db"]
 
 [[example]]
 name = "sync"
-required-features = ["example-sync", "log_self"]
+required-features = ["example-sync"]
 
 [[example]]
 name = "rpc"

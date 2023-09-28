@@ -14,7 +14,7 @@ use tokio::{
 };
 use tracing::{debug, trace, warn};
 #[cfg(feature = "log-self")]
-use tracing::{debug_span, Instrument};
+use tracing::{trace_span, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
 use crate::proto::{self, PeerData, Scope, TopicId};
@@ -108,7 +108,7 @@ impl Gossip {
         let actor_handle = tokio::spawn(async move {
             let fut = actor.run();
             #[cfg(feature = "log-self")]
-            let fut = fut.instrument(debug_span!("gossip", %me));
+            let fut = fut.instrument(trace_span!("gossip", %me));
             if let Err(err) = fut.await {
                 warn!("gossip actor closed with error: {err:?}");
                 Err(err)
