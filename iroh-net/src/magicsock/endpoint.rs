@@ -988,12 +988,22 @@ impl Endpoint {
             msgs = self.send_pings(now, true);
         }
 
-        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_region);
+        debug!(
+            "sending UDP: {:?}, DERP: {:?}, #pings: {}",
+            udp_addr,
+            derp_region,
+            msgs.len()
+        );
 
         (udp_addr, derp_region, msgs)
     }
 
     fn is_best_addr_valid(&self, instant: Instant) -> bool {
+        trace!(
+            "is_best_addr_valid: best_addr: {:?}, trust_best: {:?}",
+            self.best_addr,
+            self.trust_best_addr_until
+        );
         match self.best_addr {
             None => false,
             Some(_) => match self.trust_best_addr_until {
