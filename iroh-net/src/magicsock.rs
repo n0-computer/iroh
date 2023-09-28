@@ -631,9 +631,8 @@ impl MagicSock {
         if self.inner.is_closed() {
             return Ok(());
         }
-        self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
-
         self.inner.closing.store(true, Ordering::Relaxed);
+        self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
         self.inner.closed.store(true, Ordering::SeqCst);
 
         let mut tasks = self.actor_tasks.lock().await;
@@ -1077,6 +1076,10 @@ impl Actor {
 
     async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
         for msg in msgs {
+            // Abort sending as soon as we know we are shutting down.
+            if self.inner.is_closing() || self.inner.is_closed() {
+                break;
+            }
             match msg {
                 PingAction::EnqueueCallMeMaybe {
                     derp_region,
