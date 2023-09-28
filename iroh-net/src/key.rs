@@ -82,6 +82,14 @@ impl PublicKey {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.public.verify_strict(message, signature)
     }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        let mut text = data_encoding::BASE32_NOPAD.encode(self.as_bytes());
+        text.make_ascii_lowercase();
+        text
+    }
 }
 
 impl TryFrom<&[u8]> for PublicKey {

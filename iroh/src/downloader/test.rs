@@ -23,16 +23,7 @@ impl Downloader {
                 // we want to see the logs of the service
                 let _guard = iroh_test::logging::setup();
 
-                #[cfg(feature = "log_self")]
-                let me = SecretKey::generate().public();
-                let service = Service::new(
-                    #[cfg(feature = "log_self")]
-                    me,
-                    getter,
-                    dialer,
-                    concurrency_limits,
-                    msg_rx,
-                );
+                let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
                 service.run().await
             });
 

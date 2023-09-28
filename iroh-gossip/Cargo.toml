@@ -46,6 +46,7 @@ url = "2.4.0"
 [features]
 default = ["net"]
 net = ["futures", "iroh-net", "quinn", "tokio", "tokio-util"]
+log-self = []
 
 [[example]]
 name = "chat"

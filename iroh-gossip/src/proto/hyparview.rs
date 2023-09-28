@@ -651,7 +651,7 @@ where
             io.push(OutEvent::EmitEvent(Event::NeighborDown(peer)));
             let data = self.peer_data.remove(&peer);
             self.add_passive(peer, data, io);
-            debug!(peer = ?self.me, other = ?peer, "removed from active view, reason: {reason:?}");
+            debug!(other = ?peer, "removed from active view, reason: {reason:?}");
             Some(peer)
         } else {
             None
@@ -701,7 +701,7 @@ where
     fn add_active_unchecked(&mut self, peer: PI, priority: Priority, io: &mut impl IO<PI>) {
         self.passive_view.remove(&peer);
         self.active_view.insert(peer);
-        debug!(peer = ?self.me, other = ?peer, "add to active view");
+        debug!(other = ?peer, "add to active view");
 
         let message = Message::Neighbor(Neighbor {
             priority,
