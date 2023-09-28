@@ -114,7 +114,8 @@ impl GetInteractive {
 
     /// Get to stdout, no resume possible.
     async fn get_to_stdout(self) -> Result<()> {
-        write(format!("Fetching: {}", self.hash));
+        eprintln!("Fetching: {}", self.hash);
+        let pb = make_download_pb();
         pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let query = if self.format.is_raw() {
             // just get the entire first item
