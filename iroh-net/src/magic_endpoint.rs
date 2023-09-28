@@ -555,6 +555,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
+
     use tracing::{info, info_span, Instrument};
 
     use crate::test_utils::run_derper;
@@ -651,6 +652,54 @@ mod tests {
         let (server, client) = tokio::join!(server, client);
         server.unwrap();
         client.unwrap();
+    }
+
+    /// Test that peers saved on shutdown are correctly loaded
+    #[tokio::test]
+    async fn save_load_peers() {
+        let _guard = iroh_test::logging::setup();
+        let secret_key = SecretKey::generate();
+        let tempdir = tempfile::tempdir().unwrap();
+        let path: PathBuf = tempdir.path().into();
+        let path = path.join("peers");
+
+        /// Create an endpoint for the test.
+        async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> MagicEndpoint {
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+
+            MagicEndpoint::builder()
+                .secret_key(secret_key.clone())
+                .transport_config(transport_config)
+                .peers_data_path(peers_path)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .bind(0)
+                .await
+                .unwrap()
+        }
+
+        // create the peer that will be added to the peer map
+        let peer_id = SecretKey::generate().public();
+        let direct_addr: SocketAddr =
+            (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8758u16).into();
+        let peer_addr = PeerAddr::new(peer_id).with_direct_addresses([direct_addr]);
+
+        // first time, create a magic endpoint without peers but a peers file and add adressing
+        // information for a peer
+        let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
+        assert!(endpoint.connection_infos().await.unwrap().is_empty());
+        endpoint.add_peer_addr(peer_addr).await.unwrap();
+
+        // close the endpoint and restart it
+        endpoint.close(0u32.into(), b"done").await.unwrap();
+
+        // now restart it and check the addressing info of the peer
+        let endpoint = new_endpoint(secret_key, path).await;
+        let ConnectionInfo { mut addrs, .. } =
+            endpoint.connection_info(peer_id).await.unwrap().unwrap();
+        let conn_addr = addrs.pop().unwrap().0;
+        assert_eq!(conn_addr, direct_addr);
+        drop(tempdir);
     }
 
     // #[tokio::test]
