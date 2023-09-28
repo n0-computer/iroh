@@ -241,11 +241,13 @@ impl Downloader {
 
             let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
 
-            let fut = service.run();
-
             #[cfg(feature = "log-self")]
-            let fut = fut.instrument(trace_span!("downloader", %me));
-            fut
+            {
+                service.run().instrument(trace_span!("downloader", %me))
+            }
+
+            #[cfg(not(feature = "log-self"))]
+            service.run()
         };
         rt.local_pool().spawn_pinned(create_future);
         Self { next_id: 0, msg_tx }

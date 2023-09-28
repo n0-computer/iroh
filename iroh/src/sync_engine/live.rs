@@ -37,7 +37,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 #[cfg(feature = "log-self")]
-use tracing::{debug_span, Instrument};
+use tracing::{trace_span, Instrument};
 
 pub use iroh_sync::ContentStatus;
 
@@ -200,7 +200,7 @@ impl<S: store::Store> LiveSync<S> {
         let task = rt.main().spawn(async move {
             let fut = actor.run();
             #[cfg(feature = "log-self")]
-            let fut = fut.instrument(debug_span!("sync", %me));
+            let fut = fut.instrument(trace_span!("sync", %me));
             if let Err(err) = fut.await {
                 error!("live sync failed: {err:?}");
             }
