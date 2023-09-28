@@ -97,8 +97,8 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Check if a state vector contains pointers that we do not have locally.
     // TODO: This default impl is horrifyingly inefficient. Remove.
-    fn has_news_for_us(&self, namespace: NamespaceId, state_vector: &AuthorHeads) -> Result<bool> {
-        let our_state_vector = {
+    fn has_news_for_us(&self, namespace: NamespaceId, heads: &AuthorHeads) -> Result<bool> {
+        let our_heads = {
             let mut sv = AuthorHeads::default();
             let all = self.get_many(namespace, GetFilter::All)?;
             for e in all {
@@ -107,7 +107,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
             }
             sv
         };
-        let has_news_for_us = state_vector.has_news_for(&our_state_vector);
+        let has_news_for_us = heads.has_news_for(&our_heads);
         Ok(has_news_for_us)
     }
 }
