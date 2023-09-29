@@ -1031,7 +1031,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream().map(|msg| BlobAddPathResponse(msg))
+        rx.into_stream().map(BlobAddPathResponse)
     }
 
     async fn blob_export(

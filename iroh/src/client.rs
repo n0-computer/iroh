@@ -424,7 +424,7 @@ impl BlobAddProgress {
                 AddProgress::Done { .. } => {}
             }
         }
-        return Err(anyhow!("Response stream ended prematurely"));
+        Err(anyhow!("Response stream ended prematurely"))
     }
 }
 
