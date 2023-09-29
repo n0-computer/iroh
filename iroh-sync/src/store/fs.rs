@@ -114,7 +114,7 @@ impl super::Store for Store {
     type GetIter<'a> = RangeIterator<'a>;
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type NamespaceIter = std::vec::IntoIter<Result<NamespaceId>>;
 
     fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
@@ -138,8 +138,7 @@ impl super::Store for Store {
         }
     }
 
-    fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
-        // TODO: avoid collect
+    fn list_namespaces(&self) -> Result<Self::NamespaceIter> {
         let read_tx = self.db.begin_read()?;
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
         let namespaces: Vec<_> = namespace_table

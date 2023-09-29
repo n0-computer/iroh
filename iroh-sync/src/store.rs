@@ -33,9 +33,9 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Iterator over replica namespaces in the store, returned from [`Self::list_namespaces`]
-    type NamespaceIter<'a>: Iterator<Item = Result<NamespaceId>>
-    where
-        Self: 'a;
+    // NOTE: The iterator does not keep a referece to the store to avoid holding potential locks
+    // during iteration
+    type NamespaceIter: Iterator<Item = Result<NamespaceId>>;
 
     /// Iterator over authors in the store, returned from [`Self::list_authors`]
     type AuthorsIter<'a>: Iterator<Item = Result<Author>>
@@ -46,7 +46,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
     /// List all replica namespaces in this store.
-    fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;
+    fn list_namespaces(&self) -> Result<Self::NamespaceIter>;
 
     /// Open a replica from this store.
     ///
