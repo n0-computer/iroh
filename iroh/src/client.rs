@@ -272,15 +272,13 @@ where
     /// Write a blob by passing an async reader.
     pub async fn add_reader(
         &self,
-        source: impl AsyncRead + Unpin + Send + 'static,
+        reader: impl AsyncRead + Unpin + Send + 'static,
         tag: SetTagOption,
     ) -> anyhow::Result<BlobAddProgress> {
         const CAP: usize = 1024 * 64; // send 64KB per request by default
-                                      // let map_err = |err| anyhow!("send error: {err:?}");
-
         let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
 
-        let input = ReaderStream::with_capacity(source, CAP);
+        let input = ReaderStream::with_capacity(reader, CAP);
         let mut input = input.map(|chunk| match chunk {
             Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
             Err(err) => {
