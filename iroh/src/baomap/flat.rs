@@ -902,7 +902,7 @@ impl Store {
         let size = file.path().metadata()?.len();
         progress.blocking_send(ImportProgress::Size { id, size })?;
         let progress2 = progress.clone();
-        let (hash, outboard) = compute_outboard(&file.path(), size, move |offset| {
+        let (hash, outboard) = compute_outboard(file.path(), size, move |offset| {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
         })?;
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
