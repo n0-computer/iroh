@@ -10,7 +10,7 @@ use futures::future::BoxFuture;
 use iroh_io::stats::{SliceReaderStats, StreamWriterStats, TrackingSliceReader};
 use iroh_io::AsyncStreamWriter;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, debug_span, warn, info};
+use tracing::{debug, debug_span, info, warn};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;

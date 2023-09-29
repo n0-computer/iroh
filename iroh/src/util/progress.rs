@@ -152,11 +152,11 @@ where
 
 /// A slice writer that adds a synchronous progress callback
 #[derive(Debug)]
-pub struct ProgressSliceWriter<W>(W, mpsc::Sender<(u64, usize)>);
+pub struct ProgressSliceWriter<W, S>(W, S);
 
-impl<W: AsyncSliceWriter> ProgressSliceWriter<W> {
+impl<W: AsyncSliceWriter, S: FnMut(u64)> ProgressSliceWriter<W, S> {
     /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
-    pub fn new(inner: W, on_write: mpsc::Sender<(u64, usize)>) -> Self {
+    pub fn new(inner: W, on_write: S) -> Self {
         Self(inner, on_write)
     }
 
@@ -166,10 +166,12 @@ impl<W: AsyncSliceWriter> ProgressSliceWriter<W> {
     }
 }
 
-impl<W: AsyncSliceWriter + 'static> AsyncSliceWriter for ProgressSliceWriter<W> {
+impl<W: AsyncSliceWriter + 'static, S: FnMut(u64) + 'static> AsyncSliceWriter
+    for ProgressSliceWriter<W, S>
+{
     type WriteBytesAtFuture<'a> = W::WriteBytesAtFuture<'a>;
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        self.1.try_send((offset, Bytes::len(&data))).ok();
+        (self.1)(offset);
         self.0.write_bytes_at(offset, data)
     }
 
