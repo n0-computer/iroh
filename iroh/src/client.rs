@@ -302,7 +302,11 @@ where
     }
 
     /// Write a blob by passing bytes.
-    pub async fn add_bytes(&self, bytes: Bytes, tag: SetTagOption) -> anyhow::Result<(Hash, u64)> {
+    pub async fn add_bytes(
+        &self,
+        bytes: Bytes,
+        tag: SetTagOption,
+    ) -> anyhow::Result<BlobAddOutcome> {
         self.add_reader(Cursor::new(bytes), tag)
             .await?
             .finish()
@@ -364,6 +368,18 @@ where
     }
 }
 
+/// Outcome of a blob add operation.
+pub struct BlobAddOutcome {
+    /// The hash of the blob
+    pub hash: Hash,
+    /// The format the blob
+    pub format: BlobFormat,
+    /// The size of the blob
+    pub size: u64,
+    /// The tag of the blob
+    pub tag: Tag,
+}
+
 /// Progress stream for blob add operations.
 pub struct BlobAddProgress {
     stream: Pin<Box<dyn Stream<Item = Result<AddProgress>> + Send + Unpin + 'static>>,
@@ -389,19 +405,21 @@ impl BlobAddProgress {
     /// Returns a hash and a size. When importing a single blob, this is the hash and size of that
     /// blob. When importing a collection, this is the hash of the collection and the total size of
     /// all imported blobs.
-    pub async fn finish(mut self) -> Result<(Hash, u64)> {
+    pub async fn finish(mut self) -> Result<BlobAddOutcome> {
         let mut total_size = 0;
         while let Some(msg) = self.next().await {
             match msg? {
                 AddProgress::Found { size, .. } => {
                     total_size += size;
                 }
-                AddProgress::AllDone {
-                    hash,
-                    format: _,
-                    tag: _,
-                } => {
-                    return Ok((hash, total_size));
+                AddProgress::AllDone { hash, format, tag } => {
+                    let outcome = BlobAddOutcome {
+                        hash,
+                        format,
+                        tag,
+                        size: total_size,
+                    };
+                    return Ok(outcome);
                 }
                 AddProgress::Abort(err) => return Err(err.into()),
                 AddProgress::Progress { .. } => {}
