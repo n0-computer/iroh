@@ -1237,7 +1237,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     async move {
                         let name = source.name().to_string();
                         let (tag, size) = db
-                            .import(
+                            .import_file(
                                 source.path().to_owned(),
                                 import_mode,
                                 BlobFormat::RAW,
@@ -1265,7 +1265,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             let (tag, _size) = self
                 .inner
                 .db
-                .import(root, import_mode, BlobFormat::RAW, import_progress)
+                .import_file(root, import_mode, BlobFormat::RAW, import_progress)
                 .await?;
             tag
         };
@@ -1407,17 +1407,21 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             .db
             .import_stream(stream, BlobFormat::RAW, import_progress)
             .await?;
-        let haf = *temp_tag.inner();
-        let hash = *temp_tag.hash();
-        match msg.tag {
+        let hash_and_format = *temp_tag.inner();
+        let HashAndFormat(hash, format) = hash_and_format;
+        let tag = match msg.tag {
             SetTagOption::Named(tag) => {
-                self.inner.db.set_tag(tag, Some(haf)).await?;
+                self.inner
+                    .db
+                    .set_tag(tag.clone(), Some(hash_and_format))
+                    .await?;
+                tag
             }
-            SetTagOption::Auto => {
-                self.inner.db.create_tag(haf).await?;
-            }
-        }
-        progress.send(AddProgress::AllDone { hash }).await?;
+            SetTagOption::Auto => self.inner.db.create_tag(hash_and_format).await?,
+        };
+        progress
+            .send(AddProgress::AllDone { hash, tag, format })
+            .await?;
         Ok(())
     }
 

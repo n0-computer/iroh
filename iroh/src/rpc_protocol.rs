@@ -717,7 +717,6 @@ pub enum BlobReadResponse {
 pub struct BlobAddStreamRequest {
     /// Tag to tag the data with.
     pub tag: SetTagOption,
-
 }
 
 /// Write a blob from a byte stream

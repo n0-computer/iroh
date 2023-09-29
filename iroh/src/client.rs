@@ -15,7 +15,7 @@ use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
-use iroh_bytes::util::{SetTagOption, Tag};
+use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
@@ -25,7 +25,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, WrapOption, BlobAddPathRequest, BlobAddStreamRequest,
+    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobAddStreamRequest,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
@@ -34,7 +34,7 @@ use crate::rpc_protocol::{
     DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress,
     ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, ShareMode,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -303,7 +303,10 @@ where
 
     /// Write a blob by passing bytes.
     pub async fn add_bytes(&self, bytes: Bytes, tag: SetTagOption) -> anyhow::Result<(Hash, u64)> {
-        self.add_reader(Cursor::new(bytes), tag).await?.finish().await
+        self.add_reader(Cursor::new(bytes), tag)
+            .await?
+            .finish()
+            .await
     }
 
     /// Validate hashes on the running node.
@@ -393,7 +396,11 @@ impl BlobAddProgress {
                 AddProgress::Found { size, .. } => {
                     total_size += size;
                 }
-                AddProgress::AllDone { hash } => {
+                AddProgress::AllDone {
+                    hash,
+                    format: _,
+                    tag: _,
+                } => {
                     return Ok((hash, total_size));
                 }
                 AddProgress::Abort(err) => return Err(err.into()),
