@@ -7,10 +7,12 @@ use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use iroh_io::stats::{SliceReaderStats, StreamWriterStats, TrackingSliceReader};
-use iroh_io::AsyncStreamWriter;
+use iroh_io::stats::{
+    SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
+};
+use iroh_io::{AsyncStreamWriter, TokioStreamWriter};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, debug_span, info, warn};
+use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;
@@ -66,8 +68,6 @@ pub enum Event {
         request_id: u64,
         /// The number of blobs in the collection.
         num_blobs: Option<u64>,
-        /// The total blob size of the data.
-        total_blobs_size: Option<u64>,
     },
     /// A collection request was completed and the data was sent to the client.
     TransferCollectionCompleted {
@@ -75,6 +75,8 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
+        /// statistics about the transfer
+        stats: Box<TransferStats>,
     },
     /// A blob in a collection was transferred.
     TransferBlobCompleted {
@@ -95,7 +97,21 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this request.
         request_id: u64,
+        /// statistics about the transfer. This is None if the transfer
+        /// was aborted before any data was sent.
+        stats: Option<Box<TransferStats>>,
     },
+}
+
+/// The stats for a transfer of a collection or blob.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransferStats {
+    /// Stats for writing to the client.
+    pub write: StreamWriterStats,
+    /// Stats for reading from disk.
+    pub read: SliceReaderStats,
+    /// The total duration of the transfer.
+    pub duration: Duration,
 }
 
 /// Progress updates for the add operation.
@@ -269,8 +285,8 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     mut outboard: D::Outboard,
     mut data: D::DataReader,
     collection_parser: C,
+    stats: &mut TransferStats,
 ) -> Result<SentStatus> {
-    let t0 = std::time::Instant::now();
     let hash = request.hash;
 
     // if the request is just for the root, we don't need to deserialize the collection
@@ -284,7 +300,6 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
                 connection_id: writer.connection_id(),
                 request_id: writer.request_id(),
                 num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
             })
             .await;
         Some(c)
@@ -293,8 +308,6 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     };
 
     let mut prev = 0;
-    let mut write_stats = StreamWriterStats::default();
-    let mut read_stats = SliceReaderStats::default();
     for (offset, ranges) in request.ranges.iter_non_empty() {
         // create a tracking writer so we can get some stats for writing
         let mut tw = writer.tracking_writer();
@@ -310,8 +323,8 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
                 &mut tw,
             )
             .await?;
-            read_stats += tracking_reader.stats();
-            write_stats += tw.stats();
+            stats.read += tracking_reader.stats();
+            stats.write += tw.stats();
             debug!(
                 "finished writing ranges '{:?}' of collection {}",
                 ranges, hash
@@ -326,8 +339,8 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
             if let Some(hash) = c.next().await? {
                 tokio::task::yield_now().await;
                 let (status, size, blob_read_stats) = send_blob(db, hash, ranges, &mut tw).await?;
-                write_stats += tw.stats();
-                read_stats += blob_read_stats;
+                stats.write += tw.stats();
+                stats.read += blob_read_stats;
                 if SentStatus::NotFound == status {
                     writer.inner.finish().await?;
                     return Ok(status);
@@ -351,16 +364,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
         }
     }
 
-    let total = t0.elapsed();
     debug!("done writing");
-    let other = total - write_stats.total().stats.duration - read_stats.total().stats.duration;
-    info!(
-        "reading: {:?} other: {:?} writing: {:?}",
-        read_stats.total().stats.duration,
-        other,
-        write_stats.total().stats.duration
-    );
-    writer.inner.finish().await?;
     Ok(SentStatus::Sent)
 }
 
@@ -442,7 +446,7 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     let request = match read_request(reader).await {
         Ok(r) => r,
         Err(e) => {
-            writer.notify_transfer_aborted().await;
+            writer.notify_transfer_aborted(None).await;
             return Err(e);
         }
     };
@@ -453,7 +457,7 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
         .authorize(request.token().cloned(), &request)
         .await
     {
-        writer.notify_transfer_aborted().await;
+        writer.notify_transfer_aborted(None).await;
         return Err(e);
     }
 
@@ -514,25 +518,29 @@ pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
     match db.get(&hash) {
         // Collection or blob request
         Some(entry) => {
+            let mut stats = Box::<TransferStats>::default();
+            let t0 = std::time::Instant::now();
             // 5. Transfer data!
-            match transfer_collection(
+            let res = transfer_collection(
                 request,
                 &db,
                 &mut writer,
                 entry.outboard().await?,
                 entry.data_reader().await?,
                 collection_parser,
+                &mut stats,
             )
-            .await
-            {
+            .await;
+            stats.duration = t0.elapsed();
+            match res {
                 Ok(SentStatus::Sent) => {
-                    writer.notify_transfer_completed().await;
+                    writer.notify_transfer_completed(stats).await;
                 }
                 Ok(SentStatus::NotFound) => {
-                    writer.notify_transfer_aborted().await;
+                    writer.notify_transfer_aborted(Some(stats)).await;
                 }
                 Err(e) => {
-                    writer.notify_transfer_aborted().await;
+                    writer.notify_transfer_aborted(Some(stats)).await;
                     return Err(e);
                 }
             }
@@ -541,7 +549,7 @@ pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
         }
         None => {
             debug!("not found {}", hash);
-            writer.notify_transfer_aborted().await;
+            writer.notify_transfer_aborted(None).await;
             writer.inner.finish().await?;
         }
     };
@@ -560,9 +568,8 @@ pub struct ResponseWriter<E> {
 impl<E: EventSender> ResponseWriter<E> {
     fn tracking_writer(
         &mut self,
-    ) -> iroh_io::stats::TrackingStreamWriter<iroh_io::TokioStreamWriter<&mut quinn::SendStream>>
-    {
-        iroh_io::stats::TrackingStreamWriter::new(iroh_io::TokioStreamWriter(&mut self.inner))
+    ) -> TrackingStreamWriter<TokioStreamWriter<&mut quinn::SendStream>> {
+        TrackingStreamWriter::new(TokioStreamWriter(&mut self.inner))
     }
 
     fn connection_id(&self) -> u64 {
@@ -573,20 +580,22 @@ impl<E: EventSender> ResponseWriter<E> {
         self.inner.id().index()
     }
 
-    async fn notify_transfer_completed(&self) {
+    async fn notify_transfer_completed(&self, stats: Box<TransferStats>) {
         self.events
             .send(Event::TransferCollectionCompleted {
                 connection_id: self.connection_id(),
                 request_id: self.request_id(),
+                stats,
             })
             .await;
     }
 
-    async fn notify_transfer_aborted(&self) {
+    async fn notify_transfer_aborted(&self, stats: Option<Box<TransferStats>>) {
         self.events
             .send(Event::TransferAborted {
                 connection_id: self.connection_id(),
                 request_id: self.request_id(),
+                stats,
             })
             .await;
     }
