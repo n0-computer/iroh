@@ -1354,7 +1354,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn blob_write(
+    fn blob_add_stream(
         self,
         msg: BlobAddStreamRequest,
         stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
@@ -1368,7 +1368,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             }
         });
 
-        rx.into_stream().map(|msg| BlobAddStreamResponse(msg))
+        rx.into_stream().map(BlobAddStreamResponse)
     }
 
     async fn blob_add_stream0(
@@ -1569,7 +1569,7 @@ fn handle_rpc_request<
                     .await
             }
             BlobAddStream(msg) => {
-                chan.bidi_streaming(msg, handler, RpcHandler::blob_write)
+                chan.bidi_streaming(msg, handler, RpcHandler::blob_add_stream)
                     .await
             }
             BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),

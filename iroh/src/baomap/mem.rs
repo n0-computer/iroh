@@ -467,7 +467,7 @@ impl PartialMap for Store {
 }
 
 impl baomap::Store for Store {
-    fn import_file(
+    fn import_path(
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
