@@ -25,6 +25,7 @@ use bytes::BytesMut;
 use derive_more::From;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::{Stream, StreamExt};
 use iroh_bytes::baomap;
 use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::EntryStatus;
@@ -465,7 +466,7 @@ impl PartialMap for Store {
 }
 
 impl baomap::Store for Store {
-    fn import(
+    fn import_file(
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
@@ -485,16 +486,41 @@ impl baomap::Store for Store {
                 progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
                 // todo: provide progress for reading into mem
                 let bytes: Bytes = std::fs::read(path)?.into();
-                progress.blocking_send(ImportProgress::Size {
-                    id,
-                    size: bytes.len() as u64,
-                })?;
                 let size = bytes.len() as u64;
+                progress.blocking_send(ImportProgress::Size { id, size })?;
                 let tag = this.import_bytes_sync(id, bytes, format, progress)?;
                 Ok((tag, size))
             })
             .map(flatten_to_io)
             .boxed()
+    }
+
+    fn import_stream(
+        &self,
+        mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+        let this = self.clone();
+        async move {
+            let id = progress.new_id();
+            let mut bytes = BytesMut::new();
+            while let Some(chunk) = data.next().await {
+                bytes.extend_from_slice(&chunk?);
+                progress
+                    .try_send(ImportProgress::CopyProgress {
+                        id,
+                        offset: bytes.len() as u64,
+                    })
+                    .ok();
+            }
+            let bytes = bytes.freeze();
+            let size = bytes.len() as u64;
+            progress.blocking_send(ImportProgress::Size { id, size })?;
+            let tag = this.import_bytes_sync(id, bytes, format, progress)?;
+            Ok((tag, size))
+        }
+        .boxed()
     }
 
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {

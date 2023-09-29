@@ -46,7 +46,7 @@ use iroh_net::{
     tls, MagicEndpoint, PeerAddr,
 };
 use iroh_sync::store::Store as DocStore;
-use quic_rpc::server::RpcChannel;
+use quic_rpc::server::{RpcChannel, RpcServerError};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
@@ -62,8 +62,8 @@ use crate::rpc_protocol::{
     BlobAddPathRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    BlobWriteRequest, BlobWriteResponse, DeleteTagRequest, DownloadLocation, ListTagsRequest,
-    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    BlobWriteRequest, BlobWriteResponse, BlobWriteUpdate, DeleteTagRequest, DownloadLocation,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
     NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
     ProviderRequest, ProviderResponse, ProviderService,
@@ -1354,16 +1354,29 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    fn blob_write(
+    async fn blob_write(
         self,
-        req: BlobWriteRequest,
-        updates: impl Stream<Item = BlobWriteUpdate>,
+        _req: BlobWriteRequest,
+        stream: impl Stream<Item = BlobWriteUpdate> + Send + Unpin + 'static,
     ) -> RpcResult<BlobWriteResponse> {
-        while let Some(update) = updates.next().await {
-            match update {
-
+        let (tx, _rx) = flume::bounded(32);
+        let progress = FlumeProgressSender::new(tx);
+        let stream = stream.map(|item| match item {
+            BlobWriteUpdate::Chunk(chunk) => Ok(chunk),
+            BlobWriteUpdate::Abort => {
+                Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
             }
-        }
+        });
+        let (tag, len) = self
+            .inner
+            .db
+            .import_stream(stream, BlobFormat::RAW, progress)
+            .await?;
+        let res = BlobWriteResponse {
+            hash: *tag.hash(),
+            len,
+        };
+        Ok(res)
     }
 
     fn blob_read(
@@ -1513,7 +1526,7 @@ fn handle_rpc_request<
                 chan.client_streaming(msg, handler, RpcHandler::blob_write)
                     .await
             }
-            BlobWriteUpdate(_msg) => Err(anyhow!("Unexpected BlobUpdate message")),
+            BlobWriteUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)

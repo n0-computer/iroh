@@ -717,7 +717,9 @@ pub struct BlobWriteRequest {}
 /// Write a blob from a byte stream
 #[derive(Serialize, Deserialize, Debug)]
 pub enum BlobWriteUpdate {
+    /// A chunk of stream data
     Chunk(Bytes),
+    /// Abort the request due to an error on the client side
     Abort
 }
 
@@ -736,7 +738,7 @@ pub struct BlobWriteResponse {
     /// The hash of the created blob
     pub hash: Hash,
     /// The length of the created blob
-    pub len: usize,
+    pub len: u64,
 }
 
 /// Get stats for the running Iroh node

@@ -517,7 +517,7 @@ impl ReplState {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
                 let (tag, len) = self
                     .db
-                    .import(
+                    .import_file(
                         file_path.clone(),
                         ImportMode::Copy,
                         BlobFormat::RAW,
@@ -553,7 +553,7 @@ impl ReplState {
                         let key = format!("{key_prefix}/{relative}");
                         let (tag, len) = self
                             .db
-                            .import(
+                            .import_file(
                                 file.path().into(),
                                 ImportMode::Copy,
                                 BlobFormat::RAW,

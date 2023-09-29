@@ -11,12 +11,12 @@ use crate::{
 };
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, StreamExt};
+use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::{io::AsyncRead, sync::mpsc};
 
 pub use bao_tree;
 pub use range_collections;
@@ -181,7 +181,7 @@ pub trait Store: ReadableStore + PartialMap {
     ///
     /// Returns the hash of the imported file. The reason to have this method is that some database
     /// implementations might be able to import a file without copying it.
-    fn import(
+    fn import_file(
         &self,
         data: PathBuf,
         mode: ImportMode,
@@ -189,10 +189,29 @@ pub trait Store: ReadableStore + PartialMap {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
 
-    /// This trait method imports data from memory.
+    /// Import data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
+
+    /// Import data from a stream of bytes.
+    fn import_stream(
+        &self,
+        data: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
+
+    /// Import data from an async byte reader.
+    fn import_reader(
+        &self,
+        data: impl AsyncRead + Send + Unpin + 'static,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+        let stream = tokio_util::io::ReaderStream::new(data);
+        self.import_stream(stream, format, progress)
+    }
 
     /// Set a tag
     fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>>;

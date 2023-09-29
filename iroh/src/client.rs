@@ -20,9 +20,7 @@ use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, BufReader, ReadBuf,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::rpc_protocol::{
@@ -235,6 +233,7 @@ where
         BlobReader::from_rpc(&self.rpc, hash).await
     }
 
+    ///
     pub async fn write(
         &self,
         source: impl AsyncRead + Unpin + 'static,
