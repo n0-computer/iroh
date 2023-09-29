@@ -7,10 +7,10 @@ use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use iroh_io::stats::{StreamWriterStats, TrackingSliceReader, SliceReaderStats};
+use iroh_io::stats::{SliceReaderStats, StreamWriterStats, TrackingSliceReader};
 use iroh_io::AsyncStreamWriter;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, warn, info};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;
@@ -303,8 +303,13 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
             // wrap the data reader in a tracking reader so we can get some stats for reading
             let mut tracking_reader = TrackingSliceReader::new(&mut data);
             // send the root
-            encode_ranges_validated(&mut tracking_reader, &mut outboard, &ranges.to_chunk_ranges(), &mut tw)
-                .await?;
+            encode_ranges_validated(
+                &mut tracking_reader,
+                &mut outboard,
+                &ranges.to_chunk_ranges(),
+                &mut tw,
+            )
+            .await?;
             read_stats += tracking_reader.stats();
             write_stats += tw.stats();
             debug!(
@@ -348,11 +353,13 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
 
     let total = t0.elapsed();
     debug!("done writing");
-    println!("write_stats {:?}", write_stats.total());
-    println!("read_stats {:?}", read_stats.total());
-    println!("elapsed {:?}", total);
-    let hashing = total - write_stats.total().stats.duration - read_stats.total().stats.duration;
-    println!("reading: {:?} other: {:?} writing: {:?}", read_stats.total().stats.duration, hashing, write_stats.total().stats.duration);
+    let other = total - write_stats.total().stats.duration - read_stats.total().stats.duration;
+    info!(
+        "reading: {:?} other: {:?} writing: {:?}",
+        read_stats.total().stats.duration,
+        other,
+        write_stats.total().stats.duration
+    );
     writer.inner.finish().await?;
     Ok(SentStatus::Sent)
 }
