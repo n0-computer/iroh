@@ -12,7 +12,7 @@ use iroh_io::stats::{
 };
 use iroh_io::{AsyncStreamWriter, TokioStreamWriter};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;
@@ -106,8 +106,8 @@ pub enum Event {
 /// The stats for a transfer of a collection or blob.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TransferStats {
-    /// Stats for writing to the client.
-    pub write: StreamWriterStats,
+    /// Stats for sending to the client.
+    pub send: StreamWriterStats,
     /// Stats for reading from disk.
     pub read: SliceReaderStats,
     /// The total duration of the transfer.
@@ -324,7 +324,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
             )
             .await?;
             stats.read += tracking_reader.stats();
-            stats.write += tw.stats();
+            stats.send += tw.stats();
             debug!(
                 "finished writing ranges '{:?}' of collection {}",
                 ranges, hash
@@ -339,7 +339,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
             if let Some(hash) = c.next().await? {
                 tokio::task::yield_now().await;
                 let (status, size, blob_read_stats) = send_blob(db, hash, ranges, &mut tw).await?;
-                stats.write += tw.stats();
+                stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 if SentStatus::NotFound == status {
                     writer.inner.finish().await?;
@@ -534,7 +534,7 @@ pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
             stats.duration = t0.elapsed();
             match res {
                 Ok(SentStatus::Sent) => {
-                    writer.notify_transfer_completed(stats).await;
+                    writer.notify_transfer_completed(&hash, stats).await;
                 }
                 Ok(SentStatus::NotFound) => {
                     writer.notify_transfer_aborted(Some(stats)).await;
@@ -580,7 +580,38 @@ impl<E: EventSender> ResponseWriter<E> {
         self.inner.id().index()
     }
 
-    async fn notify_transfer_completed(&self, stats: Box<TransferStats>) {
+    fn print_stats(stats: &TransferStats) {
+        let send = stats.send.total();
+        let read = stats.read.total();
+        let total_sent_bytes = send.size;
+        let send_duration = send.stats.duration;
+        let read_duration = read.stats.duration;
+        let total_duration = stats.duration;
+        let other_duration = total_duration
+            .saturating_sub(send_duration)
+            .saturating_sub(read_duration);
+        let avg_send_size = total_sent_bytes / send.stats.count;
+        info!(
+            "sent {} bytes in {}s",
+            total_sent_bytes,
+            total_duration.as_secs_f64()
+        );
+        debug!(
+            "{}s sending, {}s reading, {}s other",
+            send_duration.as_secs_f64(),
+            read_duration.as_secs_f64(),
+            other_duration.as_secs_f64()
+        );
+        trace!(
+            "send_count: {} avg_send_size {}",
+            send.stats.count,
+            avg_send_size,
+        )
+    }
+
+    async fn notify_transfer_completed(&self, hash: &Hash, stats: Box<TransferStats>) {
+        info!("trasnfer completed for {}", hash);
+        Self::print_stats(&stats);
         self.events
             .send(Event::TransferCollectionCompleted {
                 connection_id: self.connection_id(),
@@ -591,6 +622,9 @@ impl<E: EventSender> ResponseWriter<E> {
     }
 
     async fn notify_transfer_aborted(&self, stats: Option<Box<TransferStats>>) {
+        if let Some(stats) = &stats {
+            Self::print_stats(stats);
+        };
         self.events
             .send(Event::TransferAborted {
                 connection_id: self.connection_id(),
