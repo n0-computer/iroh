@@ -13,6 +13,7 @@ use std::sync::RwLock;
 use std::time::SystemTime;
 
 use super::flatten_to_io;
+use super::temp_name;
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
@@ -481,7 +482,7 @@ impl baomap::Store for Store {
                 let id = progress.new_id();
                 progress.blocking_send(ImportProgress::Found {
                     id,
-                    path: path.clone(),
+                    name: path.to_string_lossy().to_string(),
                 })?;
                 progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
                 // todo: provide progress for reading into mem
@@ -504,6 +505,8 @@ impl baomap::Store for Store {
         let this = self.clone();
         async move {
             let id = progress.new_id();
+            let name = temp_name();
+            progress.send(ImportProgress::Found { id, name }).await?;
             let mut bytes = BytesMut::new();
             while let Some(chunk) = data.next().await {
                 bytes.extend_from_slice(&chunk?);

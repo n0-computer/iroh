@@ -3,7 +3,7 @@
 //! TODO: Contains only iroh sync related methods. Add other methods.
 
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Cursor};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -22,20 +22,19 @@ use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
+use tracing::warn;
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobDeleteBlobRequest,
-    BlobDownloadRequest, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadResponse, BlobValidateRequest, BytesGetRequest, CounterStats, DeleteTagRequest,
-    DocCreateRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest,
-    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, WrapOption,
-    BlobWriteRequest, BlobWriteResponse,
-    BlobWriteUpdate, 
+    AuthorCreateRequest, AuthorListRequest, WrapOption, BlobAddPathRequest, BlobAddStreamRequest,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
+    BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
+    CounterStats, DeleteTagRequest, DocCreateRequest, DocGetManyRequest, DocGetOneRequest,
+    DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest,
+    DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -233,35 +232,6 @@ where
         BlobReader::from_rpc(&self.rpc, hash).await
     }
 
-    ///
-    pub async fn write(
-        &self,
-        source: impl AsyncRead + Unpin + 'static,
-    ) -> Result<BlobWriteResponse> {
-        const CAP: usize = 1024 * 64; // send 64KB per request by default
-        let map_err = |err| anyhow!("send error: {err:?}");
-
-        let (mut sink, res) = self.rpc.client_streaming(BlobWriteRequest {}).await?;
-
-        let mut input = ReaderStream::with_capacity(source, CAP);
-        while let Some(chunk) = input.next().await {
-            match chunk {
-                Ok(chunk) => sink
-                    .feed(BlobWriteUpdate::Chunk(chunk))
-                    .await
-                    .map_err(map_err)?,
-                Err(err) => {
-                    sink.feed(BlobWriteUpdate::Abort).await.map_err(map_err)?;
-                    sink.flush().await.map_err(map_err)?;
-                    return Err(err.into());
-                }
-            }
-        }
-        sink.flush().await.map_err(map_err)?;
-        let res = res.await??;
-        Ok(res)
-    }
-
     /// Read all bytes of single blob.
     ///
     /// This allocates a buffer for the full blob. Use only if you know that the blob you're
@@ -286,7 +256,7 @@ where
         in_place: bool,
         tag: SetTagOption,
         wrap: WrapOption,
-    ) -> Result<impl Stream<Item = Result<AddProgress>>> {
+    ) -> Result<BlobAddProgress> {
         let stream = self
             .rpc
             .server_streaming(BlobAddPathRequest {
@@ -296,7 +266,44 @@ where
                 wrap,
             })
             .await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(BlobAddProgress::new(stream))
+    }
+
+    /// Write a blob by passing an async reader.
+    pub async fn add_reader(
+        &self,
+        source: impl AsyncRead + Unpin + Send + 'static,
+        tag: SetTagOption,
+    ) -> anyhow::Result<BlobAddProgress> {
+        const CAP: usize = 1024 * 64; // send 64KB per request by default
+                                      // let map_err = |err| anyhow!("send error: {err:?}");
+
+        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
+
+        let input = ReaderStream::with_capacity(source, CAP);
+        let mut input = input.map(|chunk| match chunk {
+            Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
+            Err(err) => {
+                warn!("Abort send, reason: failed to read from source stream: {err:?}");
+                Ok(BlobAddStreamUpdate::Abort)
+            }
+        });
+
+        tokio::spawn(async move {
+            // TODO: Is it important to catch this error? It should also result in an error on the
+            // response stream. If we deem it important, we could one-shot send it into the
+            // BlobAddProgress and return from there. Not sure.
+            if let Err(err) = sink.send_all(&mut input).await {
+                warn!("Failed to send input stream to remote: {err:?}");
+            }
+        });
+
+        Ok(BlobAddProgress::new(progress))
+    }
+
+    /// Write a blob by passing bytes.
+    pub async fn add_bytes(&self, bytes: Bytes, tag: SetTagOption) -> anyhow::Result<(Hash, u64)> {
+        self.add_reader(Cursor::new(bytes), tag).await?.finish().await
     }
 
     /// Validate hashes on the running node.
@@ -351,6 +358,57 @@ where
     pub async fn delete_blob(&self, hash: Hash) -> Result<()> {
         self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
         Ok(())
+    }
+}
+
+/// Progress stream for blob add operations.
+pub struct BlobAddProgress {
+    stream: Pin<Box<dyn Stream<Item = Result<AddProgress>> + Send + Unpin + 'static>>,
+}
+
+impl BlobAddProgress {
+    fn new(
+        stream: (impl Stream<Item = Result<impl Into<AddProgress>, impl Into<anyhow::Error>>>
+             + Send
+             + Unpin
+             + 'static),
+    ) -> Self {
+        let stream = stream.map(|item| match item {
+            Ok(item) => Ok(item.into()),
+            Err(err) => Err(err.into()),
+        });
+        Self {
+            stream: Box::pin(stream),
+        }
+    }
+    /// Finish writing the stream, ignoring all intermediate progress events.
+    ///
+    /// Returns a hash and a size. When importing a single blob, this is the hash and size of that
+    /// blob. When importing a collection, this is the hash of the collection and the total size of
+    /// all imported blobs.
+    pub async fn finish(mut self) -> Result<(Hash, u64)> {
+        let mut total_size = 0;
+        while let Some(msg) = self.next().await {
+            match msg? {
+                AddProgress::Found { size, .. } => {
+                    total_size += size;
+                }
+                AddProgress::AllDone { hash } => {
+                    return Ok((hash, total_size));
+                }
+                AddProgress::Abort(err) => return Err(err.into()),
+                AddProgress::Progress { .. } => {}
+                AddProgress::Done { .. } => {}
+            }
+        }
+        return Err(anyhow!("Response stream ended prematurely"));
+    }
+}
+
+impl Stream for BlobAddProgress {
+    type Item = Result<AddProgress>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.stream.poll_next_unpin(cx)
     }
 }
 

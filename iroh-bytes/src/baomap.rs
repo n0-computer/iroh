@@ -475,7 +475,7 @@ pub enum ImportProgress {
     /// Found a path
     ///
     /// This will be the first message for an id
-    Found { id: u64, path: PathBuf },
+    Found { id: u64, name: String },
     /// Progress when copying the file to the store
     ///
     /// This will be omitted if the store can use the file in place

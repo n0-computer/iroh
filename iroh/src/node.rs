@@ -11,7 +11,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -20,8 +20,8 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
-    ExportMode, GcMarkEvent, GcSweepEvent, Map, MapEntry, ReadableStore, Store as BaoStore,
-    ValidateProgress,
+    ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
+    Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, LinkSeqCollectionParser};
 use iroh_bytes::protocol::GetRequest;
@@ -59,14 +59,15 @@ use tracing::{debug, error, info, trace, warn};
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    BlobWriteRequest, BlobWriteResponse, BlobWriteUpdate, DeleteTagRequest, DownloadLocation,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
-    ProviderRequest, ProviderResponse, ProviderService,
+    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
+    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
+    ProviderResponse, ProviderService,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -1018,7 +1019,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    fn blob_add_from_path(self, msg: BlobAddPathRequest) -> impl Stream<Item = AddProgress> {
+    fn blob_add_from_path(
+        self,
+        msg: BlobAddPathRequest,
+    ) -> impl Stream<Item = BlobAddPathResponse> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
@@ -1027,7 +1031,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream()
+        rx.into_stream().map(|msg| BlobAddPathResponse(msg))
     }
 
     async fn blob_export(
@@ -1181,24 +1185,20 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             rpc_protocol::WrapOption,
         };
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, ImportProgress, TempTag};
-        use std::{collections::BTreeMap, sync::Mutex};
+        use iroh_bytes::baomap::{ImportMode, TempTag};
+        use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
-            ImportProgress::Found { id, path, .. } => {
-                names.lock().unwrap().insert(id, path);
+            ImportProgress::Found { id, name } => {
+                names.lock().unwrap().insert(id, name);
                 None
             }
             ImportProgress::Size { id, size } => {
-                let path = names.lock().unwrap().remove(&id)?;
-                Some(AddProgress::Found {
-                    id,
-                    name: path.display().to_string(),
-                    size,
-                })
+                let name = names.lock().unwrap().remove(&id)?;
+                Some(AddProgress::Found { id, name, size })
             }
             ImportProgress::OutboardProgress { id, offset } => {
                 Some(AddProgress::Progress { id, offset })
@@ -1354,29 +1354,71 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
-    async fn blob_write(
+    fn blob_write(
         self,
-        _req: BlobWriteRequest,
-        stream: impl Stream<Item = BlobWriteUpdate> + Send + Unpin + 'static,
-    ) -> RpcResult<BlobWriteResponse> {
-        let (tx, _rx) = flume::bounded(32);
-        let progress = FlumeProgressSender::new(tx);
+        msg: BlobAddStreamRequest,
+        stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
+    ) -> impl Stream<Item = BlobAddStreamResponse> {
+        let (tx, rx) = flume::bounded(32);
+        let this = self.clone();
+
+        self.rt().local_pool().spawn_pinned(|| async move {
+            if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
+                tx.send_async(AddProgress::Abort(err.into())).await.ok();
+            }
+        });
+
+        rx.into_stream().map(|msg| BlobAddStreamResponse(msg))
+    }
+
+    async fn blob_add_stream0(
+        self,
+        msg: BlobAddStreamRequest,
+        stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
+        progress: flume::Sender<AddProgress>,
+    ) -> anyhow::Result<()> {
+        let progress = FlumeProgressSender::new(progress);
+
         let stream = stream.map(|item| match item {
-            BlobWriteUpdate::Chunk(chunk) => Ok(chunk),
-            BlobWriteUpdate::Abort => {
+            BlobAddStreamUpdate::Chunk(chunk) => Ok(chunk),
+            BlobAddStreamUpdate::Abort => {
                 Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
             }
         });
-        let (tag, len) = self
+
+        let name_cache = Arc::new(Mutex::new(None));
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id: _, name } => {
+                let _ = name_cache.lock().unwrap().insert(name);
+                None
+            }
+            ImportProgress::Size { id, size } => {
+                let name = name_cache.lock().unwrap().take()?;
+                Some(AddProgress::Found { id, name, size })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(AddProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
+            _ => None,
+        });
+        let (temp_tag, _len) = self
             .inner
             .db
-            .import_stream(stream, BlobFormat::RAW, progress)
+            .import_stream(stream, BlobFormat::RAW, import_progress)
             .await?;
-        let res = BlobWriteResponse {
-            hash: *tag.hash(),
-            len,
-        };
-        Ok(res)
+        let haf = *temp_tag.inner();
+        let hash = *temp_tag.hash();
+        match msg.tag {
+            SetTagOption::Named(tag) => {
+                self.inner.db.set_tag(tag, Some(haf)).await?;
+            }
+            SetTagOption::Auto => {
+                self.inner.db.create_tag(haf).await?;
+            }
+        }
+        progress.send(AddProgress::AllDone { hash }).await?;
+        Ok(())
     }
 
     fn blob_read(
@@ -1522,11 +1564,11 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::blob_read)
                     .await
             }
-            BlobWrite(msg) => {
-                chan.client_streaming(msg, handler, RpcHandler::blob_write)
+            BlobAddStream(msg) => {
+                chan.bidi_streaming(msg, handler, RpcHandler::blob_write)
                     .await
             }
-            BlobWriteUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)

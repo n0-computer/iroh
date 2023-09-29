@@ -147,12 +147,11 @@ use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
-use rand::Rng;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 
-use super::flatten_to_io;
+use super::{flatten_to_io, new_uuid, temp_name};
 
 #[derive(Debug, Default)]
 struct State {
@@ -722,6 +721,12 @@ impl baomap::Store for Store {
             let id = progress.new_id();
             // write to a temp file
             let temp_data_path = this.temp_path();
+            let name = temp_data_path
+                .file_name()
+                .expect("just created")
+                .to_string_lossy()
+                .to_string();
+            progress.send(ImportProgress::Found { id, name }).await?;
             let mut writer = tokio::fs::File::create(&temp_data_path).await?;
             let mut offset = 0;
             while let Some(chunk) = data.next().await {
@@ -845,13 +850,7 @@ impl Store {
     }
 
     fn temp_path(&self) -> PathBuf {
-        let uuid = new_uuid();
-        let temp_data_path = self
-            .0
-            .options
-            .partial_path
-            .join(format!("{}.temp", hex::encode(uuid)));
-        temp_data_path
+        self.0.options.partial_path.join(temp_name())
     }
 
     fn import_file_sync(
@@ -876,7 +875,7 @@ impl Store {
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::Found {
             id,
-            path: path.clone(),
+            name: path.to_string_lossy().to_string(),
         })?;
         let file = match mode {
             ImportMode::TryReference => ImportFile::External(path),
@@ -1540,10 +1539,6 @@ fn compute_outboard(
     let ob = ob.into_inner_with_prefix();
     let ob = if ob.len() > 8 { Some(ob) } else { None };
     Ok((hash.into(), ob))
-}
-
-fn new_uuid() -> [u8; 16] {
-    rand::thread_rng().gen::<[u8; 16]>()
 }
 
 pub(crate) struct ProgressReader2<R, F: Fn(u64) -> io::Result<()>> {
