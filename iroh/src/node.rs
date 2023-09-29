@@ -1811,7 +1811,8 @@ mod tests {
                 .await?;
 
             while let Some(item) = stream.next().await {
-                match item? {
+                let BlobAddPathResponse(progress) = item?;
+                match progress {
                     AddProgress::AllDone { hash, .. } => {
                         return Ok(hash);
                     }
