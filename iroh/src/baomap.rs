@@ -20,11 +20,13 @@ fn flatten_to_io<T>(
 }
 
 /// Create a 16 byte unique ID.
+#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 fn new_uuid() -> [u8; 16] {
     rand::thread_rng().gen::<[u8; 16]>()
 }
 
 /// Create temp file name based on a 16 byte UUID.
+#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 fn temp_name() -> String {
     format!("{}.temp", hex::encode(new_uuid()))
 }
