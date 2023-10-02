@@ -625,7 +625,7 @@ impl Iterator for ParentIterator<'_> {
         self.with_mut(|fields| {
             while !fields.key.is_empty() {
                 let entry = get_one(
-                    &fields.record_table,
+                    fields.record_table,
                     *fields.namespace,
                     *fields.author,
                     &fields.key,
