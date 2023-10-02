@@ -10,7 +10,7 @@ use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::util::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpMap;
+use iroh_net::derp::{DerpMap, DerpMode};
 use iroh_net::key::SecretKey;
 use iroh_net::PeerAddr;
 use serde::{Deserialize, Serialize};
@@ -37,10 +37,11 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(opts.secret_key)
         .keylog(opts.keylog);
-    let endpoint = match opts.derp_map {
-        Some(derp_map) => endpoint.enable_derp(derp_map),
-        None => endpoint,
+    let derp_mode = match opts.derp_map {
+        Some(derp_map) => DerpMode::Custom(derp_map),
+        None => DerpMode::Default,
     };
+    let endpoint = endpoint.set_derp(derp_mode);
     let endpoint = endpoint.bind(0).await?;
     endpoint
         .connect(opts.peer, &iroh_bytes::protocol::ALPN)

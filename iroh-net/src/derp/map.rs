@@ -13,6 +13,17 @@ use url::Url;
 
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
 
+/// Configuration options for the Derp servers of the magic endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DerpMode {
+    /// Disable Derp servers completely.
+    Disabled,
+    /// Use the default Derp map, with Derp servers from n0.
+    Default,
+    /// Use a custom Derp map.
+    Custom(DerpMap),
+}
+
 /// Configuration of all the Derp servers that can be used.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
