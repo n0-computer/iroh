@@ -217,31 +217,39 @@ impl super::Store for Store {
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
-
-        let db_key = (namespace.as_ref(), author.as_ref(), key.as_ref());
-        let record = record_table.get(db_key)?;
-        let Some(record) = record else {
-            return Ok(None);
-        };
-        let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
-        // return early if the hash equals the hash of the empty byte range, which we treat as
-        // delete marker (tombstone).
-        if hash == Hash::EMPTY.as_bytes() {
-            return Ok(None);
-        }
-
-        let record = Record::new(hash.into(), len, timestamp);
-        let id = RecordIdentifier::new(namespace, author, key);
-        let entry = Entry::new(id, record);
-        let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-        let signed_entry = SignedEntry::new(entry_signature, entry);
-
-        Ok(Some(signed_entry))
+        get_one(&record_table, namespace, author, key)
     }
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
     }
+}
+
+fn get_one(
+    record_table: &RecordsTable,
+    namespace: NamespaceId,
+    author: AuthorId,
+    key: impl AsRef<[u8]>,
+) -> Result<Option<SignedEntry>> {
+    let db_key = (namespace.as_ref(), author.as_ref(), key.as_ref());
+    let record = record_table.get(db_key)?;
+    let Some(record) = record else {
+        return Ok(None);
+    };
+    let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
+    // return early if the hash equals the hash of the empty byte range, which we treat as
+    // delete marker (tombstone).
+    if hash == Hash::EMPTY.as_bytes() {
+        return Ok(None);
+    }
+
+    let record = Record::new(hash.into(), len, timestamp);
+    let id = RecordIdentifier::new(namespace, author, key);
+    let entry = Entry::new(id, record);
+    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+    let signed_entry = SignedEntry::new(entry_signature, entry);
+
+    Ok(Some(signed_entry))
 }
 
 impl Store {
@@ -519,24 +527,17 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         Ok(iter.chain(iter2))
     }
 
-    // TODO: Not horrible
-    type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry>>;
+    type ParentIterator<'a> = ParentIterator<'a>;
     fn get_with_parents(
         &self,
         id: &RecordIdentifier,
-    ) -> std::result::Result<Self::ParentIterator<'_>, Self::Error> {
-        let mut entries = vec![];
-        let mut key = id.key().to_vec();
-        while !key.is_empty() {
-            let id = RecordIdentifier::new(id.namespace(), id.author(), &key);
-            match self.get(&id) {
-                Ok(Some(entry)) => entries.push(Ok(entry)),
-                Ok(None) => {}
-                Err(err) => entries.push(Err(err)),
-            }
-            key.pop();
-        }
-        Ok(entries.into_iter())
+    ) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        ParentIterator::create(
+            &self.store.db,
+            id.namespace(),
+            id.author(),
+            id.key().to_vec(),
+        )
     }
 
     fn get_prefix(&self, prefix: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
@@ -579,6 +580,65 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         };
         write_tx.commit()?;
         Ok(count)
+    }
+}
+
+/// Iterator over parent entries, i.e. entries with the same namespace and author, and a key which
+/// is a prefix of the key passed to the iterator.
+#[self_referencing]
+pub struct ParentIterator<'a> {
+    read_tx: ReadTransaction<'a>,
+    #[borrows(read_tx)]
+    #[covariant]
+    record_table: RecordsTable<'this>,
+    namespace: NamespaceId,
+    author: AuthorId,
+    key: Vec<u8>,
+}
+
+impl<'a> ParentIterator<'a> {
+    fn create(
+        db: &'a Arc<Database>,
+        namespace: NamespaceId,
+        author: AuthorId,
+        key: Vec<u8>,
+    ) -> anyhow::Result<Self> {
+        let iter = Self::try_new(
+            db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_table(RECORDS_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            namespace,
+            author,
+            key,
+        )?;
+        Ok(iter)
+    }
+}
+
+impl Iterator for ParentIterator<'_> {
+    type Item = Result<SignedEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.with_mut(|fields| {
+            while !fields.key.is_empty() {
+                let entry = get_one(
+                    &fields.record_table,
+                    *fields.namespace,
+                    *fields.author,
+                    &fields.key,
+                );
+                fields.key.pop();
+                match entry {
+                    Err(err) => return Some(Err(err)),
+                    Ok(Some(entry)) => return Some(Ok(entry)),
+                    Ok(None) => continue,
+                }
+            }
+            None
+        })
     }
 }
 
