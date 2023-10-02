@@ -445,7 +445,7 @@ impl PartialMap for Store {
     }
 
     fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
-        tracing::info!("insert_complete_entry {:#}", entry.hash());
+        tracing::debug!("insert_complete_entry {:#}", entry.hash());
         async move {
             let hash = entry.hash.into();
             let data = entry.data.freeze();
