@@ -1769,6 +1769,32 @@ mod tests {
 
     #[cfg(feature = "mem-db")]
     #[tokio::test]
+    async fn test_node_add_blob_stream() -> Result<()> {
+        use iroh_bytes::util::SetTagOption;
+        use std::io::Cursor;
+        let rt = runtime::Handle::from_current(1)?;
+        let db = crate::baomap::mem::Store::new(rt);
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let node = Node::builder(db, doc_store)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(&test_runtime())
+            .spawn()
+            .await?;
+
+        let _drop_guard = node.cancel_token().drop_guard();
+        let client = node.client();
+        let input = vec![2u8; 1024 * 256]; // 265kb so actually streaming, chunk size is 64kb
+        let reader = Cursor::new(input.clone());
+        let progress = client.blobs.add_reader(reader, SetTagOption::Auto).await?;
+        let outcome = progress.finish().await?;
+        let hash = outcome.hash;
+        let output = client.blobs.read_to_bytes(hash).await?;
+        assert_eq!(input, output.to_vec());
+        Ok(())
+    }
+
+    #[cfg(feature = "mem-db")]
+    #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         use iroh_bytes::util::SetTagOption;
 
