@@ -38,7 +38,7 @@ impl<S: Store> SyncEngine<S> {
     /// engine with [`Self::start_sync`], then new entries inserted locally will be sent to peers
     /// through iroh-gossip.
     ///
-    /// The engine will also register for [`Replica::subscribe`] events to download content for new
+    /// The engine will also subscribe to replica events to download content for new
     /// entries from peers.
     pub fn spawn<B: BaoStore>(
         rt: Handle,

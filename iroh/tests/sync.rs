@@ -24,7 +24,8 @@ use iroh_sync::{
     AuthorId, ContentStatus, Entry, NamespaceId,
 };
 
-const LIMIT: Duration = Duration::from_secs(15);
+/// Time limit for event collection in sync tests.
+const LIMIT: Duration = Duration::from_secs(30);
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -339,7 +340,7 @@ async fn sync_big() -> Result<()> {
     let rt = test_runtime();
     let n_nodes = std::env::var("NODES")
         .map(|v| v.parse().expect("NODES must be a number"))
-        .unwrap_or(3);
+        .unwrap_or(20);
     let n_entries_init = 1;
     // let n_entries_live = 2;
     // let n_entries_phase2 = 5;

@@ -226,12 +226,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
     // TODO: Allow to clear a previous subscription?
-    pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
+    pub fn subscribe(
+        &self,
+        channel_cap: usize,
+    ) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
         let mut on_insert_sender = self.on_insert_sender.write();
         match &*on_insert_sender {
             Some(_sender) => None,
             None => {
-                let (s, r) = flume::bounded(16); // TODO: should this be configurable?
+                let (s, r) = flume::bounded(channel_cap);
                 *on_insert_sender = Some(s);
                 Some(r)
             }

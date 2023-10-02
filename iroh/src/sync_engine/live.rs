@@ -41,7 +41,10 @@ use tracing::{debug, error, error_span, warn, Instrument};
 
 pub use iroh_sync::ContentStatus;
 
-const CHANNEL_CAP: usize = 8;
+/// Capacity of the channel for the [`ToActor`] messages.
+const ACTOR_CHANNEL_CAP: usize = 8;
+/// Capacity of the subscription channel for replica events.
+const REPLICA_SUBSCRIBE_CHANNEL_CAP: usize = 64;
 
 /// An iroh-sync operation
 ///
@@ -194,7 +197,7 @@ impl<S: store::Store> LiveSync<S> {
         bao_store: B,
         downloader: Downloader,
     ) -> Self {
-        let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
+        let (to_actor_tx, to_actor_rx) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.peer_id().fmt_short();
         let mut actor = Actor::new(
             endpoint,
@@ -627,7 +630,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
             // setup event subscription.
             let events = replica
-                .subscribe()
+                .subscribe(REPLICA_SUBSCRIBE_CHANNEL_CAP)
                 .ok_or_else(|| anyhow::anyhow!("trying to subscribe twice to the same replica"))?;
             self.replica_events.push(events.into_stream());
 
