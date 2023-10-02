@@ -310,13 +310,13 @@ impl MagicSock {
     ///
     /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
-        let name = opts.secret_key.public().fmt_short();
+        let me = opts.secret_key.public().fmt_short();
         if crate::util::derp_only_mode() {
             warn!("creating a MagicSock that will only send packets over a DERP relay connection.");
         }
 
-        Self::with_name(name.clone(), opts)
-            .instrument(error_span!("magicsock", %name))
+        Self::with_name(me.clone(), opts)
+            .instrument(error_span!("magicsock", %me))
             .await
     }
 
