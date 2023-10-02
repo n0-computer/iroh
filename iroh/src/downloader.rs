@@ -43,7 +43,7 @@ use iroh_bytes::{
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
-use tracing::{debug, trace};
+use tracing::{debug, error_span, trace, Instrument};
 
 mod get;
 mod invariants;
@@ -225,6 +225,7 @@ impl Downloader {
         S: Store,
         C: CollectionParser,
     {
+        let me = endpoint.peer_id().fmt_short();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
         let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
 
@@ -237,7 +238,7 @@ impl Downloader {
 
             let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
 
-            service.run()
+            service.run().instrument(error_span!("downloader", %me))
         };
         rt.local_pool().spawn_pinned(create_future);
         Self { next_id: 0, msg_tx }
