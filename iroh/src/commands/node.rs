@@ -14,7 +14,10 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
-use iroh_net::{derp::DerpMap, key::SecretKey};
+use iroh_net::{
+    derp::{DerpMap, DerpMode},
+    key::SecretKey,
+};
 use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
@@ -115,7 +118,7 @@ async fn spawn_daemon_node<B: BaoStore, D: DocStore>(
         .peers_data_path(peers_data_path)
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
-        builder = builder.enable_derp(dm);
+        builder = builder.derp_mode(DerpMode::Custom(dm));
     }
     let builder = builder.bind_addr(opts.addr).runtime(rt);
 

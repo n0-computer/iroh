@@ -174,7 +174,7 @@ impl Default for Options {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
-            derp_map: Default::default(),
+            derp_map: DerpMap::empty(),
             callbacks: Default::default(),
             peers_path: None,
         }
@@ -2648,7 +2648,7 @@ pub(crate) mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{test_utils::run_derper, tls, MagicEndpoint};
+    use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
         quinn_udp::Transmit {
@@ -2797,7 +2797,7 @@ pub(crate) mod tests {
                     on_derp_s.try_send(()).ok();
                 }))
                 .transport_config(transport_config)
-                .enable_derp(derp_map)
+                .derp_mode(DerpMode::Custom(derp_map))
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;

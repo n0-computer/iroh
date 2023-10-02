@@ -57,7 +57,6 @@ fn test_node<D: Store>(
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
         .collection_parser(LinkSeqCollectionParser)
-        .enable_derp(iroh_net::defaults::default_derp_map())
         .bind_addr(addr)
 }
 
@@ -732,7 +731,6 @@ async fn test_custom_collection_parser() {
     let doc_store = iroh_sync::store::memory::Store::default();
     let node = Node::builder(db, doc_store)
         .collection_parser(CollectionsAreJustLinks)
-        .enable_derp(iroh_net::defaults::default_derp_map())
         .bind_addr(addr)
         .runtime(&rt)
         .spawn()
@@ -1056,7 +1054,6 @@ async fn test_token_passthrough() -> Result<()> {
     tokio::time::timeout(Duration::from_secs(30), async move {
         let endpoint = MagicEndpoint::builder()
             .secret_key(SecretKey::generate())
-            .enable_derp(iroh_net::defaults::default_derp_map())
             .keylog(true)
             .bind(0)
             .await?;
