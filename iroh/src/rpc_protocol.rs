@@ -22,7 +22,7 @@ use iroh_net::{
 use iroh_sync::{
     store::GetFilter,
     sync::{NamespaceId, SignedEntry},
-    AuthorId,
+    AuthorId, DocSetProgress,
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -634,6 +634,44 @@ pub struct DocSetResponse {
     pub entry: SignedEntry,
 }
 
+/// Set entries to a doc, that have already been added to the store
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetStreamRequest {
+    /// Id of the document
+    pub doc_id: NamespaceId,
+    /// Id of the author
+    pub author_id: NamespaceId,
+}
+
+/// Set entries that have already been added to the blob store
+#[derive(Serialize, Deserialize, Debug)]
+pub enum DocSetStreamUpdate {
+    /// Details on the entry to add
+    Entry {
+        /// Key of the entry
+        key: Vec<u8>,
+        /// Hash of the entry content
+        hash: Hash,
+        /// Size of the entry data
+        size: u64,
+    },
+    /// Abort the request due to an error on the client side
+    Abort,
+}
+
+impl Msg<ProviderService> for DocSetStreamRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<ProviderService> for DocSetStreamRequest {
+    type Update = DocSetStreamUpdate;
+    type Response = DocSetStreamResponse;
+}
+
+/// Wrapper around [`sync::AddProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocSetStreamResponse(pub DocSetProgress);
+
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyRequest {
@@ -799,6 +837,8 @@ pub enum ProviderRequest {
     DocCreate(DocCreateRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
+    DocSetStream(DocSetStreamRequest),
+    DocSetStreamUpdate(DocSetStreamUpdate),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
     DocStartSync(DocStartSyncRequest),
@@ -839,6 +879,7 @@ pub enum ProviderResponse {
     DocCreate(RpcResult<DocCreateResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
+    DocSetStream(DocSetStreamResponse),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
     DocShare(RpcResult<DocShareResponse>),

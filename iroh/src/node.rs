@@ -43,6 +43,7 @@ use iroh_net::{
     tls, MagicEndpoint, PeerAddr,
 };
 use iroh_sync::store::Store as DocStore;
+use iroh_sync::DocSetProgress;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -60,11 +61,12 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService,
+    DeleteTagRequest, DocSetStreamRequest, DocSetStreamResponse, DocSetStreamUpdate,
+    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -1230,6 +1232,77 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         })
     }
 
+    fn doc_set_stream(
+        self,
+        msg: DocSetStreamRequest,
+        stream: impl Stream<Item = DocSetStreamUpdate> + Send + Unpin + 'static,
+    ) -> impl Stream<Item = DocSetStreamResponse> {
+        let (tx, rx) = flume::bounded(32);
+        let this = self.clone();
+
+        self.rt().local_pool().spawn_pinned(|| async move {
+            if let Err(err) = this.doc_set_stream0(msg, stream, tx.clone()).await {
+                tx.send_async(DocSetProgress::Abort(err.into())).await.ok();
+            }
+        });
+
+        rx.into_stream().map(DocSetStreamResponse)
+    }
+
+    async fn doc_set_stream0(
+        self,
+        msg: DocSetStreamRequest,
+        stream: impl Stream<Item = DocSetStreamUpdate> + Send + Unpin + 'static,
+        progress: flume::Sender<DocSetProgress>,
+    ) -> anyhow::Result<()> {
+        // let progress = FlumeProgressSender::new(progress);
+
+        // let stream = stream.map(|item| match item {
+        //     DocSetStreamUpdate::Chunk(chunk) => Ok(chunk),
+        //     DocSetStreamUpdate::Abort => {
+        //         Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
+        //     }
+        // });
+
+        // let name_cache = Arc::new(Mutex::new(None));
+        // let import_progress = progress.clone().with_filter_map(move |x| match x {
+        //     ImportProgress::Found { id: _, name } => {
+        //         let _ = name_cache.lock().unwrap().insert(name);
+        //         None
+        //     }
+        //     ImportProgress::Size { id, size } => {
+        //         let name = name_cache.lock().unwrap().take()?;
+        //         Some(AddProgress::Found { id, name, size })
+        //     }
+        //     ImportProgress::OutboardProgress { id, offset } => {
+        //         Some(AddProgress::Progress { id, offset })
+        //     }
+        //     ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
+        //     _ => None,
+        // });
+        // let (temp_tag, _len) = self
+        //     .inner
+        //     .db
+        //     .import_stream(stream, BlobFormat::RAW, import_progress)
+        //     .await?;
+        // let hash_and_format = *temp_tag.inner();
+        // let HashAndFormat(hash, format) = hash_and_format;
+        // let tag = match msg.tag {
+        //     SetTagOption::Named(tag) => {
+        //         self.inner
+        //             .db
+        //             .set_tag(tag.clone(), Some(hash_and_format))
+        //             .await?;
+        //         tag
+        //     }
+        //     SetTagOption::Auto => self.inner.db.create_tag(hash_and_format).await?,
+        // };
+        // progress
+        //     .send(AddProgress::AllDone { hash, tag, format })
+        //     .await?;
+        Ok(())
+    }
+
     fn blob_add_stream(
         self,
         msg: BlobAddStreamRequest,
@@ -1490,6 +1563,11 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
+            DocSetStream(msg) => {
+                chan.bidi_streaming(msg, handler, RpcHandler::doc_set_stream)
+                    .await
+            }
+            DocSetStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
             DocGet(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.doc_get_many(req)
