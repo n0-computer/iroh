@@ -37,7 +37,6 @@ use iroh_gossip::{
 };
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
-    defaults::default_derp_map,
     derp::{DerpMap, DerpMode},
     key::SecretKey,
     magic_endpoint::get_alpn,
