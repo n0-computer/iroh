@@ -87,15 +87,6 @@ enum Message {
     Abort { reason: AbortReason },
 }
 
-pub(super) async fn abort_alice<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<(), ConnectError> {
-    let mut writer = FramedWrite::new(writer, SyncCodec);
-    let message = Message::Abort {
-        reason: AbortReason::AlreadySyncing,
-    };
-    writer.send(message).await.map_err(ConnectError::sync)?;
-    Ok(())
-}
-
 /// Runs the initiator side of the sync protocol.
 pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -251,8 +242,8 @@ impl<S: store::Store> BobState<S> {
                 (Message::Sync(_), None) => {
                     return Err(self.fail(anyhow!("unexpected sync message before init")))
                 }
-                (Message::Abort { reason }, _) => {
-                    return Err(self.fail(anyhow!("unexpected abort message ({reason:?})")))
+                (Message::Abort { .. }, _) => {
+                    return Err(self.fail(anyhow!("unexpected sync abort message")))
                 }
             };
             let next = next.map_err(|e| self.fail(e))?;

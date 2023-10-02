@@ -36,7 +36,6 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinError,
 };
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, warn, Instrument};
 
 pub use iroh_sync::ContentStatus;
@@ -70,7 +69,7 @@ pub struct SyncReport {
 #[derive(Debug, Clone)]
 enum SyncState {
     None,
-    Dialing(CancellationToken),
+    Dialing,
     Accepting,
     Finished,
     Failed,
@@ -559,7 +558,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         // passed.
         match self.get_sync_state(namespace, peer) {
             // never run two syncs at the same time
-            SyncState::Accepting | SyncState::Dialing(_) => return,
+            SyncState::Accepting | SyncState::Dialing => return,
             // always rerun if we failed or did not run yet
             SyncState::Failed | SyncState::None => {}
             // if we finished previously, only re-run if explicitly requested.
@@ -570,11 +569,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         };
         debug!(?namespace, ?peer, ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: start");
 
-        let cancel = CancellationToken::new();
-        self.set_sync_state(namespace, peer, SyncState::Dialing(cancel.clone()));
+        self.set_sync_state(namespace, peer, SyncState::Dialing);
         let endpoint = self.endpoint.clone();
         let fut = async move {
-            let res = connect_and_sync::<S>(&endpoint, &replica, PeerAddr::new(peer), cancel).await;
+            let res = connect_and_sync::<S>(&endpoint, &replica, PeerAddr::new(peer)).await;
             (namespace, peer, reason, res)
         }
         .boxed();
@@ -749,16 +747,6 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     ?namespace,
                     ?reason,
                     "sync[dial]: remote abort, already syncing"
-                );
-                Ok(())
-            }
-            Err(ConnectError::Cancelled) => {
-                // In case the remote aborted with already running: do nothing
-                debug!(
-                    ?peer,
-                    ?namespace,
-                    ?reason,
-                    "sync[dial]: cancelled, already syncing"
                 );
                 Ok(())
             }
@@ -1069,16 +1057,28 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             // Incoming sync request while we are dialing ourselves.
             // In this case, compare the binary representations of our and the other node's peer id
             // to deterministically decide which of the two concurrent connections will succeed.
-            SyncState::Dialing(cancel) => {
-                if peer.as_bytes() > self.endpoint.peer_id().as_bytes() {
-                    cancel.cancel();
+            SyncState::Dialing => match expected_sync_direction(&self.endpoint.peer_id(), &peer) {
+                SyncDirection::Accept => {
                     self.set_sync_state(namespace, peer, SyncState::Accepting);
                     Ok(replica.clone())
-                } else {
-                    Err(AbortReason::AlreadySyncing)
                 }
-            }
+                SyncDirection::Dial => Err(AbortReason::AlreadySyncing),
+            },
         }
+    }
+}
+
+#[derive(Debug)]
+enum SyncDirection {
+    Accept,
+    Dial,
+}
+
+fn expected_sync_direction(self_peer_id: &PublicKey, other_peer_id: &PublicKey) -> SyncDirection {
+    if self_peer_id.as_bytes() > other_peer_id.as_bytes() {
+        SyncDirection::Accept
+    } else {
+        SyncDirection::Dial
     }
 }
 
