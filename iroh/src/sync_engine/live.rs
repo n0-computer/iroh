@@ -770,8 +770,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 warn!(?peer, ?namespace, ?err, ?reason, "sync[dial]: failed")
             }
         }
+        let finished = SystemTime::now();
         let state = match result {
-            Ok(_) => SyncState::Finished,
+            Ok(_) => {
+                // register the peer as useful for the document
+                self.replica_store
+                    .register_useful_peer(&namespace, &peer, finished);
+                SyncState::Finished
+            }
             Err(_) => SyncState::Failed,
         };
         self.set_sync_state(namespace, peer, state);
@@ -780,7 +786,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             peer,
             origin,
             result: result.map_err(|err| format!("{err:?}")),
-            finished: SystemTime::now(),
+            finished,
         };
         let subs = self.event_subscriptions.get_mut(&event.namespace);
         if let Some(subs) = subs {

@@ -1,5 +1,7 @@
 //! Storage trait and implementation for iroh-sync documents
 
+use std::time::SystemTime;
+
 use anyhow::Result;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
@@ -8,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ranger,
     sync::{Author, Namespace, Replica, SignedEntry},
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
@@ -39,6 +41,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Iterator over authors in the store, returned from [`Self::list_authors`]
     type AuthorsIter<'a>: Iterator<Item = Result<Author>>
+    where
+        Self: 'a;
+
+    /// Iterator over authors in the store, returned from [`Self::get_sync_peers`]
+    type PeersIter<'a>: Iterator<Item = Result<PeerIdBytes>>
     where
         Self: 'a;
 
@@ -93,6 +100,16 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get all content hashes of all replicas in the store.
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
+
+    /// Register a peer that has been useful to sync a document.
+    fn register_useful_peer(
+        namespace: &NamespaceId,
+        peer: PeerIdBytes,
+        last_sync_timestamp: SystemTime,
+    );
+
+    /// Get peers to use for syncing a document.
+    fn get_sync_peers(namespace: &NamespaceId) -> Result<Self::PeersIter<'_>>;
 }
 
 /// Filter a get query onto a namespace
