@@ -401,7 +401,7 @@ impl BlobAddProgress {
     /// Finish writing the stream, ignoring all intermediate progress events.
     ///
     /// Returns a [`BlobAddOutcome`] which contains a tag, format, hash and a size.
-    /// When importing a single blob, this is the hash and size of that blob. 
+    /// When importing a single blob, this is the hash and size of that blob.
     /// When importing a collection, the hash is the hash of the collection and the size
     /// is the total size of all imported blobs (but excluding the size of the collection blob
     /// itself).
