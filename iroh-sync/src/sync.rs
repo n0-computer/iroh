@@ -786,13 +786,13 @@ impl Record {
     }
 }
 
-/// Progress updates for the import operation.
+/// Progress updates for the streaming set entry by hash operation.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DocSetProgress {
-    /// We are done with `id`, and the hash is `hash`.
+    /// Finished adding entry of the given `key` to the document
     Done {
         /// The key of the entry.
-        key: u64,
+        key: Vec<u8>,
     },
     /// We have finished adding all entries to the document
     AllDone,
