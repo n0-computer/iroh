@@ -26,7 +26,7 @@ use iroh_metrics::{inc, inc_by};
 use parking_lot::RwLock;
 
 use ed25519_dalek::{Signature, SignatureError};
-use iroh_bytes::Hash;
+use iroh_bytes::{util::RpcError, Hash};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -951,6 +951,22 @@ impl Record {
         out.extend_from_slice(self.hash.as_ref());
         out.extend_from_slice(&self.timestamp.to_be_bytes())
     }
+}
+
+/// Progress updates for the import operation.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DocSetProgress {
+    /// We are done with `id`, and the hash is `hash`.
+    Done {
+        /// The key of the entry.
+        key: u64,
+    },
+    /// We have finished adding all entries to the document
+    AllDone,
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
 }
 
 #[cfg(test)]
