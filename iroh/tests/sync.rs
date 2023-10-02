@@ -515,9 +515,9 @@ async fn assert_all_docs(
 ) {
     info!("validate all peers: {label}");
     for (i, doc) in docs.iter().enumerate() {
-        let entries = get_all(doc)
-            .await
-            .expect(&format!("failed to get entries for peer {:?}", peer_ids[i]));
+        let entries = get_all(doc).await.unwrap_or_else(|err| {
+            panic!("failed to get entries for peer {:?}: {err:?}", peer_ids[i])
+        });
         assert_eq!(
             &entries,
             expected,
@@ -548,7 +548,7 @@ impl PartialEq<(Entry, Bytes)> for ExpectedEntry {
         self.key.as_bytes() == entry.key()
             && Hash::new(&self.value) == entry.content_hash()
             && self.author == entry.author()
-            && &self.value.as_bytes() == &content.as_ref()
+            && self.value.as_bytes() == content.as_ref()
     }
 }
 impl PartialEq<ExpectedEntry> for Entry {
