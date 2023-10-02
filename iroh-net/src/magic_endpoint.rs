@@ -173,7 +173,7 @@ impl MagicEndpointBuilder {
     /// will result in an error.
     ///
     /// [`bind`]: MagicEndpointBuilder::bind
-    pub fn set_derp(mut self, derp_mode: DerpMode) -> Self {
+    pub fn derp_mode(mut self, derp_mode: DerpMode) -> Self {
         self.derp_mode = derp_mode;
         self
     }
@@ -600,7 +600,7 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .enable_derp(derp_map)
+                    .derp_mode(DerpMode::Custom(derp_map))
                     .bind(0)
                     .await
                     .unwrap();

@@ -262,8 +262,8 @@ where
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// region with a configured derp node.  If an invalid [`DerpMap`] is provided [`bind`]
-    /// will result in an error.
+    /// region with a configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// is provided [`Self::spawn`] will result in an error.
     pub fn derp_mode(mut self, dm: DerpMode) -> Self {
         self.derp_mode = dm;
         self
@@ -352,7 +352,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
-            .set_derp(self.derp_mode)
+            .derp_mode(self.derp_mode)
             .on_endpoints(Box::new(move |eps| {
                 if !eps.is_empty() {
                     endpoints_update_s.send(eps.to_vec()).ok();

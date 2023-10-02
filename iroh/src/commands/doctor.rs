@@ -15,7 +15,7 @@ use iroh::util::progress::ProgressWriter;
 use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
-    derp::{DerpMap, UseIpv4, UseIpv6},
+    derp::{DerpMap, DerpMode, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
     netcheck, portmapper, MagicEndpoint, PeerAddr,
 };
@@ -525,7 +525,7 @@ async fn make_endpoint(
         .on_endpoints(Box::new(on_endpoints))
         .on_derp_active(Box::new(on_derp_active));
     let endpoint = match derp_map {
-        Some(derp_map) => endpoint.enable_derp(derp_map),
+        Some(derp_map) => endpoint.derp_mode(DerpMode::Custom(derp_map)),
         None => endpoint,
     };
     let endpoint = endpoint.bind(0).await?;

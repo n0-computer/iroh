@@ -21,6 +21,7 @@ use iroh_bytes::{
     Hash,
 };
 use iroh_io::ConcatenateSliceWriter;
+use iroh_net::derp::DerpMode;
 use tokio::sync::mpsc;
 
 use crate::commands::show_download_progress;
@@ -72,7 +73,7 @@ impl GetInteractive {
         // spin up temp node and ask it to download the data for us
         let mut provider = iroh::node::Node::builder(db, doc_store);
         if let Some(ref dm) = self.opts.derp_map {
-            provider = provider.enable_derp(dm.clone());
+            provider = provider.derp_mode(DerpMode::Custom(dm.clone()));
         }
         let provider = provider
             .runtime(&iroh_bytes::util::runtime::Handle::from_current(1)?)

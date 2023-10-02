@@ -613,7 +613,10 @@ mod test {
     use std::time::Duration;
 
     use iroh_net::PeerAddr;
-    use iroh_net::{derp::DerpMap, MagicEndpoint};
+    use iroh_net::{
+        derp::{DerpMap, DerpMode},
+        MagicEndpoint,
+    };
     use tokio::spawn;
     use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
@@ -624,7 +627,7 @@ mod test {
     async fn create_endpoint(derp_map: DerpMap) -> anyhow::Result<MagicEndpoint> {
         MagicEndpoint::builder()
             .alpns(vec![GOSSIP_ALPN.to_vec()])
-            .enable_derp(derp_map)
+            .derp_mode(DerpMode::Custom(derp_map))
             .bind(0)
             .await
     }

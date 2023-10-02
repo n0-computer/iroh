@@ -41,7 +41,7 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
         Some(derp_map) => DerpMode::Custom(derp_map),
         None => DerpMode::Default,
     };
-    let endpoint = endpoint.set_derp(derp_mode);
+    let endpoint = endpoint.derp_mode(derp_mode);
     let endpoint = endpoint.bind(0).await?;
     endpoint
         .connect(opts.peer, &iroh_bytes::protocol::ALPN)

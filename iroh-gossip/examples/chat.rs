@@ -9,8 +9,7 @@ use iroh_gossip::{
     proto::{util::base32, Event, TopicId},
 };
 use iroh_net::{
-    defaults::default_derp_map,
-    derp::DerpMap,
+    derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
     MagicEndpoint, PeerAddr,
@@ -95,13 +94,13 @@ async fn main() -> anyhow::Result<()> {
     println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
 
     // configure our derp map
-    let derp_map = match (args.no_derp, args.derp) {
-        (false, None) => Some(default_derp_map()),
-        (false, Some(url)) => Some(DerpMap::from_url(url, 0)),
-        (true, None) => None,
+    let derp_mode = match (args.no_derp, args.derp) {
+        (false, None) => DerpMode::Default,
+        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, 0)),
+        (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
-    println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
+    println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
 
     // init a cell that will hold our gossip handle to be used in endpoint callbacks
     let gossip_cell: OnceCell<Gossip> = OnceCell::new();
@@ -113,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
+        .derp_mode(derp_mode)
         .on_endpoints({
             let gossip_cell = gossip_cell.clone();
             let notify = notify.clone();
@@ -124,12 +124,9 @@ async fn main() -> anyhow::Result<()> {
                 // notify the outer task of the initial endpoint update (later updates are not interesting)
                 notify.notify_one();
             })
-        });
-    let endpoint = match derp_map {
-        Some(derp_map) => endpoint.enable_derp(derp_map),
-        None => endpoint,
-    };
-    let endpoint = endpoint.bind(args.bind_port).await?;
+        })
+        .bind(args.bind_port)
+        .await?;
     println!("> our peer id: {}", endpoint.peer_id());
 
     // create the gossip protocol
@@ -328,10 +325,11 @@ fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from(bytes))
 }
 
-fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
-    match derp_map {
-        None => "None".to_string(),
-        Some(map) => map
+fn fmt_derp_mode(derp_mode: &DerpMode) -> String {
+    match derp_mode {
+        DerpMode::Disabled => "None".to_string(),
+        DerpMode::Default => "Default Derp servers".to_string(),
+        DerpMode::Custom(map) => map
             .regions()
             .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
             .collect::<Vec<_>>()
