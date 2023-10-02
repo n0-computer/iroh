@@ -115,7 +115,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
-    type PeersIter<'a> = std::vec::IntoIter<Result<PeerIdBytes>>;
+    type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
@@ -239,7 +239,7 @@ impl super::Store for Store {
         ContentHashesIterator::create(&self.db)
     }
 
-    fn register_useful_peer(&self, namespace: &NamespaceId, peer: crate::PeerIdBytes) {}
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) {}
 
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>> {
         Ok(vec![].into_iter())

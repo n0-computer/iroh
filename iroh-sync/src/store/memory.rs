@@ -51,7 +51,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
-    type PeersIter<'a> = std::vec::IntoIter<Result<PeerIdBytes>>;
+    type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
@@ -149,16 +149,22 @@ impl super::Store for Store {
     }
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) {
-        let cache = self
-            .peers_per_doc
-            .write()
+        let mut per_doc_cache = self.peers_per_doc.write();
+        per_doc_cache
             .entry(namespace)
-            .or_insert_with(|| lru::LruCache::new(PEER_PER_DOC_CACHE_SIZE));
-        cache.put(peer, ());
+            .or_insert_with(|| lru::LruCache::new(PEER_PER_DOC_CACHE_SIZE))
+            .put(peer, ());
     }
 
-    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>> {
-        Ok(vec![].into_iter())
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
+        let per_doc_cache = self.peers_per_doc.read();
+        let cache = match per_doc_cache.get(namespace) {
+            Some(cache) => cache,
+            None => return Ok(None),
+        };
+
+        let peers: Vec<PeerIdBytes> = cache.iter().map(|(peer_id, _empty_val)| *peer_id).collect();
+        Ok(Some(peers.into_iter()))
     }
 }
 

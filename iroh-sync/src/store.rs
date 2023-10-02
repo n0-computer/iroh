@@ -43,7 +43,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Iterator over authors in the store, returned from [`Self::get_sync_peers`]
-    type PeersIter<'a>: Iterator<Item = Result<PeerIdBytes>>
+    type PeersIter<'a>: Iterator<Item = PeerIdBytes>
     where
         Self: 'a;
 
@@ -103,7 +103,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes);
 
     /// Get peers to use for syncing a document.
-    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>>;
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
 }
 
 /// Filter a get query onto a namespace
