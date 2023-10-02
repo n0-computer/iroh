@@ -212,6 +212,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         received_from: PeerIdBytes,
         content_status: ContentStatus,
     ) -> Result<usize, InsertError<S>> {
+        entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
             content_status,
@@ -409,6 +410,9 @@ pub enum ValidationFailure {
     /// Entry timestamp is too far in the future.
     #[error("Entry timestamp is too far in the future.")]
     TooFarInTheFuture,
+    /// Entry has length 0 but not the empty hash, or the empty hash but not length 0.
+    #[error("Entry has length 0 but not the empty hash, or the empty hash but not length 0")]
+    InvalidEmptyEntry,
 }
 
 /// A signed entry.
@@ -486,6 +490,11 @@ impl SignedEntry {
     /// Get the signature.
     pub fn signature(&self) -> &EntrySignature {
         &self.signature
+    }
+
+    /// Validate that the entry has the empty hash if the length is 0, or a non-zero length.
+    pub fn validate_empty(&self) -> Result<(), ValidationFailure> {
+        self.entry().validate_empty()
     }
 
     /// Get the [`Entry`].
@@ -638,6 +647,16 @@ impl Entry {
         Entry {
             id,
             record: Record::empty_current(),
+        }
+    }
+
+    /// Validate that the entry has the empty hash if the length is 0, or a non-zero length.
+    pub fn validate_empty(&self) -> Result<(), ValidationFailure> {
+        match (self.content_hash() == Hash::EMPTY, self.content_len() == 0) {
+            (true, true) => Ok(()),
+            (false, false) => Ok(()),
+            (true, false) => Err(ValidationFailure::InvalidEmptyEntry),
+            (false, true) => Err(ValidationFailure::InvalidEmptyEntry),
         }
     }
 
@@ -843,7 +862,7 @@ impl Record {
 
     /// Return `true` if the entry is empty.
     pub fn is_empty(&self) -> bool {
-        self.len == 0 && self.hash == Hash::EMPTY
+        self.hash == Hash::EMPTY
     }
 
     /// Create a new [`Record`] with the timestamp set to now.
@@ -1449,6 +1468,60 @@ mod tests {
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foo")?, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_replica_sync_wipe_memory() -> Result<()> {
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+
+        test_replica_sync_wipe(alice_store, bob_store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_sync_wipe_fs() -> Result<()> {
+        let alice_dbfile = tempfile::NamedTempFile::new()?;
+        let alice_store = store::fs::Store::new(alice_dbfile.path())?;
+        let bob_dbfile = tempfile::NamedTempFile::new()?;
+        let bob_store = store::fs::Store::new(bob_dbfile.path())?;
+        test_replica_sync_wipe(alice_store, bob_store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_sync_wipe<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+        let alice_set = ["foot"];
+        let bob_set = ["fool", "foo", "fog"];
+
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let myspace = Namespace::new(&mut rng);
+        let alice = alice_store.new_replica(myspace.clone())?;
+        for el in &alice_set {
+            alice.hash_and_insert(el, &author, el.as_bytes())?;
+        }
+
+        let bob = bob_store.new_replica(myspace.clone())?;
+        for el in &bob_set {
+            bob.hash_and_insert(el, &author, el.as_bytes())?;
+        }
+
+        sync::<S>(&alice, &bob)?;
+
+        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+
+        alice.wipe_at_prefix("foo", &author)?;
+        bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
+        sync::<S>(&alice, &bob)?;
+        check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
+        check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
         Ok(())
     }
