@@ -241,7 +241,7 @@ impl MagicEndpointBuilder {
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
         let derp_map = match self.derp_mode {
-            DerpMode::Disabled => DerpMap::default(),
+            DerpMode::Disabled => DerpMap::empty(),
             DerpMode::Default => default_derp_map(),
             DerpMode::Custom(derp_map) => {
                 ensure!(!derp_map.is_empty(), "Empty custom Derp server map",);

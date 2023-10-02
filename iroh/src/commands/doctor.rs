@@ -246,7 +246,7 @@ async fn report(
             // creating a derp map from host name and stun port
             DerpMap::default_from_node(url, stun_port, UseIpv4::TryDns, UseIpv6::TryDns, 0)
         }
-        None => config.derp_map()?.unwrap_or_default(),
+        None => config.derp_map()?.unwrap_or_else(|| DerpMap::empty()),
     };
     println!("getting report using derp map {dm:#?}");
 

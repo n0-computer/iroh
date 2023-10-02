@@ -174,7 +174,7 @@ impl Default for Options {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
-            derp_map: Default::default(),
+            derp_map: DerpMap::empty(),
             callbacks: Default::default(),
             peers_path: None,
         }

@@ -25,7 +25,7 @@ pub enum DerpMode {
 }
 
 /// Configuration of all the Derp servers that can be used.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     /// A map of the different region IDs to the [`DerpRegion`] information
     regions: Arc<HashMap<u16, DerpRegion>>,
@@ -37,6 +37,13 @@ impl DerpMap {
         let mut ids: Vec<_> = self.regions.keys().copied().collect();
         ids.sort();
         ids
+    }
+
+    /// Create an empty Derp map.
+    pub fn empty() -> Self {
+        Self {
+            regions: Default::default()
+        }
     }
 
     /// Returns an `Iterator` over all known regions.
