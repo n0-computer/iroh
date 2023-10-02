@@ -4,14 +4,12 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
-use serde::{Deserialize, Serialize};
 
 use iroh::{
     client::quic::{Doc, Iroh},
     rpc_protocol::{DocTicket, ShareMode},
     sync_engine::{LiveEvent, Origin},
 };
-use iroh_bytes::util::RpcError;
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use tokio::io::AsyncReadExt;
 

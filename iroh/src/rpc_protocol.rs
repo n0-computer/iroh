@@ -677,7 +677,7 @@ pub struct DocSetStreamRequest {
     /// Id of the document
     pub doc_id: NamespaceId,
     /// Id of the author
-    pub author_id: NamespaceId,
+    pub author_id: AuthorId,
 }
 
 /// Set entries that have already been added to the blob store

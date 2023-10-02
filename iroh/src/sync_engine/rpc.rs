@@ -1,12 +1,13 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::{FutureExt, Stream};
+use futures::{FutureExt, Stream, StreamExt};
 use iroh_bytes::{
     baomap::Store as BaoStore,
-    util::{BlobFormat, RpcError},
+    util::{progress::FlumeProgressSender, progress::ProgressSender, BlobFormat, RpcError},
+    Hash,
 };
-use iroh_sync::{store::Store, sync::Namespace};
+use iroh_sync::{store::Store, sync::Namespace, DocSetProgress};
 use itertools::Itertools;
 use rand::rngs::OsRng;
 
@@ -17,9 +18,9 @@ use crate::{
         DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
         DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
         DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetRequest,
-        DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-        DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
-        ShareMode,
+        DocSetResponse, DocSetStreamRequest, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -212,6 +213,29 @@ impl<S: Store> SyncEngine<S> {
             .delete_prefix(prefix, &author)
             .map_err(anyhow::Error::from)?;
         Ok(DocDelResponse { removed })
+    }
+
+    pub async fn doc_set_hash(
+        &self,
+        req: DocSetStreamRequest,
+        mut stream: impl Stream<Item = Result<(Vec<u8>, Hash, u64), std::io::Error>>
+            + Send
+            + Unpin
+            + 'static,
+        progress: FlumeProgressSender<DocSetProgress>,
+    ) -> anyhow::Result<()> {
+        let DocSetStreamRequest { doc_id, author_id } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        // iterate over stream and insert
+        while let Some(entry) = stream.next().await {
+            let (key, hash, len) = entry?;
+            replica
+                .insert(&key, &author, hash, len)
+                .map_err(anyhow::Error::from)?;
+            progress.send(DocSetProgress::Done { key }).await?;
+        }
+        Ok(())
     }
 
     pub fn doc_get_many(

@@ -1256,6 +1256,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let this = self.clone();
 
         self.rt().local_pool().spawn_pinned(|| async move {
+            // if emit error, send "Abort"... kind of circuitous
             if let Err(err) = this.doc_set_stream0(msg, stream, tx.clone()).await {
                 tx.send_async(DocSetProgress::Abort(err.into())).await.ok();
             }
@@ -1266,35 +1267,19 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
 
     async fn doc_set_stream0(
         self,
-        msg: DocSetStreamRequest,
+        _msg: DocSetStreamRequest,
         stream: impl Stream<Item = DocSetStreamUpdate> + Send + Unpin + 'static,
         progress: flume::Sender<DocSetProgress>,
     ) -> anyhow::Result<()> {
-        // let progress = FlumeProgressSender::new(progress);
+        let _progress = FlumeProgressSender::new(progress);
 
-        // let stream = stream.map(|item| match item {
-        //     DocSetStreamUpdate::Chunk(chunk) => Ok(chunk),
-        //     DocSetStreamUpdate::Abort => {
-        //         Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
-        //     }
-        // });
+        let _stream = stream.map(|item| match item {
+            DocSetStreamUpdate::Entry { key, hash, size } => Ok((key, hash, size)),
+            DocSetStreamUpdate::Abort => {
+                Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
+            }
+        });
 
-        // let name_cache = Arc::new(Mutex::new(None));
-        // let import_progress = progress.clone().with_filter_map(move |x| match x {
-        //     ImportProgress::Found { id: _, name } => {
-        //         let _ = name_cache.lock().unwrap().insert(name);
-        //         None
-        //     }
-        //     ImportProgress::Size { id, size } => {
-        //         let name = name_cache.lock().unwrap().take()?;
-        //         Some(AddProgress::Found { id, name, size })
-        //     }
-        //     ImportProgress::OutboardProgress { id, offset } => {
-        //         Some(AddProgress::Progress { id, offset })
-        //     }
-        //     ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
-        //     _ => None,
-        // });
         // let (temp_tag, _len) = self
         //     .inner
         //     .db
