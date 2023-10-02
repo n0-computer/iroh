@@ -247,9 +247,6 @@ pub async fn get<D: Store, C: CollectionParser>(
     } else {
         get_blob(db, conn, &hash).await
     };
-    if let Err(e) = res.as_ref() {
-        tracing::error!("get failed: {e:?}");
-    }
     res
 }
 
