@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
@@ -450,22 +450,26 @@ where
                 inner: inner.clone(),
                 collection_parser: self.collection_parser.clone(),
             };
-            rt2.main().spawn(async move {
-                Self::run(
-                    endpoint,
-                    callbacks,
-                    cb_receiver,
-                    handler,
-                    self.rpc_endpoint,
-                    internal_rpc,
-                    self.custom_get_handler,
-                    self.auth_handler,
-                    self.collection_parser,
-                    rt3,
-                    gossip,
-                )
-                .await
-            })
+            let me = endpoint.peer_id().fmt_short();
+            rt2.main().spawn(
+                async move {
+                    Self::run(
+                        endpoint,
+                        callbacks,
+                        cb_receiver,
+                        handler,
+                        self.rpc_endpoint,
+                        internal_rpc,
+                        self.custom_get_handler,
+                        self.auth_handler,
+                        self.collection_parser,
+                        rt3,
+                        gossip,
+                    )
+                    .await
+                }
+                .instrument(error_span!("node", %me)),
+            )
         };
         let node = Node {
             inner,
