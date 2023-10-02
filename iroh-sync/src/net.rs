@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::{
-    net::codec::{run_alice, BobState},
+    net::codec::{abort_alice, run_alice, BobState},
     store,
     sync::AsyncReplica as Replica,
     NamespaceId, SyncOutcome,
@@ -37,16 +37,30 @@ pub async fn connect_and_sync<S: store::Store>(
     let peer_id = peer.peer_id;
     debug!(?peer_id, "sync[dial]: connect");
     let namespace = doc.namespace();
-    let connection = tokio::select! {
-        biased;
-        _  = cancel.cancelled() => return Err(ConnectError::Cancelled),
-        res = endpoint.connect(peer, SYNC_ALPN) => {
-            res.map_err(ConnectError::connect)?
-        }
-    };
+    let connection = endpoint
+        .connect(peer, SYNC_ALPN)
+        .await
+        .map_err(ConnectError::connect)?;
+
     debug!(?peer_id, ?namespace, "sync[dial]: connected");
     let (mut send_stream, mut recv_stream) =
         connection.open_bi().await.map_err(ConnectError::connect)?;
+
+    if cancel.is_cancelled() {
+        abort_alice(&mut send_stream)
+            .await
+            .map_err(|_| ConnectError::Cancelled)?;
+        send_stream
+            .finish()
+            .await
+            .map_err(|_| ConnectError::Cancelled)?;
+        recv_stream
+            .read_to_end(0)
+            .await
+            .map_err(|_| ConnectError::Cancelled)?;
+        return Err(ConnectError::Cancelled);
+    }
+
     let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer_id).await;
 
     send_stream.finish().await.map_err(ConnectError::close)?;

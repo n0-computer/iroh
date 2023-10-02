@@ -87,6 +87,15 @@ enum Message {
     Abort { reason: AbortReason },
 }
 
+pub(super) async fn abort_alice<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<(), ConnectError> {
+    let mut writer = FramedWrite::new(writer, SyncCodec);
+    let message = Message::Abort {
+        reason: AbortReason::AlreadySyncing,
+    };
+    writer.send(message).await.map_err(ConnectError::sync)?;
+    Ok(())
+}
+
 /// Runs the initiator side of the sync protocol.
 pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
