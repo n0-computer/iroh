@@ -562,9 +562,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         })
     }
 
-    async fn start_sync(&mut self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<PeerAddr>) -> Result<()> {
         self.ensure_open(namespace)?;
         self.syncing_replicas.insert(namespace);
+        let known_useful_peers = self.replica_store.get_sync_peers(&namespace);
+        peers.extend(known_useful_peers);
         self.join_peers(namespace, peers).await?;
         Ok(())
     }
@@ -770,12 +772,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 warn!(?peer, ?namespace, ?err, ?reason, "sync[dial]: failed")
             }
         }
-        let finished = SystemTime::now();
         let state = match result {
             Ok(_) => {
                 // register the peer as useful for the document
-                self.replica_store
-                    .register_useful_peer(&namespace, &peer, finished);
+                self.replica_store.register_useful_peer(&namespace, &peer);
                 SyncState::Finished
             }
             Err(_) => SyncState::Failed,
@@ -786,7 +786,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             peer,
             origin,
             result: result.map_err(|err| format!("{err:?}")),
-            finished,
+            finished: SystemTime::now(),
         };
         let subs = self.event_subscriptions.get_mut(&event.namespace);
         if let Some(subs) = subs {

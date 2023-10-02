@@ -19,7 +19,7 @@ use crate::{
     sync::{
         Author, Entry, EntrySignature, Namespace, Record, RecordIdentifier, Replica, SignedEntry,
     },
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes,
 };
 
 use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
@@ -115,6 +115,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type PeersIter<'a> = std::vec::IntoIter<Result<PeerIdBytes>>;
 
     fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
@@ -236,6 +237,12 @@ impl super::Store for Store {
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
+    }
+
+    fn register_useful_peer(&self, namespace: &NamespaceId, peer: crate::PeerIdBytes) {}
+
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>> {
+        Ok(vec![].into_iter())
     }
 }
 

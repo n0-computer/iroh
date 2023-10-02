@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
+    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -14,10 +15,18 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Author, Namespace, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes,
 };
 
 use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
+
+/// Number of [`PeerIdBytes`] objects to cache per document.
+const PEER_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
+    Some(val) => val,
+    None => panic!("this is clearly non zero"),
+};
+
+type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
@@ -27,6 +36,8 @@ pub struct Store {
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
     pubkeys: MemPublicKeyStore,
+    /// Cache of peers that have been used for sync.
+    peers_per_doc: SyncPeersCache,
 }
 
 type Rid = (AuthorId, Vec<u8>);
@@ -40,6 +51,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type PeersIter<'a> = std::vec::IntoIter<Result<PeerIdBytes>>;
 
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
@@ -134,6 +146,19 @@ impl super::Store for Store {
             namespace_i: 0,
             record_i: 0,
         })
+    }
+
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) {
+        let cache = self
+            .peers_per_doc
+            .write()
+            .entry(namespace)
+            .or_insert_with(|| lru::LruCache::new(PEER_PER_DOC_CACHE_SIZE));
+        cache.put(peer, ());
+    }
+
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>> {
+        Ok(vec![].into_iter())
     }
 }
 

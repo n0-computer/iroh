@@ -1,7 +1,5 @@
 //! Storage trait and implementation for iroh-sync documents
 
-use std::time::SystemTime;
-
 use anyhow::Result;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
@@ -102,14 +100,10 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
 
     /// Register a peer that has been useful to sync a document.
-    fn register_useful_peer(
-        namespace: &NamespaceId,
-        peer: PeerIdBytes,
-        last_sync_timestamp: SystemTime,
-    );
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes);
 
     /// Get peers to use for syncing a document.
-    fn get_sync_peers(namespace: &NamespaceId) -> Result<Self::PeersIter<'_>>;
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>>;
 }
 
 /// Filter a get query onto a namespace
