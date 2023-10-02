@@ -132,7 +132,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> our secret key: {}", secret_key);
 
     // configure our derp map
-    // configure our derp map
     let derp_mode = match (args.no_derp, args.derp) {
         (false, None) => DerpMode::Default,
         (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, 0)),

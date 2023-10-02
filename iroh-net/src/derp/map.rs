@@ -42,7 +42,7 @@ impl DerpMap {
     /// Create an empty Derp map.
     pub fn empty() -> Self {
         Self {
-            regions: Default::default()
+            regions: Default::default(),
         }
     }
 
