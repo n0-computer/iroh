@@ -400,9 +400,11 @@ impl BlobAddProgress {
     }
     /// Finish writing the stream, ignoring all intermediate progress events.
     ///
-    /// Returns a hash and a size. When importing a single blob, this is the hash and size of that
-    /// blob. When importing a collection, this is the hash of the collection and the total size of
-    /// all imported blobs.
+    /// Returns a [`BlobAddOutcome`] which contains a tag, format, hash and a size.
+    /// When importing a single blob, this is the hash and size of that blob. 
+    /// When importing a collection, the hash is the hash of the collection and the size
+    /// is the total size of all imported blobs, but without the size of the collection blob
+    /// itself.
     pub async fn finish(mut self) -> Result<BlobAddOutcome> {
         let mut total_size = 0;
         while let Some(msg) = self.next().await {
