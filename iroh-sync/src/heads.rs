@@ -1,4 +1,4 @@
-//! State vector
+//! Author heads
 
 use std::collections::BTreeMap;
 
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::AuthorId;
 
 /// Timestamps of the latest entry for each author.
+// TODO: If we want to encode this in gossip messages we have to enforce a max length.
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Default)]
 pub struct AuthorHeads {
     heads: BTreeMap<AuthorId, u64>,

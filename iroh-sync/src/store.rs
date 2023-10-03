@@ -99,13 +99,13 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     // TODO: This default impl is horrifyingly inefficient. Remove.
     fn has_news_for_us(&self, namespace: NamespaceId, heads: &AuthorHeads) -> Result<bool> {
         let our_heads = {
-            let mut sv = AuthorHeads::default();
+            let mut heads = AuthorHeads::default();
             let all = self.get_many(namespace, GetFilter::All)?;
             for e in all {
                 let e = e?;
-                sv.insert(e.author(), e.timestamp());
+                heads.insert(e.author(), e.timestamp());
             }
-            sv
+            heads
         };
         let has_news_for_us = heads.has_news_for(&our_heads);
         Ok(has_news_for_us)

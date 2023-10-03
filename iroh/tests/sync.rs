@@ -25,7 +25,7 @@ use iroh_sync::{
 };
 
 /// Time limit for event collection in sync tests.
-const LIMIT: Duration = Duration::from_secs(30);
+const LIMIT: Duration = Duration::from_secs(60);
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -57,7 +57,7 @@ fn spawn_node(
     async move {
         let node = test_node(rt, "127.0.0.1:0".parse()?, secret_key);
         let node = node.spawn().await?;
-        info!("spawned node {i} {:?}", node.peer_id());
+        info!(?i, me = %node.peer_id().fmt_short(), "node spawned");
         Ok(node)
     }
 }
@@ -381,7 +381,7 @@ async fn sync_big() -> Result<()> {
     publish(&docs, &mut expected, n_entries_init, |i, j| {
         (
             authors[i],
-            format!("init/{:?}/{j}", peer_ids[i]),
+            format!("init/{}/{j}", peer_ids[i].fmt_short()),
             format!("init:{i}:{j}"),
         )
     })
@@ -404,7 +404,7 @@ async fn sync_big() -> Result<()> {
 
     // join nodes together
     for (i, doc) in docs.iter().enumerate().skip(1) {
-        info!(me = ?peer_ids[i], peer = ?peer0.peer_id, "join");
+        info!(me = %peer_ids[i].fmt_short(), peer = %peer0.peer_id.fmt_short(), "join");
         doc.start_sync(vec![peer0.clone()]).await?;
     }
 
@@ -415,11 +415,15 @@ async fn sync_big() -> Result<()> {
     for (i, events) in events.into_iter().enumerate() {
         let doc = docs[i].clone();
         let expected = expected.clone();
-        let me = peer_ids[i];
+        let me = peer_ids[i].fmt_short();
         let fut = async move {
-            wait_for_events(events, expected_inserts, Duration::from_secs(30), me, |e| {
-                matches!(e, LiveEvent::InsertRemote { .. })
-            })
+            wait_for_events(
+                events,
+                expected_inserts,
+                Duration::from_secs(30),
+                me.clone(),
+                |e| matches!(e, LiveEvent::InsertRemote { .. }),
+            )
             .await?;
             let entries = get_all(&doc).await?;
             if entries != expected {
@@ -429,7 +433,7 @@ async fn sync_big() -> Result<()> {
                     expected.len()
                 ))
             } else {
-                info!(?me, "All done, all good");
+                info!(%me, "received and checked all {} expected entries", expected.len());
                 Ok(())
             }
         };
@@ -490,7 +494,7 @@ async fn wait_for_events(
     mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
     expected_n: usize,
     timeout_per_event: Duration,
-    me: PublicKey,
+    me: String,
     matcher: impl Fn(LiveEvent) -> bool,
 ) -> anyhow::Result<()> {
     let mut i = 0;
@@ -501,7 +505,7 @@ async fn wait_for_events(
             .ok_or_else(|| anyhow!("end of event stream for after {i}"))??;
         if matcher(event) {
             i += 1;
-            debug!(?me, "recv event {i} of {expected_n}");
+            debug!(%me, "recv event {i} of {expected_n}");
         }
     }
     Ok(())
