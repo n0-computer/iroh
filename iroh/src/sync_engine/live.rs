@@ -567,7 +567,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 _ => return,
             },
         };
-        debug!(?namespace, ?peer, ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: start");
+        debug!(?namespace, peer = %peer.fmt_short(), ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: start");
 
         self.set_sync_state(namespace, peer, SyncState::Dialing);
         let endpoint = self.endpoint.clone();
@@ -709,7 +709,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         for peer in peers.into_iter() {
             let peer_id = peer.peer_id;
             if let Err(err) = self.endpoint.add_peer_addr(peer).await {
-                warn!(peer = ?peer_id, "failed to add known addrs: {err:?}");
+                warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
             }
         }
 
@@ -743,7 +743,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         match result {
             Err(ConnectError::RemoteAbort(AbortReason::AlreadySyncing)) => {
                 debug!(
-                    ?peer,
+                    peer = %peer.fmt_short(),
                     ?namespace,
                     ?reason,
                     "sync[dial]: remote abort, already syncing"
@@ -777,7 +777,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 reason,
             }) if reason == AbortReason::AlreadySyncing => {
                 // In case we aborted the sync: do nothing (our outgoing sync is in progress)
-                debug!(?peer, ?namespace, ?reason, "sync[accept]: aborted by us");
+                debug!(peer = %peer.fmt_short(), ?namespace, ?reason, "sync[accept]: aborted by us");
                 Ok(())
             }
             Err(err) => {
@@ -807,15 +807,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         result: Result<SyncFinished>,
     ) -> Result<()> {
         // debug log the result, warn in case of errors
-        match (&origin, &result) {
-            (Origin::Accept, Ok(_)) => debug!(?peer, ?namespace, "sync[accept]: done"),
-            (Origin::Connect(reason), Ok(_)) => {
-                debug!(?peer, ?namespace, ?reason, "sync[dial]: done")
-            }
-            (Origin::Accept, Err(err)) => warn!(?peer, ?namespace, ?err, "sync[accept]: failed"),
-            (Origin::Connect(reason), Err(err)) => {
-                warn!(?peer, ?namespace, ?err, ?reason, "sync[dial]: failed")
-            }
+        match &result {
+            Ok(res) => log_finished(&origin, &res),
+            Err(err) => warn!(?peer, ?namespace, ?err, ?origin, "sync failed"),
         }
         let state = match result {
             Ok(_) => SyncState::Finished,
@@ -825,11 +819,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // Broadcast a sync report to our neighbors, but only if we received new entries.
         if let Ok(state) = &result {
-            if state.progress.num_recv > 0 {
+            if state.outcome.num_recv > 0 {
                 let report = SyncReport {
                     peer,
                     namespace,
-                    heads: state.progress.heads_received.clone(),
+                    heads: state.outcome.heads_received.clone(),
                 };
                 let op = Op::SyncReport(report);
                 debug!(
@@ -912,14 +906,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             .replica_store
                             .has_news_for_us(report.namespace, &report.heads)?
                         {
-                            debug!(?namespace, ?peer, "recv sync report: have news, sync now");
+                            debug!(?namespace, peer = %peer.fmt_short(), "recv sync report: have news, sync now");
                             self.sync_with_peer(
                                 report.namespace,
                                 peer,
                                 SyncReason::ResyncAfterReport,
                             );
                         } else {
-                            debug!(?namespace, ?peer, "recv sync report: no news");
+                            debug!(?namespace, peer = %peer.fmt_short(), "recv sync report: no news");
                         }
                     }
                 }
@@ -928,14 +922,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             // [Self::sync_with_peer] will check to not resync with peers synced previously in the
             // same session. TODO: Maybe this is too broad and leads to too many sync requests.
             Event::NeighborUp(peer) => {
-                debug!(?peer, ?namespace, "neighbor up");
+                debug!(peer = %peer.fmt_short(), ?namespace, "neighbor up");
                 self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
                 if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
                     notify_all(subs, LiveEvent::NeighborUp(peer)).await;
                 }
             }
             Event::NeighborDown(peer) => {
-                debug!(?peer, ?namespace, "neighbor down");
+                debug!(peer = %peer.fmt_short(), ?namespace, "neighbor down");
                 if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
                     notify_all(subs, LiveEvent::NeighborDown(peer)).await;
                 }
@@ -1106,7 +1100,7 @@ pub enum SyncReason {
     DirectJoin,
     /// Peer showed up as new neighbor in the gossip swarm
     NewNeighbor,
-    ///
+    /// We synced after receiving a [`SyncReport`] that indicated news for us
     ResyncAfterReport,
 }
 
@@ -1130,4 +1124,17 @@ async fn notify_all(subs: &mut HashMap<u64, OnLiveEventCallback>, event: LiveEve
             subs.remove(&idx);
         }
     }
+}
+
+fn log_finished(origin: &Origin, details: &SyncFinished) {
+    debug!(
+        peer = %details.peer.fmt_short(),
+        namespace = ?details.namespace,
+        sent = ?details.outcome.num_sent,
+        recv = ?details.outcome.num_recv,
+        t_connect = ?details.timings.connect,
+        t_process = ?details.timings.process,
+        origin = ?origin,
+        "sync finished",
+    )
 }

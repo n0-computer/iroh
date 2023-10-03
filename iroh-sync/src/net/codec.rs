@@ -271,7 +271,7 @@ impl<S: store::Store> BobState<S> {
     }
 
     /// Consume self and get the [`SyncOutcome`] for this connection.
-    pub fn into_progress(self) -> SyncOutcome {
+    pub fn into_outcome(self) -> SyncOutcome {
         self.progress
     }
 }
