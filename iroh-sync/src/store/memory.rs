@@ -20,12 +20,6 @@ use crate::{
 
 use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
 
-/// Number of [`PeerIdBytes`] objects to cache per document.
-const PEER_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
-    Some(val) => val,
-    None => panic!("this is clearly non zero"),
-};
-
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
 /// Manages the replicas and authors for an instance.
@@ -148,12 +142,13 @@ impl super::Store for Store {
         })
     }
 
-    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) {
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
         let mut per_doc_cache = self.peers_per_doc.write();
         per_doc_cache
             .entry(namespace)
-            .or_insert_with(|| lru::LruCache::new(PEER_PER_DOC_CACHE_SIZE))
+            .or_insert_with(|| lru::LruCache::new(super::PEER_PER_DOC_CACHE_SIZE))
             .put(peer, ());
+        Ok(())
     }
 
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
