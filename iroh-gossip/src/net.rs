@@ -9,7 +9,7 @@ use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
 use tokio::{
-    sync::{broadcast, mpsc, oneshot, watch},
+    sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
 };
 use tracing::{debug, error_span, trace, warn, Instrument};
@@ -34,6 +34,8 @@ const SEND_QUEUE_CAP: usize = 64;
 const TO_ACTOR_CAP: usize = 64;
 /// Channel capacity for the InEvent message queue (single)
 const IN_EVENT_CAP: usize = 1024;
+/// Channel capacity for endpoint change message queue (single)
+const ON_ENDPOINTS_CAP: usize = 64;
 
 /// Events emitted from the gossip protocol
 pub type Event = proto::Event<PublicKey>;
@@ -66,7 +68,7 @@ type ProtoMessage = proto::Message<PublicKey>;
 #[derive(Debug, Clone)]
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
-    on_endpoints_tx: Arc<watch::Sender<Vec<iroh_net::config::Endpoint>>>,
+    on_endpoints_tx: mpsc::Sender<Vec<iroh_net::config::Endpoint>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -84,7 +86,7 @@ impl Gossip {
         );
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
-        let (on_endpoints_tx, on_endpoints_rx) = watch::channel(Default::default());
+        let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
         let me = endpoint.peer_id().fmt_short();
         let actor = Actor {
@@ -116,7 +118,7 @@ impl Gossip {
         );
         Self {
             to_actor_tx,
-            on_endpoints_tx: Arc::new(on_endpoints_tx),
+            on_endpoints_tx,
             _actor_handle: Arc::new(actor_handle),
         }
     }
@@ -229,10 +231,14 @@ impl Gossip {
     ///
     /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
     /// to us.
+    ///
+    /// This is only best effort, and will drop new events if backed up.
     pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
+        let endpoints = endpoints.to_vec();
         self.on_endpoints_tx
-            .send(endpoints.to_vec())
-            .map_err(|_| anyhow!("gossip actor dropped"))
+            .try_send(endpoints)
+            .map_err(|_| anyhow!("endpoints channel dropped"))?;
+        Ok(())
     }
 
     async fn send(&self, event: ToActor) -> anyhow::Result<()> {
@@ -321,8 +327,8 @@ struct Actor {
     in_event_tx: mpsc::Sender<InEvent>,
     /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
-    /// Watcher for updates of discovered endpoint addresses
-    on_endpoints_rx: watch::Receiver<Vec<iroh_net::config::Endpoint>>,
+    /// Updates of discovered endpoint addresses
+    on_endpoints_rx: mpsc::Receiver<Vec<iroh_net::config::Endpoint>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
@@ -351,10 +357,18 @@ impl Actor {
                         }
                     }
                 },
-                _ = self.on_endpoints_rx.changed() => {
-                    let addr = self.endpoint.my_addr().await?;
-                    let peer_data = encode_peer_data(&addr.info)?;
-                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
+                new_endpoints = self.on_endpoints_rx.recv() => {
+                    match new_endpoints {
+                        Some(endpoints) => {
+                            let addr = self.endpoint.my_addr_with_endpoints(endpoints).await?;
+                            let peer_data = encode_peer_data(&addr.info)?;
+                            self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
+                        }
+                        None => {
+                            debug!("endpoint change handle dropped, stopping gossip actor");
+                            break;
+                        }
+                    }
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
                     match res {

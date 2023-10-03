@@ -365,11 +365,17 @@ impl MagicEndpoint {
     }
 
     /// Get the [`PeerAddr`] for this endpoint.
-    // TODO: We can save an async call by exposing this on the msock.
     pub async fn my_addr(&self) -> Result<PeerAddr> {
         let addrs = self.local_endpoints().await?;
         let derp = self.my_derp().await;
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
+        Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
+    }
+
+    /// Get the [`PeerAddr`] for this endpoint, while providing the endpoints.
+    pub async fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<PeerAddr> {
+        let derp = self.my_derp().await;
+        let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
     }
 
