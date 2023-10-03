@@ -36,7 +36,7 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinError,
 };
-use tracing::{debug, error, error_span, warn, Instrument};
+use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 pub use iroh_sync::ContentStatus;
 

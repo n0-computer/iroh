@@ -43,7 +43,7 @@ use iroh_bytes::{
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
-use tracing::{debug, error_span, trace, Instrument};
+use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
 mod invariants;

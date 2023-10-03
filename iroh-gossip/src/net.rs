@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, util::base32, PeerData, Scope, TopicId};
+use crate::proto::{self, PeerData, Scope, TopicId};
 
 pub mod util;
 
@@ -345,7 +345,10 @@ struct Actor {
 
 impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
+        let mut i = 0;
         loop {
+            i += 1;
+            trace!(?i, "tick");
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
@@ -418,13 +421,13 @@ impl Actor {
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(
                     async move {
-                        debug!(peer = ?peer_id, "connection established");
+                        debug!("connection established");
                         match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                             Ok(()) => {
-                                debug!(peer = ?peer_id, "connection closed without error")
+                                debug!("connection closed without error")
                             }
                             Err(err) => {
-                                debug!(peer = ?peer_id, "connection closed with error {err:?}")
+                                debug!("connection closed with error {err:?}")
                             }
                         }
                         in_event_tx
@@ -432,7 +435,7 @@ impl Actor {
                             .await
                             .ok();
                     }
-                    .instrument(trace_span!("conn_in", peer = ?peer_id)),
+                    .instrument(error_span!("gossip_conn", peer = %peer_id.fmt_short())),
                 );
 
                 // Forward queued pending sends
