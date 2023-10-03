@@ -961,7 +961,9 @@ mod tests {
         // behave like an lrucache
         let mut peer_a = [0; 32];
         rng.fill_bytes(&mut peer_a);
-        store.register_useful_peer(my_replica.namespace(), peer_a);
+        store
+            .register_useful_peer(my_replica.namespace(), peer_a)
+            .unwrap();
         let stored_peer = store
             .get_sync_peers(&my_replica.namespace())
             .unwrap()
