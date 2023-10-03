@@ -1,5 +1,7 @@
 //! Storage trait and implementation for iroh-sync documents
 
+use std::num::NonZeroUsize;
+
 use anyhow::Result;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
@@ -16,6 +18,12 @@ pub mod fs;
 pub mod memory;
 mod pubkeys;
 pub use pubkeys::*;
+
+/// Number of [`PeerIdBytes`] objects to cache per document.
+const PEER_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
+    Some(val) => val,
+    None => panic!("this is clearly non zero"),
+};
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
@@ -100,7 +108,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
 
     /// Register a peer that has been useful to sync a document.
-    fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes);
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes) -> Result<()>;
 
     /// Get peers to use for syncing a document.
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;

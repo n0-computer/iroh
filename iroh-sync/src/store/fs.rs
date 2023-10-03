@@ -303,7 +303,18 @@ impl super::Store for Store {
     }
 
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
-        Ok(None)
+        let read_tx = self.db.begin_read()?;
+        let peers_table = read_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+        let mut peers = Vec::with_capacity(super::PEER_PER_DOC_CACHE_SIZE.get());
+        for result in peers_table.get(namespace.as_bytes())? {
+            let (_nanos, &peer) = result?.value();
+            peers.push(peer);
+        }
+        if peers.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(peers.into_iter()))
+        }
     }
 }
 
