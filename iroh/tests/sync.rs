@@ -35,10 +35,7 @@ fn test_node(
 ) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
     let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
-    Node::builder(db, store)
-        .enable_derp(iroh_net::defaults::default_derp_map())
-        .runtime(&rt)
-        .bind_addr(addr)
+    Node::builder(db, store).runtime(&rt).bind_addr(addr)
 }
 
 async fn spawn_node(

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -36,12 +36,11 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
-use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     config::Endpoint,
-    derp::DerpMap,
+    derp::DerpMode,
     key::{PublicKey, SecretKey},
     tls, MagicEndpoint, PeerAddr,
 };
@@ -54,7 +53,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
@@ -124,7 +123,7 @@ pub struct Builder<
     keylog: bool,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
-    derp_map: Option<DerpMap>,
+    derp_mode: DerpMode,
     collection_parser: C,
     gc_policy: GcPolicy,
     rt: Option<runtime::Handle>,
@@ -182,7 +181,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
-            derp_map: Some(default_derp_map()),
+            derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
@@ -216,7 +215,7 @@ where
             custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: value,
-            derp_map: self.derp_map,
+            derp_mode: self.derp_mode,
             collection_parser: self.collection_parser,
             gc_policy: self.gc_policy,
             rt: self.rt,
@@ -240,7 +239,7 @@ where
             custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: self.rpc_endpoint,
-            derp_map: self.derp_map,
+            derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
             rt: self.rt,
             docs: self.docs,
@@ -256,31 +255,17 @@ where
         self
     }
 
-    /// Enables using DERP servers to assist in establishing connectivity.
+    /// Sets the DERP servers to assist in establishing connectivity.
     ///
     /// DERP servers are used to discover other nodes by [`PublicKey`] and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// The provided `derp_map` must contain at least one region with a configured derp
-    /// node.
-    ///
-    /// When calling neither this, nor [`disable_derp`] the builder uses the
-    /// [`default_derp_map`] containing number0's global derp servers.
-    ///
-    /// [`disable_derp`]: Builder::disable_derp
-    pub fn enable_derp(mut self, dm: DerpMap) -> Self {
-        self.derp_map = Some(dm);
-        self
-    }
-
-    /// Disables using DERP servers.
-    ///
-    /// See [`enable_derp`] for details.
-    ///
-    /// [`enable_derp`]: Builder::enable_derp
-    pub fn disable_derp(mut self) -> Self {
-        self.derp_map = None;
+    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
+    /// region with a configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// is provided [`Self::spawn`] will result in an error.
+    pub fn derp_mode(mut self, dm: DerpMode) -> Self {
+        self.derp_mode = dm;
         self
     }
 
@@ -346,14 +331,6 @@ where
     pub async fn spawn(self) -> Result<Node<D, S>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
-        ensure!(
-            self.derp_map
-                .as_ref()
-                .map(|m| !m.is_empty())
-                .unwrap_or(true),
-            "Derp server enabled but DerpMap is empty",
-        );
-
         // Initialize the metrics collection.
         //
         // The metrics are global per process. Subsequent calls do not change the metrics
@@ -375,6 +352,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
+            .derp_mode(self.derp_mode)
             .on_endpoints(Box::new(move |eps| {
                 if !eps.is_empty() {
                     endpoints_update_s.send(eps.to_vec()).ok();
@@ -382,10 +360,6 @@ where
             }));
         let endpoint = match self.peers_data_path {
             Some(path) => endpoint.peers_data_path(path),
-            None => endpoint,
-        };
-        let endpoint = match self.derp_map {
-            Some(derp_map) => endpoint.enable_derp(derp_map),
             None => endpoint,
         };
         let endpoint = endpoint.bind(self.bind_addr.port()).await?;
@@ -450,22 +424,26 @@ where
                 inner: inner.clone(),
                 collection_parser: self.collection_parser.clone(),
             };
-            rt2.main().spawn(async move {
-                Self::run(
-                    endpoint,
-                    callbacks,
-                    cb_receiver,
-                    handler,
-                    self.rpc_endpoint,
-                    internal_rpc,
-                    self.custom_get_handler,
-                    self.auth_handler,
-                    self.collection_parser,
-                    rt3,
-                    gossip,
-                )
-                .await
-            })
+            let me = endpoint.peer_id().fmt_short();
+            rt2.main().spawn(
+                async move {
+                    Self::run(
+                        endpoint,
+                        callbacks,
+                        cb_receiver,
+                        handler,
+                        self.rpc_endpoint,
+                        internal_rpc,
+                        self.custom_get_handler,
+                        self.auth_handler,
+                        self.collection_parser,
+                        rt3,
+                        gossip,
+                    )
+                    .await
+                }
+                .instrument(error_span!("node", %me)),
+            )
         };
         let node = Node {
             inner,
