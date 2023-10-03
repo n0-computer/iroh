@@ -2,20 +2,20 @@
 
 use std::path::{Path, PathBuf};
 
-/// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
+/// Paths to files or directories used by Iroh.
 #[derive(Debug, Clone, Eq, PartialEq, strum::AsRefStr, strum::EnumString, strum::Display)]
 #[cfg_attr(test, derive(strum::EnumIter))]
 pub enum IrohPaths {
-    /// Path to the node's secret key for the [`iroh_net::PublicKey`].
+    /// Path to the node's secret key for the [`iroh_net::key::PublicKey`].
     #[strum(serialize = "keypair")]
     SecretKey,
-    /// Path to the node's [flat-file store](iroh::baomap::flat) for complete blobs.
+    /// Path to the node's [flat-file store](crate::baomap::flat) for complete blobs.
     #[strum(serialize = "blobs.v0")]
     BaoFlatStoreComplete,
-    /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
+    /// Path to the node's [flat-file store](crate::baomap::flat) for partial blobs.
     #[strum(serialize = "blobs-partial.v0")]
     BaoFlatStorePartial,
-    /// Path to the node's [flat-file store](iroh::baomap::flat) for metadata such as the tags table.
+    /// Path to the node's [flat-file store](crate::baomap::flat) for metadata such as the tags table.
     #[strum(serialize = "blobs-meta.v0")]
     BaoFlatStoreMeta,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
@@ -37,7 +37,7 @@ impl AsRef<Path> for IrohPaths {
 }
 
 impl IrohPaths {
-    /// Get the path for this [`IrohPath`] by joining the name to a root directory.
+    /// Get the path for this [`IrohPaths`] by joining the name to a root directory.
     pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
         let path = root.as_ref().join(self);
         path
