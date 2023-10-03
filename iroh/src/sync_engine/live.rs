@@ -808,7 +808,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     ) -> Result<()> {
         // debug log the result, warn in case of errors
         match &result {
-            Ok(res) => log_finished(&origin, &res),
+            Ok(res) => log_finished(&origin, res),
             Err(err) => warn!(?peer, ?namespace, ?err, ?origin, "sync failed"),
         }
         let state = match result {

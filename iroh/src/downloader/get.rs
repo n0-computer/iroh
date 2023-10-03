@@ -242,12 +242,11 @@ pub async fn get<D: Store, C: CollectionParser>(
     hash: Hash,
     recursive: bool,
 ) -> Result<Stats, FailureAction> {
-    let res = if recursive {
+    if recursive {
         get_collection(db, collection_parser, conn, &hash).await
     } else {
         get_blob(db, conn, &hash).await
-    };
-    res
+    }
 }
 
 /// Get a blob that was requested completely.
