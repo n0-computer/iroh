@@ -793,7 +793,7 @@ mod tests {
     use std::collections::HashSet;
 
     use anyhow::Result;
-    use rand_core::SeedableRng;
+    use rand_core::{RngCore, SeedableRng};
 
     use crate::{
         ranger::{Range, Store as _},
@@ -956,6 +956,19 @@ mod tests {
 
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
+
+        // test basic peer persistence. In reality there is no contract for Store implementation to
+        // behave like an lrucache
+        let mut peer_a = [0; 32];
+        rng.fill_bytes(&mut peer_a);
+        store.register_useful_peer(my_replica.namespace(), peer_a);
+        let stored_peer = store
+            .get_sync_peers(&my_replica.namespace())
+            .unwrap()
+            .unwrap()
+            .next();
+
+        assert_eq!(stored_peer, Some(peer_a));
 
         Ok(())
     }
