@@ -9,8 +9,8 @@ use iroh_bytes::Hash;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
-    Database, Range as TableRange, ReadOnlyTable, ReadTransaction, ReadableTable, StorageError,
-    TableDefinition,
+    Database, MultimapTableDefinition, Range as TableRange, ReadOnlyTable, ReadTransaction,
+    ReadableTable, StorageError, TableDefinition,
 };
 
 use crate::{
@@ -61,6 +61,13 @@ type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'stat
 type DbResult<T> = Result<T, StorageError>;
 
 const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
+/// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
+/// last time a peer was useful in a document.
+// NOTE: resolution is nanoseconds, stored as a u64 since this covers ~500years from unix epoch,
+// which should be more than enough
+type Nanos = u64;
+const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
+    MultimapTableDefinition::new("sync-peers-1");
 
 impl Store {
     /// Create or open a store from a `path` to a database file.
@@ -241,8 +248,8 @@ impl super::Store for Store {
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) {}
 
-    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Self::PeersIter<'_>> {
-        Ok(vec![].into_iter())
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
+        Ok(None)
     }
 }
 
