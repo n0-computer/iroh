@@ -3,7 +3,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
-    num::NonZeroUsize,
     sync::Arc,
 };
 

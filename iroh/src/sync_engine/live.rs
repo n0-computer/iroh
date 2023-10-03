@@ -799,8 +799,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         let state = match result {
             Ok(_) => {
                 // register the peer as useful for the document
-                self.replica_store
-                    .register_useful_peer(namespace, *peer.as_bytes());
+                if let Err(e) = self
+                    .replica_store
+                    .register_useful_peer(namespace, *peer.as_bytes())
+                {
+                    debug!(%e, "failed to register peer for document")
+                }
                 SyncState::Finished
             }
             Err(_) => SyncState::Failed,
