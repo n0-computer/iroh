@@ -18,8 +18,9 @@ use iroh_bytes::provider::AddProgress;
 use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
 use iroh_bytes::Hash;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
+use iroh_sync::DocSetProgress;
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
-use quic_rpc::{RpcClient, ServiceConnection};
+use quic_rpc::{client::UpdateSink, RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
@@ -31,11 +32,11 @@ use crate::rpc_protocol::{
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
     DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocLeaveRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
-    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, WrapOption,
+    DocLeaveRequest, DocListRequest, DocSetRequest, DocSetStreamRequest, DocSetStreamUpdate,
+    DocShareRequest, DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -554,6 +555,25 @@ where
             })
             .await??;
         Ok(res.entry.content_hash())
+    }
+
+    /// Set a stream of entries on the doc by a stream of keys, hashes, and sizes.
+    pub async fn set_hash_streaming(
+        &self,
+        author_id: AuthorId,
+    ) -> Result<(
+        UpdateSink<ProviderService, C, DocSetStreamUpdate>,
+        impl Stream<Item = Result<DocSetProgress>>,
+    )> {
+        let (sink, progress) = self
+            .rpc
+            .bidi(DocSetStreamRequest {
+                doc_id: self.id,
+                author_id,
+            })
+            .await?;
+        let stream = progress.map_ok(|res| res.0).map_err(Into::into);
+        Ok((sink, stream))
     }
 
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].

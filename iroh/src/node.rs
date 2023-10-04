@@ -1256,7 +1256,6 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let this = self.clone();
 
         self.rt().local_pool().spawn_pinned(|| async move {
-            // if emit error, send "Abort"... kind of circuitous
             if let Err(err) = this.doc_set_stream0(msg, stream, tx.clone()).await {
                 tx.send_async(DocSetProgress::Abort(err.into())).await.ok();
             }
@@ -1267,40 +1266,25 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
 
     async fn doc_set_stream0(
         self,
-        _msg: DocSetStreamRequest,
+        msg: DocSetStreamRequest,
         stream: impl Stream<Item = DocSetStreamUpdate> + Send + Unpin + 'static,
         progress: flume::Sender<DocSetProgress>,
     ) -> anyhow::Result<()> {
-        let _progress = FlumeProgressSender::new(progress);
+        let progress = FlumeProgressSender::new(progress);
 
-        let _stream = stream.map(|item| match item {
-            DocSetStreamUpdate::Entry { key, hash, size } => Ok((key, hash, size)),
+        let stream = stream.map(|item| match item {
+            DocSetStreamUpdate::Entry {
+                id,
+                key,
+                hash,
+                size,
+            } => Ok((id, key, hash, size)),
             DocSetStreamUpdate::Abort => {
                 Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
             }
         });
 
-        // let (temp_tag, _len) = self
-        //     .inner
-        //     .db
-        //     .import_stream(stream, BlobFormat::RAW, import_progress)
-        //     .await?;
-        // let hash_and_format = *temp_tag.inner();
-        // let HashAndFormat(hash, format) = hash_and_format;
-        // let tag = match msg.tag {
-        //     SetTagOption::Named(tag) => {
-        //         self.inner
-        //             .db
-        //             .set_tag(tag.clone(), Some(hash_and_format))
-        //             .await?;
-        //         tag
-        //     }
-        //     SetTagOption::Auto => self.inner.db.create_tag(hash_and_format).await?,
-        // };
-        // progress
-        //     .send(AddProgress::AllDone { hash, tag, format })
-        //     .await?;
-        Ok(())
+        self.inner.sync.doc_set_hash(msg, stream, progress).await
     }
 
     fn blob_add_stream(
@@ -1696,7 +1680,7 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
     use anyhow::bail;
-    use futures::StreamExt;
+    use futures::{SinkExt, StreamExt};
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -1818,6 +1802,69 @@ mod tests {
         let event_hash = s.recv().await.expect("missing add tagged blob event");
         assert_eq!(got_hash, event_hash);
 
+        Ok(())
+    }
+
+    #[cfg(feature = "mem-db")]
+    #[tokio::test]
+    async fn test_node_doc_set_stream() -> Result<()> {
+        use iroh_bytes::util::SetTagOption;
+        use std::io::Cursor;
+        let rt = runtime::Handle::from_current(1)?;
+        let db = crate::baomap::mem::Store::new(rt);
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let node = Node::builder(db, doc_store)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(&test_runtime())
+            .spawn()
+            .await?;
+
+        let _drop_guard = node.cancel_token().drop_guard();
+        let client = node.client();
+        let input = vec![2u8; 1024 * 256]; // 265kb so actually streaming, chunk size is 64kb
+        let reader = Cursor::new(input.clone());
+        let progress = client.blobs.add_reader(reader, SetTagOption::Auto).await?;
+        let outcome = progress.finish().await?;
+        let hash = outcome.hash;
+        let size = outcome.size;
+        let key: Vec<u8> = String::from("hello world").into_bytes();
+        let output = client.blobs.read_to_bytes(hash).await?;
+        assert_eq!(input, output.to_vec());
+
+        let doc = client.docs.create().await?;
+        let author = client.authors.create().await?;
+        let (mut sink, mut progress) = doc.set_hash_streaming(author).await?;
+        sink.send(DocSetStreamUpdate::Entry {
+            id: 0,
+            key: key.clone(),
+            hash,
+            size,
+        })
+        .await?;
+        match progress.next().await.unwrap()? {
+            DocSetProgress::Done { key: got_key, .. } => {
+                assert_eq!(got_key, key);
+            }
+            res => {
+                bail!("unexpected progress event {res:?}, expected DocSetProgress::Done");
+            }
+        }
+        drop(sink);
+        match progress.next().await.unwrap()? {
+            DocSetProgress::AllDone => {}
+            res => {
+                bail!("unexpected progress event {res:?}, expected DocSetProgress::AllDone");
+            }
+        }
+        let entry = doc.get_one(author, key.clone()).await?;
+        match entry {
+            None => bail!("unable to get entry that was just added"),
+            Some(entry) => {
+                assert_eq!(&key, entry.key());
+                assert_eq!(hash, entry.content_hash());
+                assert_eq!(size, entry.content_len());
+            }
+        }
         Ok(())
     }
 }

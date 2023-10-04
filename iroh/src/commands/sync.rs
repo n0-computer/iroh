@@ -1,17 +1,35 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
 use dialoguer::Confirm;
-use futures::{StreamExt, TryStreamExt};
-use indicatif::HumanBytes;
+use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
+use tokio::{io::AsyncReadExt, task::JoinHandle};
 
 use iroh::{
     client::quic::{Doc, Iroh},
-    rpc_protocol::{DocTicket, ShareMode},
+    rpc_protocol::{
+        DocSetStreamUpdate, DocTicket, ProviderRequest, ProviderResponse, ProviderService,
+        ShareMode, WrapOption,
+    },
     sync_engine::{LiveEvent, Origin},
 };
+use iroh_bytes::{
+    provider::AddProgress,
+    util::{SetTagOption, Tag},
+    Hash,
+};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
-use tokio::io::AsyncReadExt;
+
+use iroh_sync::DocSetProgress;
+use quic_rpc::{client::UpdateSink, transport::quinn::QuinnConnection};
 
 use crate::config::ConsoleEnv;
 
@@ -133,6 +151,49 @@ pub enum DocCommands {
         /// How to show the contents of the keys.
         #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
         mode: DisplayContentMode,
+    },
+    /// Import data into a document
+    Import {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also be set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Author of the entry.
+        ///
+        /// Required unless the author is set through the IROH_AUTHOR environment variable.
+        /// Within the Iroh console, the active author can also be set with `author switch`.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
+        /// Prefix to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
+        #[clap(long)]
+        prefix: Option<String>,
+        /// Path to a local file or directory to import
+        ///
+        /// Pathnames will be used as the document key
+        #[clap(long)]
+        path: String,
+        /// If true, don't copy the file into iroh, reference the existing file instead
+        ///
+        /// Moving a file imported with `in-place` will result in data corruption
+        #[clap(short, long)]
+        in_place: bool,
+    },
+    /// Export data from a document
+    Export {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also be set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Key to the entry (parsed as UTF-8 string)
+        #[clap(short, long)]
+        key: String,
+        /// Path to export to
+        #[clap(short, long)]
+        path: String,
     },
     /// Watch for changes and events on a document
     Watch {
@@ -309,6 +370,70 @@ impl DocCommands {
                 let doc = get_doc(iroh, env, doc).await?;
                 doc.leave().await?;
                 println!("Doc {} is now inactive", fmt_short(doc.id()));
+            }
+            Self::Import {
+                doc,
+                author,
+                prefix,
+                path,
+                in_place,
+            } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let author = env.author(author)?;
+                let mut prefix = prefix.unwrap_or_else(|| String::from(""));
+
+                if prefix.ends_with('/') {
+                    prefix.pop();
+                }
+                let root = canonicalize_path(&path)?.canonicalize()?;
+                let tag = tag_from_file_name(&root)?;
+                let stream = iroh
+                    .blobs
+                    .add_from_path(
+                        root.clone(),
+                        in_place,
+                        SetTagOption::Named(tag.clone()),
+                        WrapOption::NoWrap,
+                    )
+                    .await?;
+                let (updates, progress) = doc.set_hash_streaming(author).await?;
+                let root_prefix = match root.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => PathBuf::new(),
+                };
+                let (entries, size) =
+                    import_coordinator(doc.id(), root_prefix, prefix, stream, updates, progress)
+                        .await?;
+                println!("Imported {} entries totaling {}", entries, HumanBytes(size));
+            }
+            Self::Export { doc, key, path } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let key_str = key.clone();
+                let key = key.as_bytes().to_vec();
+                let filter = GetFilter::Key(key);
+                let path: PathBuf = canonicalize_path(&path)?;
+
+                let mut stream = doc.get_many(filter).await?;
+                while let Some(entry) = stream.try_next().await? {
+                    match doc.read_to_bytes(&entry).await {
+                        Ok(content) => {
+                            if let Some(dir) = path.parent() {
+                                if let Err(err) = std::fs::create_dir_all(dir) {
+                                    println!(
+                                        "<unable to create directory for {}: {err}>",
+                                        path.display()
+                                    );
+                                }
+                            };
+                            if let Err(err) = std::fs::write(path.clone(), content) {
+                                println!("<unable to write to file {}: {err}>", path.display())
+                            } else {
+                                println!("wrote '{key_str}' to {}", path.display());
+                            }
+                        }
+                        Err(err) => println!("<failed to get content: {err}>"),
+                    }
+                }
             }
             Self::Watch { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
@@ -499,4 +624,253 @@ pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
     text.make_ascii_lowercase();
     format!("{}…", &text)
+}
+
+fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(shellexpand::tilde(&path).to_string());
+    Ok(path)
+}
+
+fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
+    match path.file_name() {
+        Some(name) => name
+            .to_os_string()
+            .into_string()
+            .map(|t| t.into())
+            .map_err(|e| anyhow!("{e:?} contains invalid Unicode")),
+        None => bail!("the given `path` does not have a proper directory or file name"),
+    }
+}
+
+pub async fn import_coordinator(
+    doc_id: NamespaceId,
+    root: PathBuf,
+    prefix: String,
+    mut blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
+    mut doc_set_updates: UpdateSink<
+        ProviderService,
+        QuinnConnection<ProviderResponse, ProviderRequest>,
+        DocSetStreamUpdate,
+    >,
+    mut doc_set_progress: impl Stream<Item = Result<DocSetProgress>> + Unpin,
+) -> Result<(u64, u64)> {
+    let mut mp = ImportProgressState::new(doc_id);
+    let mut task_mp = mp.clone();
+    // new task to iterate through the stream of added files
+    // and send them through the `doc_set_updates` `UpdateSink`
+    // to get added to the doc
+    //
+    // TODO: catch errors and signal stop if error occurs in task
+    let add_progress_task = tokio::spawn(async move {
+        let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
+        while let Some(item) = blob_add_progress.next().await {
+            match item? {
+                AddProgress::Found { name, id, size } => {
+                    tracing::trace!("Found({id},{name},{size})");
+                    task_mp.found(name.clone(), id, size);
+                    collections.insert(id, (name, size, None));
+                }
+                AddProgress::Progress { id, offset } => {
+                    tracing::trace!("Progress({id}, {offset})");
+                    task_mp.add_progress(id, offset);
+                }
+                AddProgress::Done { hash, id } => {
+                    tracing::trace!("Done({id},{hash:?})");
+                    task_mp.adding_to_doc(id);
+                    match collections.get_mut(&id) {
+                        Some((path_str, size, ref mut h)) => {
+                            *h = Some(hash);
+                            let key =
+                                key_from_path_str(root.clone(), prefix.clone(), path_str.clone())?;
+                            // send update to doc
+                            doc_set_updates
+                                .send(DocSetStreamUpdate::Entry {
+                                    id,
+                                    key,
+                                    hash,
+                                    size: *size,
+                                })
+                                .await?;
+                        }
+                        None => {
+                            anyhow::bail!("Got Done for unknown collection id {id}");
+                        }
+                    }
+                }
+                AddProgress::AllDone { hash, .. } => {
+                    tracing::trace!("AddProgress::AllDone({hash:?})");
+                    break;
+                }
+                AddProgress::Abort(e) => {
+                    task_mp.error();
+                    anyhow::bail!("Error while adding data: {e}");
+                }
+            }
+        }
+        Ok(())
+    });
+    let mut entries = 0;
+    let mut total_size = 0;
+    while let Some(res) = doc_set_progress.next().await {
+        match res? {
+            DocSetProgress::Done { id, size, .. } => {
+                mp.done(id);
+                entries += 1;
+                total_size += size;
+            }
+            DocSetProgress::AllDone => {
+                mp.all_done();
+                add_progress_task.abort();
+                return Ok((entries, total_size));
+            }
+            DocSetProgress::Abort(e) => {
+                mp.error();
+                add_progress_task.abort();
+                anyhow::bail!("Error while adding entry to doc: {e}")
+            }
+        }
+    }
+    unreachable!();
+}
+
+fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
+    let suffix = PathBuf::from(path_str)
+        .strip_prefix(root)?
+        .to_str()
+        .map(|p| p.as_bytes())
+        .ok_or(anyhow!("could not convert path to bytes"))?
+        .to_vec();
+    let mut key = prefix.into_bytes().to_vec();
+    key.extend(suffix);
+    Ok(key)
+}
+
+#[derive(Debug, Clone)]
+struct ImportProgressState {
+    task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    sender: flume::Sender<ImportProgressEvent>,
+}
+
+enum ImportProgressEvent {
+    Found { name: String, id: u64, size: u64 },
+    AddProgress { id: u64, progress: u64 },
+    AddingToDoc { id: u64 },
+    Done { id: u64 },
+    AllDone,
+    Error,
+}
+
+impl ImportProgressState {
+    fn new(doc_id: NamespaceId) -> Self {
+        let (sender, recv) = flume::bounded(32);
+        let task = tokio::spawn(async move {
+            let mp = MultiProgress::new();
+            let mut pbs = HashMap::new();
+            while let Ok(event) = recv.recv() {
+                match event {
+                    ImportProgressEvent::Found { name, id, size } => {
+                        let pb = mp.add(ProgressBar::new(size));
+                        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .progress_chars("=>-"));
+                        pb.set_message(name);
+                        pb.set_length(size);
+                        pb.set_position(0);
+                        pb.enable_steady_tick(Duration::from_millis(500));
+                        pbs.insert(id, pb);
+                    }
+                    ImportProgressEvent::AddProgress { id, progress } => {
+                        if let Some(pb) = pbs.get_mut(&id) {
+                            pb.set_position(progress);
+                        }
+                    }
+                    ImportProgressEvent::AddingToDoc { id } => {
+                        if let Some(pb) = pbs.get_mut(&id) {
+                            pb.finish_with_message(format!(
+                                "Adding to doc {}...",
+                                fmt_short(doc_id.as_bytes())
+                            ));
+                        }
+                    }
+                    ImportProgressEvent::Done { id } => {
+                        if let Some(pb) = pbs.remove(&id) {
+                            pb.finish_and_clear();
+                            mp.remove(&pb);
+                        }
+                    }
+                    ImportProgressEvent::AllDone | ImportProgressEvent::Error => {
+                        mp.clear().ok();
+                        return;
+                    }
+                }
+            }
+        });
+        Self {
+            task: Arc::new(Mutex::new(Some(task))),
+            sender: sender.clone(),
+        }
+    }
+
+    fn found(&mut self, name: String, id: u64, size: u64) {
+        if !self.sender.is_disconnected() {
+            self.sender
+                .send(ImportProgressEvent::Found { name, id, size })
+                .expect("checked");
+        }
+    }
+
+    fn add_progress(&mut self, id: u64, progress: u64) {
+        if !self.sender.is_disconnected() {
+            self.sender
+                .send(ImportProgressEvent::AddProgress { id, progress })
+                .expect("checked");
+        }
+    }
+
+    fn adding_to_doc(&mut self, id: u64) {
+        if !self.sender.is_disconnected() {
+            self.sender
+                .send(ImportProgressEvent::AddingToDoc { id })
+                .expect("checked");
+        }
+    }
+
+    fn done(&mut self, id: u64) {
+        if !self.sender.is_disconnected() {
+            self.sender
+                .send(ImportProgressEvent::Done { id })
+                .expect("checked");
+        }
+    }
+
+    fn all_done(self) {
+        if !self.sender.is_disconnected() {
+            self.sender
+                .send(ImportProgressEvent::AllDone)
+                .expect("checked");
+        }
+        self.shutdown();
+    }
+
+    fn error(self) {
+        if !self.sender.is_disconnected() {
+            self.sender
+                .send(ImportProgressEvent::Error)
+                .expect("receiever dropped");
+        }
+        self.shutdown();
+    }
+
+    fn shutdown(self) {
+        match self.task.lock() {
+            Err(e) => {
+                tracing::error!("error cleaning up import progress bar: {e}")
+            }
+            Ok(mut task) => {
+                if let Some(task) = task.take() {
+                    task.abort();
+                }
+            }
+        }
+    }
 }
