@@ -50,7 +50,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     where
         Self: 'a;
 
-    /// Iterator over authors in the store, returned from [`Self::get_sync_peers`]
+    /// Iterator over peers in the store for a document, returned from [`Self::get_sync_peers`].
     type PeersIter<'a>: Iterator<Item = PeerIdBytes>
     where
         Self: 'a;

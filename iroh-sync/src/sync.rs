@@ -994,7 +994,7 @@ mod tests {
         }
         verify_peers(store, namespace, &expected_peers);
 
-        // one more peer should evit the last peer
+        // one more peer should evict the last peer
         expected_peers.pop();
         let newer_peer = [count as u8; 32];
         expected_peers.insert(0, newer_peer);
