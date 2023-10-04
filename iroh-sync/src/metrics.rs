@@ -36,6 +36,6 @@ impl Default for Metrics {
 
 impl Metric for Metrics {
     fn name() -> &'static str {
-        "iroh-sync"
+        "iroh_sync"
     }
 }

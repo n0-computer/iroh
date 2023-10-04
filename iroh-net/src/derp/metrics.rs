@@ -126,6 +126,6 @@ impl Default for Metrics {
 
 impl Metric for Metrics {
     fn name() -> &'static str {
-        "Derpserver"
+        "derpserver"
     }
 }
