@@ -791,8 +791,12 @@ impl Record {
 pub enum DocSetProgress {
     /// Finished adding entry of the given `key` to the document
     Done {
-        /// The key of the entry.
+        /// Id for this entry, unique for this import
+        id: u64,
+        /// The key of this entry
         key: Vec<u8>,
+        /// size of the entry added
+        size: u64,
     },
     /// We have finished adding all entries to the document
     AllDone,

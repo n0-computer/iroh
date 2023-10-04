@@ -194,7 +194,7 @@ impl<S: Store> SyncEngine<S> {
     pub async fn doc_set_hash(
         &self,
         req: DocSetStreamRequest,
-        mut stream: impl Stream<Item = Result<(Vec<u8>, Hash, u64), std::io::Error>>
+        mut stream: impl Stream<Item = Result<(u64, Vec<u8>, Hash, u64), std::io::Error>>
             + Send
             + Unpin
             + 'static,
@@ -205,12 +205,15 @@ impl<S: Store> SyncEngine<S> {
         let author = self.get_author(&author_id)?;
         // iterate over stream and insert
         while let Some(entry) = stream.next().await {
-            let (key, hash, len) = entry?;
+            let (id, key, hash, len) = entry?;
             replica
                 .insert(&key, &author, hash, len)
                 .map_err(anyhow::Error::from)?;
-            progress.send(DocSetProgress::Done { key }).await?;
+            progress
+                .send(DocSetProgress::Done { id, key, size: len })
+                .await?;
         }
+        progress.send(DocSetProgress::AllDone).await?;
         Ok(())
     }
 

@@ -648,6 +648,8 @@ pub struct DocSetStreamRequest {
 pub enum DocSetStreamUpdate {
     /// Details on the entry to add
     Entry {
+        /// Unique id
+        id: u64,
         /// Key of the entry
         key: Vec<u8>,
         /// Hash of the entry content
