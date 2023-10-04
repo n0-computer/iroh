@@ -6,9 +6,9 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkNum};
 use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
+use iroh_bytes::collection::LinkSeqCollectionParser;
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
-    collection::CollectionParser,
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
@@ -28,16 +28,15 @@ use tracing::trace;
 use crate::util::progress::ProgressSliceWriter2;
 
 /// Get a blob or collection
-pub async fn get<D: BaoStore, C: CollectionParser>(
+pub async fn get<D: BaoStore>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     hash: Hash,
     recursive: bool,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let res = if recursive {
-        get_collection(db, collection_parser, conn, &hash, sender).await
+        get_collection(db, conn, &hash, sender).await
     } else {
         get_blob(db, conn, &hash, sender).await
     };
@@ -281,9 +280,8 @@ pub(crate) async fn get_missing_ranges_collection<D: BaoStore>(
 }
 
 /// Get a collection
-pub async fn get_collection<D: BaoStore, C: CollectionParser>(
+pub async fn get_collection<D: BaoStore>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
@@ -293,7 +291,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(reader).await?;
+        let (mut collection, stats) = LinkSeqCollectionParser.parse(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
@@ -372,7 +370,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         // read the collection fully for now
         let entry = db.get(root_hash).context("just downloaded")?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(reader).await?;
+        let (mut collection, stats) = LinkSeqCollectionParser.parse(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,

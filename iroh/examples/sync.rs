@@ -230,11 +230,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
-    let collection_parser = LinkSeqCollectionParser;
-
     // create the live syncer
-    let downloader =
-        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
+    let downloader = Downloader::new(db.clone(), endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
@@ -1027,7 +1024,6 @@ mod iroh_bytes_handlers {
                 conn,
                 self.db.clone(),
                 self.event_sender.clone(),
-                LinkSeqCollectionParser,
                 self.auth_handler.clone(),
                 self.rt.clone(),
             )

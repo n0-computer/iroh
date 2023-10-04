@@ -2,7 +2,7 @@
 use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
-    collection::CollectionParser,
+    collection::LinkSeqCollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
         BlobFormat, HashAndFormat, RpcError, Tag,
@@ -234,11 +234,10 @@ pub trait Store: ReadableStore + PartialMap {
     /// in the gc_sweep phase.
     fn gc_mark<'a>(
         &'a self,
-        cp: impl CollectionParser + 'a,
         extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     ) -> LocalBoxStream<'a, GcMarkEvent> {
         Gen::new(|co| async move {
-            if let Err(e) = gc_mark_task(self, cp, extra_roots, &co).await {
+            if let Err(e) = gc_mark_task(self, extra_roots, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
@@ -367,7 +366,6 @@ impl Drop for TempTag {
 /// Implementation of the gc method.
 async fn gc_mark_task<'a>(
     store: &'a impl Store,
-    cp: impl CollectionParser + 'a,
     extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
@@ -418,7 +416,7 @@ async fn gc_mark_task<'a>(
                     warn!("gc: {} creating data reader failed", hash);
                     continue;
                 };
-                let Ok((mut iter, stats)) = cp.parse(reader).await else {
+                let Ok((mut iter, stats)) = LinkSeqCollectionParser.parse(reader).await else {
                     warn!("gc: {} parse failed", hash);
                     continue;
                 };

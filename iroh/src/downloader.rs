@@ -36,7 +36,6 @@ use std::{
 use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
     baomap::{range_collections::RangeSet2, Store},
-    collection::CollectionParser,
     protocol::RangeSpecSeq,
     Hash,
 };
@@ -215,15 +214,13 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader.
-    pub async fn new<S, C>(
+    pub async fn new<S>(
         store: S,
-        collection_parser: C,
         endpoint: MagicEndpoint,
         rt: iroh_bytes::util::runtime::Handle,
     ) -> Self
     where
         S: Store,
-        C: CollectionParser,
     {
         let me = endpoint.peer_id().fmt_short();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
@@ -231,10 +228,7 @@ impl Downloader {
 
         let create_future = move || {
             let concurrency_limits = ConcurrencyLimits::default();
-            let getter = get::IoGetter {
-                store,
-                collection_parser,
-            };
+            let getter = get::IoGetter { store };
 
             let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
 

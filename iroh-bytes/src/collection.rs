@@ -5,27 +5,6 @@ use futures::{future::LocalBoxFuture, FutureExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use std::fmt::Debug;
 
-/// A custom collection parser that allows the user to define what a collection is.
-///
-/// A collection can be anything that contains an ordered sequence of blake3 hashes.
-/// Some collections store links with a fixed size and therefore allow efficient
-/// skipping. Others store links with a variable size and therefore only allow
-/// sequential access.
-///
-/// This API tries to accomodate both use cases. For collections that do not allow
-/// efficient random access, the [`LinkStream::skip`] method can be implemented by just repeatedly
-/// calling `next`.
-///
-/// For collections that do allow efficient random access, the [`LinkStream::skip`] method can be
-/// used to move some internal offset.
-pub trait CollectionParser: Send + Debug + Clone + 'static {
-    /// Parse a collection with this parser
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
-}
-
 /// A stream (async iterator) over the hashes of a collection.
 ///
 /// Allows to get the next hash or skip a number of hashes.  Does not
@@ -176,8 +155,9 @@ pub struct CollectionStats {
 #[derive(Debug, Clone)]
 pub struct LinkSeqCollectionParser;
 
-impl CollectionParser for LinkSeqCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
+impl LinkSeqCollectionParser {
+    /// Parse a sequence of links.
+    pub fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
         mut reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {

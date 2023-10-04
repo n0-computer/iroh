@@ -15,7 +15,7 @@ use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;
-use crate::collection::CollectionParser;
+use crate::collection::LinkSeqCollectionParser;
 use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
@@ -263,7 +263,7 @@ pub async fn read_request(mut reader: quinn::RecvStream) -> Result<Request> {
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
+pub async fn transfer_collection<D: Map, E: EventSender>(
     request: GetRequest,
     // Store from which to fetch blobs.
     db: &D,
@@ -272,7 +272,6 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     // the collection to transfer
     mut outboard: D::Outboard,
     mut data: D::DataReader,
-    collection_parser: C,
     stats: &mut TransferStats,
 ) -> Result<SentStatus> {
     let hash = request.hash;
@@ -281,7 +280,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     let just_root = matches!(request.ranges.as_single(), Some((0, _)));
     let mut c = if !just_root {
         // use the collection parser to parse the collection
-        let (c, stats) = collection_parser.parse(&mut data).await?;
+        let (c, stats) = LinkSeqCollectionParser.parse(&mut data).await?;
         writer
             .events
             .send(Event::TransferCollectionStarted {
@@ -363,11 +362,10 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 }
 
 /// Handle a single connection.
-pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
+pub async fn handle_connection<D: Map, E: EventSender>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
-    collection_parser: C,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     rt: crate::util::runtime::Handle,
 ) {
@@ -395,12 +393,9 @@ pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
             let authorization_handler = authorization_handler.clone();
-            let collection_parser = collection_parser.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
-                    if let Err(err) =
-                        handle_stream(db, reader, writer, authorization_handler, collection_parser)
-                            .await
+                    if let Err(err) = handle_stream(db, reader, writer, authorization_handler).await
                     {
                         warn!("error: {err:#?}",);
                     }
@@ -413,12 +408,11 @@ pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
     .await
 }
 
-async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
+async fn handle_stream<D: Map, E: EventSender>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
-    collection_parser: C,
 ) -> Result<()> {
     // 1. Decode the request.
     debug!("reading request");
@@ -441,15 +435,14 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     }
 
     match request {
-        Request::Get(request) => handle_get(db, request, collection_parser, writer).await,
+        Request::Get(request) => handle_get(db, request, writer).await,
     }
 }
 
 /// Handle a single standard get request.
-pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
+pub async fn handle_get<D: Map, E: EventSender>(
     db: D,
     request: GetRequest,
-    collection_parser: C,
     mut writer: ResponseWriter<E>,
 ) -> Result<()> {
     let hash = request.hash;
@@ -477,7 +470,6 @@ pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
                 &mut writer,
                 entry.outboard().await?,
                 entry.data_reader().await?,
-                collection_parser,
                 &mut stats,
             )
             .await;

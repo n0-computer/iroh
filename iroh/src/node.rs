@@ -22,7 +22,7 @@ use iroh_bytes::baomap::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::collection::{CollectionParser, LinkSeqCollectionParser};
+use iroh_bytes::collection::LinkSeqCollectionParser;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
@@ -104,16 +104,11 @@ pub enum GcPolicy {
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<
-    D,
-    S = iroh_sync::store::memory::Store,
-    E = DummyServerEndpoint,
-    C = LinkSeqCollectionParser,
-> where
+pub struct Builder<D, S = iroh_sync::store::memory::Store, E = DummyServerEndpoint>
+where
     D: Map,
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
-    C: CollectionParser,
 {
     bind_addr: SocketAddr,
     secret_key: SecretKey,
@@ -122,7 +117,6 @@ pub struct Builder<
     keylog: bool,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_mode: DerpMode,
-    collection_parser: C,
     gc_policy: GcPolicy,
     rt: Option<runtime::Handle>,
     docs: S,
@@ -169,7 +163,6 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
-            collection_parser: LinkSeqCollectionParser,
             gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
@@ -178,18 +171,17 @@ impl<D: Map, S: DocStore> Builder<D, S> {
     }
 }
 
-impl<D, S, E, C> Builder<D, S, E, C>
+impl<D, S, E> Builder<D, S, E>
 where
     D: BaoStore,
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
-    C: CollectionParser,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
         self,
         value: E2,
-    ) -> Builder<D, S, E2, C> {
+    ) -> Builder<D, S, E2> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -198,29 +190,6 @@ where
             keylog: self.keylog,
             auth_handler: self.auth_handler,
             rpc_endpoint: value,
-            derp_mode: self.derp_mode,
-            collection_parser: self.collection_parser,
-            gc_policy: self.gc_policy,
-            rt: self.rt,
-            docs: self.docs,
-            peers_data_path: self.peers_data_path,
-        }
-    }
-
-    /// Configure the collection parser, changing the type of the builder to the new collection parser type.
-    pub fn collection_parser<C2: CollectionParser>(
-        self,
-        collection_parser: C2,
-    ) -> Builder<D, S, E, C2> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            collection_parser,
-            bind_addr: self.bind_addr,
-            secret_key: self.secret_key,
-            db: self.db,
-            keylog: self.keylog,
-            auth_handler: self.auth_handler,
-            rpc_endpoint: self.rpc_endpoint,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
             rt: self.rt,
@@ -348,13 +317,7 @@ where
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
 
         // spawn the sync engine
-        let downloader = Downloader::new(
-            self.db.clone(),
-            self.collection_parser.clone(),
-            endpoint.clone(),
-            rt.clone(),
-        )
-        .await;
+        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone()).await;
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             rt.clone(),
@@ -368,10 +331,9 @@ where
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {}s", gc_period.as_secs());
             let db = self.db.clone();
-            let cp = self.collection_parser.clone();
             let task = rt
                 .local_pool()
-                .spawn_pinned(move || Self::gc_loop(db, ds, cp, gc_period));
+                .spawn_pinned(move || Self::gc_loop(db, ds, gc_period));
             Some(AbortingJoinHandle(task))
         } else {
             None
@@ -396,7 +358,6 @@ where
             let gossip = gossip.clone();
             let handler = RpcHandler {
                 inner: inner.clone(),
-                collection_parser: self.collection_parser.clone(),
             };
             let me = endpoint.peer_id().fmt_short();
             rt2.main().spawn(
@@ -409,7 +370,6 @@ where
                         self.rpc_endpoint,
                         internal_rpc,
                         self.auth_handler,
-                        self.collection_parser,
                         rt3,
                         gossip,
                     )
@@ -451,11 +411,10 @@ where
         server: MagicEndpoint,
         callbacks: Callbacks,
         mut cb_receiver: mpsc::Receiver<EventCallback>,
-        handler: RpcHandler<D, S, C>,
+        handler: RpcHandler<D, S>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         auth_handler: Arc<dyn RequestAuthorizationHandler>,
-        collection_parser: C,
         rt: runtime::Handle,
         gossip: Gossip,
     ) {
@@ -519,11 +478,10 @@ where
                     };
                     let gossip = gossip.clone();
                     let inner = handler.inner.clone();
-                    let collection_parser = collection_parser.clone();
                     let auth_handler = auth_handler.clone();
                     let sync = handler.inner.sync.clone();
                     rt.main().spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, collection_parser, auth_handler).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, auth_handler).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -547,7 +505,7 @@ where
             .ok();
     }
 
-    async fn gc_loop(db: D, ds: S, cp: C, gc_period: Duration) {
+    async fn gc_loop(db: D, ds: S, gc_period: Duration) {
         'outer: loop {
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
@@ -578,7 +536,7 @@ where
             }
 
             tracing::info!("Starting GC mark phase");
-            let mut stream = db.gc_mark(cp.clone(), None);
+            let mut stream = db.gc_mark(None);
             while let Some(item) = stream.next().await {
                 match item {
                     GcMarkEvent::CustomInfo(text) => {
@@ -615,13 +573,12 @@ where
 
 // TODO: Restructure this code to not take all these arguments.
 #[allow(clippy::too_many_arguments)]
-async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
+async fn handle_connection<D: BaoStore, S: DocStore>(
     connecting: quinn::Connecting,
     alpn: String,
     node: Arc<NodeInner<D, S>>,
     gossip: Gossip,
     sync: SyncEngine<S>,
-    collection_parser: C,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
@@ -632,7 +589,6 @@ async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
                 connecting,
                 node.db.clone(),
                 node.callbacks.clone(),
-                collection_parser,
                 auth_handler,
                 node.rt.clone(),
             )
@@ -835,12 +791,11 @@ impl<D: Map, S: DocStore> Future for Node<D, S> {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler<D, S: DocStore, C> {
+struct RpcHandler<D, S: DocStore> {
     inner: Arc<NodeInner<D, S>>,
-    collection_parser: C,
 }
 
-impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
+impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -899,7 +854,6 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         futures::stream::iter(tags).filter_map(move |(name, HashAndFormat(hash, format))| {
             let db = db.clone();
             let local = local.clone();
-            let cp = self.collection_parser.clone();
             async move {
                 if !format.is_collection() {
                     return None;
@@ -908,7 +862,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 let stats = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
-                        let (_collection, stats) = cp.parse(reader).await.ok()?;
+                        let (_collection, stats) =
+                            LinkSeqCollectionParser.parse(reader).await.ok()?;
                         Some(stats)
                     })
                     .await
@@ -1062,17 +1017,8 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         let progress3 = progress.clone();
         let db = self.inner.db.clone();
         let db2 = db.clone();
-        let collection_parser = self.collection_parser.clone();
         let download = local.spawn_pinned(move || async move {
-            crate::get::get(
-                &db2,
-                &collection_parser,
-                conn,
-                hash,
-                msg.format.is_collection(),
-                progress2,
-            )
-            .await
+            crate::get::get(&db2, conn, hash, msg.format.is_collection(), progress2).await
         });
 
         let this = self.clone();
@@ -1449,15 +1395,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
     }
 }
 
-fn handle_rpc_request<
-    D: BaoStore,
-    S: DocStore,
-    E: ServiceEndpoint<ProviderService>,
-    C: CollectionParser,
->(
+fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
-    handler: &RpcHandler<D, S, C>,
+    handler: &RpcHandler<D, S>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
