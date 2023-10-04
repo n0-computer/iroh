@@ -30,7 +30,7 @@ use iroh_bytes::{
     util::progress::IgnoreProgressSender,
     util::BlobFormat,
 };
-use iroh_bytes::{collection::LinkSeqCollectionParser, util::runtime};
+use iroh_bytes::util::runtime;
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
@@ -995,11 +995,9 @@ async fn copy(
 mod iroh_bytes_handlers {
     use std::sync::Arc;
 
-    use bytes::Bytes;
     use futures::{future::BoxFuture, FutureExt};
     use iroh_bytes::{
-        collection::LinkSeqCollectionParser,
-        protocol::{GetRequest, RequestToken},
+        protocol::RequestToken,
         provider::{EventSender, RequestAuthorizationHandler},
     };
 

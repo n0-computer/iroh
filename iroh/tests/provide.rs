@@ -182,7 +182,7 @@ async fn multiple_clients() -> Result<()> {
                 let opts = get_options(peer_id, addrs);
                 let expected_data = &content;
                 let expected_name = &name;
-                let request = GetRequest::all(hash).into();
+                let request = GetRequest::all(hash);
                 let (collection, children, _stats) =
                     run_collection_get_request(opts, request).await?;
                 assert_eq!(expected_name, &collection.blobs()[0].name);
@@ -272,7 +272,7 @@ where
 
     let addrs = node.local_endpoint_addresses().await?;
     let opts = get_options(node.peer_id(), addrs);
-    let request = GetRequest::all(collection_hash).into();
+    let request = GetRequest::all(collection_hash);
     let (collection, children, _stats) = run_collection_get_request(opts, request).await?;
     assert_eq!(num_blobs, collection.blobs().len());
     for (i, (name, hash)) in lookup.into_iter().enumerate() {
@@ -379,7 +379,7 @@ async fn test_server_close() {
     .await
     .unwrap();
     let opts = get_options(peer_id, node_addr);
-    let request = GetRequest::all(hash).into();
+    let request = GetRequest::all(hash);
     let (_collection, _children, _stats) = run_collection_get_request(opts, request).await.unwrap();
 
     // Unwrap the JoinHandle, then the result of the Provider
@@ -449,7 +449,7 @@ async fn test_ipv6() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
-        let request = GetRequest::all(hash).into();
+        let request = GetRequest::all(hash);
         run_collection_get_request(opts, request).await
     })
     .await
@@ -478,7 +478,7 @@ async fn test_not_found() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
-        let request = GetRequest::single(hash).into();
+        let request = GetRequest::single(hash);
         let res = run_collection_get_request(opts, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
@@ -522,7 +522,7 @@ async fn test_chunk_not_found_1() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
-        let request = GetRequest::single(hash).into();
+        let request = GetRequest::single(hash);
         let res = run_collection_get_request(opts, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
@@ -563,7 +563,7 @@ async fn test_run_ticket() {
             SecretKey::generate(),
             Some(iroh_net::defaults::default_derp_map()),
         );
-        let request = GetRequest::all(no_token_ticket.hash()).into();
+        let request = GetRequest::all(no_token_ticket.hash());
         let response = run_collection_get_request(opts, request).await;
         assert!(response.is_err());
         anyhow::Result::<_>::Ok(())
@@ -578,9 +578,7 @@ async fn test_run_ticket() {
         .unwrap()
         .with_token(token);
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = GetRequest::all(hash)
-            .with_token(ticket.token().cloned())
-            .into();
+        let request = GetRequest::all(hash).with_token(ticket.token().cloned());
         run_collection_get_request(
             ticket.as_get_options(
                 SecretKey::generate(),
@@ -630,7 +628,7 @@ async fn test_run_fsm() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
-        let request = GetRequest::all(hash).into();
+        let request = GetRequest::all(hash);
         let (collection, children, _) = run_collection_get_request(opts, request).await?;
         validate_children(collection, children)?;
         anyhow::Ok(())
@@ -679,7 +677,7 @@ async fn test_size_request_blob() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = GetRequest::last_chunk(hash).into();
+        let request = GetRequest::last_chunk(hash);
         let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
@@ -720,8 +718,7 @@ async fn test_collection_stat() {
         let request = GetRequest::new(
             hash,
             RangeSpecSeq::from_ranges_infinite([RangeSet2::all(), ranges]),
-        )
-        .into();
+        );
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;
         // we should get the first <=1024 bytes and the last chunk of each child
@@ -811,7 +808,7 @@ async fn test_token_passthrough() -> Result<()> {
             .connect(peer_addr, &iroh_bytes::protocol::ALPN)
             .await
             .context("failed to connect to provider")?;
-        let request = GetRequest::all(hash).with_token(token).into();
+        let request = GetRequest::all(hash).with_token(token);
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;
         let actual = &items[&0];

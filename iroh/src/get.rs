@@ -310,7 +310,7 @@ pub async fn get_collection<D: BaoStore>(
             .collect::<Vec<_>>();
         log!("requesting chunks {:?}", missing_iter);
         let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-        let request = get::fsm::start(conn, request.into());
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         log!("connected");
