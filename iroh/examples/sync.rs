@@ -25,12 +25,12 @@ use iroh::{
     downloader::Downloader,
     sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
+use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
     util::BlobFormat,
 };
-use iroh_bytes::util::runtime;
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
