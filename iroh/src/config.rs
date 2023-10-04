@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use config::{Environment, File, Value};
-use iroh::node::GcPolicy;
+use iroh::{node::GcPolicy, util::path::IrohPaths};
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},
@@ -36,54 +36,13 @@ pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
     env::var(format!("{ENV_PREFIX}_{key}"))
 }
 
-/// Paths to files or directory within the [`iroh_data_root`] used by Iroh.
-#[derive(Debug, Clone, Eq, PartialEq, strum::AsRefStr, strum::EnumString, strum::Display)]
-#[cfg_attr(test, derive(strum::EnumIter))]
-pub enum IrohPaths {
-    /// Path to the node's secret key for the [`iroh_net::PublicKey`].
-    #[strum(serialize = "keypair")]
-    SecretKey,
-    /// Path to the node's [flat-file store](iroh::baomap::flat) for complete blobs.
-    #[strum(serialize = "blobs.v0")]
-    BaoFlatStoreComplete,
-    /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
-    #[strum(serialize = "blobs-partial.v0")]
-    BaoFlatStorePartial,
-    /// Path to the node's [flat-file store](iroh::baomap::flat) for metadata such as the tags table.
-    #[strum(serialize = "blobs-meta.v0")]
-    BaoFlatStoreMeta,
-    /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
-    #[strum(serialize = "docs.redb")]
-    DocsDatabase,
-    /// Path to the console state
-    #[strum(serialize = "console")]
-    Console,
-    #[strum(serialize = "peers.postcard")]
-    /// Path to store known peer data.
-    PeerData,
-}
-
-impl AsRef<Path> for IrohPaths {
-    fn as_ref(&self) -> &Path {
-        let s: &str = self.as_ref();
-        Path::new(s)
+/// Get the path for this [`IrohPaths`] by joining the name to `IROH_DATA_DIR` environment variable.
+pub fn path_with_env(p: IrohPaths) -> Result<PathBuf> {
+    let mut root = iroh_data_root()?;
+    if !root.is_absolute() {
+        root = std::env::current_dir()?.join(root);
     }
-}
-impl IrohPaths {
-    /// Get the path for this [`IrohPath`] by joining the name to `IROH_DATA_DIR` environment variable.
-    pub fn with_env(self) -> Result<PathBuf> {
-        let mut root = iroh_data_root()?;
-        if !root.is_absolute() {
-            root = std::env::current_dir()?.join(root);
-        }
-        Ok(self.with_root(root))
-    }
-
-    /// Get the path for this [`IrohPath`] by joining the name to a root directory.
-    pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
-        let path = root.as_ref().join(self);
-        path
-    }
+    Ok(p.with_root(root))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -130,10 +89,10 @@ impl ConsolePaths {
     }
     pub fn with_env(self) -> Result<PathBuf> {
         Self::ensure_env_dir()?;
-        Ok(self.with_root(IrohPaths::Console.with_env()?))
+        Ok(self.with_root(path_with_env(IrohPaths::Console)?))
     }
     pub fn ensure_env_dir() -> Result<()> {
-        let p = IrohPaths::Console.with_env()?;
+        let p = path_with_env(IrohPaths::Console)?;
         match std::fs::metadata(&p) {
             Ok(meta) => match meta.is_dir() {
                 true => Ok(()),
@@ -472,8 +431,6 @@ pub fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use strum::IntoEnumIterator;
-
     use super::*;
 
     #[test]
@@ -481,17 +438,5 @@ mod tests {
         let config = NodeConfig::load(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
 
         assert_eq!(config.derp_regions.len(), 2);
-    }
-
-    #[test]
-    fn test_iroh_paths_parse_roundtrip() {
-        for iroh_path in IrohPaths::iter() {
-            println!("{iroh_path}");
-            let root = PathBuf::from("/tmp");
-            let path = root.join(&iroh_path);
-            let fname = path.file_name().unwrap().to_str().unwrap();
-            let parsed = IrohPaths::from_str(fname).unwrap();
-            assert_eq!(iroh_path, parsed);
-        }
     }
 }
