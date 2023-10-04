@@ -246,9 +246,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.8.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9282899b0068a806644365e8416beb676203c471ade24b711c825817a2968e9f"
+checksum = "155e7e0c896695a9049badd7bf2b915d29230e24dc82a7c7ef065eded072404f"
 dependencies = [
  "bytes",
  "futures",
@@ -2073,9 +2073,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-io"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9c47e66a8ee652d554f00e085a0a6559b6c029036aab918a412aad1541b3fea"
+checksum = "19ace4f69567bfeb726672bab901d3e81be0c01119d860b2a10b7efb1553b880"
 dependencies = [
  "bytes",
  "futures",
