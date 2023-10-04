@@ -345,7 +345,7 @@ impl PartialMap for Store {
         // this prevents this from happening until the live set is cleared at the
         // beginning of the next mark phase, at which point this hash is normally
         // reachable.
-        tracing::info!("protecting partial hash {}", hash);
+        tracing::debug!("protecting partial hash {}", hash);
         state.live.insert(hash);
         let entry = state
             .partial
@@ -946,7 +946,7 @@ impl Store {
     }
 
     fn set_tag_sync(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
-        tracing::info!("set_tag {} {:?}", name, value);
+        tracing::debug!("set_tag {} {:?}", name, value);
         let mut tags = self.0.tags.write().unwrap();
         let mut new_tags = tags.clone();
         let changed = if let Some(value) = value {
@@ -974,7 +974,7 @@ impl Store {
     }
 
     fn create_tag_sync(&self, value: HashAndFormat) -> io::Result<Tag> {
-        tracing::info!("create_tag {:?}", value);
+        tracing::debug!("create_tag {:?}", value);
         let mut tags = self.0.tags.write().unwrap();
         let mut new_tags = tags.clone();
         let tag = Tag::auto(SystemTime::now(), |x| new_tags.contains_key(x));
@@ -1146,7 +1146,7 @@ impl Store {
         // copy all the things
         let stable = mode == ExportMode::TryReference;
         let path_bytes = if size >= self.0.options.move_threshold && stable && owned {
-            tracing::info!("moving {} to {}", source.display(), target.display());
+            tracing::debug!("moving {} to {}", source.display(), target.display());
             if let Err(e) = std::fs::rename(source, &target) {
                 tracing::error!("rename failed: {}", e);
                 return Err(e)?;
@@ -1162,7 +1162,7 @@ impl Store {
             entry.external.insert(target);
             Some(entry.external_to_bytes())
         } else {
-            tracing::info!("copying {} to {}", source.display(), target.display());
+            tracing::debug!("copying {} to {}", source.display(), target.display());
             progress(0)?;
             // todo: progress
             std::fs::copy(&source, &target)?;
@@ -1195,7 +1195,7 @@ impl Store {
         meta_path: PathBuf,
         rt: iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
-        tracing::info!(
+        tracing::debug!(
             "loading database from {} {}",
             complete_path.display(),
             partial_path.display()
@@ -1409,11 +1409,11 @@ impl Store {
             for (uuid, (data_path, outboard_path)) in entries {
                 if Some(uuid) != keep {
                     if let Some(data_path) = data_path {
-                        tracing::info!("removing partial data file {}", data_path.display());
+                        tracing::debug!("removing partial data file {}", data_path.display());
                         std::fs::remove_file(data_path)?;
                     }
                     if let Some(outboard_path) = outboard_path {
-                        tracing::info!(
+                        tracing::debug!(
                             "removing partial outboard file {}",
                             outboard_path.display()
                         );
@@ -1423,18 +1423,18 @@ impl Store {
             }
         }
         for hash in complete.keys() {
-            tracing::info!("complete {}", hash);
+            tracing::debug!("complete {}", hash);
             partial.remove(hash);
         }
         for hash in partial.keys() {
-            tracing::info!("partial {}", hash);
+            tracing::debug!("partial {}", hash);
         }
         let tags_path = meta_path.join("tags.meta");
         let mut tags = BTreeMap::new();
         if tags_path.exists() {
             let data = std::fs::read(tags_path)?;
             tags = postcard::from_bytes(&data)?;
-            tracing::info!("loaded tags. {} entries", tags.len());
+            tracing::debug!("loaded tags. {} entries", tags.len());
         };
         Ok(Self(Arc::new(Inner {
             state: RwLock::new(State {

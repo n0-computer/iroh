@@ -112,7 +112,7 @@ async fn sync_simple() -> Result<()> {
 
 /// Test subscribing to replica events (without sync)
 #[tokio::test]
-async fn sync_subscribe() -> Result<()> {
+async fn sync_subscribe_no_sync() -> Result<()> {
     setup_logging();
     let rt = test_runtime();
     let node = spawn_node(rt, 0).await?;
