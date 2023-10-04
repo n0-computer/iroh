@@ -307,7 +307,13 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
-    /// Manage a running Iroh node
+    /// Manage tags
+    ///
+    /// Tags are how iroh keeps track of data that is important to the user.
+    /// Anything that is added or downloaded explicitly will be tagged, either
+    /// with a user-provided tag or with an automatically generated tag.
+    ///
+    /// Data that is tagged will not be deleted by iroh.
     Tag {
         #[clap(subcommand)]
         command: TagCommands,
