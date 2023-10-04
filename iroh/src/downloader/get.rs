@@ -159,19 +159,6 @@ impl From<iroh_bytes::get::fsm::ConnectedNextError> for FailureAction {
                 FailureAction::AbortRequest(e.into())
             }
             Write(e) => e.into(),
-            Read(e) => e.into(),
-            e @ CustomRequestTooBig => {
-                // something wrong with the request itself
-                FailureAction::AbortRequest(e.into())
-            }
-            e @ Eof => {
-                // TODO(@divma): unsure about this based on docs
-                FailureAction::RetryLater(e.into())
-            }
-            e @ PostcardDe(_) => {
-                // serialization errors can't be recovered
-                FailureAction::AbortRequest(e.into())
-            }
             e @ Io(_) => {
                 // io errors are likely recoverable
                 FailureAction::RetryLater(e.into())
@@ -266,7 +253,7 @@ pub async fn get_blob<D: Store>(
             .unwrap_or_else(RangeSet2::all);
         let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
         // full request
-        let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -282,10 +269,7 @@ pub async fn get_blob<D: Store>(
         get_blob_inner_partial(db, header, entry).await?
     } else {
         // full request
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::single(*hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::single(*hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -482,10 +466,7 @@ pub async fn get_collection<D: Store>(
     } else {
         tracing::info!("don't have collection - doing full download");
         // don't have the collection, so probably got nothing
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::all(*root_hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::all(*root_hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot

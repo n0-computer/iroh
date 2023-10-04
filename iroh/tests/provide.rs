@@ -32,7 +32,7 @@ use iroh_bytes::{
         fsm::{self, DecodeError},
         Stats,
     },
-    protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
+    protocol::{GetRequest, RangeSpecSeq, RequestToken},
     provider::{self, RequestAuthorizationHandler},
     util::{runtime, BlobFormat},
     Hash,
@@ -609,7 +609,7 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
 
 async fn run_collection_get_request(
     opts: iroh::dial::Options,
-    request: Request,
+    request: GetRequest,
 ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
     let connection = iroh::dial::dial(opts).await?;
     let initial = fsm::start(connection, request);

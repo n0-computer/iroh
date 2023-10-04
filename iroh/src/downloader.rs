@@ -5,8 +5,6 @@
 //! - [`ProviderMap`]: Where the downloader obtains information about peers that could be
 //!   used to perform a download.
 //! - [`Store`]: Where data is stored.
-//! - [`CollectionParser`]: Used by the Get state machine logic to identify blobs encoding
-//!   collections.
 //!
 //! Once a download request is received, the logic is as follows:
 //! 1. The [`ProviderMap`] is queried for peers. From these peers some are selected
