@@ -367,6 +367,7 @@ where
 }
 
 /// Outcome of a blob add operation.
+#[derive(Debug, Clone)]
 pub struct BlobAddOutcome {
     /// The hash of the blob
     pub hash: Hash,
@@ -379,7 +380,9 @@ pub struct BlobAddOutcome {
 }
 
 /// Progress stream for blob add operations.
+#[derive(derive_more::Debug)]
 pub struct BlobAddProgress {
+    #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<AddProgress>> + Send + Unpin + 'static>>,
 }
 
