@@ -252,6 +252,8 @@ impl super::Store for Store {
     }
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
+        let peer = &peer;
+        let namespace = namespace.as_bytes();
         // calculate nanos since UNIX_EPOCH for a time measurement
         let nanos = std::time::UNIX_EPOCH
             .elapsed()
@@ -259,42 +261,63 @@ impl super::Store for Store {
         let write_tx = self.db.begin_write()?;
         {
             let mut peers_table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            let namespace_peers = peers_table.get(namespace.as_bytes())?;
+            let mut namespace_peers = peers_table.get(namespace)?;
 
-            // find any previous entry for the same peer to remove it
-            let mut prev_peer_nanos = None;
-            // calculate the len in the same loop since calling `len` is another fallible operation
-            let mut len = 0;
-            // the oldest entry in the table, candidate for removal depending on len
-            let mut oldest_entry: Option<(Nanos, PeerIdBytes)> = None;
-            for result in namespace_peers {
-                len += 1;
-                let (peer_nanos, &peer_bytes) = result?.value();
-
-                if prev_peer_nanos.is_none() && peer_bytes == peer {
-                    prev_peer_nanos = Some(peer_nanos);
+            // get the oldest entry since it's candidate for removal
+            let maybe_oldest = namespace_peers.next().transpose()?.map(|guard| {
+                let (oldest_nanos, &oldest_peer) = guard.value();
+                (oldest_nanos, oldest_peer)
+            });
+            match maybe_oldest {
+                None => {
+                    // the table is empty so the peer can be inserted without further checks since
+                    // super::PEERS_PER_DOC_CACHE_SIZE is non zero
+                    drop(namespace_peers);
+                    peers_table.insert(namespace, (nanos, peer))?;
                 }
+                Some((oldest_nanos, oldest_peer)) => {
+                    let oldest_peer = &oldest_peer;
 
-                // adjust the oldest entry if this not an entry that will be removed
-                if peer_bytes != peer {
-                    let candidate = (peer_nanos, peer_bytes);
-                    oldest_entry = Some(
-                        oldest_entry
-                            .map(|current_oldest| current_oldest.min(candidate))
-                            .unwrap_or(candidate),
-                    );
+                    if oldest_peer == peer {
+                        // oldest peer is the current one, so replacing the entry for the peer will
+                        // maintain the size
+                        drop(namespace_peers);
+                        peers_table.remove(namespace, (oldest_nanos, oldest_peer))?;
+                        peers_table.insert(namespace, (nanos, peer))?;
+                    } else {
+                        // calculate the len in the same loop since calling `len` is another fallible operation
+                        let mut len = 1;
+                        // find any previous entry for the same peer to remove it
+                        let mut prev_peer_nanos = None;
+
+                        for result in namespace_peers {
+                            len += 1;
+                            let guard = result?;
+                            let (peer_nanos, peer_bytes) = guard.value();
+                            if prev_peer_nanos.is_none() && peer_bytes == peer {
+                                prev_peer_nanos = Some(peer_nanos)
+                            }
+                        }
+
+                        match prev_peer_nanos {
+                            Some(prev_nanos) => {
+                                // the peer was already present, so we can remove the old entry and
+                                // insert the new one without checking the size
+                                peers_table.remove(namespace, (prev_nanos, peer))?;
+                                peers_table.insert(namespace, (nanos, peer))?;
+                            }
+                            None => {
+                                // the peer is new and the table is non empty, add it and check the
+                                // size to decide if the oldest peer should be evicted
+                                peers_table.insert(namespace, (nanos, peer))?;
+                                len += 1;
+                                if len > super::PEERS_PER_DOC_CACHE_SIZE.get() {
+                                    peers_table.remove(namespace, (oldest_nanos, oldest_peer))?;
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-            if let Some(to_remove) = prev_peer_nanos {
-                peers_table.remove(namespace.as_bytes(), (to_remove, &peer))?;
-                len -= 1;
-            }
-            peers_table.insert(namespace.as_bytes(), (nanos, &peer))?;
-            len += 1;
-            if len > super::PEER_PER_DOC_CACHE_SIZE.get() {
-                let (nanos, evicted_peer) = oldest_entry
-                    .expect("there is at least one more entry than the one that was inserted");
-                peers_table.remove(namespace.as_bytes(), (nanos, &evicted_peer))?;
             }
         }
         write_tx.commit()?;
@@ -305,7 +328,7 @@ impl super::Store for Store {
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
         let read_tx = self.db.begin_read()?;
         let peers_table = read_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-        let mut peers = Vec::with_capacity(super::PEER_PER_DOC_CACHE_SIZE.get());
+        let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
         for result in peers_table.get(namespace.as_bytes())? {
             let (_nanos, &peer) = result?.value();
             peers.push(peer);

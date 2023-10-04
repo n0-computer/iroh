@@ -145,7 +145,7 @@ impl super::Store for Store {
         let mut per_doc_cache = self.peers_per_doc.write();
         per_doc_cache
             .entry(namespace)
-            .or_insert_with(|| lru::LruCache::new(super::PEER_PER_DOC_CACHE_SIZE))
+            .or_insert_with(|| lru::LruCache::new(super::PEERS_PER_DOC_CACHE_SIZE))
             .put(peer, ());
         Ok(())
     }
