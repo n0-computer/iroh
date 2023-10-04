@@ -51,7 +51,7 @@ impl Stats {
 pub mod fsm {
     use std::{io, result};
 
-    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, MAX_MESSAGE_SIZE, Request};
+    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
 
     use super::*;
 
