@@ -394,6 +394,11 @@ pub mod fsm {
             &self.ranges
         }
 
+        /// Hash of the root blob
+        pub fn hash(&self) -> &Hash {
+            &self.hash
+        }
+
         /// Go into the next state, reading the header
         ///
         /// For the collection we already know the hash, since it was part of the request
