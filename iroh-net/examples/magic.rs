@@ -2,8 +2,8 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh_net::{
-    defaults::{default_derp_map, TEST_REGION_ID},
-    derp::DerpMap,
+    defaults::TEST_REGION_ID,
+    derp::{DerpMap, DerpMode},
     key::SecretKey,
     magic_endpoint::accept_conn,
     MagicEndpoint, PeerAddr,
@@ -50,16 +50,16 @@ async fn main() -> anyhow::Result<()> {
         Some(key) => parse_secret(&key)?,
     };
 
-    let derp_map = match args.derp_url {
-        None => default_derp_map(),
+    let derp_mode = match args.derp_url {
+        None => DerpMode::Default,
         // use `region_id` 65535, which is reserved for testing and experiments
-        Some(url) => DerpMap::from_url(url, TEST_REGION_ID),
+        Some(url) => DerpMode::Custom(DerpMap::from_url(url, TEST_REGION_ID)),
     };
 
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![args.alpn.to_string().into_bytes()])
-        .enable_derp(derp_map)
+        .derp_mode(derp_mode)
         .bind(args.bind_port)
         .await?;
 

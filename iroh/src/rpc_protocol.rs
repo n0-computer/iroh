@@ -25,7 +25,7 @@ use iroh_sync::{
     AuthorId,
 };
 use quic_rpc::{
-    message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
+    message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
     Service,
 };
 use serde::{Deserialize, Serialize};
@@ -74,8 +74,12 @@ impl Msg<ProviderService> for BlobAddPathRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobAddPathRequest {
-    type Response = AddProgress;
+    type Response = BlobAddPathResponse;
 }
+
+/// Wrapper around [`AddProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct BlobAddPathResponse(pub AddProgress);
 
 /// A request to the node to download and share the data specified by the hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -678,20 +682,20 @@ pub struct DocGetOneResponse {
 
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BytesGetRequest {
+pub struct BlobReadRequest {
     /// Hash to get bytes for
     pub hash: Hash,
 }
 
-impl Msg<ProviderService> for BytesGetRequest {
+impl Msg<ProviderService> for BlobReadRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for BytesGetRequest {
+impl ServerStreamingMsg<ProviderService> for BlobReadRequest {
     type Response = RpcResult<BlobReadResponse>;
 }
 
-/// Response to [`BytesGetRequest`]
+/// Response to [`BlobReadRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum BlobReadResponse {
     /// The entry header.
@@ -707,6 +711,35 @@ pub enum BlobReadResponse {
         chunk: Bytes,
     },
 }
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BlobAddStreamRequest {
+    /// Tag to tag the data with.
+    pub tag: SetTagOption,
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub enum BlobAddStreamUpdate {
+    /// A chunk of stream data
+    Chunk(Bytes),
+    /// Abort the request due to an error on the client side
+    Abort,
+}
+
+impl Msg<ProviderService> for BlobAddStreamRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<ProviderService> for BlobAddStreamRequest {
+    type Update = BlobAddStreamUpdate;
+    type Response = BlobAddStreamResponse;
+}
+
+/// Wrapper around [`AddProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct BlobAddStreamResponse(pub AddProgress);
 
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
@@ -747,7 +780,9 @@ pub enum ProviderRequest {
     NodeConnectionInfo(NodeConnectionInfoRequest),
     NodeWatch(NodeWatchRequest),
 
-    BlobRead(BytesGetRequest),
+    BlobRead(BlobReadRequest),
+    BlobAddStream(BlobAddStreamRequest),
+    BlobAddStreamUpdate(BlobAddStreamUpdate),
     BlobAddPath(BlobAddPathRequest),
     BlobDownload(BlobDownloadRequest),
     BlobList(BlobListRequest),
@@ -788,7 +823,8 @@ pub enum ProviderResponse {
     NodeWatch(NodeWatchResponse),
 
     BlobRead(RpcResult<BlobReadResponse>),
-    BlobAddPath(AddProgress),
+    BlobAddStream(BlobAddStreamResponse),
+    BlobAddPath(BlobAddPathResponse),
     BlobDownload(GetProgress),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),

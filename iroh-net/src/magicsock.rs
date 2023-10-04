@@ -42,7 +42,7 @@ use tokio::{
     sync::{self, mpsc, Mutex},
     time,
 };
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::{
     config::{self, DERP_MAGIC_IP},
@@ -174,7 +174,7 @@ impl Default for Options {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
-            derp_map: Default::default(),
+            derp_map: DerpMap::empty(),
             callbacks: Default::default(),
             peers_path: None,
         }
@@ -204,7 +204,8 @@ struct Inner {
     actor_sender: mpsc::Sender<ActorMessage>,
     /// Sends network messages.
     network_sender: mpsc::Sender<Vec<quinn_udp::Transmit>>,
-    name: String,
+    /// String representation of the peer_id of this node.
+    me: String,
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
     on_endpoints: Option<Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>>,
@@ -309,16 +310,13 @@ impl MagicSock {
     ///
     /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
-        let name = format!(
-            "magic-{}",
-            hex::encode(&opts.secret_key.public().as_bytes()[..8])
-        );
+        let me = opts.secret_key.public().fmt_short();
         if crate::util::derp_only_mode() {
             warn!("creating a MagicSock that will only send packets over a DERP relay connection.");
         }
 
-        Self::with_name(name.clone(), opts)
-            .instrument(info_span!("magicsock", %name))
+        Self::with_name(me.clone(), opts)
+            .instrument(error_span!("magicsock", %me))
             .await
     }
 
@@ -327,7 +325,7 @@ impl MagicSock {
         self.inner.has_derp_region(region).await
     }
 
-    async fn with_name(name: String, opts: Options) -> Result<Self> {
+    async fn with_name(me: String, opts: Options) -> Result<Self> {
         let port_mapper = portmapper::Client::default().await;
 
         let Options {
@@ -375,7 +373,7 @@ impl MagicSock {
         let (network_sender, network_receiver) = mpsc::channel(128);
 
         let inner = Arc::new(Inner {
-            name,
+            me,
             on_endpoints,
             on_derp_active,
             on_net_info,
@@ -523,7 +521,7 @@ impl MagicSock {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn re_stun(&self, why: &'static str) {
         self.inner
             .actor_sender
@@ -552,7 +550,7 @@ impl MagicSock {
 
     // TODO
     // /// Handles a "ping" CLI query.
-    // #[instrument(skip_all, fields(self.name = %self.name))]
+    // #[instrument(skip_all, fields(me = %self.inner.me))]
     // pub async fn ping<F>(&self, peer: config::Node, mut res: config::PingResult, cb: F)
     // where
     //     F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
@@ -586,7 +584,7 @@ impl MagicSock {
     // }
 
     /// Sets the connection's preferred local port.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn set_preferred_port(&self, port: u16) {
         let (s, r) = sync::oneshot::channel();
         self.inner
@@ -609,7 +607,7 @@ impl MagicSock {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     /// Add addresses for a node to the magic socket's addresbook.
     pub async fn add_peer_addr(&self, addr: PeerAddr) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
@@ -624,7 +622,7 @@ impl MagicSock {
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
-    #[instrument(skip_all, fields(name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
             return Ok(());
@@ -647,7 +645,7 @@ impl MagicSock {
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
     /// It should be followed by a call to ReSTUN.
-    #[instrument(skip_all, fields(name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn rebind_all(&self) {
         let (s, r) = sync::oneshot::channel();
         self.inner
@@ -708,7 +706,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
 }
 
 impl AsyncUdpSocket for MagicSock {
-    #[instrument(skip_all, fields(name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     fn poll_send(
         &self,
         _udp_state: &quinn_udp::UdpState,
@@ -763,7 +761,7 @@ impl AsyncUdpSocket for MagicSock {
         Poll::Pending
     }
 
-    #[instrument(skip_all, fields(name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -828,7 +826,7 @@ impl AsyncUdpSocket for MagicSock {
                                 "[QUINN] <- {} ({}b) ({}) ({:?}, {:?})",
                                 meta_out.addr,
                                 meta_out.len,
-                                self.inner.name,
+                                self.inner.me,
                                 meta_out.dst_ip,
                                 source
                             );
@@ -1839,7 +1837,7 @@ impl Actor {
     }
 
     /// Records the new endpoints, reporting whether they're changed.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn set_endpoints(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
         for (_de, f) in self.on_endpoint_refreshed.drain() {
@@ -1857,7 +1855,7 @@ impl Actor {
         true
     }
 
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
         let endpoint = self.peer_map.by_id(&endpoint_id);
         if endpoint.is_none() {
@@ -1921,7 +1919,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn rebind_all(&mut self) {
         inc!(MagicsockMetrics, rebind_calls);
         if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
@@ -1936,7 +1934,7 @@ impl Actor {
 
     /// Resets the preferred address for all peers.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
         for (_, ep) in self.peer_map.endpoints_mut() {
             ep.note_connectivity_change();
@@ -1945,7 +1943,7 @@ impl Actor {
 
     /// Closes and re-binds the UDP sockets.
     /// We consider it successful if we manage to bind the IPv4 socket.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
         let mut ipv6_addr = None;
 
@@ -1985,7 +1983,7 @@ impl Actor {
         Ok(())
     }
 
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn set_preferred_port(&mut self, port: u16) {
         let existing_port = self.inner.port.swap(port, Ordering::Relaxed);
         if existing_port == port {
@@ -2648,7 +2646,7 @@ pub(crate) mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{test_utils::run_derper, tls, MagicEndpoint};
+    use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
         quinn_udp::Transmit {
@@ -2797,7 +2795,7 @@ pub(crate) mod tests {
                     on_derp_s.try_send(()).ok();
                 }))
                 .transport_config(transport_config)
-                .enable_derp(derp_map)
+                .derp_mode(DerpMode::Custom(derp_map))
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;

@@ -11,17 +11,17 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
-    ExportMode, GcMarkEvent, GcSweepEvent, Map, MapEntry, ReadableStore, Store as BaoStore,
-    ValidateProgress,
+    ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
+    Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, LinkSeqCollectionParser};
 use iroh_bytes::protocol::GetRequest;
@@ -36,17 +36,16 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
-use iroh_net::defaults::default_derp_map;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     config::Endpoint,
-    derp::DerpMap,
+    derp::DerpMode,
     key::{PublicKey, SecretKey},
     tls, MagicEndpoint, PeerAddr,
 };
 use iroh_sync::store::Store as DocStore;
-use quic_rpc::server::RpcChannel;
+use quic_rpc::server::{RpcChannel, RpcServerError};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
@@ -54,14 +53,15 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
+    BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadResponse, BlobValidateRequest, BytesGetRequest,
+    BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
@@ -124,7 +124,7 @@ pub struct Builder<
     keylog: bool,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
-    derp_map: Option<DerpMap>,
+    derp_mode: DerpMode,
     collection_parser: C,
     gc_policy: GcPolicy,
     rt: Option<runtime::Handle>,
@@ -182,7 +182,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
-            derp_map: Some(default_derp_map()),
+            derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
@@ -216,7 +216,7 @@ where
             custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: value,
-            derp_map: self.derp_map,
+            derp_mode: self.derp_mode,
             collection_parser: self.collection_parser,
             gc_policy: self.gc_policy,
             rt: self.rt,
@@ -240,7 +240,7 @@ where
             custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: self.rpc_endpoint,
-            derp_map: self.derp_map,
+            derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
             rt: self.rt,
             docs: self.docs,
@@ -256,31 +256,17 @@ where
         self
     }
 
-    /// Enables using DERP servers to assist in establishing connectivity.
+    /// Sets the DERP servers to assist in establishing connectivity.
     ///
     /// DERP servers are used to discover other nodes by [`PublicKey`] and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// The provided `derp_map` must contain at least one region with a configured derp
-    /// node.
-    ///
-    /// When calling neither this, nor [`disable_derp`] the builder uses the
-    /// [`default_derp_map`] containing number0's global derp servers.
-    ///
-    /// [`disable_derp`]: Builder::disable_derp
-    pub fn enable_derp(mut self, dm: DerpMap) -> Self {
-        self.derp_map = Some(dm);
-        self
-    }
-
-    /// Disables using DERP servers.
-    ///
-    /// See [`enable_derp`] for details.
-    ///
-    /// [`enable_derp`]: Builder::enable_derp
-    pub fn disable_derp(mut self) -> Self {
-        self.derp_map = None;
+    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
+    /// region with a configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// is provided [`Self::spawn`] will result in an error.
+    pub fn derp_mode(mut self, dm: DerpMode) -> Self {
+        self.derp_mode = dm;
         self
     }
 
@@ -346,14 +332,6 @@ where
     pub async fn spawn(self) -> Result<Node<D, S>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
-        ensure!(
-            self.derp_map
-                .as_ref()
-                .map(|m| !m.is_empty())
-                .unwrap_or(true),
-            "Derp server enabled but DerpMap is empty",
-        );
-
         // Initialize the metrics collection.
         //
         // The metrics are global per process. Subsequent calls do not change the metrics
@@ -375,6 +353,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
+            .derp_mode(self.derp_mode)
             .on_endpoints(Box::new(move |eps| {
                 if !eps.is_empty() {
                     endpoints_update_s.send(eps.to_vec()).ok();
@@ -382,10 +361,6 @@ where
             }));
         let endpoint = match self.peers_data_path {
             Some(path) => endpoint.peers_data_path(path),
-            None => endpoint,
-        };
-        let endpoint = match self.derp_map {
-            Some(derp_map) => endpoint.enable_derp(derp_map),
             None => endpoint,
         };
         let endpoint = endpoint.bind(self.bind_addr.port()).await?;
@@ -450,22 +425,26 @@ where
                 inner: inner.clone(),
                 collection_parser: self.collection_parser.clone(),
             };
-            rt2.main().spawn(async move {
-                Self::run(
-                    endpoint,
-                    callbacks,
-                    cb_receiver,
-                    handler,
-                    self.rpc_endpoint,
-                    internal_rpc,
-                    self.custom_get_handler,
-                    self.auth_handler,
-                    self.collection_parser,
-                    rt3,
-                    gossip,
-                )
-                .await
-            })
+            let me = endpoint.peer_id().fmt_short();
+            rt2.main().spawn(
+                async move {
+                    Self::run(
+                        endpoint,
+                        callbacks,
+                        cb_receiver,
+                        handler,
+                        self.rpc_endpoint,
+                        internal_rpc,
+                        self.custom_get_handler,
+                        self.auth_handler,
+                        self.collection_parser,
+                        rt3,
+                        gossip,
+                    )
+                    .await
+                }
+                .instrument(error_span!("node", %me)),
+            )
         };
         let node = Node {
             inner,
@@ -1018,7 +997,10 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    fn blob_add_from_path(self, msg: BlobAddPathRequest) -> impl Stream<Item = AddProgress> {
+    fn blob_add_from_path(
+        self,
+        msg: BlobAddPathRequest,
+    ) -> impl Stream<Item = BlobAddPathResponse> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
@@ -1027,7 +1009,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
         });
-        rx.into_stream()
+        rx.into_stream().map(BlobAddPathResponse)
     }
 
     async fn blob_export(
@@ -1181,24 +1163,20 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             rpc_protocol::WrapOption,
         };
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, ImportProgress, TempTag};
-        use std::{collections::BTreeMap, sync::Mutex};
+        use iroh_bytes::baomap::{ImportMode, TempTag};
+        use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
-            ImportProgress::Found { id, path, .. } => {
-                names.lock().unwrap().insert(id, path);
+            ImportProgress::Found { id, name } => {
+                names.lock().unwrap().insert(id, name);
                 None
             }
             ImportProgress::Size { id, size } => {
-                let path = names.lock().unwrap().remove(&id)?;
-                Some(AddProgress::Found {
-                    id,
-                    name: path.display().to_string(),
-                    size,
-                })
+                let name = names.lock().unwrap().remove(&id)?;
+                Some(AddProgress::Found { id, name, size })
             }
             ImportProgress::OutboardProgress { id, offset } => {
                 Some(AddProgress::Progress { id, offset })
@@ -1237,7 +1215,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
                     async move {
                         let name = source.name().to_string();
                         let (tag, size) = db
-                            .import(
+                            .import_file(
                                 source.path().to_owned(),
                                 import_mode,
                                 BlobFormat::RAW,
@@ -1265,7 +1243,7 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
             let (tag, _size) = self
                 .inner
                 .db
-                .import(root, import_mode, BlobFormat::RAW, import_progress)
+                .import_file(root, import_mode, BlobFormat::RAW, import_progress)
                 .await?;
             tag
         };
@@ -1354,9 +1332,80 @@ impl<D: BaoStore, S: DocStore, C: CollectionParser> RpcHandler<D, S, C> {
         })
     }
 
+    fn blob_add_stream(
+        self,
+        msg: BlobAddStreamRequest,
+        stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
+    ) -> impl Stream<Item = BlobAddStreamResponse> {
+        let (tx, rx) = flume::bounded(32);
+        let this = self.clone();
+
+        self.rt().local_pool().spawn_pinned(|| async move {
+            if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
+                tx.send_async(AddProgress::Abort(err.into())).await.ok();
+            }
+        });
+
+        rx.into_stream().map(BlobAddStreamResponse)
+    }
+
+    async fn blob_add_stream0(
+        self,
+        msg: BlobAddStreamRequest,
+        stream: impl Stream<Item = BlobAddStreamUpdate> + Send + Unpin + 'static,
+        progress: flume::Sender<AddProgress>,
+    ) -> anyhow::Result<()> {
+        let progress = FlumeProgressSender::new(progress);
+
+        let stream = stream.map(|item| match item {
+            BlobAddStreamUpdate::Chunk(chunk) => Ok(chunk),
+            BlobAddStreamUpdate::Abort => {
+                Err(io::Error::new(io::ErrorKind::Interrupted, "Remote abort"))
+            }
+        });
+
+        let name_cache = Arc::new(Mutex::new(None));
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id: _, name } => {
+                let _ = name_cache.lock().unwrap().insert(name);
+                None
+            }
+            ImportProgress::Size { id, size } => {
+                let name = name_cache.lock().unwrap().take()?;
+                Some(AddProgress::Found { id, name, size })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(AddProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => Some(AddProgress::Done { hash, id }),
+            _ => None,
+        });
+        let (temp_tag, _len) = self
+            .inner
+            .db
+            .import_stream(stream, BlobFormat::RAW, import_progress)
+            .await?;
+        let hash_and_format = *temp_tag.inner();
+        let HashAndFormat(hash, format) = hash_and_format;
+        let tag = match msg.tag {
+            SetTagOption::Named(tag) => {
+                self.inner
+                    .db
+                    .set_tag(tag.clone(), Some(hash_and_format))
+                    .await?;
+                tag
+            }
+            SetTagOption::Auto => self.inner.db.create_tag(hash_and_format).await?,
+        };
+        progress
+            .send(AddProgress::AllDone { hash, tag, format })
+            .await?;
+        Ok(())
+    }
+
     fn blob_read(
         self,
-        req: BytesGetRequest,
+        req: BlobReadRequest,
     ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let entry = self.inner.db.get(&req.hash);
@@ -1497,6 +1546,11 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::blob_read)
                     .await
             }
+            BlobAddStream(msg) => {
+                chan.bidi_streaming(msg, handler, RpcHandler::blob_add_stream)
+                    .await
+            }
+            BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)
@@ -1693,6 +1747,32 @@ mod tests {
 
     #[cfg(feature = "mem-db")]
     #[tokio::test]
+    async fn test_node_add_blob_stream() -> Result<()> {
+        use iroh_bytes::util::SetTagOption;
+        use std::io::Cursor;
+        let rt = runtime::Handle::from_current(1)?;
+        let db = crate::baomap::mem::Store::new(rt);
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let node = Node::builder(db, doc_store)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(&test_runtime())
+            .spawn()
+            .await?;
+
+        let _drop_guard = node.cancel_token().drop_guard();
+        let client = node.client();
+        let input = vec![2u8; 1024 * 256]; // 265kb so actually streaming, chunk size is 64kb
+        let reader = Cursor::new(input.clone());
+        let progress = client.blobs.add_reader(reader, SetTagOption::Auto).await?;
+        let outcome = progress.finish().await?;
+        let hash = outcome.hash;
+        let output = client.blobs.read_to_bytes(hash).await?;
+        assert_eq!(input, output.to_vec());
+        Ok(())
+    }
+
+    #[cfg(feature = "mem-db")]
+    #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         use iroh_bytes::util::SetTagOption;
 
@@ -1735,7 +1815,8 @@ mod tests {
                 .await?;
 
             while let Some(item) = stream.next().await {
-                match item? {
+                let BlobAddPathResponse(progress) = item?;
+                match progress {
                     AddProgress::AllDone { hash, .. } => {
                         return Ok(hash);
                     }

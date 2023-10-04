@@ -9,10 +9,10 @@ use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
 use tokio::{
-    sync::{broadcast, mpsc, oneshot, watch},
+    sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
 };
-use tracing::{debug, trace, warn};
+use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
 use crate::proto::{self, PeerData, Scope, TopicId};
@@ -34,6 +34,8 @@ const SEND_QUEUE_CAP: usize = 64;
 const TO_ACTOR_CAP: usize = 64;
 /// Channel capacity for the InEvent message queue (single)
 const IN_EVENT_CAP: usize = 1024;
+/// Channel capacity for endpoint change message queue (single)
+const ON_ENDPOINTS_CAP: usize = 64;
 
 /// Events emitted from the gossip protocol
 pub type Event = proto::Event<PublicKey>;
@@ -66,7 +68,7 @@ type ProtoMessage = proto::Message<PublicKey>;
 #[derive(Debug, Clone)]
 pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
-    on_endpoints_tx: Arc<watch::Sender<Vec<iroh_net::config::Endpoint>>>,
+    on_endpoints_tx: mpsc::Sender<Vec<iroh_net::config::Endpoint>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -84,7 +86,9 @@ impl Gossip {
         );
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
-        let (on_endpoints_tx, on_endpoints_rx) = watch::channel(Default::default());
+        let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
+
+        let me = endpoint.peer_id().fmt_short();
         let actor = Actor {
             endpoint,
             state,
@@ -100,17 +104,21 @@ impl Gossip {
             subscribers_all: None,
             subscribers_topic: Default::default(),
         };
-        let actor_handle = tokio::spawn(async move {
-            if let Err(err) = actor.run().await {
-                warn!("gossip actor closed with error: {err:?}");
-                Err(err)
-            } else {
-                Ok(())
+
+        let actor_handle = tokio::spawn(
+            async move {
+                if let Err(err) = actor.run().await {
+                    warn!("gossip actor closed with error: {err:?}");
+                    Err(err)
+                } else {
+                    Ok(())
+                }
             }
-        });
+            .instrument(error_span!("gossip", %me)),
+        );
         Self {
             to_actor_tx,
-            on_endpoints_tx: Arc::new(on_endpoints_tx),
+            on_endpoints_tx,
             _actor_handle: Arc::new(actor_handle),
         }
     }
@@ -223,10 +231,14 @@ impl Gossip {
     ///
     /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
     /// to us.
+    ///
+    /// This is only best effort, and will drop new events if backed up.
     pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
+        let endpoints = endpoints.to_vec();
         self.on_endpoints_tx
-            .send(endpoints.to_vec())
-            .map_err(|_| anyhow!("gossip actor dropped"))
+            .try_send(endpoints)
+            .map_err(|_| anyhow!("endpoints channel dropped"))?;
+        Ok(())
     }
 
     async fn send(&self, event: ToActor) -> anyhow::Result<()> {
@@ -315,8 +327,8 @@ struct Actor {
     in_event_tx: mpsc::Sender<InEvent>,
     /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
-    /// Watcher for updates of discovered endpoint addresses
-    on_endpoints_rx: watch::Receiver<Vec<iroh_net::config::Endpoint>>,
+    /// Updates of discovered endpoint addresses
+    on_endpoints_rx: mpsc::Receiver<Vec<iroh_net::config::Endpoint>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
@@ -333,7 +345,6 @@ struct Actor {
 
 impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
-        let me = *self.state.me();
         loop {
             tokio::select! {
                 biased;
@@ -341,24 +352,32 @@ impl Actor {
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
-                            debug!(?me, "all gossip handles dropped, stop gossip actor");
+                            debug!("all gossip handles dropped, stop gossip actor");
                             break;
                         }
                     }
                 },
-                _ = self.on_endpoints_rx.changed() => {
-                    let addr = self.endpoint.my_addr().await?;
-                    let peer_data = encode_peer_data(&addr.info)?;
-                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
+                new_endpoints = self.on_endpoints_rx.recv() => {
+                    match new_endpoints {
+                        Some(endpoints) => {
+                            let addr = self.endpoint.my_addr_with_endpoints(endpoints).await?;
+                            let peer_data = encode_peer_data(&addr.info)?;
+                            self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
+                        }
+                        None => {
+                            debug!("endpoint change handle dropped, stopping gossip actor");
+                            break;
+                        }
+                    }
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
                     match res {
                         Ok(conn) => {
-                            debug!(?me, peer = ?peer_id, "dial successfull");
+                            debug!(peer = ?peer_id, "dial successfull");
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
-                            warn!(?me, peer = ?peer_id, "dial failed: {err}");
+                            warn!(peer = ?peer_id, "dial failed: {err}");
                         }
                     }
                 }
@@ -383,8 +402,7 @@ impl Actor {
     }
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
-        let me = *self.state.me();
-        trace!(?me, "handle to_actor  {msg:?}");
+        trace!("handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
                 self.conns.insert(peer_id, conn.clone());
@@ -395,13 +413,13 @@ impl Actor {
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(async move {
-                    debug!(?me, peer = ?peer_id, "connection established");
+                    debug!(peer = ?peer_id, "connection established");
                     match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                         Ok(()) => {
-                            debug!(?me, peer = ?peer_id, "connection closed without error")
+                            debug!(peer = ?peer_id, "connection closed without error")
                         }
                         Err(err) => {
-                            debug!(?me, peer = ?peer_id, "connection closed with error {err:?}")
+                            debug!(peer = ?peer_id, "connection closed with error {err:?}")
                         }
                     }
                     in_event_tx
@@ -458,11 +476,10 @@ impl Actor {
     }
 
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
-        let me = *self.state.me();
         if matches!(event, InEvent::TimerExpired(_)) {
-            trace!(?me, "handle in_event  {event:?}");
+            trace!("handle in_event  {event:?}");
         } else {
-            debug!(?me, "handle in_event  {event:?}");
+            debug!("handle in_event  {event:?}");
         };
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
@@ -470,9 +487,9 @@ impl Actor {
         let out = self.state.handle(event, now);
         for event in out {
             if matches!(event, OutEvent::ScheduleTimer(_, _)) {
-                trace!(?me, "handle out_event {event:?}");
+                trace!("handle out_event {event:?}");
             } else {
-                debug!(?me, "handle out_event {event:?}");
+                debug!("handle out_event {event:?}");
             };
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
@@ -482,7 +499,7 @@ impl Actor {
                             self.conn_send_tx.remove(&peer_id);
                         }
                     } else {
-                        debug!(?me, peer = ?peer_id, "dial");
+                        debug!(peer = ?peer_id, "dial");
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         // TODO: Enforce max length
                         self.pending_sends.entry(peer_id).or_default().push(message);
@@ -516,13 +533,13 @@ impl Actor {
                 OutEvent::PeerData(peer, data) => match decode_peer_data(&data) {
                     Err(err) => warn!("Failed to decode {data:?} from {peer}: {err}"),
                     Ok(info) => {
-                        debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
+                        debug!(peer = ?peer, "add known addrs: {info:?}");
                         let peer_addr = PeerAddr {
                             peer_id: peer,
                             info,
                         };
                         if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
-                            debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
+                            debug!(peer = ?peer, "add known failed: {err:?}");
                         }
                     }
                 },
@@ -613,7 +630,10 @@ mod test {
     use std::time::Duration;
 
     use iroh_net::PeerAddr;
-    use iroh_net::{derp::DerpMap, MagicEndpoint};
+    use iroh_net::{
+        derp::{DerpMap, DerpMode},
+        MagicEndpoint,
+    };
     use tokio::spawn;
     use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
@@ -624,7 +644,7 @@ mod test {
     async fn create_endpoint(derp_map: DerpMap) -> anyhow::Result<MagicEndpoint> {
         MagicEndpoint::builder()
             .alpns(vec![GOSSIP_ALPN.to_vec()])
-            .enable_derp(derp_map)
+            .derp_mode(DerpMode::Custom(derp_map))
             .bind(0)
             .await
     }

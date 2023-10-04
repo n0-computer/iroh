@@ -37,7 +37,9 @@ use iroh_gossip::{
 };
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
-    defaults::default_derp_map, derp::DerpMap, key::SecretKey, magic_endpoint::get_alpn,
+    derp::{DerpMap, DerpMode},
+    key::SecretKey,
+    magic_endpoint::get_alpn,
     MagicEndpoint, PeerAddr,
 };
 use iroh_sync::{
@@ -130,13 +132,13 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> our secret key: {}", secret_key);
 
     // configure our derp map
-    let derp_map = match (args.no_derp, args.derp) {
-        (false, None) => Some(default_derp_map()),
-        (false, Some(url)) => Some(DerpMap::from_url(url, 0)),
-        (true, None) => None,
+    let derp_mode = match (args.no_derp, args.derp) {
+        (false, None) => DerpMode::Default,
+        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, 0)),
+        (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
-    println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
+    println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
 
     // build our magic endpoint and the gossip protocol
     let (endpoint, gossip) = {
@@ -152,6 +154,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 SYNC_ALPN.to_vec(),
                 iroh_bytes::protocol::ALPN.to_vec(),
             ])
+            .derp_mode(derp_mode)
             .on_endpoints({
                 let gossip_cell = gossip_cell.clone();
                 Box::new(move |endpoints| {
@@ -162,12 +165,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     // trigger oneshot on the first endpoint update
                     initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
                 })
-            });
-        let endpoint = match derp_map {
-            Some(derp_map) => endpoint.enable_derp(derp_map),
-            None => endpoint,
-        };
-        let endpoint = endpoint.bind(args.bind_port).await?;
+            })
+            .bind(args.bind_port)
+            .await?;
 
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
@@ -517,7 +517,7 @@ impl ReplState {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
                 let (tag, len) = self
                     .db
-                    .import(
+                    .import_file(
                         file_path.clone(),
                         ImportMode::Copy,
                         BlobFormat::RAW,
@@ -553,7 +553,7 @@ impl ReplState {
                         let key = format!("{key_prefix}/{relative}");
                         let (tag, len) = self
                             .db
-                            .import(
+                            .import_file(
                                 file.path().into(),
                                 ImportMode::Copy,
                                 BlobFormat::RAW,
@@ -956,10 +956,11 @@ fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
     text.make_ascii_lowercase();
     format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
 }
-fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
-    match derp_map {
-        None => "None".to_string(),
-        Some(map) => map
+fn fmt_derp_mode(derp_mode: &DerpMode) -> String {
+    match derp_mode {
+        DerpMode::Disabled => "None".to_string(),
+        DerpMode::Default => "Default Derp servers".to_string(),
+        DerpMode::Custom(map) => map
             .regions()
             .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
             .collect::<Vec<_>>()

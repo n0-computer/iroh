@@ -19,7 +19,7 @@ use bao_tree::{
 use bytes::{Bytes, BytesMut};
 use futures::{
     future::{self, BoxFuture},
-    FutureExt,
+    FutureExt, Stream,
 };
 use iroh_bytes::{
     baomap::{
@@ -321,7 +321,7 @@ impl PartialMapEntry<Store> for PartialEntry {
 }
 
 impl baomap::Store for Store {
-    fn import(
+    fn import_file(
         &self,
         data: PathBuf,
         mode: ImportMode,
@@ -335,6 +335,16 @@ impl baomap::Store for Store {
     /// import a byte slice
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let _ = (bytes, format);
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn import_stream(
+        &self,
+        data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+        let _ = (data, format, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
