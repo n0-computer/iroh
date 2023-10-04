@@ -670,7 +670,7 @@ impl BidiStreamingMsg<ProviderService> for DocSetStreamRequest {
     type Response = DocSetStreamResponse;
 }
 
-/// Wrapper around [`sync::AddProgress`].
+/// Wrapper around [`sync::DocSetProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct DocSetStreamResponse(pub DocSetProgress);
 
