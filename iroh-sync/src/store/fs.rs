@@ -329,7 +329,7 @@ impl super::Store for Store {
         let read_tx = self.db.begin_read()?;
         let peers_table = read_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
         let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
-        for result in peers_table.get(namespace.as_bytes())? {
+        for result in peers_table.get(namespace.as_bytes())?.rev() {
             let (_nanos, &peer) = result?.value();
             peers.push(peer);
         }

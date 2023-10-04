@@ -20,7 +20,7 @@ mod pubkeys;
 pub use pubkeys::*;
 
 /// Number of [`PeerIdBytes`] objects to cache per document.
-const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
+pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
     Some(val) => val,
     None => panic!("this is clearly non zero"),
 };
