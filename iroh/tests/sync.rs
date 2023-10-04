@@ -501,8 +501,8 @@ async fn wait_for_events(
     while i < expected_n {
         let event = tokio::time::timeout(timeout_per_event, events.next())
             .await
-            .map_err(|_| anyhow!("timeout while getting InsertRemote event after {i}"))?
-            .ok_or_else(|| anyhow!("end of event stream for after {i}"))??;
+            .map_err(|_| anyhow!("timeout while waiting for next event after {i} (expected {expected_n})"))?
+            .ok_or_else(|| anyhow!("end of event stream after {i} (expected {expected_n})"))??;
         if matcher(event) {
             i += 1;
             debug!(%me, "recv event {i} of {expected_n}");
