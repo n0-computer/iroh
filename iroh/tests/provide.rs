@@ -11,7 +11,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{
-    future::{self, BoxFuture, LocalBoxFuture},
+    future::{BoxFuture, LocalBoxFuture},
     FutureExt,
 };
 use iroh::{
@@ -37,8 +37,8 @@ use iroh_bytes::{
         fsm::{self, DecodeError},
         Stats,
     },
-    protocol::{CustomGetRequest, GetRequest, RangeSpecSeq, Request, RequestToken},
-    provider::{self, CustomGetHandler, RequestAuthorizationHandler},
+    protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
+    provider::{self, RequestAuthorizationHandler},
     util::{runtime, BlobFormat},
     Hash,
 };
@@ -757,109 +757,6 @@ async fn test_custom_collection_parser() {
     .expect("get failed");
 }
 
-#[derive(Clone, Debug)]
-struct CollectionCustomHandler {
-    // the hash to respond with when getting a custom request
-    hash: Hash,
-}
-
-impl CustomGetHandler for CollectionCustomHandler {
-    fn handle(
-        &self,
-        _token: Option<RequestToken>,
-        _data: Bytes,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-        // return a request for the collection at self.hash
-        future::ok(GetRequest::all(self.hash)).boxed()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct BlobCustomHandler {
-    // the hash to respond with when getting a custom request
-    hash: Hash,
-}
-
-impl CustomGetHandler for BlobCustomHandler {
-    fn handle(
-        &self,
-        _token: Option<RequestToken>,
-        _data: Bytes,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-        // return a request for the collection at self.hash
-        future::ok(GetRequest::single(self.hash)).boxed()
-    }
-}
-
-#[tokio::test]
-async fn test_custom_request_blob() {
-    let rt = test_runtime();
-    let expected = b"hello".to_vec();
-    let (db, hashes) = iroh::baomap::readonly_mem::Store::new([("test", &expected)]);
-    let hash = Hash::from(*hashes.values().next().unwrap());
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db, addr)
-        .runtime(&rt)
-        .custom_get_handler(Arc::new(BlobCustomHandler { hash }))
-        .spawn()
-        .await
-        .unwrap();
-    let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
-            token: None,
-            data: Bytes::from(&b"hello"[..]),
-        });
-        let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
-        let response = fsm::start(connection, request);
-        let connected = response.next().await?;
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            panic!()
-        };
-        let header = start.next();
-        let (_, actual) = header.concatenate_into_vec().await?;
-        assert_eq!(actual, expected);
-        anyhow::Ok(())
-    })
-    .await
-    .expect("timeout")
-    .expect("get failed");
-}
-
-#[tokio::test]
-async fn test_custom_request_collection() {
-    let rt = test_runtime();
-    let child1 = b"hello".to_vec();
-    let child2 = b"world".to_vec();
-    let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db.clone(), addr)
-        .runtime(&rt)
-        .custom_get_handler(Arc::new(CollectionCustomHandler { hash }))
-        .spawn()
-        .await
-        .unwrap();
-    let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = CustomGetRequest {
-            token: None,
-            data: Bytes::from(&b"hello"[..]),
-        }
-        .into();
-        let opts = get_options(peer_id, addrs);
-        let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[&0], child1);
-        assert_eq!(items[&1], child2);
-        anyhow::Ok(())
-    })
-    .await
-    .expect("timeout")
-    .expect("get failed");
-}
-
 /// compute the range of the last chunk of a blob of the given size
 fn last_chunk_range(size: usize) -> Range<usize> {
     const CHUNK_LEN: usize = 1024;
@@ -916,39 +813,6 @@ async fn test_size_request_blob() {
     .expect("get failed");
 }
 
-/// Ask for the last chunk of all children in a collection, even if we don't know
-/// the number of children and their sizes yet.
-///
-/// The verified last chunks also verifies the sizes.
-#[tokio::test]
-async fn test_size_request_collection() {
-    let rt = test_runtime();
-    let child1 = make_test_data(123456);
-    let child2 = make_test_data(345678);
-    let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db.clone(), addr)
-        .runtime(&rt)
-        .custom_get_handler(Arc::new(CollectionCustomHandler { hash }))
-        .spawn()
-        .await
-        .unwrap();
-    let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = GetRequest::last_chunks(hash).into();
-        let opts = get_options(peer_id, addrs);
-        let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[&0], last_chunk(&child1));
-        assert_eq!(items[&1], last_chunk(&child2));
-        anyhow::Ok(())
-    })
-    .await
-    .expect("timeout")
-    .expect("get failed");
-}
-
 #[tokio::test]
 async fn test_collection_stat() {
     let rt = test_runtime();
@@ -958,7 +822,6 @@ async fn test_collection_stat() {
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = test_node(db.clone(), addr)
         .runtime(&rt)
-        .custom_get_handler(Arc::new(CollectionCustomHandler { hash }))
         .spawn()
         .await
         .unwrap();

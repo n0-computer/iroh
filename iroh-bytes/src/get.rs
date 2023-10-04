@@ -51,7 +51,7 @@ impl Stats {
 pub mod fsm {
     use std::{io, result};
 
-    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
+    use crate::protocol::{NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
 
     use super::*;
 
@@ -68,7 +68,7 @@ pub mod fsm {
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -241,7 +241,7 @@ pub mod fsm {
         pub async fn next(self) -> Result<ConnectedNext, ConnectedNextError> {
             let Self {
                 start,
-                mut reader,
+                reader,
                 mut writer,
                 request,
             } = self;
@@ -271,29 +271,6 @@ pub mod fsm {
                 Request::Get(get_request) => {
                     // we already have a get request, just return it
                     get_request
-                }
-                Request::CustomGet(_) => {
-                    // we sent a custom request, so we need the actual GetRequest from the response
-                    let response_len = reader
-                        .read_u64_le()
-                        .await
-                        .map_err(ConnectedNextError::from_io)?;
-
-                    let mut response = if response_len < (MAX_MESSAGE_SIZE as u64) {
-                        Vec::with_capacity(response_len as usize)
-                    } else {
-                        return Err(ConnectedNextError::CustomRequestTooBig);
-                    };
-                    (&mut reader)
-                        .take(response_len)
-                        .read_to_end(&mut response)
-                        .await
-                        .map_err(ConnectedNextError::from_io)?;
-                    if response.len() != response_len as usize {
-                        return Err(ConnectedNextError::Eof);
-                    }
-                    postcard::from_bytes::<GetRequest>(&response)
-                        .map_err(ConnectedNextError::PostcardDe)?
                 }
             };
             let hash = request.hash;

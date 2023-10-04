@@ -16,7 +16,6 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
@@ -24,13 +23,12 @@ use iroh_bytes::baomap::{
     Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, LinkSeqCollectionParser};
-use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
-    provider::{AddProgress, CustomGetHandler, RequestAuthorizationHandler},
+    provider::{AddProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
 };
@@ -122,7 +120,6 @@ pub struct Builder<
     rpc_endpoint: E,
     db: D,
     keylog: bool,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_mode: DerpMode,
     collection_parser: C,
@@ -161,19 +158,6 @@ impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
     }
 }
 
-#[derive(Debug)]
-struct NoopCustomGetHandler;
-
-impl CustomGetHandler for NoopCustomGetHandler {
-    fn handle(
-        &self,
-        _token: Option<RequestToken>,
-        _request: Bytes,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
-    }
-}
-
 impl<D: Map, S: DocStore> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db_and_store(db: D, docs: S) -> Self {
@@ -184,7 +168,6 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             keylog: false,
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
-            custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: LinkSeqCollectionParser,
             gc_policy: GcPolicy::Disabled,
@@ -213,7 +196,6 @@ where
             secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
-            custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: value,
             derp_mode: self.derp_mode,
@@ -237,7 +219,6 @@ where
             secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
-            custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: self.rpc_endpoint,
             derp_mode: self.derp_mode,
@@ -268,14 +249,6 @@ where
     pub fn derp_mode(mut self, dm: DerpMode) -> Self {
         self.derp_mode = dm;
         self
-    }
-
-    /// Configure the custom get handler.
-    pub fn custom_get_handler(self, custom_get_handler: Arc<dyn CustomGetHandler>) -> Self {
-        Self {
-            custom_get_handler,
-            ..self
-        }
     }
 
     /// Configures a custom authorization handler.
@@ -435,7 +408,6 @@ where
                         handler,
                         self.rpc_endpoint,
                         internal_rpc,
-                        self.custom_get_handler,
                         self.auth_handler,
                         self.collection_parser,
                         rt3,
@@ -482,7 +454,6 @@ where
         handler: RpcHandler<D, S, C>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
-        custom_get_handler: Arc<dyn CustomGetHandler>,
         auth_handler: Arc<dyn RequestAuthorizationHandler>,
         collection_parser: C,
         rt: runtime::Handle,
@@ -549,11 +520,10 @@ where
                     let gossip = gossip.clone();
                     let inner = handler.inner.clone();
                     let collection_parser = collection_parser.clone();
-                    let custom_get_handler = custom_get_handler.clone();
                     let auth_handler = auth_handler.clone();
                     let sync = handler.inner.sync.clone();
                     rt.main().spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, collection_parser, custom_get_handler, auth_handler).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, collection_parser, auth_handler).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -652,7 +622,6 @@ async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
     gossip: Gossip,
     sync: SyncEngine<S>,
     collection_parser: C,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
@@ -664,7 +633,6 @@ async fn handle_connection<D: BaoStore, S: DocStore, C: CollectionParser>(
                 node.db.clone(),
                 node.callbacks.clone(),
                 collection_parser,
-                custom_get_handler,
                 auth_handler,
                 node.rt.clone(),
             )

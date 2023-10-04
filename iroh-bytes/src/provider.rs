@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
-use bytes::Bytes;
 use futures::future::BoxFuture;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
@@ -17,7 +16,7 @@ use tracing_futures::Instrument;
 
 use crate::baomap::*;
 use crate::collection::CollectionParser;
-use crate::protocol::{write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken};
+use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
 
@@ -238,17 +237,6 @@ pub trait RequestAuthorizationHandler: Send + Sync + Debug + 'static {
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
-/// A custom get request handler that allows the user to make up a get request
-/// on the fly.
-pub trait CustomGetHandler: Send + Sync + Debug + 'static {
-    /// Handle the custom request, given an opaque data blob from the requester.
-    fn handle(
-        &self,
-        token: Option<RequestToken>,
-        request: Bytes,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
-}
-
 /// Read the request from the getter.
 ///
 /// Will fail if there is an error while reading, if the reader
@@ -380,7 +368,6 @@ pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
     db: D,
     events: E,
     collection_parser: C,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     rt: crate::util::runtime::Handle,
 ) {
@@ -407,20 +394,13 @@ pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
             };
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
-            let custom_get_handler = custom_get_handler.clone();
             let authorization_handler = authorization_handler.clone();
             let collection_parser = collection_parser.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
-                    if let Err(err) = handle_stream(
-                        db,
-                        reader,
-                        writer,
-                        custom_get_handler,
-                        authorization_handler,
-                        collection_parser,
-                    )
-                    .await
+                    if let Err(err) =
+                        handle_stream(db, reader, writer, authorization_handler, collection_parser)
+                            .await
                     {
                         warn!("error: {err:#?}",);
                     }
@@ -437,7 +417,6 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     collection_parser: C,
 ) -> Result<()> {
@@ -463,36 +442,7 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
 
     match request {
         Request::Get(request) => handle_get(db, request, collection_parser, writer).await,
-        Request::CustomGet(request) => {
-            handle_custom_get(db, request, writer, custom_get_handler, collection_parser).await
-        }
     }
-}
-async fn handle_custom_get<E: EventSender, D: Map, C: CollectionParser>(
-    db: D,
-    request: CustomGetRequest,
-    mut writer: ResponseWriter<E>,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
-    collection_parser: C,
-) -> Result<()> {
-    writer
-        .events
-        .send(Event::CustomGetRequestReceived {
-            len: request.data.len(),
-            connection_id: writer.connection_id(),
-            request_id: writer.request_id(),
-            token: request.token.clone(),
-        })
-        .await;
-    // try to make a GetRequest from the custom bytes
-    let request = custom_get_handler
-        .handle(request.token, request.data)
-        .await?;
-    // write it to the requester as the first thing
-    let data = postcard::to_stdvec(&request)?;
-    write_lp(&mut writer.inner, &data).await?;
-    // from now on just handle it like a normal get request
-    handle_get(db, request, collection_parser, writer).await
 }
 
 /// Handle a single standard get request.
