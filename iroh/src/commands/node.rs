@@ -6,12 +6,13 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use iroh::{
     baomap::flat::{self, Store as BaoFsStore},
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
+    util::{fs::load_secret_key, path::IrohPaths},
 };
 use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{
@@ -20,10 +21,9 @@ use iroh_net::{
 };
 use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
-use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
 
-use crate::{commands::add, config::IrohPaths};
+use crate::{commands::add, config::path_with_env};
 
 use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 
@@ -89,17 +89,17 @@ async fn start_daemon_node(
     rt: &runtime::Handle,
     opts: StartOptions,
 ) -> Result<Node<BaoFsStore, DocFsStore>> {
-    let blob_dir = IrohPaths::BaoFlatStoreComplete.with_env()?;
-    let partial_blob_dir = IrohPaths::BaoFlatStorePartial.with_env()?;
-    let meta_dir = IrohPaths::BaoFlatStoreMeta.with_env()?;
-    let peer_data_path = IrohPaths::PeerData.with_env()?;
+    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
+    let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
+    let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
+    let peer_data_path = path_with_env(IrohPaths::PeerData)?;
     tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::fs::create_dir_all(&partial_blob_dir).await?;
     let bao_store = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let key = Some(IrohPaths::SecretKey.with_env()?);
-    let doc_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_env()?)?;
+    let key = Some(path_with_env(IrohPaths::SecretKey)?);
+    let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
     spawn_daemon_node(rt, bao_store, doc_store, key, peer_data_path, opts).await
 }
 
@@ -149,41 +149,7 @@ async fn spawn_daemon_node<B: BaoStore, D: DocStore>(
 
 async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
     match key {
-        Some(key_path) => {
-            if key_path.exists() {
-                let keystr = tokio::fs::read(key_path).await?;
-                let secret_key = SecretKey::try_from_openssh(keystr).context("invalid keyfile")?;
-                Ok(secret_key)
-            } else {
-                let secret_key = SecretKey::generate();
-                let ser_key = secret_key.to_openssh()?;
-
-                // Try to canoncialize if possible
-                let key_path = key_path.canonicalize().unwrap_or(key_path);
-                let key_path_parent = key_path.parent().ok_or_else(|| {
-                    anyhow!("no parent directory found for '{}'", key_path.display())
-                })?;
-                tokio::fs::create_dir_all(&key_path_parent).await?;
-
-                // write to tempfile
-                let (file, temp_file_path) = tempfile::NamedTempFile::new_in(key_path_parent)
-                    .context("unable to create tempfile")?
-                    .into_parts();
-                let mut file = tokio::fs::File::from_std(file);
-                file.write_all(ser_key.as_bytes())
-                    .await
-                    .context("unable to write keyfile")?;
-                file.flush().await?;
-                drop(file);
-
-                // move file
-                tokio::fs::rename(temp_file_path, key_path)
-                    .await
-                    .context("failed to rename keyfile")?;
-
-                Ok(secret_key)
-            }
-        }
+        Some(key_path) => load_secret_key(key_path).await,
         None => {
             // No path provided, just generate one
             Ok(SecretKey::generate())

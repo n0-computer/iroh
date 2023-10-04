@@ -6,12 +6,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::config::{IrohPaths, NodeConfig};
+use crate::config::{path_with_env, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::util::progress::ProgressWriter;
+use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
@@ -778,7 +778,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
             SecretKey::try_from(&bytes[..])?
         }
         SecretKeyOption::Local => {
-            let path = IrohPaths::SecretKey.with_env()?;
+            let path = path_with_env(IrohPaths::SecretKey)?;
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
                 SecretKey::try_from_openssh(bytes)?
