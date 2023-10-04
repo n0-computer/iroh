@@ -309,11 +309,13 @@ pub enum RpcCommands {
     },
     /// Manage tags
     ///
-    /// Tags are how iroh keeps track of data that is important to the user.
-    /// Anything that is added or downloaded explicitly will be tagged, either
-    /// with a user-provided tag or with an automatically generated tag.
-    ///
-    /// Data that is tagged will not be deleted by iroh.
+    /// Tags are local, human-readable names for things iroh should keep.
+    /// Anything added with explicit commands like `iroh get` or `doc join`
+    /// will be tagged & kept until the tag is removed. If no tag is given
+    /// while running an explicit command, iroh will automatically generate 
+    /// a tag.
+    /// 
+    /// Any data iroh fetches without a tag will be periodically deleted.
     Tag {
         #[clap(subcommand)]
         command: TagCommands,
