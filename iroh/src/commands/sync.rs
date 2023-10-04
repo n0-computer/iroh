@@ -569,29 +569,39 @@ pub async fn import_coordinator(
     // new task to iterate through the stream of added files
     // and send them through the `doc_set_updates` `UpdateSink`
     // to get added to the doc
-    //
-    // TODO: catch errors and signal stop if error occurs in task
     let add_progress_task = tokio::spawn(async move {
         let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
         while let Some(item) = blob_add_progress.next().await {
             match item? {
                 AddProgress::Found { name, id, size } => {
                     tracing::trace!("Found({id},{name},{size})");
-                    task_mp.found(name.clone(), id, size);
+                    task_mp.found(name.clone(), id, size).await;
                     collections.insert(id, (name, size, None));
                 }
                 AddProgress::Progress { id, offset } => {
                     tracing::trace!("Progress({id}, {offset})");
-                    task_mp.add_progress(id, offset);
+                    task_mp.add_progress(id, offset).await;
                 }
                 AddProgress::Done { hash, id } => {
                     tracing::trace!("Done({id},{hash:?})");
-                    task_mp.adding_to_doc(id);
+                    task_mp.adding_to_doc(id).await;
                     match collections.get_mut(&id) {
                         Some((path_str, size, ref mut h)) => {
                             *h = Some(hash);
-                            let key =
-                                key_from_path_str(root.clone(), prefix.clone(), path_str.clone())?;
+                            let key = match key_from_path_str(
+                                root.clone(),
+                                prefix.clone(),
+                                path_str.clone(),
+                            ) {
+                                Ok(k) => k,
+                                Err(e) => {
+                                    doc_set_updates
+                                        .send(DocSetStreamUpdate::Abort)
+                                        .await
+                                        .expect("receiver dropped");
+                                    anyhow::bail!("issue creating key for entry {hash:?}: {e}");
+                                }
+                            };
                             // send update to doc
                             doc_set_updates
                                 .send(DocSetStreamUpdate::Entry {
@@ -600,7 +610,8 @@ pub async fn import_coordinator(
                                     hash,
                                     size: *size,
                                 })
-                                .await?;
+                                .await
+                                .expect("receiver dropped");
                         }
                         None => {
                             anyhow::bail!("Got Done for unknown collection id {id}");
@@ -612,7 +623,11 @@ pub async fn import_coordinator(
                     break;
                 }
                 AddProgress::Abort(e) => {
-                    task_mp.error();
+                    task_mp.error().await;
+                    doc_set_updates
+                        .send(DocSetStreamUpdate::Abort)
+                        .await
+                        .expect("receiver dropped");
                     anyhow::bail!("Error while adding data: {e}");
                 }
             }
@@ -624,17 +639,17 @@ pub async fn import_coordinator(
     while let Some(res) = doc_set_progress.next().await {
         match res? {
             DocSetProgress::Done { id, size, .. } => {
-                mp.done(id);
+                mp.done(id).await;
                 entries += 1;
                 total_size += size;
             }
             DocSetProgress::AllDone => {
-                mp.all_done();
+                mp.all_done().await;
                 add_progress_task.abort();
                 return Ok((entries, total_size));
             }
             DocSetProgress::Abort(e) => {
-                mp.error();
+                mp.error().await;
                 add_progress_task.abort();
                 anyhow::bail!("Error while adding entry to doc: {e}")
             }
@@ -721,51 +736,57 @@ impl ImportProgressState {
         }
     }
 
-    fn found(&mut self, name: String, id: u64, size: u64) {
+    async fn found(&mut self, name: String, id: u64, size: u64) {
         if !self.sender.is_disconnected() {
             self.sender
-                .send(ImportProgressEvent::Found { name, id, size })
+                .send_async(ImportProgressEvent::Found { name, id, size })
+                .await
                 .expect("checked");
         }
     }
 
-    fn add_progress(&mut self, id: u64, progress: u64) {
+    async fn add_progress(&mut self, id: u64, progress: u64) {
         if !self.sender.is_disconnected() {
             self.sender
-                .send(ImportProgressEvent::AddProgress { id, progress })
+                .send_async(ImportProgressEvent::AddProgress { id, progress })
+                .await
                 .expect("checked");
         }
     }
 
-    fn adding_to_doc(&mut self, id: u64) {
+    async fn adding_to_doc(&mut self, id: u64) {
         if !self.sender.is_disconnected() {
             self.sender
-                .send(ImportProgressEvent::AddingToDoc { id })
+                .send_async(ImportProgressEvent::AddingToDoc { id })
+                .await
                 .expect("checked");
         }
     }
 
-    fn done(&mut self, id: u64) {
+    async fn done(&mut self, id: u64) {
         if !self.sender.is_disconnected() {
             self.sender
-                .send(ImportProgressEvent::Done { id })
+                .send_async(ImportProgressEvent::Done { id })
+                .await
                 .expect("checked");
         }
     }
 
-    fn all_done(self) {
+    async fn all_done(self) {
         if !self.sender.is_disconnected() {
             self.sender
-                .send(ImportProgressEvent::AllDone)
+                .send_async(ImportProgressEvent::AllDone)
+                .await
                 .expect("checked");
         }
         self.shutdown();
     }
 
-    fn error(self) {
+    async fn error(self) {
         if !self.sender.is_disconnected() {
             self.sender
-                .send(ImportProgressEvent::Error)
+                .send_async(ImportProgressEvent::Error)
+                .await
                 .expect("receiever dropped");
         }
         self.shutdown();
