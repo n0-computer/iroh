@@ -28,7 +28,7 @@ use std::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
     },
-    task::{Context, Poll, Waker},
+    task::{ready, Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -200,8 +200,7 @@ pub struct MagicSock {
 #[derive(derive_more::Debug)]
 struct Inner {
     actor_sender: mpsc::Sender<ActorMessage>,
-    /// Sends network messages.
-    network_sender: mpsc::Sender<Vec<quinn_udp::Transmit>>,
+    derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     /// String representation of the peer_id of this node.
     me: String,
     #[allow(clippy::type_complexity)]
@@ -249,6 +248,7 @@ struct Inner {
     net_checker: netcheck::Client,
     /// The state for an active DiscoKey.
     disco_info: parking_lot::Mutex<HashMap<PublicKey, DiscoInfo>>,
+    udp_state: quinn_udp::UdpState,
 }
 
 impl Inner {
@@ -285,6 +285,261 @@ impl Inner {
 
     fn public_key(&self) -> PublicKey {
         self.secret_key.public()
+    }
+
+    /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
+    fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+        *self.local_addrs.read().unwrap()
+    }
+    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
+        let (v4, v6) = self.local_addr();
+        let addr = if let Some(v6) = v6 { v6 } else { v4 };
+        Ok(addr)
+    }
+
+    #[instrument(skip_all, fields(me = %self.me))]
+    fn poll_send(
+        &self,
+        cx: &mut Context,
+        transmits: &[quinn_udp::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
+        inc_by!(MagicsockMetrics, send_data, bytes_total as _);
+
+        if self.is_closed() {
+            inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            )));
+        }
+
+        let mut n = 0;
+        if transmits.is_empty() {
+            return Poll::Ready(Ok(n));
+        }
+
+        trace!(
+            "sending:\n{}",
+            transmits.iter().fold(
+                String::with_capacity(transmits.len() * 50),
+                |mut final_repr, t| {
+                    final_repr.push_str(
+                        format!(
+                            "  dest: {}, src: {:?}, content_len: {}\n",
+                            QuicMappedAddr(t.destination),
+                            t.src_ip,
+                            t.contents.len()
+                        )
+                        .as_str(),
+                    );
+                    final_repr
+                }
+            )
+        );
+
+        let dest = transmits[0].destination;
+        for transmit in transmits.iter() {
+            if transmit.destination != dest {
+                break;
+            }
+            n += 1;
+        }
+        // TODO: This is the remaining alloc on the hot path for send.
+        // Unfortunately I don't see a way around this because we have do modify the transmits.
+        let mut transmits = transmits[..n].to_vec();
+        let dest = QuicMappedAddr(dest);
+
+        match self.peer_map.get_send_addrs_for_quic_mapped_addr(&dest) {
+            // TODO: Handle ping actions
+            Some((public_key, udp_addr, derp_region, mut msgs)) => {
+                trace!("Sending to endpoint for {:?} ({:?})", dest, public_key);
+                // If we have pings to send, we *have* to send them out first.
+                if !msgs.is_empty() {
+                    ready!(self.poll_handle_ping_actions(cx, &mut msgs))?;
+                }
+                if let Some(addr) = udp_addr {
+                    for t in transmits.iter_mut() {
+                        t.destination = addr;
+                    }
+                    if addr.is_ipv6() && self.pconn6.is_none() {
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "no IPv6 connection",
+                        )));
+                    }
+                    let conn = if addr.is_ipv6() {
+                        self.pconn6.as_ref().unwrap()
+                    } else {
+                        &self.pconn4
+                    };
+                    let n = ready!(conn.poll_send(&self.udp_state, cx, &transmits))?;
+                    debug!(?public_key, ?addr, ?n, "sent udp");
+                    if let Some(derp_region) = derp_region {
+                        transmits.truncate(n);
+                        self.send_derp(derp_region, public_key, split_packets(transmits));
+                    }
+                    Poll::Ready(Ok(n))
+                } else if let Some(derp_region) = derp_region {
+                    self.send_derp(derp_region, public_key, split_packets(transmits));
+                    Poll::Ready(Ok(n))
+                } else {
+                    warn!("no UDP or DERP addr");
+                    Poll::Ready(Ok(n))
+                }
+            }
+            None => {
+                error!(addr=%dest, "no endpoint for mapped address");
+                Poll::Ready(Ok(n))
+            }
+        }
+    }
+
+    #[instrument(skip_all, fields(me = %self.me))]
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        // FIXME: currently ipv4 load results in ipv6 traffic being ignored
+        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        if self.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            )));
+        }
+
+        // order of polling is: UDPv4, UDPv6, Derp
+        let msgs = match self.pconn4.poll_recv(cx, bufs, metas)? {
+            Poll::Pending | Poll::Ready(0) => match &self.pconn6 {
+                Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
+                    Poll::Pending | Poll::Ready(0) => {
+                        return self.poll_recv_derp(cx, bufs, metas);
+                    }
+                    Poll::Ready(n) => n,
+                },
+                None => {
+                    return self.poll_recv_derp(cx, bufs, metas);
+                }
+            },
+            Poll::Ready(n) => n,
+        };
+
+        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+
+        let mut num_msgs = 0;
+
+        for (meta, buf) in metas.into_iter().zip(bufs.iter()).take(msgs) {
+            let mut start = 0;
+
+            // find disco and stun packets and forward them to the actor
+            loop {
+                let end = start + meta.stride;
+                if end > buf.len() {
+                    break;
+                }
+                let packet = &buf[start..end];
+                if stun::is(&packet) {
+                    trace!("UDP recv: stun packet");
+                    let packet = Bytes::copy_from_slice(packet);
+                    self.net_checker.receive_stun_packet(packet, meta.addr);
+                } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
+                    // Disco?
+                    trace!("UDP recv: disco packet: {:?}", meta);
+                    self.handle_disco_message(sender, &sealed_box, SendAddr::Udp(meta.addr), None);
+                }
+                start = end;
+            }
+
+            // remap addr
+            match self
+                .peer_map
+                .get_quic_mapped_addr_for_ip_port(&SendAddr::Udp(meta.addr))
+            {
+                None => {
+                    warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
+                }
+                Some(quic_mapped_addr) => {
+                    debug!("peer_map state found for {}", meta.addr);
+                    num_msgs += meta.len / meta.stride;
+                    meta.addr = quic_mapped_addr.0;
+                }
+            }
+            // Normalize local_ip
+            meta.dst_ip = dst_ip;
+        }
+
+        if num_msgs > 0 {
+            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
+            trace!("received {} datagrams", num_msgs);
+            return Poll::Ready(Ok(num_msgs));
+        }
+
+        Poll::Ready(Ok(msgs))
+    }
+
+    #[instrument(skip_all, fields(name = %self.me))]
+    fn poll_recv_derp(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        let mut num_msgs = 0;
+        for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
+            match self.derp_recv_receiver.try_recv() {
+                Err(flume::TryRecvError::Empty) => {
+                    self.network_recv_wakers
+                        .lock()
+                        .unwrap()
+                        .replace(cx.waker().clone());
+                    break;
+                }
+                Err(flume::TryRecvError::Disconnected) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "connection closed",
+                    )));
+                }
+                Ok(dm) => {
+                    if self.is_closed() {
+                        break;
+                    }
+
+                    match dm {
+                        DerpRecvResult::Error(err) => {
+                            return Poll::Ready(Err(err));
+                        }
+                        DerpRecvResult::Ok { bytes, meta } => {
+                            buf_out[..bytes.len()].copy_from_slice(&bytes);
+                            *meta_out = meta;
+
+                            inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
+                            trace!(
+                                "[QUINN] <- {} ({}b) ({}) ({:?}, DERP)",
+                                meta_out.addr,
+                                meta_out.len,
+                                self.me,
+                                meta_out.dst_ip,
+                            );
+                        }
+                    }
+
+                    num_msgs += 1;
+                }
+            }
+        }
+
+        // If we have any msgs to report, they are in the first `num_msgs_total` slots
+        if num_msgs > 0 {
+            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
+            trace!("received {} datagrams", num_msgs);
+            return Poll::Ready(Ok(num_msgs));
+        }
+
+        Poll::Pending
     }
 
     /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
@@ -507,6 +762,125 @@ impl Inner {
             Ok(()) => {}
         }
     }
+
+    fn encode_disco_message(&self, dst_key: PublicKey, msg: &disco::Message) -> Bytes {
+        let seal = {
+            let mut disco_info = self.disco_info.lock();
+            let di = get_disco_info(&mut disco_info, &self.secret_key, &dst_key);
+            let mut seal = msg.as_bytes();
+            di.shared_key.seal(&mut seal);
+            seal
+        };
+
+        disco::encode_message(&self.public_key(), seal).into()
+    }
+
+    fn poll_handle_ping_actions(
+        &self,
+        cx: &mut Context<'_>,
+        msgs: &mut Vec<PingAction>,
+    ) -> Poll<io::Result<()>> {
+        if msgs.is_empty() {
+            return Poll::Ready(Ok(()));
+        }
+        while let Some(msg) = msgs.pop() {
+            // Abort sending as soon as we know we are shutting down.
+            if self.is_closing() || self.is_closed() {
+                return Poll::Ready(Ok(()));
+            }
+            match msg {
+                PingAction::EnqueueCallMeMaybe {
+                    derp_region,
+                    endpoint_id,
+                } => {
+                    let msg = ActorMessage::EnqueueCallMeMaybe {
+                        derp_region,
+                        endpoint_id,
+                    };
+                    match self.actor_sender.try_send(msg) {
+                        Ok(_) => {}
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            error!("magicsock actor dropped");
+                        }
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            warn!("actor channel is full, dropping CallMeMaybe message");
+                        }
+                    }
+                }
+                PingAction::SendPing {
+                    id,
+                    dst,
+                    dst_key,
+                    tx_id,
+                    purpose,
+                } => {
+                    let msg = disco::Message::Ping(disco::Ping {
+                        tx_id,
+                        node_key: self.public_key(),
+                    });
+                    let pkt = self.encode_disco_message(dst_key, &msg);
+                    let is_derp = dst.is_derp();
+                    if is_derp {
+                        inc!(MagicsockMetrics, send_disco_derp);
+                    } else {
+                        inc!(MagicsockMetrics, send_disco_udp);
+                    }
+
+                    match dst {
+                        SendAddr::Udp(addr) => {
+                            let transmit = quinn_udp::Transmit {
+                                destination: addr,
+                                contents: pkt,
+                                ecn: None,
+                                segment_size: None,
+                                src_ip: None, // TODO
+                            };
+                            let conn = if addr.is_ipv6() {
+                                self.pconn6.as_ref().unwrap()
+                            } else {
+                                &self.pconn4
+                            };
+                            ready!(conn.poll_send(&self.udp_state, cx, &[transmit]))?;
+                            let msg_sender = self.actor_sender.clone();
+                            self.peer_map.write(move |pm| {
+                                if let Some(ep) = pm.by_id_mut(&id) {
+                                    ep.ping_sent(dst, tx_id, purpose, msg_sender);
+                                }
+                            });
+                        }
+                        SendAddr::Derp(region) => {
+                            self.send_derp(region, dst_key, vec![pkt]);
+                            let msg_sender = self.actor_sender.clone();
+                            self.peer_map.write(move |pm| {
+                                if let Some(ep) = pm.by_id_mut(&id) {
+                                    ep.ping_sent(dst, tx_id, purpose, msg_sender);
+                                }
+                            })
+                        }
+                    }
+                }
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: Vec<Bytes>) {
+        let msg = DerpActorMessage::Send {
+            region_id,
+            contents,
+            peer,
+        };
+        match self.derp_actor_sender.try_send(msg) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!("unable to send to derp actor, already closed");
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("dropping message for derp actor, channel is full");
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -599,7 +973,6 @@ impl MagicSock {
 
         let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
         let (actor_sender, actor_receiver) = mpsc::channel(128);
-        let (network_sender, network_receiver) = mpsc::channel(128);
 
         // load the peer data
         let peer_map = match peers_path.as_ref() {
@@ -617,6 +990,9 @@ impl MagicSock {
             _ => PeerMap::default(),
         };
 
+        let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
+        let udp_state = quinn_udp::UdpState::default();
+
         let inner = Arc::new(Inner {
             me,
             on_endpoints,
@@ -631,7 +1007,6 @@ impl MagicSock {
             network_recv_wakers: std::sync::Mutex::new(None),
             network_send_wakers: std::sync::Mutex::new(None),
             actor_sender: actor_sender.clone(),
-            network_sender,
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map,
             my_derp: AtomicU16::new(0),
@@ -640,11 +1015,10 @@ impl MagicSock {
             net_checker: net_checker.clone(),
             disco_info: parking_lot::Mutex::new(HashMap::new()),
             peer_map,
+            derp_actor_sender: derp_actor_sender.clone(),
+            udp_state,
         });
 
-        let udp_state = quinn_udp::UdpState::default();
-
-        let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
         let derp_actor_task = tokio::task::spawn(
             async move {
@@ -660,7 +1034,6 @@ impl MagicSock {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
                     derp_actor_sender,
-                    network_receiver,
                     inner: inner2,
                     derp_recv_sender,
                     endpoints_update_state: EndpointUpdateState::new(),
@@ -673,7 +1046,6 @@ impl MagicSock {
                     port_mapper,
                     pconn4,
                     pconn6,
-                    udp_state,
                     no_v4_send: false,
                     net_checker,
                 };
@@ -730,7 +1102,7 @@ impl MagicSock {
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        Ok(*self.inner.local_addrs.read().unwrap())
+        Ok(self.inner.local_addr())
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
@@ -868,75 +1240,6 @@ impl MagicSock {
             .unwrap();
         r.await.unwrap();
     }
-
-    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        self.local_addr()
-            .map(|(v4, v6)| if let Some(v6) = v6 { v6 } else { v4 })
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err}")))
-    }
-
-    #[instrument(skip_all, fields(name = %self.inner.me))]
-    fn poll_recv_derp(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        let mut num_msgs = 0;
-        for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
-            match self.inner.derp_recv_receiver.try_recv() {
-                Err(flume::TryRecvError::Empty) => {
-                    self.inner
-                        .network_recv_wakers
-                        .lock()
-                        .unwrap()
-                        .replace(cx.waker().clone());
-                    break;
-                }
-                Err(flume::TryRecvError::Disconnected) => {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "connection closed",
-                    )));
-                }
-                Ok(dm) => {
-                    if self.inner.is_closed() {
-                        break;
-                    }
-
-                    match dm {
-                        DerpRecvResult::Error(err) => {
-                            return Poll::Ready(Err(err));
-                        }
-                        DerpRecvResult::Ok { bytes, meta } => {
-                            buf_out[..bytes.len()].copy_from_slice(&bytes);
-                            *meta_out = meta;
-
-                            inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
-                            trace!(
-                                "[QUINN] <- {} ({}b) ({}) ({:?}, DERP)",
-                                meta_out.addr,
-                                meta_out.len,
-                                self.inner.me,
-                                meta_out.dst_ip,
-                            );
-                        }
-                    }
-
-                    num_msgs += 1;
-                }
-            }
-        }
-
-        // If we have any msgs to report, they are in the first `num_msgs_total` slots
-        if num_msgs > 0 {
-            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
-            trace!("received {} datagrams", num_msgs);
-            return Poll::Ready(Ok(num_msgs));
-        }
-
-        Poll::Pending
-    }
 }
 
 /// The info and state for the DiscoKey in the MagicSock.discoInfo map key.
@@ -1005,52 +1308,7 @@ impl AsyncUdpSocket for MagicSock {
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
-        let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
-        inc_by!(MagicsockMetrics, send_data, bytes_total as _);
-
-        if self.inner.is_closed() {
-            inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
-        }
-
-        let mut n = 0;
-        if transmits.is_empty() {
-            return Poll::Ready(Ok(n));
-        }
-
-        // Split up transmits by destination, as the rest of the code assumes single dest.
-        let groups = TransmitIter::new(transmits);
-        for group in groups {
-            match self.inner.network_sender.try_reserve() {
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    // TODO: add counter?
-                    self.inner
-                        .network_send_wakers
-                        .lock()
-                        .unwrap()
-                        .replace(cx.waker().clone());
-                    break;
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "connection closed",
-                    )));
-                }
-                Ok(permit) => {
-                    n += group.len();
-                    permit.send(group);
-                }
-            }
-        }
-        if n > 0 {
-            return Poll::Ready(Ok(n));
-        }
-
-        Poll::Pending
+        self.inner.poll_send(cx, transmits)
     }
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
@@ -1060,90 +1318,7 @@ impl AsyncUdpSocket for MagicSock {
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        // FIXME: currently ipv4 load results in ipv6 traffic being ignored
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        if self.inner.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
-        }
-
-        // order of polling is: UDPv4, UDPv6, Derp
-        let msgs = match self.inner.pconn4.poll_recv(cx, bufs, metas)? {
-            Poll::Pending | Poll::Ready(0) => match &self.inner.pconn6 {
-                Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
-                    Poll::Pending | Poll::Ready(0) => {
-                        return self.poll_recv_derp(cx, bufs, metas);
-                    }
-                    Poll::Ready(n) => n,
-                },
-                None => {
-                    return self.poll_recv_derp(cx, bufs, metas);
-                }
-            },
-            Poll::Ready(n) => n,
-        };
-
-        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-
-        let mut num_msgs = 0;
-
-        for (meta, buf) in metas.into_iter().zip(bufs.iter()).take(msgs) {
-            let mut start = 0;
-
-            // find disco and stun packets and forward them to the actor
-            loop {
-                let end = start + meta.stride;
-                if end > buf.len() {
-                    break;
-                }
-                let packet = &buf[start..end];
-                if stun::is(&packet) {
-                    trace!("UDP recv: stun packet");
-                    let packet = Bytes::copy_from_slice(packet);
-                    self.inner
-                        .net_checker
-                        .receive_stun_packet(packet, meta.addr);
-                } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
-                    // Disco?
-                    trace!("UDP recv: disco packet: {:?}", meta);
-                    self.inner.handle_disco_message(
-                        sender,
-                        &sealed_box,
-                        SendAddr::Udp(meta.addr),
-                        None,
-                    );
-                }
-                start = end;
-            }
-
-            // remap addr
-            match self
-                .inner
-                .peer_map
-                .get_quic_mapped_addr_for_ip_port(&SendAddr::Udp(meta.addr))
-            {
-                None => {
-                    warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
-                }
-                Some(quic_mapped_addr) => {
-                    debug!("peer_map state found for {}", meta.addr);
-                    num_msgs += meta.len / meta.stride;
-                    meta.addr = quic_mapped_addr.0;
-                }
-            }
-            // Normalize local_ip
-            meta.dst_ip = dst_ip;
-        }
-
-        if num_msgs > 0 {
-            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
-            trace!("received {} datagrams", num_msgs);
-            return Poll::Ready(Ok(num_msgs));
-        }
-
-        Poll::Ready(Ok(msgs))
+        self.inner.poll_recv(cx, bufs, metas)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -1201,8 +1376,6 @@ struct Actor {
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
-    // udp_actor_sender: mpsc::Sender<UdpActorMessage>,
-    network_receiver: mpsc::Receiver<Vec<quinn_udp::Transmit>>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<DerpRecvResult>,
     /// Indicates the update endpoint state.
@@ -1227,7 +1400,6 @@ struct Actor {
     // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
-    udp_state: quinn_udp::UdpState,
 
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
@@ -1292,10 +1464,6 @@ impl Actor {
 
         loop {
             tokio::select! {
-                Some(transmits) = self.network_receiver.recv() => {
-                    trace!("tick: network send");
-                    self.send_network(transmits).await;
-                }
                 Some(msg) = self.msg_receiver.recv() => {
                     trace!(?msg, "tick: msg");
                     if self.handle_actor_message(msg).await {
@@ -1339,50 +1507,14 @@ impl Actor {
         }
     }
 
-    async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
+    async fn handle_ping_actions(&mut self, mut msgs: Vec<PingAction>) {
         if msgs.is_empty() {
             return;
         }
-
-        info!("handle_ping_actions ({}): {:?}", msgs.len(), msgs);
-        for msg in msgs {
-            // Abort sending as soon as we know we are shutting down.
-            if self.inner.is_closing() || self.inner.is_closed() {
-                break;
-            }
-            match msg {
-                PingAction::EnqueueCallMeMaybe {
-                    derp_region,
-                    endpoint_id,
-                } => {
-                    self.enqueue_call_me_maybe(derp_region, endpoint_id).await;
-                }
-                PingAction::SendPing {
-                    id,
-                    dst,
-                    dst_key,
-                    tx_id,
-                    purpose,
-                } => {
-                    let msg = disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        node_key: self.inner.public_key(),
-                    });
-                    match self.send_disco_message(dst, dst_key, msg).await {
-                        Ok(true) => {
-                            let msg_sender = self.msg_sender.clone();
-                            self.inner.peer_map.write(move |pm| {
-                                if let Some(ep) = pm.by_id_mut(&id) {
-                                    ep.ping_sent(dst, tx_id, purpose, msg_sender);
-                                }
-                            })
-                        }
-                        _ => {
-                            debug!("failed to send ping to {:?}", dst);
-                        }
-                    }
-                }
-            }
+        if let Err(err) =
+            futures::future::poll_fn(|cx| self.inner.poll_handle_ping_actions(cx, &mut msgs)).await
+        {
+            debug!("failed to send pings: {err:?}");
         }
     }
 
@@ -1582,110 +1714,6 @@ impl Actor {
         }
 
         out
-    }
-
-    /// Split a number of transmits into individual packets.
-    ///
-    /// For each transmit, if it has a segment size, it will be split into
-    /// multiple packets according to that segment size. If it does not have a
-    /// segment size, the contents will be sent as a single packet.
-    fn split_packets(transmits: Vec<quinn_udp::Transmit>) -> Vec<Bytes> {
-        let mut res = Vec::with_capacity(transmits.len());
-        for transmit in transmits {
-            let contents = transmit.contents;
-            if let Some(segment_size) = transmit.segment_size {
-                for chunk in contents.chunks(segment_size) {
-                    res.push(contents.slice_ref(chunk));
-                }
-            } else {
-                res.push(contents);
-            }
-        }
-        res
-    }
-
-    async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
-        trace!(
-            "sending:\n{}",
-            transmits.iter().fold(
-                String::with_capacity(transmits.len() * 50),
-                |mut final_repr, t| {
-                    final_repr.push_str(
-                        format!(
-                            "  dest: {}, src: {:?}, content_len: {}\n",
-                            QuicMappedAddr(t.destination),
-                            t.src_ip,
-                            t.contents.len()
-                        )
-                        .as_str(),
-                    );
-                    final_repr
-                }
-            )
-        );
-
-        if transmits.is_empty() {
-            return;
-        }
-        let current_destination = &transmits[0].destination;
-        debug_assert!(
-            transmits
-                .iter()
-                .all(|t| &t.destination == current_destination),
-            "mixed destinations"
-        );
-        let current_destination = QuicMappedAddr(*current_destination);
-
-        match self
-            .inner
-            .peer_map
-            .get_send_addrs_for_quic_mapped_addr(&current_destination)
-        {
-            Some((public_key, udp_addr, derp_region, msgs)) => {
-                trace!(
-                    "Sending to endpoint for {:?} ({:?})",
-                    current_destination,
-                    public_key
-                );
-
-                self.handle_ping_actions(msgs).await;
-                match (udp_addr, derp_region) {
-                    (Some(udp_addr), Some(derp_region)) => {
-                        let res = self.send_raw(udp_addr, transmits.clone()).await;
-                        self.send_derp(derp_region, public_key, Self::split_packets(transmits));
-
-                        if let Err(err) = res {
-                            warn!("failed to send UDP: {:?}", err);
-                        }
-                    }
-                    (None, Some(derp_region)) => {
-                        self.send_derp(derp_region, public_key, Self::split_packets(transmits));
-                    }
-                    (Some(udp_addr), None) => {
-                        if let Err(err) = self.send_raw(udp_addr, transmits).await {
-                            warn!("failed to send UDP: {:?}", err);
-                        }
-                    }
-                    (None, None) => {
-                        warn!("no UDP or DERP addr")
-                    }
-                }
-            }
-            None => {
-                // TODO: This should not be possible.  We should have errored during the
-                // AsyncUdpSocket::poll_send call.
-                error!(addr=%current_destination, "no endpoint for mapped address");
-            }
-        }
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    fn send_derp(&mut self, region_id: u16, peer: PublicKey, contents: Vec<Bytes>) {
-        self.send_derp_actor(DerpActorMessage::Send {
-            region_id,
-            contents,
-            peer,
-        });
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
@@ -2266,14 +2294,7 @@ impl Actor {
             bail!("connection closed");
         }
 
-        let seal = {
-            let mut disco_info = self.inner.disco_info.lock();
-            let di = get_disco_info(&mut disco_info, &self.inner.secret_key, &dst_key);
-            let mut seal = msg.as_bytes();
-            di.shared_key.seal(&mut seal);
-            seal
-        };
-
+        let pkt = self.inner.encode_disco_message(dst_key, &msg);
         let is_derp = dst.is_derp();
         if is_derp {
             inc!(MagicsockMetrics, send_disco_derp);
@@ -2281,8 +2302,23 @@ impl Actor {
             inc!(MagicsockMetrics, send_disco_udp);
         }
 
-        let pkt = disco::encode_message(&self.inner.public_key(), seal);
-        let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
+        let sent = match dst {
+            SendAddr::Udp(addr) => {
+                let transmits = vec![quinn_udp::Transmit {
+                    destination: addr,
+                    contents: pkt,
+                    ecn: None,
+                    segment_size: None,
+                    src_ip: None, // TODO
+                }];
+                self.send_raw(addr, transmits).await
+            }
+            SendAddr::Derp(region) => {
+                self.inner.send_derp(region, dst_key, vec![pkt]);
+                Ok(1)
+            }
+        };
+
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
@@ -2313,38 +2349,6 @@ impl Actor {
                 warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
                 Err(err.into())
             }
-        }
-    }
-
-    /// Sends either to UDP or DERP, depending on the IP.
-    #[instrument(skip_all)]
-    async fn send_addr(
-        &mut self,
-        addr: SendAddr,
-        pub_key: Option<&PublicKey>,
-        pkt: Bytes,
-    ) -> io::Result<usize> {
-        match addr {
-            SendAddr::Udp(addr) => {
-                let transmits = vec![quinn_udp::Transmit {
-                    destination: addr,
-                    contents: pkt,
-                    ecn: None,
-                    segment_size: None,
-                    src_ip: None, // TODO
-                }];
-                self.send_raw(addr, transmits).await
-            }
-            SendAddr::Derp(region) => match pub_key {
-                None => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "missing pub key for derp route",
-                )),
-                Some(pub_key) => {
-                    self.send_derp(region, *pub_key, vec![pkt]);
-                    Ok(1)
-                }
-            },
         }
     }
 
@@ -2397,7 +2401,8 @@ impl Actor {
             }
         }
         let sum =
-            futures::future::poll_fn(|cx| conn.poll_send(&self.udp_state, cx, &transmits)).await?;
+            futures::future::poll_fn(|cx| conn.poll_send(&self.inner.udp_state, cx, &transmits))
+                .await?;
         let total_bytes: u64 = transmits
             .iter()
             .take(sum)
@@ -2542,43 +2547,24 @@ impl Display for SendAddr {
     }
 }
 
-/// A simple iterator to group [`Transmit`]s by destination.
+/// Split a number of transmits into individual packets.
 ///
-/// [`Transmit`]: quinn_udp::Transmit
-struct TransmitIter<'a> {
-    transmits: &'a [quinn_udp::Transmit],
-    offset: usize,
-}
-
-impl<'a> TransmitIter<'a> {
-    fn new(transmits: &'a [quinn_udp::Transmit]) -> Self {
-        TransmitIter {
-            transmits,
-            offset: 0,
-        }
-    }
-}
-
-impl Iterator for TransmitIter<'_> {
-    type Item = Vec<quinn_udp::Transmit>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.offset == self.transmits.len() {
-            return None;
-        }
-        let current_dest = &self.transmits[self.offset].destination;
-        let mut end = self.offset;
-        for t in &self.transmits[self.offset..] {
-            if current_dest != &t.destination {
-                break;
+/// For each transmit, if it has a segment size, it will be split into
+/// multiple packets according to that segment size. If it does not have a
+/// segment size, the contents will be sent as a single packet.
+fn split_packets(transmits: Vec<quinn_udp::Transmit>) -> Vec<Bytes> {
+    let mut res = Vec::with_capacity(transmits.len());
+    for transmit in transmits {
+        let contents = transmit.contents;
+        if let Some(segment_size) = transmit.segment_size {
+            for chunk in contents.chunks(segment_size) {
+                res.push(contents.slice_ref(chunk));
             }
-            end += 1;
+        } else {
+            res.push(contents);
         }
-
-        let out = self.transmits[self.offset..end].to_vec();
-        self.offset = end;
-        Some(out)
     }
+    res
 }
 
 /// Splits a packet into its component items.
@@ -3437,10 +3423,10 @@ pub(crate) mod tests {
                 .collect()
         }
         // no packets
-        assert_eq!(Actor::split_packets(vec![]), Vec::<Bytes>::default());
+        assert_eq!(split_packets(vec![]), Vec::<Bytes>::default());
         // no split
         assert_eq!(
-            Actor::split_packets(vec![
+            split_packets(vec![
                 mk_transmit(b"hello", None),
                 mk_transmit(b"world", None)
             ]),
@@ -3448,12 +3434,12 @@ pub(crate) mod tests {
         );
         // split without rest
         assert_eq!(
-            Actor::split_packets(vec![mk_transmit(b"helloworld", Some(5)),]),
+            split_packets(vec![mk_transmit(b"helloworld", Some(5)),]),
             mk_expected(["hello", "world"])
         );
         // split with rest and second transmit
         assert_eq!(
-            Actor::split_packets(vec![
+            split_packets(vec![
                 mk_transmit(b"hello world", Some(5)),
                 mk_transmit(b"!", None)
             ]),
@@ -3461,7 +3447,7 @@ pub(crate) mod tests {
         );
         // split that results in 1 packet
         assert_eq!(
-            Actor::split_packets(vec![
+            split_packets(vec![
                 mk_transmit(b"hello world", Some(1000)),
                 mk_transmit(b"!", None)
             ]),
