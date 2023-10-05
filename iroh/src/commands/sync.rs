@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -10,7 +9,8 @@ use clap::Parser;
 use colored::Colorize;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use tokio::{io::AsyncReadExt, task::JoinHandle};
+use iroh_net::util::AbortingJoinHandle;
+use tokio::io::AsyncReadExt;
 
 use iroh::{
     client::quic::{Doc, Iroh},
@@ -152,7 +152,6 @@ pub enum DocCommands {
         /// Path to a local file or directory to import
         ///
         /// Pathnames will be used as the document key
-        #[clap(long)]
         path: String,
         /// If true, don't copy the file into iroh, reference the existing file instead
         ///
@@ -169,11 +168,10 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         /// Key to the entry (parsed as UTF-8 string)
-        #[clap(short, long)]
         key: String,
         /// Path to export to
         #[clap(short, long)]
-        path: String,
+        out: String,
     },
     /// Watch for changes and events on a document
     Watch {
@@ -331,17 +329,23 @@ impl DocCommands {
                     Some(p) => p.to_path_buf(),
                     None => PathBuf::new(),
                 };
-                let (entries, size) =
-                    import_coordinator(doc.id(), root_prefix, prefix, stream, updates, progress)
-                        .await?;
-                println!("Imported {} entries totaling {}", entries, HumanBytes(size));
+                let ImportStats {
+                    total_entries,
+                    total_size,
+                } = import_coordinator(doc.id(), root_prefix, prefix, stream, updates, progress)
+                    .await?;
+                println!(
+                    "Imported {} entries totaling {}",
+                    total_entries,
+                    HumanBytes(total_size)
+                );
             }
-            Self::Export { doc, key, path } => {
+            Self::Export { doc, key, out } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let filter = GetFilter::Key(key);
-                let path: PathBuf = canonicalize_path(&path)?;
+                let path: PathBuf = canonicalize_path(&out)?;
 
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
@@ -552,7 +556,16 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
     }
 }
 
-pub async fn import_coordinator(
+struct ImportStats {
+    total_entries: u64,
+    total_size: u64,
+}
+
+/// Takes the appropriate streams and sinks from [`BlobsClient::add_from_path`] and [`DocsClient::set_hash_streaming`]
+/// and coordinates adding blobs to a document via the hash of the blob.
+/// It also creates and powers the [`ImportProgressBar`] and returns
+/// a tuple of the number of entries added, and the total size of those entries.
+async fn import_coordinator(
     doc_id: NamespaceId,
     root: PathBuf,
     prefix: String,
@@ -563,13 +576,13 @@ pub async fn import_coordinator(
         DocSetStreamUpdate,
     >,
     mut doc_set_progress: impl Stream<Item = Result<DocSetProgress>> + Unpin,
-) -> Result<(u64, u64)> {
-    let mut mp = ImportProgressState::new(doc_id);
+) -> Result<ImportStats> {
+    let (mut mp, _progress_bar_task) = ImportProgressBar::new(doc_id);
     let mut task_mp = mp.clone();
     // new task to iterate through the stream of added files
     // and send them through the `doc_set_updates` `UpdateSink`
     // to get added to the doc
-    let add_progress_task = tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
         while let Some(item) = blob_add_progress.next().await {
             match item? {
@@ -634,6 +647,7 @@ pub async fn import_coordinator(
         }
         Ok(())
     });
+    let _add_progress_task = AbortingJoinHandle::from(task);
     let mut entries = 0;
     let mut total_size = 0;
     while let Some(res) = doc_set_progress.next().await {
@@ -645,17 +659,18 @@ pub async fn import_coordinator(
             }
             DocSetProgress::AllDone => {
                 mp.all_done().await;
-                add_progress_task.abort();
-                return Ok((entries, total_size));
+                break;
             }
             DocSetProgress::Abort(e) => {
                 mp.error().await;
-                add_progress_task.abort();
-                anyhow::bail!("Error while adding entry to doc: {e}")
+                anyhow::bail!("Error while adding entry to doc: {e}");
             }
         }
     }
-    unreachable!();
+    Ok(ImportStats {
+        total_entries: entries,
+        total_size,
+    })
 }
 
 fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
@@ -671,10 +686,7 @@ fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<
 }
 
 #[derive(Debug, Clone)]
-struct ImportProgressState {
-    task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    sender: flume::Sender<ImportProgressEvent>,
-}
+struct ImportProgressBar(flume::Sender<ImportProgressEvent>);
 
 enum ImportProgressEvent {
     Found { name: String, id: u64, size: u64 },
@@ -685,8 +697,8 @@ enum ImportProgressEvent {
     Error,
 }
 
-impl ImportProgressState {
-    fn new(doc_id: NamespaceId) -> Self {
+impl ImportProgressBar {
+    fn new(doc_id: NamespaceId) -> (Self, AbortingJoinHandle<()>) {
         let (sender, recv) = flume::bounded(32);
         let task = tokio::spawn(async move {
             let mp = MultiProgress::new();
@@ -730,78 +742,42 @@ impl ImportProgressState {
                 }
             }
         });
-        Self {
-            task: Arc::new(Mutex::new(Some(task))),
-            sender: sender.clone(),
-        }
+        (Self(sender.clone()), AbortingJoinHandle::from(task))
     }
 
     async fn found(&mut self, name: String, id: u64, size: u64) {
-        if !self.sender.is_disconnected() {
-            self.sender
-                .send_async(ImportProgressEvent::Found { name, id, size })
-                .await
-                .expect("checked");
-        }
+        self.0
+            .send_async(ImportProgressEvent::Found { name, id, size })
+            .await
+            .ok();
     }
 
     async fn add_progress(&mut self, id: u64, progress: u64) {
-        if !self.sender.is_disconnected() {
-            self.sender
-                .send_async(ImportProgressEvent::AddProgress { id, progress })
-                .await
-                .expect("checked");
-        }
+        self.0
+            .send_async(ImportProgressEvent::AddProgress { id, progress })
+            .await
+            .ok();
     }
 
     async fn adding_to_doc(&mut self, id: u64) {
-        if !self.sender.is_disconnected() {
-            self.sender
-                .send_async(ImportProgressEvent::AddingToDoc { id })
-                .await
-                .expect("checked");
-        }
+        self.0
+            .send_async(ImportProgressEvent::AddingToDoc { id })
+            .await
+            .ok();
     }
 
     async fn done(&mut self, id: u64) {
-        if !self.sender.is_disconnected() {
-            self.sender
-                .send_async(ImportProgressEvent::Done { id })
-                .await
-                .expect("checked");
-        }
+        self.0
+            .send_async(ImportProgressEvent::Done { id })
+            .await
+            .ok();
     }
 
     async fn all_done(self) {
-        if !self.sender.is_disconnected() {
-            self.sender
-                .send_async(ImportProgressEvent::AllDone)
-                .await
-                .expect("checked");
-        }
-        self.shutdown();
+        self.0.send_async(ImportProgressEvent::AllDone).await.ok();
     }
 
     async fn error(self) {
-        if !self.sender.is_disconnected() {
-            self.sender
-                .send_async(ImportProgressEvent::Error)
-                .await
-                .expect("receiever dropped");
-        }
-        self.shutdown();
-    }
-
-    fn shutdown(self) {
-        match self.task.lock() {
-            Err(e) => {
-                tracing::error!("error cleaning up import progress bar: {e}")
-            }
-            Ok(mut task) => {
-                if let Some(task) = task.take() {
-                    task.abort();
-                }
-            }
-        }
+        self.0.send_async(ImportProgressEvent::Error).await.ok();
     }
 }
