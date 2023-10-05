@@ -146,7 +146,7 @@ use iroh_bytes::baomap::{
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File, BufferedFileReader};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::trace_span;
@@ -256,7 +256,7 @@ impl MapEntry<Store> for PartialEntry {
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
         async move {
-            let file = File::open(self.outboard_path.clone()).await?;
+            let file = BufferedFileReader::open(self.outboard_path.clone()).await?;
             Ok(PreOrderOutboard {
                 root: self.hash,
                 tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
@@ -268,7 +268,7 @@ impl MapEntry<Store> for PartialEntry {
 
     fn data_reader(&self) -> BoxFuture<'_, io::Result<<Store as Map>::DataReader>> {
         async move {
-            let file = File::open(self.data_path.clone()).await?;
+            let file = BufferedFileReader::open(self.data_path.clone()).await?;
             Ok(MemOrFile::File(file))
         }
         .boxed()
@@ -435,7 +435,6 @@ pub struct Entry {
     /// the hash is not part of the entry itself
     hash: blake3::Hash,
     entry: EntryData,
-    is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
@@ -472,7 +471,7 @@ impl MapEntry<Store> for Entry {
     }
 
     fn is_complete(&self) -> bool {
-        self.is_complete
+        self.entry.is_complete
     }
 }
 
@@ -484,6 +483,8 @@ impl MapEntry<Store> for Entry {
 /// persisted.
 #[derive(Debug, Clone)]
 struct EntryData {
+    /// True if the data is complete.
+    is_complete: bool,
     /// The data itself.
     data: Either<Bytes, (PathBuf, u64)>,
     /// The bao outboard data.
@@ -498,7 +499,7 @@ pub enum MemOrFile {
     /// We got it all in memory
     Mem(Bytes),
     /// An iroh_io::File
-    File(File),
+    File(BufferedFileReader),
 }
 
 impl AsyncSliceReader for MemOrFile {
@@ -534,7 +535,7 @@ impl EntryData {
         async move {
             Ok(match outboard {
                 Either::Left(mem) => MemOrFile::Mem(mem),
-                Either::Right(path) => MemOrFile::File(File::open(path).await?),
+                Either::Right(path) => MemOrFile::File(BufferedFileReader::open(path).await?),
             })
         }
     }
@@ -545,7 +546,7 @@ impl EntryData {
         async move {
             Ok(match data {
                 Either::Left(mem) => MemOrFile::Mem(mem),
-                Either::Right((path, _)) => MemOrFile::File(File::open(path).await?),
+                Either::Right((path, _)) => MemOrFile::File(BufferedFileReader::open(path).await?),
             })
         }
     }
@@ -585,8 +586,8 @@ impl Map for Store {
             let data = state.data.get(hash).cloned();
             Some(Entry {
                 hash: blake3::Hash::from(*hash),
-                is_complete: true,
                 entry: EntryData {
+                    is_complete: true,
                     data: if let Some(data) = data {
                         Either::Left(data)
                     } else {
@@ -615,8 +616,8 @@ impl Map for Store {
             );
             Some(Entry {
                 hash: blake3::Hash::from(*hash),
-                is_complete: false,
                 entry: EntryData {
+                    is_complete: false,
                     data: Either::Right((data_path, entry.size)),
                     outboard: Either::Right(outboard_path),
                 },

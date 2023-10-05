@@ -569,7 +569,7 @@ impl<E: EventSender> ResponseWriter<E> {
     fn tracking_writer(
         &mut self,
     ) -> TrackingStreamWriter<TokioStreamWriter<&mut quinn::SendStream>> {
-        TrackingStreamWriter::new(TokioStreamWriter(&mut self.inner))
+        TrackingStreamWriter::new(TokioStreamWriter::new(&mut self.inner))
     }
 
     fn connection_id(&self) -> u64 {

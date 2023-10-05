@@ -2074,8 +2074,6 @@ dependencies = [
 [[package]]
 name = "iroh-io"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19ace4f69567bfeb726672bab901d3e81be0c01119d860b2a10b7efb1553b880"
 dependencies = [
  "bytes",
  "futures",
