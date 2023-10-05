@@ -859,6 +859,7 @@ async fn run_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
+#[allow(clippy::unnecessary_unwrap)] // NOTE: clippy's suggestion makes the code a lot more complex
 async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
