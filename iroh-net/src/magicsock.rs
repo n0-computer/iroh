@@ -304,14 +304,13 @@ impl Inner {
             return true;
         }
 
-        let mut unknown_sender = false;
-        if self.peer_map.endpoint_for_node_key_mut(&sender).is_none()
-            && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
-        {
+        let unknown_sender = self.peer_map.read(|pm| {
+            pm.endpoint_for_node_key(&sender).is_none() && pm.endpoint_for_ip_port(&src).is_none()
+        });
+        if unknown_sender {
             // Disco Ping from unseen endpoint. We will have to add the
             // endpoint later if the message is a ping
             debug!("disco: unknown sender {:?} - {}", sender, src);
-            unknown_sender = true;
         }
 
         // We're now reasonably sure we're expecting communication from
@@ -370,10 +369,12 @@ impl Inner {
                         sender,
                         src.derp_region()
                     );
-                    self.peer_map.insert_endpoint(EndpointOptions {
-                        public_key: sender,
-                        derp_region: src.derp_region(),
-                        active: true,
+                    self.peer_map.write(|pm| {
+                        pm.insert_endpoint(EndpointOptions {
+                            public_key: sender,
+                            derp_region: src.derp_region(),
+                            active: true,
+                        })
                     });
                 }
 
@@ -382,16 +383,14 @@ impl Inner {
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
-                let insert =
-                    if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender).as_mut() {
+                self.peer_map.write(|pm| {
+                    if let Some(ep) = pm.endpoint_for_node_key_mut(&sender).as_mut() {
                         let (_, insert) = ep.handle_pong_conn(&self.public_key(), &pong, src);
-                        insert
-                    } else {
-                        None
-                    };
-                if let Some((src, key)) = insert {
-                    self.peer_map.set_node_key_for_ip_port(&src, &key);
-                }
+                        if let Some((src, key)) = insert {
+                            pm.set_node_key_for_ip_port(&src, &key);
+                        }
+                    }
+                });
                 true
             }
             disco::Message::CallMeMaybe(cm) => {
@@ -402,25 +401,27 @@ impl Inner {
                     return true;
                 }
                 let node_key = derp_node_src.unwrap();
-                match self.peer_map.endpoint_for_node_key_mut(&node_key).as_mut() {
-                    None => {
-                        inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
-                        debug!(
-                            "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
-                            sender, node_key,
-                        );
-                    }
-                    Some(ep) => {
-                        debug!(
-                            "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
-                            self.public_key(),
-                            ep.public_key(),
-                            src,
-                            cm.my_number.len()
-                        );
-                        ep.handle_call_me_maybe(cm);
-                    }
-                }
+                self.peer_map.write(
+                    |pm| match pm.endpoint_for_node_key_mut(&node_key).as_mut() {
+                        None => {
+                            inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
+                            debug!(
+                                "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
+                                sender, node_key,
+                            );
+                        }
+                        Some(ep) => {
+                            debug!(
+                                "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
+                                self.public_key(),
+                                ep.public_key(),
+                                src,
+                                cm.my_number.len()
+                            );
+                            ep.handle_call_me_maybe(cm);
+                        }
+                    },
+                );
                 true
             }
         }
@@ -462,35 +463,23 @@ impl Inner {
             assert!(derp_node_src.is_none());
         }
 
-        let (dst_key, insert) = match derp_node_src {
-            Some(dst_key) => {
-                // From Derp
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key).as_mut() {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (dst_key, true)
-                } else {
-                    (dst_key, false)
-                }
+        let dst_key = derp_node_src.unwrap_or(node_key);
+        let is_duplicate = self.peer_map.write(|pm| {
+            let dst_key = derp_node_src.unwrap_or(node_key);
+            let ep = pm.endpoint_for_node_key_mut(&dst_key);
+            let Some(ep) = ep else {
+                return false;
+            };
+            if ep.add_candidate_endpoint(src, dm.tx_id) {
+                return true;
             }
-            None => {
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&node_key).as_mut() {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (node_key, true)
-                } else {
-                    (node_key, false)
-                }
-            }
+            pm.set_node_key_for_ip_port(&src, &dst_key);
+            false
+        });
+        if is_duplicate {
+            debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+            return;
         };
-
-        if insert {
-            self.peer_map.set_node_key_for_ip_port(&src, &dst_key);
-        }
 
         if !likely_heart_beat {
             info!(
@@ -1133,16 +1122,15 @@ impl AsyncUdpSocket for MagicSock {
             match self
                 .inner
                 .peer_map
-                .endpoint_for_ip_port_mut(&SendAddr::Udp(meta.addr))
-                .as_ref()
+                .get_quic_mapped_addr_for_ip_port(&SendAddr::Udp(meta.addr))
             {
                 None => {
                     warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
                 }
-                Some(ep) => {
+                Some(quic_mapped_addr) => {
                     debug!("peer_map state found for {}", meta.addr);
                     num_msgs += meta.len / meta.stride;
-                    meta.addr = ep.quic_mapped_addr.0;
+                    meta.addr = quic_mapped_addr.0;
                 }
             }
             // Normalize local_ip
@@ -1382,9 +1370,12 @@ impl Actor {
                     });
                     match self.send_disco_message(dst, dst_key, msg).await {
                         Ok(true) => {
-                            if let Some(ep) = self.inner.peer_map.by_id_mut(&id).as_mut() {
-                                ep.ping_sent(dst, tx_id, purpose, self.msg_sender.clone());
-                            }
+                            let msg_sender = self.msg_sender.clone();
+                            self.inner.peer_map.write(move |pm| {
+                                if let Some(ep) = pm.by_id_mut(&id) {
+                                    ep.ping_sent(dst, tx_id, purpose, msg_sender);
+                                }
+                            })
                         }
                         _ => {
                             debug!("failed to send ping to {:?}", dst);
@@ -1486,11 +1477,11 @@ impl Actor {
                     }
                 }
             }
-            ActorMessage::EndpointPingExpired(id, txid) => {
-                if let Some(ep) = self.inner.peer_map.by_id_mut(&id).as_mut() {
+            ActorMessage::EndpointPingExpired(id, txid) => self.inner.peer_map.write(|pm| {
+                if let Some(ep) = pm.by_id_mut(&id).as_mut() {
                     ep.ping_timeout(txid);
                 }
-            }
+            }),
         }
 
         false
@@ -1531,35 +1522,32 @@ impl Actor {
         let region_id = dm.region_id;
         let ipp = SendAddr::Derp(region_id);
 
-        let ep_quic_mapped_addr = match self
-            .inner
-            .peer_map
-            .endpoint_for_node_key_mut(&dm.src)
-            .as_mut()
-        {
-            Some(ep) => {
-                if ep.derp_region().is_none() {
-                    ep.add_derp_region(region_id);
+        let ep_quic_mapped_addr = self.inner.peer_map.write(|pm| {
+            let ep_quic_mapped_addr = match pm.endpoint_for_node_key_mut(&dm.src).as_mut() {
+                Some(ep) => {
+                    if ep.derp_region().is_none() {
+                        ep.add_derp_region(region_id);
+                    }
+                    Some(ep.quic_mapped_addr)
                 }
-                Some(ep.quic_mapped_addr)
+                None => None,
+            };
+            match ep_quic_mapped_addr {
+                Some(addr) => addr,
+                None => {
+                    info!(peer=%dm.src, "no peer_map state found for peer");
+                    let id = pm.insert_endpoint(EndpointOptions {
+                        public_key: dm.src,
+                        derp_region: Some(region_id),
+                        active: true,
+                    });
+                    pm.set_endpoint_for_ip_port(&ipp, id);
+                    let mut ep = pm.by_id_mut(&id);
+                    let ep_inner = ep.as_mut().expect("inserted");
+                    ep_inner.quic_mapped_addr
+                }
             }
-            None => None,
-        };
-        let ep_quic_mapped_addr = match ep_quic_mapped_addr {
-            Some(addr) => addr,
-            None => {
-                info!(peer=%dm.src, "no peer_map state found for peer");
-                let id = self.inner.peer_map.insert_endpoint(EndpointOptions {
-                    public_key: dm.src,
-                    derp_region: Some(region_id),
-                    active: true,
-                });
-                self.inner.peer_map.set_endpoint_for_ip_port(&ipp, id);
-                let mut ep = self.inner.peer_map.by_id_mut(&id);
-                let ep_inner = ep.as_mut().expect("inserted");
-                ep_inner.quic_mapped_addr
-            }
-        };
+        });
 
         // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
@@ -2115,17 +2103,16 @@ impl Actor {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
-        let public_key = {
-            let endpoint = self.inner.peer_map.by_id_mut(&endpoint_id);
-            if endpoint.is_none() {
-                warn!(
-                    "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
-                    derp_region, endpoint_id
-                );
-                return;
-            }
-            let endpoint = endpoint.unwrap();
-            endpoint.public_key
+        let public_key = self
+            .inner
+            .peer_map
+            .read(|pm| pm.by_id(&endpoint_id).map(|ep| ep.public_key));
+        let Some(public_key) = public_key else {
+            warn!(
+                "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
+                derp_region, endpoint_id
+            );
+            return;
         };
         if self.last_endpoints_time.is_none()
             || self.last_endpoints_time.as_ref().unwrap().elapsed()

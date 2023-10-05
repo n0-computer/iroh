@@ -9,7 +9,7 @@ use std::{
 use anyhow::Context;
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
-use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
+use parking_lot::Mutex;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -989,7 +989,7 @@ pub(super) struct PeerMap {
 }
 
 #[derive(Default, Debug)]
-struct PeerMapInner {
+pub(super) struct PeerMapInner {
     by_node_key: HashMap<PublicKey, usize>,
     by_ip_port: HashMap<SendAddr, usize>,
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
@@ -1000,9 +1000,20 @@ struct PeerMapInner {
 impl PeerMap {
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Ok(Self {
-            inner: Mutex::new(PeerMapInner::load_from_file(path)?),
-        })
+        Ok(Self::from_inner(PeerMapInner::load_from_file(path)?))
+    }
+
+    fn from_inner(inner: PeerMapInner) -> Self {
+        Self {
+            inner: Mutex::new(inner),
+        }
+    }
+
+    /// Get the known peer addresses stored in the map. Peers with empty addressing information are
+    /// filtered out.
+    #[cfg(test)]
+    pub fn known_peer_addresses(&self) -> Vec<PeerAddr> {
+        self.inner.lock().known_peer_addresses().collect()
     }
 
     /// Add the contact information for a peer.
@@ -1015,22 +1026,21 @@ impl PeerMap {
         self.inner.lock().node_count()
     }
 
-    // pub(super) fn by_id(&self, id: &usize) -> Option<MappedMutexGuard<Endpoint>> {
-    //     MutexGuard::try_map(self.inner.lock(), |pm| pm.by_id(id)).ok()
-    // }
-    pub(super) fn by_id_mut(&self, id: &usize) -> Option<MappedMutexGuard<Endpoint>> {
-        MutexGuard::try_map(self.inner.lock(), |pm| pm.by_id_mut(id)).ok()
+    pub(super) fn write<T>(&self, f: impl FnOnce(&mut PeerMapInner) -> T) -> T {
+        let mut inner = self.inner.lock();
+        f(&mut inner)
     }
 
-    pub(super) fn endpoint_for_node_key_mut(
-        &self,
-        nk: &PublicKey,
-    ) -> Option<MappedMutexGuard<Endpoint>> {
-        MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_node_key_mut(nk)).ok()
+    pub(super) fn read<T>(&self, f: impl FnOnce(&PeerMapInner) -> T) -> T {
+        let inner = self.inner.lock();
+        f(&inner)
     }
 
-    pub fn endpoint_for_ip_port_mut(&self, ipp: &SendAddr) -> Option<MappedMutexGuard<Endpoint>> {
-        MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_ip_port_mut(ipp)).ok()
+    pub fn get_quic_mapped_addr_for_ip_port(&self, ipp: &SendAddr) -> Option<QuicMappedAddr> {
+        self.inner
+            .lock()
+            .endpoint_for_ip_port(ipp)
+            .map(|ep| ep.quic_mapped_addr)
     }
 
     pub fn get_quic_mapped_addr_for_node_key(&self, nk: &PublicKey) -> Option<QuicMappedAddr> {
@@ -1084,27 +1094,10 @@ impl PeerMap {
         self.inner.lock().endpoint_info(public_key)
     }
 
-    /// Inserts a new endpoint into the [`PeerMap`].
-    pub(super) fn insert_endpoint(&self, options: Options) -> usize {
-        self.inner.lock().insert_endpoint(options)
-    }
-
-    /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
-    ///
-    /// This should only be called with a fully verified mapping of ipp to
-    /// nk, because calling this function defines the endpoint we hand to
-    /// WireGuard for packets received from ipp.
-    pub(super) fn set_node_key_for_ip_port(&self, ipp: &SendAddr, nk: &PublicKey) {
-        self.inner.lock().set_node_key_for_ip_port(ipp, nk)
-    }
-
-    pub(super) fn set_endpoint_for_ip_port(&self, ipp: &SendAddr, id: usize) {
-        self.inner.lock().set_endpoint_for_ip_port(ipp, id)
-    }
-
     /// Saves the known peer info to the given path, returning the number of peers persisted.
     pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         // TODO: No allocation. But also cannot hold inner across await point.
+        // So, not sure what to do here.
         let mut known_peers = self
             .inner
             .lock()
@@ -1212,14 +1205,8 @@ impl PeerMapInner {
     }
 
     // /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
-    // pub(super) fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> Option<&Endpoint> {
-    //     self.by_ip_port.get(ipp).and_then(|id| self.by_id(id))
-    // }
-
-    pub fn endpoint_for_ip_port_mut(&mut self, ipp: &SendAddr) -> Option<&mut Endpoint> {
-        self.by_ip_port
-            .get(ipp)
-            .and_then(|id| self.by_id.get_mut(id))
+    pub(super) fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> Option<&Endpoint> {
+        self.by_ip_port.get(ipp).and_then(|id| self.by_id(id))
     }
 
     pub fn endpoint_for_quic_mapped_addr_mut(
@@ -1681,7 +1668,7 @@ mod tests {
             },
         ]);
 
-        let peer_map = PeerMap {
+        let peer_map = PeerMap::from_inner(PeerMapInner {
             by_node_key: HashMap::from([
                 (a_endpoint.public_key, a_endpoint.id),
                 (b_endpoint.public_key, b_endpoint.id),
@@ -1705,7 +1692,7 @@ mod tests {
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: 5,
-        };
+        });
         let mut got = peer_map.endpoint_infos();
         got.sort_by_key(|p| p.id);
         assert_eq!(expect, got);
@@ -1749,11 +1736,13 @@ mod tests {
         let loaded_peer_map = PeerMap::load_from_file(&path).unwrap();
         let loaded: HashMap<PublicKey, AddrInfo> = loaded_peer_map
             .known_peer_addresses()
+            .into_iter()
             .map(|PeerAddr { peer_id, info }| (peer_id, info))
             .collect();
 
         let og: HashMap<PublicKey, AddrInfo> = peer_map
             .known_peer_addresses()
+            .into_iter()
             .map(|PeerAddr { peer_id, info }| (peer_id, info))
             .collect();
         // compare the peer maps via their known peers
