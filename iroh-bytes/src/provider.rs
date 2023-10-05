@@ -59,25 +59,16 @@ pub enum Event {
         /// The size of the custom get request.
         len: usize,
     },
-    /// A collection has been found and is being transferred.
-    TransferCollectionStarted {
+    /// A sequence of hashes has been found and is being transferred.
+    TransferHashSeqStarted {
         /// An unique connection id.
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
-        /// The number of blobs in the collection.
-        num_blobs: Option<u64>,
+        /// The number of blobs in the sequence.
+        num_blobs: u64,
     },
-    /// A collection request was completed and the data was sent to the client.
-    TransferCollectionCompleted {
-        /// An unique connection id.
-        connection_id: u64,
-        /// An identifier uniquely identifying this transfer request.
-        request_id: u64,
-        /// statistics about the transfer
-        stats: Box<TransferStats>,
-    },
-    /// A blob in a collection was transferred.
+    /// A blob in a sequence was transferred.
     TransferBlobCompleted {
         /// An unique connection id.
         connection_id: u64,
@@ -85,10 +76,19 @@ pub enum Event {
         request_id: u64,
         /// The hash of the blob
         hash: Hash,
-        /// The index of the blob in the collection.
+        /// The index of the blob in the sequence.
         index: u64,
         /// The size of the blob transferred.
         size: u64,
+    },
+    /// A request was completed and the data was sent to the client.
+    TransferCompleted {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+        /// statistics about the transfer
+        stats: Box<TransferStats>,
     },
     /// A request was aborted because the client disconnected.
     TransferAborted {
@@ -280,13 +280,13 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
     let just_root = matches!(request.ranges.as_single(), Some((0, _)));
     let mut c = if !just_root {
         // use the collection parser to parse the collection
-        let (stream, count) = parse_hash_seq(&mut data).await?;
+        let (stream, num_blobs) = parse_hash_seq(&mut data).await?;
         writer
             .events
-            .send(Event::TransferCollectionStarted {
+            .send(Event::TransferHashSeqStarted {
                 connection_id: writer.connection_id(),
                 request_id: writer.request_id(),
-                num_blobs: Some(count),
+                num_blobs,
             })
             .await;
         Some(stream)
@@ -299,7 +299,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
         // create a tracking writer so we can get some stats for writing
         let mut tw = writer.tracking_writer();
         if offset == 0 {
-            debug!("writing ranges '{:?}' of collection {}", ranges, hash);
+            debug!("writing ranges '{:?}' of sequence {}", ranges, hash);
             // wrap the data reader in a tracking reader so we can get some stats for reading
             let mut tracking_reader = TrackingSliceReader::new(&mut data);
             // send the root
@@ -555,7 +555,7 @@ impl<E: EventSender> ResponseWriter<E> {
         info!("trasnfer completed for {}", hash);
         Self::print_stats(&stats);
         self.events
-            .send(Event::TransferCollectionCompleted {
+            .send(Event::TransferCompleted {
                 connection_id: self.connection_id(),
                 request_id: self.request_id(),
                 stats,

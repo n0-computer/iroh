@@ -950,29 +950,24 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             ExportMode::Copy
         };
         if recursive {
-            #[cfg(feature = "iroh-collection")]
-            {
-                use crate::collection::{Blob, Collection};
-                use crate::util::io::pathbuf_from_name;
-                tokio::fs::create_dir_all(&path).await?;
-                let collection = Collection::load(db, &hash).await?;
-                for Blob { hash, name } in collection.blobs() {
-                    #[allow(clippy::needless_borrow)]
-                    let path = path.join(pathbuf_from_name(&name));
-                    if let Some(parent) = path.parent() {
-                        tokio::fs::create_dir_all(parent).await?;
-                    }
-                    trace!("exporting blob {} to {}", hash, path.display());
-                    let id = progress.new_id();
-                    let progress1 = progress.clone();
-                    db.export(*hash, path, mode, move |offset| {
-                        Ok(progress1.try_send(GetProgress::ExportProgress { id, offset })?)
-                    })
-                    .await?;
+            use crate::collection::{Blob, Collection};
+            use crate::util::io::pathbuf_from_name;
+            tokio::fs::create_dir_all(&path).await?;
+            let collection = Collection::load(db, &hash).await?;
+            for Blob { hash, name } in collection.blobs() {
+                #[allow(clippy::needless_borrow)]
+                let path = path.join(pathbuf_from_name(&name));
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
                 }
+                trace!("exporting blob {} to {}", hash, path.display());
+                let id = progress.new_id();
+                let progress1 = progress.clone();
+                db.export(*hash, path, mode, move |offset| {
+                    Ok(progress1.try_send(GetProgress::ExportProgress { id, offset })?)
+                })
+                .await?;
             }
-            #[cfg(not(feature = "iroh-collection"))]
-            anyhow::bail!("recursive export not supported without iroh-collection feature");
         } else if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
             let id = progress.new_id();
@@ -1065,7 +1060,6 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         .flatten_stream()
     }
 
-    #[cfg(feature = "iroh-collection")]
     async fn blob_add_from_path0(
         self,
         msg: BlobAddPathRequest,
@@ -1188,15 +1182,6 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             .await;
 
         Ok(())
-    }
-
-    #[cfg(not(feature = "iroh-collection"))]
-    async fn blob_add_from_path0(
-        self,
-        _msg: BlobAddPathRequest,
-        _progress: flume::Sender<AddProgress>,
-    ) -> anyhow::Result<()> {
-        anyhow::bail!("collections not supported");
     }
 
     async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {

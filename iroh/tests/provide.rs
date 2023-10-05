@@ -1,4 +1,4 @@
-#![cfg(all(feature = "mem-db", feature = "iroh-collection"))]
+#![cfg(feature = "mem-db")]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -290,7 +290,7 @@ where
         let mut events = Vec::new();
         while let Some(event) = events_recv.recv().await {
             match event {
-                Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. })
+                Event::ByteProvide(provider::Event::TransferCompleted { .. })
                 | Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
                     events.push(event);
                     break;
@@ -330,7 +330,7 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
     assert!(matches!(
         events[2],
-        Event::ByteProvide(provider::Event::TransferCollectionStarted { .. })
+        Event::ByteProvide(provider::Event::TransferHashSeqStarted { .. })
     ));
     for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
         match event {
@@ -342,7 +342,7 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     }
     assert!(matches!(
         events.last().unwrap(),
-        Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. })
+        Event::ByteProvide(provider::Event::TransferCompleted { .. })
     ));
 }
 
@@ -391,7 +391,7 @@ async fn test_server_close() {
                 maybe_event = events_recv.recv() => {
                     match maybe_event {
                         Some(event) => match event {
-                            Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. }) => node.shutdown(),
+                            Event::ByteProvide(provider::Event::TransferCompleted { .. }) => node.shutdown(),
                             Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
                                 break Err(anyhow!("transfer aborted"));
                             }
