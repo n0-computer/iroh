@@ -2664,23 +2664,12 @@ impl std::fmt::Display for QuicMappedAddr {
 pub(crate) mod tests {
     use anyhow::Context;
     use rand::RngCore;
-    use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
-
-    fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
-        quinn_udp::Transmit {
-            destination,
-            ecn: None,
-            contents: destination.to_string().into(),
-            segment_size: None,
-            src_ip: None,
-        }
-    }
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();

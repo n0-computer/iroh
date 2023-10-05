@@ -1701,7 +1701,7 @@ mod tests {
     /// Test persisting and loading of known peers.
     #[tokio::test]
     async fn load_save_peer_data() {
-        let mut peer_map = PeerMap::default();
+        let peer_map = PeerMap::default();
 
         let peer_a = SecretKey::generate().public();
         let peer_b = SecretKey::generate().public();
