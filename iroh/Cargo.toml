@@ -67,13 +67,14 @@ colored = { version = "2.0.4", optional = true }
 
 # Examples
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional = true }
+reflink-copy = { version = "0.1.8", optional = true }
 
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table"]
 metrics = ["iroh-metrics"]
 mem-db = []
-flat-db = []
+flat-db = ["reflink-copy"]
 iroh-collection = []
 test = []
 example-sync = ["cli"]
