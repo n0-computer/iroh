@@ -2168,6 +2168,7 @@ dependencies = [
  "num_enum",
  "once_cell",
  "os_info",
+ "parking_lot",
  "postcard",
  "pretty_assertions",
  "proptest",

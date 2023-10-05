@@ -241,6 +241,10 @@ struct Inner {
     derp_map: DerpMap,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
+    /// UDP IPv4 socket
+    pconn4: RebindingUdpConn,
+    /// UDP IPv6 socket
+    pconn6: Option<RebindingUdpConn>,
 }
 
 impl Inner {
@@ -390,6 +394,8 @@ impl MagicSock {
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map,
             my_derp: AtomicU16::new(0),
+            pconn4: pconn4.clone(),
+            pconn6: pconn6.clone(),
         });
 
         let udp_state = quinn_udp::UdpState::default();
@@ -1043,10 +1049,7 @@ impl Actor {
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
-                    let mut msgs = Vec::new();
-                    for (_, ep) in self.peer_map.endpoints_mut() {
-                        msgs.extend(ep.stayin_alive());
-                    }
+                    let msgs = self.peer_map.endpoints_stayin_alive();
                     self.handle_ping_actions(msgs).await;
                 }
                 _ = endpoints_update_receiver.changed() => {
@@ -1101,7 +1104,7 @@ impl Actor {
                     });
                     match self.send_disco_message(dst, dst_key, msg).await {
                         Ok(true) => {
-                            if let Some(ep) = self.peer_map.by_id_mut(&id) {
+                            if let Some(ep) = self.peer_map.by_id_mut(&id).as_mut() {
                                 ep.ping_sent(dst, tx_id, purpose, self.msg_sender.clone());
                             }
                         }
@@ -1131,17 +1134,12 @@ impl Actor {
                 let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
-                let res = self
-                    .peer_map
-                    .endpoint_for_node_key(&node_key)
-                    .map(|ep| ep.quic_mapped_addr);
+                let res = self.peer_map.get_quic_mapped_addr_for_node_key(&node_key);
                 let _ = s.send(res);
             }
             ActorMessage::Shutdown => {
                 debug!("shutting down");
-                for (_, ep) in self.peer_map.endpoints_mut() {
-                    ep.stop_and_reset();
-                }
+                self.peer_map.notify_shutdown();
                 if let Some(path) = self.peers_path.as_ref() {
                     match self.peer_map.save_to_file(path).await {
                         Ok(count) => {
@@ -1213,7 +1211,7 @@ impl Actor {
                 }
             }
             ActorMessage::EndpointPingExpired(id, txid) => {
-                if let Some(ep) = self.peer_map.by_id_mut(&id) {
+                if let Some(ep) = self.peer_map.by_id_mut(&id).as_mut() {
                     ep.ping_timeout(txid);
                 }
             }
@@ -1231,7 +1229,8 @@ impl Actor {
         debug!("received data {} from {}", meta.len, meta.addr);
         match self
             .peer_map
-            .endpoint_for_ip_port(&SendAddr::Udp(meta.addr))
+            .endpoint_for_ip_port_mut(&SendAddr::Udp(meta.addr))
+            .as_ref()
         {
             None => {
                 warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
@@ -1284,13 +1283,18 @@ impl Actor {
         let region_id = dm.region_id;
         let ipp = SendAddr::Derp(region_id);
 
-        let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key_mut(&dm.src) {
-            Some(ep) => {
-                if ep.derp_region().is_none() {
-                    ep.add_derp_region(region_id);
+        let ep_quic_mapped_addr =
+            match self.peer_map.endpoint_for_node_key_mut(&dm.src).as_mut() {
+                Some(ep) => {
+                    if ep.derp_region().is_none() {
+                        ep.add_derp_region(region_id);
+                    }
+                    Some(ep.quic_mapped_addr)
                 }
-                ep.quic_mapped_addr
-            }
+                None => None,
+            };
+        let ep_quic_mapped_addr = match ep_quic_mapped_addr {
+            Some(addr) => addr,
             None => {
                 info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
@@ -1299,8 +1303,9 @@ impl Actor {
                     active: true,
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
-                let ep = self.peer_map.by_id_mut(&id).expect("inserted");
-                ep.quic_mapped_addr
+                let mut ep = self.peer_map.by_id_mut(&id);
+                let ep_inner = ep.as_mut().expect("inserted");
+                ep_inner.quic_mapped_addr
             }
         };
 
@@ -1397,17 +1402,15 @@ impl Actor {
 
         match self
             .peer_map
-            .endpoint_for_quic_mapped_addr_mut(&current_destination)
+            .get_send_addrs_for_quic_mapped_addr(&current_destination)
         {
-            Some(ep) => {
-                let public_key = *ep.public_key();
+            Some((public_key, udp_addr, derp_region, msgs)) => {
                 trace!(
                     "Sending to endpoint for {:?} ({:?})",
                     current_destination,
                     public_key
                 );
 
-                let (udp_addr, derp_region, msgs) = ep.get_send_addrs();
                 self.handle_ping_actions(msgs).await;
                 match (udp_addr, derp_region) {
                     (Some(udp_addr), Some(derp_region)) => {
@@ -1863,15 +1866,18 @@ impl Actor {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
-        let endpoint = self.peer_map.by_id(&endpoint_id);
-        if endpoint.is_none() {
-            warn!(
-                "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
-                derp_region, endpoint_id
-            );
-            return;
-        }
-        let endpoint = endpoint.unwrap();
+        let public_key = {
+            let endpoint = self.peer_map.by_id_mut(&endpoint_id);
+            if endpoint.is_none() {
+                warn!(
+                    "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
+                    derp_region, endpoint_id
+                );
+                return;
+            }
+            let endpoint = endpoint.unwrap();
+            endpoint.public_key
+        };
         if self.last_endpoints_time.is_none()
             || self.last_endpoints_time.as_ref().unwrap().elapsed()
                 > ENDPOINTS_FRESH_ENOUGH_DURATION
@@ -1904,7 +1910,6 @@ impl Actor {
                 .await
                 .unwrap();
         } else {
-            let public_key = *endpoint.public_key();
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::CallMeMaybe { my_number: eps };
 
@@ -1942,9 +1947,7 @@ impl Actor {
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
-        for (_, ep) in self.peer_map.endpoints_mut() {
-            ep.note_connectivity_change();
-        }
+        self.peer_map.reset_endpoint_states()
     }
 
     /// Closes and re-binds the UDP sockets.
@@ -2137,7 +2140,7 @@ impl Actor {
         }
 
         let mut unknown_sender = false;
-        if self.peer_map.endpoint_for_node_key(&sender).is_none()
+        if self.peer_map.endpoint_for_node_key_mut(&sender).is_none()
             && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
         {
             // Disco Ping from unseen endpoint. We will have to add the
@@ -2208,13 +2211,16 @@ impl Actor {
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
-                    let (_, insert) = ep
-                        .handle_pong_conn(&self.inner.public_key(), &pong, di, src)
-                        .await;
-                    if let Some((src, key)) = insert {
-                        self.peer_map.set_node_key_for_ip_port(&src, &key);
-                    }
+                let insert = if let Some(ep) =
+                    self.peer_map.endpoint_for_node_key_mut(&sender).as_mut()
+                {
+                    let (_, insert) = ep.handle_pong_conn(&self.inner.public_key(), &pong, di, src);
+                    insert
+                } else {
+                    None
+                };
+                if let Some((src, key)) = insert {
+                    self.peer_map.set_node_key_for_ip_port(&src, &key);
                 }
                 true
             }
@@ -2226,7 +2232,7 @@ impl Actor {
                     return true;
                 }
                 let node_key = derp_node_src.unwrap();
-                match self.peer_map.endpoint_for_node_key_mut(&node_key) {
+                match self.peer_map.endpoint_for_node_key_mut(&node_key).as_mut() {
                     None => {
                         inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                         debug!(
@@ -2242,7 +2248,7 @@ impl Actor {
                             src,
                             cm.my_number.len()
                         );
-                        ep.handle_call_me_maybe(cm).await;
+                        ep.handle_call_me_maybe(cm);
                     }
                 }
                 true
@@ -2285,7 +2291,7 @@ impl Actor {
         let (dst_key, insert) = match derp_node_src {
             Some(dst_key) => {
                 // From Derp
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
+                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key).as_mut() {
                     if ep.add_candidate_endpoint(src, dm.tx_id) {
                         debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                         return;
@@ -2296,7 +2302,11 @@ impl Actor {
                 }
             }
             None => {
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&di.node_key) {
+                if let Some(ep) = self
+                    .peer_map
+                    .endpoint_for_node_key_mut(&di.node_key)
+                    .as_mut()
+                {
                     if ep.add_candidate_endpoint(src, dm.tx_id) {
                         debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                         return;

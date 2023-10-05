@@ -3,12 +3,14 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use anyhow::Context;
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
+use parking_lot::{Mutex, MutexGuard, MappedMutexGuard};
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -644,7 +646,7 @@ impl Endpoint {
     /// Handles a Pong message (a reply to an earlier ping).
     ///
     /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
-    pub(super) async fn handle_pong_conn(
+    pub(super) fn handle_pong_conn(
         &mut self,
         conn_disco_public: &PublicKey,
         m: &disco::Pong,
@@ -667,7 +669,7 @@ impl Endpoint {
                 (false, None)
             }
             Some(sp) => {
-                sp.timer.stop().await;
+                sp.timer.abort();
 
                 let known_tx_id = true;
                 let mut peer_map_insert = None;
@@ -773,7 +775,7 @@ impl Endpoint {
     /// Handles a CallMeMaybe discovery message via DERP. The contract for use of
     /// this message is that the peer has already sent to us via UDP, so their stateful firewall should be
     /// open. Now we can Ping back and make it through.
-    pub async fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
+    pub fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
         let now = Instant::now();
         for el in self.is_call_me_maybe_ep.values_mut() {
             *el = false;
@@ -985,8 +987,13 @@ pub struct AddrLatency {
 ///   These come and go as the peer moves around on the internet
 ///
 /// An index of peerInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub(super) struct PeerMap {
+    inner: Arc<Mutex<PeerMapInner>>,
+}
+
+#[derive(Default, Debug)]
+struct PeerMapInner {
     by_node_key: HashMap<PublicKey, usize>,
     by_ip_port: HashMap<SendAddr, usize>,
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
@@ -998,6 +1005,162 @@ impl PeerMap {
     /// Get the known peer addresses stored in the map. Peers with empty addressing information are
     /// filtered out.
     pub fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
+        self.inner
+            .lock()
+            .known_peer_addresses()
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// Create a new [`PeerMap`] from data stored in `path`.
+    pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(PeerMapInner::load_from_file(path)?)),
+        })
+    }
+
+    /// Add the contact information for a peer.
+    pub fn add_peer_addr(&self, peer_addr: PeerAddr) {
+        self.inner.lock().add_peer_addr(peer_addr)
+    }
+
+    /// Number of nodes currently listed.
+    pub(super) fn node_count(&self) -> usize {
+        self.inner.lock().node_count()
+    }
+
+    // pub(super) fn by_id(&self, id: &usize) -> Option<MappedMutexGuard<Endpoint>> {
+    //     MutexGuard::try_map(self.inner.lock(), |pm| pm.by_id(id)).ok()
+    // }
+    pub(super) fn by_id_mut(&self, id: &usize) -> Option<MappedMutexGuard<Endpoint>> {
+        MutexGuard::try_map(self.inner.lock(), |pm| pm.by_id_mut(id)).ok()
+    }
+
+    pub(super) fn endpoint_for_node_key_mut(&self, nk: &PublicKey) -> Option<MappedMutexGuard<Endpoint>> {
+        MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_node_key_mut(nk)).ok()
+    }
+
+    // pub(super) fn endpoint_for_node_key(&self, nk: &PublicKey) -> MappedMutexGuard<Option<&Endpoint>> {
+    //     MutexGuard::map(self.inner.lock(), |pm| &mut pm.endpoint_for_node_key(nk))
+    // }
+
+    // pub fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> MappedMutexGuard<Option<&Endpoint>> {
+    //     MutexGuard::map(self.inner.lock(), |pm| &mut pm.endpoint_for_ip_port(ipp))
+    // }
+
+    pub fn endpoint_for_ip_port_mut(&self, ipp: &SendAddr) -> Option<MappedMutexGuard<Endpoint>> {
+        MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_ip_port_mut(ipp)).ok()
+    }
+
+    pub fn get_quic_mapped_addr_for_node_key(&self, nk: &PublicKey) -> Option<QuicMappedAddr> {
+        self.inner.lock().endpoint_for_node_key(nk).map(|ep| ep.quic_mapped_addr)
+    }
+
+    pub fn get_send_addrs_for_quic_mapped_addr(
+        &self,
+        addr: &QuicMappedAddr,
+    ) -> Option<(PublicKey, Option<SocketAddr>, Option<u16>, Vec<PingAction>)> {
+        let mut inner = self.inner.lock();
+        let ep = inner.endpoint_for_quic_mapped_addr_mut(&addr)?;
+        let public_key = *ep.public_key();
+        let (udp_addr, derp_region, msgs) = ep.get_send_addrs();
+        Some((public_key, udp_addr, derp_region, msgs))
+    }
+
+    pub(super) fn notify_shutdown(&self) {
+        let mut inner = self.inner.lock();
+        for (_, ep) in inner.endpoints_mut() {
+            ep.stop_and_reset();
+        }
+    }
+
+    pub(super) fn reset_endpoint_states(&self) {
+        let mut inner = self.inner.lock();
+        for (_, ep) in inner.endpoints_mut() {
+            ep.note_connectivity_change();
+        }
+    }
+
+    pub(super) fn endpoints_stayin_alive(&self) -> Vec<PingAction> {
+        let mut msgs = Vec::new();
+        let mut inner = self.inner.lock();
+        for (_, ep) in inner.endpoints_mut() {
+            msgs.extend(ep.stayin_alive());
+        }
+        msgs
+    }
+
+    /// Get the [`EndpointInfo`]s for each endpoint
+    pub(super) fn endpoint_infos(&self) -> Vec<EndpointInfo> {
+        self.inner.lock().endpoint_infos()
+    }
+
+    /// Get the [`EndpointInfo`]s for each endpoint
+    pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
+        self.inner.lock().endpoint_info(public_key)
+    }
+
+    /// Inserts a new endpoint into the [`PeerMap`].
+    pub(super) fn insert_endpoint(&self, options: Options) -> usize {
+        self.inner.lock().insert_endpoint(options)
+    }
+
+    /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
+    ///
+    /// This should only be called with a fully verified mapping of ipp to
+    /// nk, because calling this function defines the endpoint we hand to
+    /// WireGuard for packets received from ipp.
+    pub(super) fn set_node_key_for_ip_port(&self, ipp: &SendAddr, nk: &PublicKey) {
+        self.inner.lock().set_node_key_for_ip_port(ipp, nk)
+    }
+
+    pub(super) fn set_endpoint_for_ip_port(&self, ipp: &SendAddr, id: usize) {
+        self.inner.lock().set_endpoint_for_ip_port(ipp, id)
+    }
+
+    /// Saves the known peer info to the given path, returning the number of peers persisted.
+    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
+        // TODO: No allocation. But also cannot hold inner across await point.
+        let mut known_peers = self
+            .inner
+            .lock()
+            .known_peer_addresses()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .peekable();
+        if known_peers.peek().is_none() {
+            // prevent file handling if unnecesary
+            return Ok(0);
+        }
+        let (tmp_file, tmp_path) = tempfile::NamedTempFile::new()
+            .context("cannot create temp file to save peer data")?
+            .into_parts();
+
+        let mut tmp = tokio::fs::File::from_std(tmp_file);
+
+        let mut count = 0;
+        for peer_addr in known_peers {
+            let ser = postcard::to_stdvec(&peer_addr).context("failed to serialize peer data")?;
+            tmp.write_all(&ser)
+                .await
+                .context("failed to persist peer data")?;
+            count += 1;
+        }
+        tmp.flush().await.context("failed to flush peer data")?;
+        drop(tmp);
+
+        // move the file
+        tokio::fs::rename(tmp_path, path)
+            .await
+            .context("failed renaming peer data file")?;
+        Ok(count)
+    }
+}
+
+impl PeerMapInner {
+    /// Get the known peer addresses stored in the map. Peers with empty addressing information are
+    /// filtered out.
+    pub fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
         self.by_id.values().filter_map(|endpoint| {
             let peer_addr = endpoint.peer_addr();
             (!peer_addr.info.is_empty()).then_some(peer_addr)
@@ -1006,7 +1169,7 @@ impl PeerMap {
 
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let mut me = PeerMap::default();
+        let mut me = PeerMapInner::default();
         let contents = std::fs::read(path)?;
         let mut slice: &[u8] = &contents;
         while !slice.is_empty() {
@@ -1137,37 +1300,6 @@ impl PeerMap {
     pub(super) fn set_endpoint_for_ip_port(&mut self, ipp: &SendAddr, id: usize) {
         trace!("insert ip -> id: {:?} -> {}", ipp, id);
         self.by_ip_port.insert(*ipp, id);
-    }
-
-    /// Saves the known peer info to the given path, returning the number of peers persisted.
-    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
-        let mut known_peers = self.known_peer_addresses().peekable();
-        if known_peers.peek().is_none() {
-            // prevent file handling if unnecesary
-            return Ok(0);
-        }
-        let (tmp_file, tmp_path) = tempfile::NamedTempFile::new()
-            .context("cannot create temp file to save peer data")?
-            .into_parts();
-
-        let mut tmp = tokio::fs::File::from_std(tmp_file);
-
-        let mut count = 0;
-        for peer_addr in known_peers {
-            let ser = postcard::to_stdvec(&peer_addr).context("failed to serialize peer data")?;
-            tmp.write_all(&ser)
-                .await
-                .context("failed to persist peer data")?;
-            count += 1;
-        }
-        tmp.flush().await.context("failed to flush peer data")?;
-        drop(tmp);
-
-        // move the file
-        tokio::fs::rename(tmp_path, path)
-            .await
-            .context("failed renaming peer data file")?;
-        Ok(count)
     }
 
     // TODO: When do we want to remove endpoints?

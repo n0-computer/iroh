@@ -1,4 +1,4 @@
-use std::{convert::TryInto, num::ParseIntError, str::FromStr};
+use std::{convert::TryInto, net::SocketAddr, num::ParseIntError, str::FromStr};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -32,7 +32,8 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (PeerAddr, Ma
             .await
             .unwrap();
         let addr = ep.local_addr().unwrap();
-        let addr = PeerAddr::new(ep.peer_id()).with_direct_addresses([addr.0]);
+        let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
+        let addr = PeerAddr::new(ep.peer_id()).with_direct_addresses([addr]);
         (addr, ep)
     })
 }
@@ -44,6 +45,7 @@ pub async fn connect_client(
 ) -> Result<(MagicEndpoint, quinn::Connection)> {
     let endpoint = MagicEndpoint::builder()
         .alpns(vec![ALPN.to_vec()])
+        .derp_mode(DerpMode::Disabled)
         .transport_config(transport_config(&opt))
         .bind(0)
         .await
@@ -192,4 +194,3 @@ fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
 
     Ok(base * multiplier)
 }
-
