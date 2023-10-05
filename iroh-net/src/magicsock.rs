@@ -239,11 +239,13 @@ struct Inner {
     derp_map: DerpMap,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
+    /// Tracks the networkmap node entity for each peer discovery key.
     peer_map: PeerMap,
     /// UDP IPv4 socket
     pconn4: RebindingUdpConn,
     /// UDP IPv6 socket
     pconn6: Option<RebindingUdpConn>,
+    /// Netcheck client
     net_checker: netcheck::Client,
     /// The state for an active DiscoKey.
     disco_info: parking_lot::Mutex<HashMap<PublicKey, DiscoInfo>>,
@@ -648,7 +650,7 @@ impl MagicSock {
             pconn6: pconn6.clone(),
             net_checker: net_checker.clone(),
             disco_info: parking_lot::Mutex::new(HashMap::new()),
-            peer_map: peer_map.clone(),
+            peer_map,
         });
 
         let udp_state = quinn_udp::UdpState::default();
@@ -678,7 +680,6 @@ impl MagicSock {
                     on_endpoint_refreshed: HashMap::new(),
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
-                    peer_map,
                     peers_path,
                     port_mapper,
                     pconn4,
@@ -1232,8 +1233,6 @@ struct Actor {
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<config::NetInfo>,
-    /// Tracks the networkmap node entity for each peer discovery key.
-    peer_map: PeerMap,
     /// Path where connection info from [`Self::peer_map`] is persisted.
     peers_path: Option<PathBuf>,
 
@@ -1326,9 +1325,9 @@ impl Actor {
                     self.re_stun("portmap_updated").await;
                 },
                 _ = endpoint_heartbeat_timer.tick() => {
-                    trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
+                    trace!("tick: endpoint heartbeat {} endpoints", self.inner.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
-                    let msgs = self.peer_map.endpoints_stayin_alive();
+                    let msgs = self.inner.peer_map.endpoints_stayin_alive();
                     self.handle_ping_actions(msgs).await;
                 }
                 _ = endpoints_update_receiver.changed() => {
@@ -1340,7 +1339,7 @@ impl Actor {
                 }
                 _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
                     let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
-                    match self.peer_map.save_to_file(path).await {
+                    match self.inner.peer_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "peers persisted"),
                         Err(e) => debug!(%e, "failed to persist known peers"),
                     }
@@ -1383,7 +1382,7 @@ impl Actor {
                     });
                     match self.send_disco_message(dst, dst_key, msg).await {
                         Ok(true) => {
-                            if let Some(ep) = self.peer_map.by_id_mut(&id).as_mut() {
+                            if let Some(ep) = self.inner.peer_map.by_id_mut(&id).as_mut() {
                                 ep.ping_sent(dst, tx_id, purpose, self.msg_sender.clone());
                             }
                         }
@@ -1402,25 +1401,28 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
             ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self.peer_map.endpoint_infos();
+                let eps: Vec<_> = self.inner.peer_map.endpoint_infos();
                 let _ = s.send(eps);
             }
             ActorMessage::TrackedEndpoint(node_key, s) => {
-                let _ = s.send(self.peer_map.endpoint_info(&node_key));
+                let _ = s.send(self.inner.peer_map.endpoint_info(&node_key));
             }
             ActorMessage::LocalEndpoints(s) => {
                 let eps: Vec<_> = self.last_endpoints.clone();
                 let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
-                let res = self.peer_map.get_quic_mapped_addr_for_node_key(&node_key);
+                let res = self
+                    .inner
+                    .peer_map
+                    .get_quic_mapped_addr_for_node_key(&node_key);
                 let _ = s.send(res);
             }
             ActorMessage::Shutdown => {
                 debug!("shutting down");
-                self.peer_map.notify_shutdown();
+                self.inner.peer_map.notify_shutdown();
                 if let Some(path) = self.peers_path.as_ref() {
-                    match self.peer_map.save_to_file(path).await {
+                    match self.inner.peer_map.save_to_file(path).await {
                         Ok(count) => {
                             debug!(count, "known peers persisted")
                         }
@@ -1485,7 +1487,7 @@ impl Actor {
                 }
             }
             ActorMessage::EndpointPingExpired(id, txid) => {
-                if let Some(ep) = self.peer_map.by_id_mut(&id).as_mut() {
+                if let Some(ep) = self.inner.peer_map.by_id_mut(&id).as_mut() {
                     ep.ping_timeout(txid);
                 }
             }
@@ -1529,7 +1531,12 @@ impl Actor {
         let region_id = dm.region_id;
         let ipp = SendAddr::Derp(region_id);
 
-        let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key_mut(&dm.src).as_mut() {
+        let ep_quic_mapped_addr = match self
+            .inner
+            .peer_map
+            .endpoint_for_node_key_mut(&dm.src)
+            .as_mut()
+        {
             Some(ep) => {
                 if ep.derp_region().is_none() {
                     ep.add_derp_region(region_id);
@@ -1542,13 +1549,13 @@ impl Actor {
             Some(addr) => addr,
             None => {
                 info!(peer=%dm.src, "no peer_map state found for peer");
-                let id = self.peer_map.insert_endpoint(EndpointOptions {
+                let id = self.inner.peer_map.insert_endpoint(EndpointOptions {
                     public_key: dm.src,
                     derp_region: Some(region_id),
                     active: true,
                 });
-                self.peer_map.set_endpoint_for_ip_port(&ipp, id);
-                let mut ep = self.peer_map.by_id_mut(&id);
+                self.inner.peer_map.set_endpoint_for_ip_port(&ipp, id);
+                let mut ep = self.inner.peer_map.by_id_mut(&id);
                 let ep_inner = ep.as_mut().expect("inserted");
                 ep_inner.quic_mapped_addr
             }
@@ -1642,6 +1649,7 @@ impl Actor {
         let current_destination = QuicMappedAddr(*current_destination);
 
         match self
+            .inner
             .peer_map
             .get_send_addrs_for_quic_mapped_addr(&current_destination)
         {
@@ -2108,7 +2116,7 @@ impl Actor {
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
         let public_key = {
-            let endpoint = self.peer_map.by_id_mut(&endpoint_id);
+            let endpoint = self.inner.peer_map.by_id_mut(&endpoint_id);
             if endpoint.is_none() {
                 warn!(
                     "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
@@ -2188,7 +2196,7 @@ impl Actor {
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
-        self.peer_map.reset_endpoint_states()
+        self.inner.peer_map.reset_endpoint_states()
     }
 
     /// Closes and re-binds the UDP sockets.
@@ -2370,7 +2378,7 @@ impl Actor {
 
     #[instrument(skip_all)]
     fn add_known_addr(&mut self, peer_addr: PeerAddr) {
-        self.peer_map.add_peer_addr(peer_addr)
+        self.inner.peer_map.add_peer_addr(peer_addr)
     }
 
     /// Returns the current IPv4 listener's port number.

@@ -3,7 +3,6 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -984,9 +983,9 @@ pub struct AddrLatency {
 ///   These come and go as the peer moves around on the internet
 ///
 /// An index of peerInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Debug)]
 pub(super) struct PeerMap {
-    inner: Arc<Mutex<PeerMapInner>>,
+    inner: Mutex<PeerMapInner>,
 }
 
 #[derive(Default, Debug)]
@@ -1002,7 +1001,7 @@ impl PeerMap {
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         Ok(Self {
-            inner: Arc::new(Mutex::new(PeerMapInner::load_from_file(path)?)),
+            inner: Mutex::new(PeerMapInner::load_from_file(path)?),
         })
     }
 
