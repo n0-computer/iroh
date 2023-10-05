@@ -22,7 +22,7 @@ use iroh_bytes::baomap::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::collection::LinkSeqCollectionParser;
+use iroh_bytes::collection::parse_link_seq;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
@@ -859,20 +859,20 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
                     return None;
                 }
                 let entry = db.get(&hash)?;
-                let stats = local
+                let count = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
-                        let (_collection, stats) =
-                            LinkSeqCollectionParser.parse(reader).await.ok()?;
-                        Some(stats)
+                        let (_collection, count) =
+                            parse_link_seq(reader).await.ok()?;
+                        Some(count)
                     })
                     .await
                     .ok()??;
                 Some(BlobListCollectionsResponse {
                     tag: name,
                     hash,
-                    total_blobs_count: stats.num_blobs,
-                    total_blobs_size: stats.total_blob_size,
+                    total_blobs_count: Some(count),
+                    total_blobs_size: None,
                 })
             }
         })

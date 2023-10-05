@@ -2,12 +2,11 @@
 use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
-    collection::LinkSeqCollectionParser,
     util::{
         progress::{IdGenerator, ProgressSender},
         BlobFormat, HashAndFormat, RpcError, Tag,
     },
-    Hash,
+    Hash, collection::{parse_link_seq, LinkStream},
 };
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
@@ -416,11 +415,11 @@ async fn gc_mark_task<'a>(
                     warn!("gc: {} creating data reader failed", hash);
                     continue;
                 };
-                let Ok((mut iter, stats)) = LinkSeqCollectionParser.parse(reader).await else {
+                let Ok((mut iter, count)) = parse_link_seq(reader).await else {
                     warn!("gc: {} parse failed", hash);
                     continue;
                 };
-                info!("parsed collection {} {:?}", hash, stats);
+                info!("parsed collection {} {:?}", hash, count);
                 loop {
                     let item = match iter.next().await {
                         Ok(Some(item)) => item,

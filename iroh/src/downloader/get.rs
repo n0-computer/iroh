@@ -4,7 +4,7 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use futures::FutureExt;
 use iroh_bytes::baomap::range_collections::RangeSet2;
-use iroh_bytes::collection::LinkSeqCollectionParser;
+use iroh_bytes::collection::parse_link_seq;
 use iroh_bytes::{
     baomap::{MapEntry, PartialMapEntry, Store},
     get::{
@@ -392,7 +392,7 @@ pub async fn get_collection<D: Store>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, _) = LinkSeqCollectionParser.parse(reader).await.map_err(|e| {
+        let (mut collection, _) = parse_link_seq(reader).await.map_err(|e| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection : {e}"
             ))
@@ -484,7 +484,7 @@ pub async fn get_collection<D: Store>(
             FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
         })?;
         let reader = entry.data_reader().await?;
-        let (mut collection, _) = LinkSeqCollectionParser.parse(reader).await.map_err(|_| {
+        let (mut collection, _) = parse_link_seq(reader).await.map_err(|_| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection"
             ))

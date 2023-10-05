@@ -6,7 +6,7 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkNum};
 use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
-use iroh_bytes::collection::LinkSeqCollectionParser;
+use iroh_bytes::collection::parse_link_seq;
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     get::{
@@ -288,12 +288,12 @@ pub async fn get_collection<D: BaoStore>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = LinkSeqCollectionParser.parse(reader).await?;
+        let (mut collection, count) = parse_link_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
-                num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
+                num_blobs: Some(count),
+                total_blobs_size: None,
             })
             .await?;
         let mut children: Vec<Hash> = vec![];
@@ -364,12 +364,12 @@ pub async fn get_collection<D: BaoStore>(
         // read the collection fully for now
         let entry = db.get(root_hash).context("just downloaded")?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = LinkSeqCollectionParser.parse(reader).await?;
+        let (mut collection, count) = parse_link_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
-                num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
+                num_blobs: Some(count),
+                total_blobs_size: None,
             })
             .await?;
         let mut children = vec![];

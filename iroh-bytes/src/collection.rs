@@ -49,12 +49,19 @@ impl IntoIterator for LinkSeq {
     }
 }
 
-impl LinkStream for LinkSeqIter {
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
+/// Iterator over the hashes in a [`LinkSeq`].
+#[derive(Debug, Clone)]
+pub struct LinkSeqStream(LinkSeq);
+
+impl LinkSeqStream {
+
+    /// Get the next hash in the sequence.
+    pub fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
         futures::future::ok(self.0.pop_front()).boxed_local()
     }
 
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
+    /// Skip a number of hashes in the sequence.
+    pub fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
         let ok = self.0.drop_front(n as usize);
         if ok {
             futures::future::ok(())
@@ -151,29 +158,14 @@ pub struct CollectionStats {
     pub total_blob_size: Option<u64>,
 }
 
-/// A collection parser that parses a sequence of links.
-#[derive(Debug, Clone)]
-pub struct LinkSeqCollectionParser;
-
-impl LinkSeqCollectionParser {
-    /// Parse a sequence of links.
-    pub fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        mut reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        async move {
-            let bytes = reader.read_to_end().await?;
-            let links = LinkSeq::try_from(bytes)?;
-            let num_blobs = links.len().saturating_sub(1);
-            let stream: Box<dyn LinkStream> = Box::new(links.into_iter());
-            Ok((
-                stream,
-                CollectionStats {
-                    num_blobs: Some(num_blobs as u64),
-                    total_blob_size: None,
-                },
-            ))
-        }
-        .boxed_local()
-    }
+/// Parse a sequence of links.
+pub async fn parse_link_seq<'a, R: AsyncSliceReader + 'a>(mut reader: R) -> anyhow::Result<(LinkSeqStream, u64)> {
+    let bytes = reader.read_to_end().await?;
+    let links = LinkSeq::try_from(bytes)?;
+    let num_links = links.len() as u64;
+    let stream = LinkSeqStream(links);
+    Ok((
+        stream,
+        num_links,
+    ))
 }
