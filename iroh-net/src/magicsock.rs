@@ -409,7 +409,7 @@ impl Inner {
                         );
                     }
                     Some(ep) => {
-                        info!(
+                        debug!(
                             "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
                             self.public_key(),
                             ep.public_key(),
