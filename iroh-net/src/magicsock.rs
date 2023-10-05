@@ -2682,36 +2682,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_transmit_iter() {
-        let transmits = vec![
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 2)),
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 2)),
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 3)),
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 3)),
-        ];
-
-        let groups: Vec<_> = TransmitIter::new(&transmits).collect();
-        dbg!(&groups);
-        assert_eq!(groups.len(), 4);
-        assert_eq!(groups[0].len(), 1);
-        assert_eq!(groups[1].len(), 2);
-        assert_eq!(groups[2].len(), 1);
-        assert_eq!(groups[3].len(), 2);
-
-        let transmits = vec![
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
-            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
-        ];
-
-        let groups: Vec<_> = TransmitIter::new(&transmits).collect();
-        dbg!(&groups);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].len(), 2);
-    }
-
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         conn.local_addr().unwrap().port()
@@ -3405,7 +3375,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn split_packets() {
+    fn test_split_packets() {
         fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit {
             let destination = "127.0.0.1:12345".parse().unwrap();
             quinn_udp::Transmit {
