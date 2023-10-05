@@ -28,7 +28,7 @@ use std::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
     },
-    task::{Context, Poll, Waker},
+    task::{ready, Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -61,7 +61,7 @@ use self::{
     endpoint::{Options as EndpointOptions, PeerMap, PingAction},
     metrics::Metrics as MagicsockMetrics,
     rebinding_conn::RebindingUdpConn,
-    udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
+    udp_actor::{IpPacket, NetworkReadResult, NetworkSource},
 };
 
 mod derp_actor;
@@ -241,10 +241,13 @@ struct Inner {
     derp_map: DerpMap,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
+    peer_map: PeerMap,
     /// UDP IPv4 socket
     pconn4: RebindingUdpConn,
     /// UDP IPv6 socket
     pconn6: Option<RebindingUdpConn>,
+    ip_sender: mpsc::Sender<IpPacket>,
+    net_checker: netcheck::Client,
 }
 
 impl Inner {
@@ -376,6 +379,24 @@ impl MagicSock {
         let (actor_sender, actor_receiver) = mpsc::channel(128);
         let (network_sender, network_receiver) = mpsc::channel(128);
 
+        let (ip_sender, ip_receiver) = mpsc::channel(128);
+
+        // load the peer data
+        let peer_map = match peers_path.as_ref() {
+            Some(path) if path.exists() => match PeerMap::load_from_file(path) {
+                Ok(peer_map) => {
+                    let count = peer_map.node_count();
+                    debug!(count, "loaded peer map");
+                    peer_map
+                }
+                Err(e) => {
+                    debug!(%e, "failed to load peer map: using default");
+                    PeerMap::default()
+                }
+            },
+            _ => PeerMap::default(),
+        };
+
         let inner = Arc::new(Inner {
             me,
             on_endpoints,
@@ -396,25 +417,12 @@ impl MagicSock {
             my_derp: AtomicU16::new(0),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
+            ip_sender: ip_sender.clone(),
+            net_checker: net_checker.clone(),
+            peer_map: peer_map.clone(),
         });
 
         let udp_state = quinn_udp::UdpState::default();
-        let (ip_sender, ip_receiver) = mpsc::channel(128);
-        let (udp_actor_sender, udp_actor_receiver) = mpsc::channel(128);
-
-        let udp_actor_task = {
-            let udp_actor =
-                UdpActor::new(&udp_state, inner.clone(), pconn4.clone(), pconn6.clone());
-            let net_checker = net_checker.clone();
-            tokio::task::spawn(
-                async move {
-                    udp_actor
-                        .run(udp_actor_receiver, net_checker, ip_sender)
-                        .await;
-                }
-                .instrument(info_span!("udp.actor")),
-            )
-        };
 
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -425,22 +433,6 @@ impl MagicSock {
             .instrument(info_span!("derp.actor")),
         );
 
-        // load the peer data
-        let peer_map = match peers_path.as_ref() {
-            Some(path) if path.exists() => match PeerMap::load_from_file(path) {
-                Ok(peer_map) => {
-                    let count = peer_map.node_count();
-                    debug!(count, "loaded peer map");
-                    peer_map
-                }
-                Err(e) => {
-                    debug!(%e, "failed to load peer map: using default");
-                    PeerMap::default()
-                }
-            },
-            _ => PeerMap::default(),
-        };
-
         let inner2 = inner.clone();
         let main_actor_task = tokio::task::spawn(
             async move {
@@ -448,7 +440,6 @@ impl MagicSock {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
                     derp_actor_sender,
-                    udp_actor_sender,
                     network_receiver,
                     ip_receiver,
                     inner: inner2,
@@ -482,7 +473,6 @@ impl MagicSock {
             actor_tasks: Arc::new(Mutex::new(vec![
                 main_actor_task.into(),
                 derp_actor_task.into(),
-                udp_actor_task.into(),
             ])),
         };
 
@@ -661,6 +651,12 @@ impl MagicSock {
             .unwrap();
         r.await.unwrap();
     }
+
+    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
+        self.local_addr()
+            .map(|(v4, v6)| if let Some(v6) = v6 { v6 } else { v4 })
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err}")))
+    }
 }
 
 /// The info and state for the DiscoKey in the MagicSock.discoInfo map key.
@@ -783,75 +779,77 @@ impl AsyncUdpSocket for MagicSock {
             )));
         }
 
+        // TODO: ipv6
+        let msgs = ready!(self.inner.pconn4.poll_recv(cx, bufs, metas))?;
+
+        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+
         let mut num_msgs = 0;
-        for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
-            match self.inner.network_recv_ch.try_recv() {
-                Err(flume::TryRecvError::Empty) => {
-                    self.inner
-                        .network_recv_wakers
-                        .lock()
-                        .unwrap()
-                        .replace(cx.waker().clone());
+
+        for (meta, buf) in metas.into_iter().zip(bufs.iter()).take(msgs) {
+            let mut start = 0;
+
+            // find disco and stun packets and forward them to the actor
+            loop {
+                let end = start + meta.stride;
+                if end > buf.len() {
                     break;
                 }
-                Err(flume::TryRecvError::Disconnected) => {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "connection closed",
-                    )));
-                }
-                Ok(dm) => {
-                    if self.inner.is_closed() {
+                let packet = &buf[start..end];
+                if stun::is(&packet) {
+                    trace!("tick: stun packet");
+                    let packet = Bytes::copy_from_slice(packet);
+                    self.inner
+                        .net_checker
+                        .receive_stun_packet(packet, meta.addr);
+                } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
+                    // Disco?
+                    trace!("tick: disco packet: {:?}", meta);
+                    // todo: we drop disco packets here if the actor is slow to pick them up..
+                    if self
+                        .inner
+                        .ip_sender
+                        .try_send(IpPacket::Disco {
+                            sender,
+                            sealed_box: Bytes::copy_from_slice(sealed_box),
+                            src: SendAddr::Udp(meta.addr),
+                        })
+                        .is_err()
+                    {
+                        warn!("ip_sender slow");
                         break;
-                    }
+                    };
+                }
+                start = end;
+            }
 
-                    match dm {
-                        NetworkReadResult::Error(err) => {
-                            return Poll::Ready(Err(err));
-                        }
-                        NetworkReadResult::Ok {
-                            bytes,
-                            meta,
-                            source,
-                        } => {
-                            buf_out[..bytes.len()].copy_from_slice(&bytes);
-                            *meta_out = meta;
-
-                            match source {
-                                NetworkSource::Derp => {
-                                    inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
-                                }
-                                NetworkSource::Ipv4 => {
-                                    inc_by!(MagicsockMetrics, recv_data_ipv4, bytes.len() as _);
-                                }
-                                NetworkSource::Ipv6 => {
-                                    inc_by!(MagicsockMetrics, recv_data_ipv6, bytes.len() as _);
-                                }
-                            }
-                            trace!(
-                                "[QUINN] <- {} ({}b) ({}) ({:?}, {:?})",
-                                meta_out.addr,
-                                meta_out.len,
-                                self.inner.me,
-                                meta_out.dst_ip,
-                                source
-                            );
-                        }
-                    }
-
-                    num_msgs += 1;
+            // remap addr
+            match self
+                .inner
+                .peer_map
+                .endpoint_for_ip_port_mut(&SendAddr::Udp(meta.addr))
+                .as_ref()
+            {
+                None => {
+                    warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
+                }
+                Some(ep) => {
+                    debug!("peer_map state found for {}", meta.addr);
+                    num_msgs += meta.len / meta.stride;
+                    meta.addr = ep.quic_mapped_addr.0;
                 }
             }
+            // Normalize local_ip
+            meta.dst_ip = dst_ip;
         }
 
-        // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
             inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
             trace!("received {} datagrams", num_msgs);
             return Poll::Ready(Ok(num_msgs));
         }
 
-        Poll::Pending
+        Poll::Ready(Ok(msgs))
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -909,7 +907,7 @@ struct Actor {
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
-    udp_actor_sender: mpsc::Sender<UdpActorMessage>,
+    // udp_actor_sender: mpsc::Sender<UdpActorMessage>,
     network_receiver: mpsc::Receiver<Vec<quinn_udp::Transmit>>,
     ip_receiver: mpsc::Receiver<IpPacket>,
     /// Channel to send received derp messages on, for processing.
@@ -1022,17 +1020,7 @@ impl Actor {
                             self.handle_disco_message(sender, &sealed_box, src, None).await;
                         }
                         IpPacket::Forward(mut forward) => {
-                            if let NetworkReadResult::Ok { meta, bytes, .. } = &mut forward {
-                                if !self.receive_ip(bytes, meta) {
-                                    continue;
-                                }
-                            }
-
-                            let _ = self.derp_recv_sender.send_async(forward).await;
-                            let mut wakers = self.inner.network_recv_wakers.lock().unwrap();
-                            while let Some(waker) = wakers.take() {
-                                waker.wake();
-                            }
+                            unreachable!("ip packets are not pushed over here anymore");
                         }
                     }
                 }
@@ -1153,10 +1141,6 @@ impl Actor {
                     .send(DerpActorMessage::Shutdown)
                     .await
                     .ok();
-                self.udp_actor_sender
-                    .send(UdpActorMessage::Shutdown)
-                    .await
-                    .ok();
 
                 // Ignore errors from pconnN
                 // They will frequently have been closed already by a call to connBind.Close.
@@ -1225,34 +1209,6 @@ impl Actor {
     /// [`QuicMappedAddr`] instead of the actual remote.
     ///
     /// Returns `true` if the message should be processed.
-    fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
-        debug!("received data {} from {}", meta.len, meta.addr);
-        match self
-            .peer_map
-            .endpoint_for_ip_port_mut(&SendAddr::Udp(meta.addr))
-            .as_ref()
-        {
-            None => {
-                warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
-                return false;
-            }
-            Some(ep) => {
-                debug!("peer_map state found for {}", meta.addr);
-                meta.addr = ep.quic_mapped_addr.0;
-            }
-        }
-
-        // Normalize local_ip
-        meta.dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-
-        // ep.noteRecvActivity();
-        // if stats := c.stats.Load(); stats != nil {
-        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
-        // }
-
-        debug!("received passthrough message {}", bytes.len());
-        true
-    }
 
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
@@ -1283,16 +1239,15 @@ impl Actor {
         let region_id = dm.region_id;
         let ipp = SendAddr::Derp(region_id);
 
-        let ep_quic_mapped_addr =
-            match self.peer_map.endpoint_for_node_key_mut(&dm.src).as_mut() {
-                Some(ep) => {
-                    if ep.derp_region().is_none() {
-                        ep.add_derp_region(region_id);
-                    }
-                    Some(ep.quic_mapped_addr)
+        let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key_mut(&dm.src).as_mut() {
+            Some(ep) => {
+                if ep.derp_region().is_none() {
+                    ep.add_derp_region(region_id);
                 }
-                None => None,
-            };
+                Some(ep.quic_mapped_addr)
+            }
+            None => None,
+        };
         let ep_quic_mapped_addr = match ep_quic_mapped_addr {
             Some(addr) => addr,
             None => {

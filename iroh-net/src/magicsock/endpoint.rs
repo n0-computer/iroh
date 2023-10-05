@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context;
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
-use parking_lot::{Mutex, MutexGuard, MappedMutexGuard};
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -1036,7 +1036,10 @@ impl PeerMap {
         MutexGuard::try_map(self.inner.lock(), |pm| pm.by_id_mut(id)).ok()
     }
 
-    pub(super) fn endpoint_for_node_key_mut(&self, nk: &PublicKey) -> Option<MappedMutexGuard<Endpoint>> {
+    pub(super) fn endpoint_for_node_key_mut(
+        &self,
+        nk: &PublicKey,
+    ) -> Option<MappedMutexGuard<Endpoint>> {
         MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_node_key_mut(nk)).ok()
     }
 
@@ -1053,7 +1056,10 @@ impl PeerMap {
     }
 
     pub fn get_quic_mapped_addr_for_node_key(&self, nk: &PublicKey) -> Option<QuicMappedAddr> {
-        self.inner.lock().endpoint_for_node_key(nk).map(|ep| ep.quic_mapped_addr)
+        self.inner
+            .lock()
+            .endpoint_for_node_key(nk)
+            .map(|ep| ep.quic_mapped_addr)
     }
 
     pub fn get_send_addrs_for_quic_mapped_addr(
