@@ -354,7 +354,7 @@ impl AuthorCommands {
 /// Format the content. If an error occurs it's returned in a formated, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
-    let decode_failed = |_err: std::string::FromUtf8Error| format!("<invalid UTF-8>");
+    let decode_failed = |_err: std::string::FromUtf8Error| "<invalid UTF-8>".to_string();
 
     match mode {
         DisplayContentMode::Auto => {
