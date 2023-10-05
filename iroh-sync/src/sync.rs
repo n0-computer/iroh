@@ -392,7 +392,7 @@ impl From<SignedEntry> for Entry {
 
 impl PartialOrd for SignedEntry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.entry.id.partial_cmp(&other.entry.id)
+        Some(self.cmp(other))
     }
 }
 
