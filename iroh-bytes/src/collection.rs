@@ -1,20 +1,9 @@
 //! traits related to collections of blobs
 use crate::util::Hash;
 use bytes::Bytes;
-use futures::{future::LocalBoxFuture, FutureExt};
+use futures::Future;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use std::fmt::Debug;
-
-/// A stream (async iterator) over the hashes of a collection.
-///
-/// Allows to get the next hash or skip a number of hashes.  Does not
-/// implement `Stream` because of the extra `skip` method.
-pub trait LinkStream: Debug {
-    /// Get the next hash in the collection.
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>>;
-    /// Skip a number of hashes in the collection.
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>>;
-}
 
 /// A sequence of links, backed by a [`Bytes`] object.
 #[derive(Debug, Clone)]
@@ -54,21 +43,20 @@ impl IntoIterator for LinkSeq {
 pub struct LinkSeqStream(LinkSeq);
 
 impl LinkSeqStream {
-
     /// Get the next hash in the sequence.
-    pub fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
-        futures::future::ok(self.0.pop_front()).boxed_local()
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> impl Future<Output = anyhow::Result<Option<Hash>>> + '_ {
+        futures::future::ok(self.0.pop_front())
     }
 
     /// Skip a number of hashes in the sequence.
-    pub fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
+    pub fn skip(&mut self, n: u64) -> impl Future<Output = anyhow::Result<()>> + '_ {
         let ok = self.0.drop_front(n as usize);
         if ok {
             futures::future::ok(())
         } else {
             futures::future::err(anyhow::anyhow!("out of bounds"))
         }
-        .boxed_local()
     }
 }
 
@@ -159,13 +147,12 @@ pub struct CollectionStats {
 }
 
 /// Parse a sequence of links.
-pub async fn parse_link_seq<'a, R: AsyncSliceReader + 'a>(mut reader: R) -> anyhow::Result<(LinkSeqStream, u64)> {
+pub async fn parse_link_seq<'a, R: AsyncSliceReader + 'a>(
+    mut reader: R,
+) -> anyhow::Result<(LinkSeqStream, u64)> {
     let bytes = reader.read_to_end().await?;
     let links = LinkSeq::try_from(bytes)?;
     let num_links = links.len() as u64;
     let stream = LinkSeqStream(links);
-    Ok((
-        stream,
-        num_links,
-    ))
+    Ok((stream, num_links))
 }

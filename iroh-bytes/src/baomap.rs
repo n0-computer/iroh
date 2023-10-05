@@ -2,11 +2,12 @@
 use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
+    collection::parse_link_seq,
     util::{
         progress::{IdGenerator, ProgressSender},
         BlobFormat, HashAndFormat, RpcError, Tag,
     },
-    Hash, collection::{parse_link_seq, LinkStream},
+    Hash,
 };
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;

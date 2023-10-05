@@ -862,8 +862,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
                 let count = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
-                        let (_collection, count) =
-                            parse_link_seq(reader).await.ok()?;
+                        let (_collection, count) = parse_link_seq(reader).await.ok()?;
                         Some(count)
                     })
                     .await

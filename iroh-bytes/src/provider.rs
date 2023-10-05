@@ -15,7 +15,7 @@ use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;
-use crate::collection::{parse_link_seq, LinkStream};
+use crate::collection::parse_link_seq;
 use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
