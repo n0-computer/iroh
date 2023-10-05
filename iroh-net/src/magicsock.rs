@@ -1366,15 +1366,21 @@ impl Actor {
     async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
         trace!(
             "sending:\n{}",
-            transmits
-                .iter()
-                .map(|t| format!(
-                    "  dest: {}, src: {:?}, content_len: {}\n",
-                    QuicMappedAddr(t.destination),
-                    t.src_ip,
-                    t.contents.len()
-                ))
-                .collect::<String>()
+            transmits.iter().fold(
+                String::with_capacity(transmits.len() * 50),
+                |mut final_repr, t| {
+                    final_repr.push_str(
+                        format!(
+                            "  dest: {}, src: {:?}, content_len: {}\n",
+                            QuicMappedAddr(t.destination),
+                            t.src_ip,
+                            t.contents.len()
+                        )
+                        .as_str(),
+                    );
+                    final_repr
+                }
+            )
         );
 
         if transmits.is_empty() {
