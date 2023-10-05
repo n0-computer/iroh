@@ -1,9 +1,8 @@
 //! traits related to collections of blobs
 use crate::util::Hash;
 use bytes::Bytes;
-use futures::Future;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
-use std::fmt::Debug;
+use std::{fmt::Debug, io};
 
 /// A sequence of links, backed by a [`Bytes`] object.
 #[derive(Debug, Clone)]
@@ -45,17 +44,20 @@ pub struct LinkSeqStream(LinkSeq);
 impl LinkSeqStream {
     /// Get the next hash in the sequence.
     #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> impl Future<Output = anyhow::Result<Option<Hash>>> + '_ {
-        futures::future::ok(self.0.pop_front())
+    pub async fn next(&mut self) -> io::Result<Option<Hash>> {
+        Ok(self.0.pop_front())
     }
 
     /// Skip a number of hashes in the sequence.
-    pub fn skip(&mut self, n: u64) -> impl Future<Output = anyhow::Result<()>> + '_ {
+    pub async fn skip(&mut self, n: u64) -> io::Result<()> {
         let ok = self.0.drop_front(n as usize);
-        if ok {
-            futures::future::ok(())
+        if !ok {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "end of sequence",
+            ))
         } else {
-            futures::future::err(anyhow::anyhow!("out of bounds"))
+            Ok(())
         }
     }
 }
