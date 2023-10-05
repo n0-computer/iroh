@@ -110,6 +110,9 @@ pub enum DocCommands {
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
+        /// How to show the contents of the keys.
+        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        mode: DisplayContentMode,
     },
     /// Watch for changes and events on a document
     Watch {
@@ -227,16 +230,14 @@ impl DocCommands {
                 doc,
                 prefix,
                 author,
+                mode,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let filter = GetFilter::author_prefix(author, prefix);
 
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!(
-                        "{}",
-                        fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
-                    );
+                    println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
             }
             Self::Watch { doc } => {
