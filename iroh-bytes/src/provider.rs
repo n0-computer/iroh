@@ -15,7 +15,7 @@ use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::baomap::*;
-use crate::collection::parse_link_seq;
+use crate::hashseq::parse_hash_seq;
 use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
@@ -280,7 +280,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
     let just_root = matches!(request.ranges.as_single(), Some((0, _)));
     let mut c = if !just_root {
         // use the collection parser to parse the collection
-        let (stream, count) = parse_link_seq(&mut data).await?;
+        let (stream, count) = parse_hash_seq(&mut data).await?;
         writer
             .events
             .send(Event::TransferCollectionStarted {

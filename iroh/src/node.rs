@@ -22,7 +22,7 @@ use iroh_bytes::baomap::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::collection::parse_link_seq;
+use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
@@ -855,14 +855,14 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             let db = db.clone();
             let local = local.clone();
             async move {
-                if !format.is_collection() {
+                if !format.is_hash_seq() {
                     return None;
                 }
                 let entry = db.get(&hash)?;
                 let count = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
-                        let (_collection, count) = parse_link_seq(reader).await.ok()?;
+                        let (_collection, count) = parse_hash_seq(reader).await.ok()?;
                         Some(count)
                     })
                     .await
@@ -1017,7 +1017,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let db = self.inner.db.clone();
         let db2 = db.clone();
         let download = local.spawn_pinned(move || async move {
-            crate::get::get(&db2, conn, hash, msg.format.is_collection(), progress2).await
+            crate::get::get(&db2, conn, hash, msg.format.is_hash_seq(), progress2).await
         });
 
         let this = self.clone();
@@ -1032,7 +1032,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
                 .await?;
             if let DownloadLocation::External { path, in_place } = msg.out {
                 if let Err(cause) = this
-                    .blob_export(path, hash, msg.format.is_collection(), in_place, progress3)
+                    .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
                     .await
                 {
                     progress.send(GetProgress::Abort(cause.into())).await?;

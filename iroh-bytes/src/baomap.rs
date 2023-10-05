@@ -2,7 +2,7 @@
 use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
-    collection::parse_link_seq,
+    hashseq::parse_hash_seq,
     util::{
         progress::{IdGenerator, ProgressSender},
         BlobFormat, HashAndFormat, RpcError, Tag,
@@ -416,7 +416,7 @@ async fn gc_mark_task<'a>(
                     warn!("gc: {} creating data reader failed", hash);
                     continue;
                 };
-                let Ok((mut iter, count)) = parse_link_seq(reader).await else {
+                let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
                     warn!("gc: {} parse failed", hash);
                     continue;
                 };

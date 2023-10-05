@@ -4,8 +4,8 @@
 #![recursion_limit = "256"]
 
 pub mod baomap;
-pub mod collection;
 pub mod get;
+pub mod hashseq;
 pub mod protocol;
 pub mod provider;
 pub mod util;

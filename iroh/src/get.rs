@@ -6,7 +6,7 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkNum};
 use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
-use iroh_bytes::collection::parse_link_seq;
+use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     get::{
@@ -288,7 +288,7 @@ pub async fn get_collection<D: BaoStore>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, count) = parse_link_seq(reader).await?;
+        let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
@@ -364,7 +364,7 @@ pub async fn get_collection<D: BaoStore>(
         // read the collection fully for now
         let entry = db.get(root_hash).context("just downloaded")?;
         let reader = entry.data_reader().await?;
-        let (mut collection, count) = parse_link_seq(reader).await?;
+        let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,

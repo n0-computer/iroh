@@ -5,10 +5,10 @@ use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use std::{fmt::Debug, io};
 
 /// A sequence of links, backed by a [`Bytes`] object.
-#[derive(Debug, Clone)]
-pub struct LinkSeq(Bytes);
+#[derive(Debug, Clone, derive_more::Into)]
+pub struct HashSeq(Bytes);
 
-impl FromIterator<Hash> for LinkSeq {
+impl FromIterator<Hash> for HashSeq {
     fn from_iter<T: IntoIterator<Item = Hash>>(iter: T) -> Self {
         let iter = iter.into_iter();
         let (lower, _upper) = iter.size_hint();
@@ -20,28 +20,30 @@ impl FromIterator<Hash> for LinkSeq {
     }
 }
 
-impl TryFrom<Bytes> for LinkSeq {
+impl TryFrom<Bytes> for HashSeq {
     type Error = anyhow::Error;
 
     fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
-        Self::new(bytes).ok_or_else(|| anyhow::anyhow!("invalid link sequence"))
+        Self::new(bytes).ok_or_else(|| anyhow::anyhow!("invalid hash sequence"))
     }
 }
 
-impl IntoIterator for LinkSeq {
+impl IntoIterator for HashSeq {
     type Item = Hash;
-    type IntoIter = LinkSeqIter;
+    type IntoIter = HashSeqIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        LinkSeqIter(self)
+        HashSeqIter(self)
     }
 }
 
-/// Iterator over the hashes in a [`LinkSeq`].
+/// Stream over the hashes in a [`HashSeq`].
+///
+/// todo: make this wrap a reader instead of a [`HashSeq`].
 #[derive(Debug, Clone)]
-pub struct LinkSeqStream(LinkSeq);
+pub struct HashSeqStream(HashSeq);
 
-impl LinkSeqStream {
+impl HashSeqStream {
     /// Get the next hash in the sequence.
     #[allow(clippy::should_implement_trait)]
     pub async fn next(&mut self) -> io::Result<Option<Hash>> {
@@ -62,8 +64,8 @@ impl LinkSeqStream {
     }
 }
 
-impl LinkSeq {
-    /// Create a new sequence of links.
+impl HashSeq {
+    /// Create a new sequence of hashes.
     pub fn new(bytes: Bytes) -> Option<Self> {
         if bytes.len() % 32 == 0 {
             Some(Self(bytes))
@@ -127,11 +129,11 @@ impl LinkSeq {
     }
 }
 
-/// Iterator over the hashes in a [`LinkSeq`].
+/// Iterator over the hashes in a [`HashSeq`].
 #[derive(Debug, Clone)]
-pub struct LinkSeqIter(LinkSeq);
+pub struct HashSeqIter(HashSeq);
 
-impl Iterator for LinkSeqIter {
+impl Iterator for HashSeqIter {
     type Item = Hash;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -139,22 +141,13 @@ impl Iterator for LinkSeqIter {
     }
 }
 
-/// Information about a collection.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CollectionStats {
-    /// The number of blobs in the collection. `None` for unknown.
-    pub num_blobs: Option<u64>,
-    /// The total size of all blobs in the collection. `None` for unknown.
-    pub total_blob_size: Option<u64>,
-}
-
-/// Parse a sequence of links.
-pub async fn parse_link_seq<'a, R: AsyncSliceReader + 'a>(
+/// Parse a sequence of hashes.
+pub async fn parse_hash_seq<'a, R: AsyncSliceReader + 'a>(
     mut reader: R,
-) -> anyhow::Result<(LinkSeqStream, u64)> {
+) -> anyhow::Result<(HashSeqStream, u64)> {
     let bytes = reader.read_to_end().await?;
-    let links = LinkSeq::try_from(bytes)?;
-    let num_links = links.len() as u64;
-    let stream = LinkSeqStream(links);
-    Ok((stream, num_links))
+    let hashes = HashSeq::try_from(bytes)?;
+    let num_hashes = hashes.len() as u64;
+    let stream = HashSeqStream(hashes);
+    Ok((stream, num_hashes))
 }

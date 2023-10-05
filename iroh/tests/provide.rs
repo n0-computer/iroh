@@ -557,7 +557,7 @@ async fn test_run_ticket() {
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let no_token_ticket = node.ticket(hash, BlobFormat::COLLECTION).await.unwrap();
+    let no_token_ticket = node.ticket(hash, BlobFormat::HASHSEQ).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = no_token_ticket.as_get_options(
             SecretKey::generate(),
@@ -573,7 +573,7 @@ async fn test_run_ticket() {
     .expect("getting without token failed in an unexpected way");
 
     let ticket = node
-        .ticket(hash, BlobFormat::COLLECTION)
+        .ticket(hash, BlobFormat::HASHSEQ)
         .await
         .unwrap()
         .with_token(token);
