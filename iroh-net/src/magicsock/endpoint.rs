@@ -22,9 +22,7 @@ use crate::{
     net::ip::is_unicast_link_local, stun, util::derp_only_mode, PeerAddr,
 };
 
-use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr,
-};
+use super::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr, SendAddr};
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -650,7 +648,6 @@ impl Endpoint {
         &mut self,
         conn_disco_public: &PublicKey,
         m: &disco::Pong,
-        _di: &mut DiscoInfo,
         src: SendAddr,
     ) -> (bool, Option<(SendAddr, PublicKey)>) {
         let is_derp = src.is_derp();
@@ -1002,16 +999,6 @@ struct PeerMapInner {
 }
 
 impl PeerMap {
-    /// Get the known peer addresses stored in the map. Peers with empty addressing information are
-    /// filtered out.
-    pub fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
-        self.inner
-            .lock()
-            .known_peer_addresses()
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
-
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         Ok(Self {
@@ -1042,14 +1029,6 @@ impl PeerMap {
     ) -> Option<MappedMutexGuard<Endpoint>> {
         MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_node_key_mut(nk)).ok()
     }
-
-    // pub(super) fn endpoint_for_node_key(&self, nk: &PublicKey) -> MappedMutexGuard<Option<&Endpoint>> {
-    //     MutexGuard::map(self.inner.lock(), |pm| &mut pm.endpoint_for_node_key(nk))
-    // }
-
-    // pub fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> MappedMutexGuard<Option<&Endpoint>> {
-    //     MutexGuard::map(self.inner.lock(), |pm| &mut pm.endpoint_for_ip_port(ipp))
-    // }
 
     pub fn endpoint_for_ip_port_mut(&self, ipp: &SendAddr) -> Option<MappedMutexGuard<Endpoint>> {
         MutexGuard::try_map(self.inner.lock(), |pm| pm.endpoint_for_ip_port_mut(ipp)).ok()
@@ -1233,10 +1212,10 @@ impl PeerMapInner {
             .and_then(|id| self.by_id.get_mut(id))
     }
 
-    /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
-    pub(super) fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> Option<&Endpoint> {
-        self.by_ip_port.get(ipp).and_then(|id| self.by_id(id))
-    }
+    // /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
+    // pub(super) fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> Option<&Endpoint> {
+    //     self.by_ip_port.get(ipp).and_then(|id| self.by_id(id))
+    // }
 
     pub fn endpoint_for_ip_port_mut(&mut self, ipp: &SendAddr) -> Option<&mut Endpoint> {
         self.by_ip_port

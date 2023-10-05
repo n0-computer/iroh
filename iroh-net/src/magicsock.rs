@@ -28,7 +28,7 @@ use std::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
     },
-    task::{ready, Context, Poll, Waker},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -61,7 +61,6 @@ use self::{
     endpoint::{Options as EndpointOptions, PeerMap, PingAction},
     metrics::Metrics as MagicsockMetrics,
     rebinding_conn::RebindingUdpConn,
-    udp_actor::{IpPacket, NetworkReadResult, NetworkSource},
 };
 
 mod derp_actor;
@@ -69,7 +68,6 @@ mod endpoint;
 mod metrics;
 mod rebinding_conn;
 mod timer;
-mod udp_actor;
 
 pub use self::endpoint::ConnectionType;
 pub use self::endpoint::EndpointInfo;
@@ -216,7 +214,7 @@ struct Inner {
     on_net_info: Option<Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>>,
 
     /// Used for receiving DERP messages.
-    network_recv_ch: flume::Receiver<NetworkReadResult>,
+    derp_recv_receiver: flume::Receiver<DerpRecvResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
     network_recv_wakers: std::sync::Mutex<Option<Waker>>,
     network_send_wakers: std::sync::Mutex<Option<Waker>>,
@@ -246,8 +244,9 @@ struct Inner {
     pconn4: RebindingUdpConn,
     /// UDP IPv6 socket
     pconn6: Option<RebindingUdpConn>,
-    ip_sender: mpsc::Sender<IpPacket>,
     net_checker: netcheck::Client,
+    /// The state for an active DiscoKey.
+    disco_info: parking_lot::Mutex<HashMap<PublicKey, DiscoInfo>>,
 }
 
 impl Inner {
@@ -284,6 +283,238 @@ impl Inner {
 
     fn public_key(&self) -> PublicKey {
         self.secret_key.public()
+    }
+
+    /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
+    ///
+    /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
+    /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
+    #[instrument(skip_all)]
+    fn handle_disco_message(
+        &self,
+        sender: PublicKey,
+        sealed_box: &[u8],
+        src: SendAddr,
+        derp_node_src: Option<PublicKey>,
+    ) -> bool {
+        debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
+        if self.is_closed() {
+            return true;
+        }
+
+        let mut unknown_sender = false;
+        if self.peer_map.endpoint_for_node_key_mut(&sender).is_none()
+            && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
+        {
+            // Disco Ping from unseen endpoint. We will have to add the
+            // endpoint later if the message is a ping
+            debug!("disco: unknown sender {:?} - {}", sender, src);
+            unknown_sender = true;
+        }
+
+        // We're now reasonably sure we're expecting communication from
+        // this peer, do the heavy crypto lifting to see what they want.
+        //
+        let (payload, sealed_box) = {
+            let mut disco_info = self.disco_info.lock();
+            let di = get_disco_info(&mut disco_info, &self.secret_key, &sender);
+            let mut sealed_box = sealed_box.to_vec();
+            let payload = di.shared_key.open(&mut sealed_box);
+            (payload, sealed_box)
+        };
+
+        if payload.is_err() {
+            // This could happen if we changed the key between restarts.
+            warn!(
+                "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
+                self.public_key(),
+                sender,
+                payload,
+            );
+            inc!(MagicsockMetrics, recv_disco_bad_key);
+            return true;
+        }
+        let dm = disco::Message::from_bytes(&sealed_box);
+        debug!("disco: disco.parse = {:?}", dm);
+
+        if dm.is_err() {
+            // Couldn't parse it, but it was inside a correctly
+            // signed box, so just ignore it, assuming it's from a
+            // newer version of Tailscale that we don't
+            // understand. Not even worth logging about, lest it
+            // be too spammy for old clients.
+
+            inc!(MagicsockMetrics, recv_disco_bad_parse);
+            return true;
+        }
+
+        let dm = dm.unwrap();
+        let is_derp = src.is_derp();
+        if is_derp {
+            inc!(MagicsockMetrics, recv_disco_derp);
+        } else {
+            inc!(MagicsockMetrics, recv_disco_udp);
+        }
+
+        debug!("got disco message: {:?}", dm);
+        match dm {
+            disco::Message::Ping(ping) => {
+                inc!(MagicsockMetrics, recv_disco_ping);
+                // if we get here we got a valid ping from an unknown sender
+                // so insert an endpoint for them
+                if unknown_sender {
+                    warn!(
+                        "unknown sender: {:?} with region id {:?}",
+                        sender,
+                        src.derp_region()
+                    );
+                    self.peer_map.insert_endpoint(EndpointOptions {
+                        public_key: sender,
+                        derp_region: src.derp_region(),
+                        active: true,
+                    });
+                }
+
+                self.handle_ping(ping, &sender, src, derp_node_src);
+                true
+            }
+            disco::Message::Pong(pong) => {
+                inc!(MagicsockMetrics, recv_disco_pong);
+                let insert =
+                    if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender).as_mut() {
+                        let (_, insert) = ep.handle_pong_conn(&self.public_key(), &pong, src);
+                        insert
+                    } else {
+                        None
+                    };
+                if let Some((src, key)) = insert {
+                    self.peer_map.set_node_key_for_ip_port(&src, &key);
+                }
+                true
+            }
+            disco::Message::CallMeMaybe(cm) => {
+                inc!(MagicsockMetrics, recv_disco_call_me_maybe);
+                if !is_derp || derp_node_src.is_none() {
+                    // CallMeMaybe messages should only come via DERP.
+                    debug!("[unexpected] CallMeMaybe packets should only come via DERP");
+                    return true;
+                }
+                let node_key = derp_node_src.unwrap();
+                match self.peer_map.endpoint_for_node_key_mut(&node_key).as_mut() {
+                    None => {
+                        inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
+                        debug!(
+                            "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
+                            sender, node_key,
+                        );
+                    }
+                    Some(ep) => {
+                        info!(
+                            "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
+                            self.public_key(),
+                            ep.public_key(),
+                            src,
+                            cm.my_number.len()
+                        );
+                        ep.handle_call_me_maybe(cm);
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    /// di is the DiscoInfo of the source of the ping.
+    /// derp_node_src is non-zero if the ping arrived via DERP.
+    #[instrument(skip_all)]
+    fn handle_ping(
+        &self,
+        dm: disco::Ping,
+        sender: &PublicKey,
+        src: SendAddr,
+        derp_node_src: Option<PublicKey>,
+    ) {
+        let (node_key, likely_heart_beat) = {
+            let mut disco_info = self.disco_info.lock();
+            let di = get_disco_info(&mut disco_info, &self.secret_key, sender);
+            let likely_heart_beat = Some(src) == di.last_ping_from
+                && di
+                    .last_ping_time
+                    .map(|s| s.elapsed() < Duration::from_secs(5))
+                    .unwrap_or_default();
+            di.last_ping_from.replace(src);
+            di.last_ping_time.replace(Instant::now());
+            (di.node_key, likely_heart_beat)
+        };
+        let is_derp = src.is_derp();
+
+        // If we got a ping over DERP, then derp_node_src is non-zero and we reply
+        // over DERP (in which case ip_dst is also a DERP address).
+        // But if the ping was over UDP (ip_dst is not a DERP address), then dst_key
+        // will be zero here, but that's fine: send_disco_message only requires
+        // a dstKey if the dst ip:port is DERP.
+
+        if is_derp {
+            assert!(derp_node_src.is_some());
+        } else {
+            assert!(derp_node_src.is_none());
+        }
+
+        let (dst_key, insert) = match derp_node_src {
+            Some(dst_key) => {
+                // From Derp
+                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key).as_mut() {
+                    if ep.add_candidate_endpoint(src, dm.tx_id) {
+                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+                        return;
+                    }
+                    (dst_key, true)
+                } else {
+                    (dst_key, false)
+                }
+            }
+            None => {
+                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&node_key).as_mut() {
+                    if ep.add_candidate_endpoint(src, dm.tx_id) {
+                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+                        return;
+                    }
+                    (node_key, true)
+                } else {
+                    (node_key, false)
+                }
+            }
+        };
+
+        if insert {
+            self.peer_map.set_node_key_for_ip_port(&src, &dst_key);
+        }
+
+        if !likely_heart_beat {
+            info!(
+                "disco: {:?}<-{:?} ({dst_key:?}, {src:?})  got ping tx={:?}",
+                self.public_key(),
+                node_key,
+                dm.tx_id
+            );
+        }
+
+        let ip_dst = src;
+        let pong = disco::Message::Pong(disco::Pong {
+            tx_id: dm.tx_id,
+            src: src.as_socket_addr(),
+        });
+        match self.actor_sender.try_send(ActorMessage::SendDiscoMessage {
+            dst: ip_dst,
+            dst_key,
+            msg: pong,
+        }) {
+            Err(mpsc::error::TrySendError::Closed(_)) => error!("actor sender gone"),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("actor_sender full - cannot reply to ping from {src:?}",)
+            }
+            Ok(()) => {}
+        }
     }
 }
 
@@ -360,7 +591,7 @@ impl MagicSock {
             None => None,
         };
 
-        let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
+        let (derp_recv_sender, derp_recv_receiver) = flume::bounded(128);
 
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
@@ -378,8 +609,6 @@ impl MagicSock {
         let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
         let (actor_sender, actor_receiver) = mpsc::channel(128);
         let (network_sender, network_receiver) = mpsc::channel(128);
-
-        let (ip_sender, ip_receiver) = mpsc::channel(128);
 
         // load the peer data
         let peer_map = match peers_path.as_ref() {
@@ -407,7 +636,7 @@ impl MagicSock {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            network_recv_ch: network_recv_ch_receiver,
+            derp_recv_receiver,
             network_recv_wakers: std::sync::Mutex::new(None),
             network_send_wakers: std::sync::Mutex::new(None),
             actor_sender: actor_sender.clone(),
@@ -417,8 +646,8 @@ impl MagicSock {
             my_derp: AtomicU16::new(0),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            ip_sender: ip_sender.clone(),
             net_checker: net_checker.clone(),
+            disco_info: parking_lot::Mutex::new(HashMap::new()),
             peer_map: peer_map.clone(),
         });
 
@@ -441,16 +670,14 @@ impl MagicSock {
                     msg_sender: actor_sender,
                     derp_actor_sender,
                     network_receiver,
-                    ip_receiver,
                     inner: inner2,
-                    derp_recv_sender: network_recv_ch_sender,
+                    derp_recv_sender,
                     endpoints_update_state: EndpointUpdateState::new(),
                     last_endpoints: Vec::new(),
                     last_endpoints_time: None,
                     on_endpoint_refreshed: HashMap::new(),
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
-                    disco_info: HashMap::new(),
                     peer_map,
                     peers_path,
                     port_mapper,
@@ -657,6 +884,69 @@ impl MagicSock {
             .map(|(v4, v6)| if let Some(v6) = v6 { v6 } else { v4 })
             .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err}")))
     }
+
+    #[instrument(skip_all, fields(name = %self.inner.me))]
+    fn poll_recv_derp(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        let mut num_msgs = 0;
+        for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
+            match self.inner.derp_recv_receiver.try_recv() {
+                Err(flume::TryRecvError::Empty) => {
+                    self.inner
+                        .network_recv_wakers
+                        .lock()
+                        .unwrap()
+                        .replace(cx.waker().clone());
+                    break;
+                }
+                Err(flume::TryRecvError::Disconnected) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "connection closed",
+                    )));
+                }
+                Ok(dm) => {
+                    if self.inner.is_closed() {
+                        break;
+                    }
+
+                    match dm {
+                        DerpRecvResult::Error(err) => {
+                            return Poll::Ready(Err(err));
+                        }
+                        DerpRecvResult::Ok { bytes, meta } => {
+                            buf_out[..bytes.len()].copy_from_slice(&bytes);
+                            *meta_out = meta;
+
+                            inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
+                            trace!(
+                                "[QUINN] <- {} ({}b) ({}) ({:?}, DERP)",
+                                meta_out.addr,
+                                meta_out.len,
+                                self.inner.me,
+                                meta_out.dst_ip,
+                            );
+                        }
+                    }
+
+                    num_msgs += 1;
+                }
+            }
+        }
+
+        // If we have any msgs to report, they are in the first `num_msgs_total` slots
+        if num_msgs > 0 {
+            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
+            trace!("received {} datagrams", num_msgs);
+            return Poll::Ready(Ok(num_msgs));
+        }
+
+        Poll::Pending
+    }
 }
 
 /// The info and state for the DiscoKey in the MagicSock.discoInfo map key.
@@ -665,6 +955,7 @@ impl MagicSock {
 /// node. In the case of shared nodes and users switching accounts, two
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
+#[derive(Debug)]
 struct DiscoInfo {
     node_key: PublicKey,
     /// The precomputed key for communication with the peer that has the `node_key` used to
@@ -677,6 +968,15 @@ struct DiscoInfo {
 
     /// The last time of a ping for `node_key`.
     last_ping_time: Option<Instant>,
+}
+
+#[derive(Debug)]
+enum DerpRecvResult {
+    Error(io::Error),
+    Ok {
+        meta: quinn_udp::RecvMeta,
+        bytes: Bytes,
+    },
 }
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
@@ -779,8 +1079,21 @@ impl AsyncUdpSocket for MagicSock {
             )));
         }
 
-        // TODO: ipv6
-        let msgs = ready!(self.inner.pconn4.poll_recv(cx, bufs, metas))?;
+        // order of polling is: UDPv4, UDPv6, Derp
+        let msgs = match self.inner.pconn4.poll_recv(cx, bufs, metas)? {
+            Poll::Pending | Poll::Ready(0) => match &self.inner.pconn6 {
+                Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
+                    Poll::Pending | Poll::Ready(0) => {
+                        return self.poll_recv_derp(cx, bufs, metas);
+                    }
+                    Poll::Ready(n) => n,
+                },
+                None => {
+                    return self.poll_recv_derp(cx, bufs, metas);
+                }
+            },
+            Poll::Ready(n) => n,
+        };
 
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
@@ -797,28 +1110,20 @@ impl AsyncUdpSocket for MagicSock {
                 }
                 let packet = &buf[start..end];
                 if stun::is(&packet) {
-                    trace!("tick: stun packet");
+                    trace!("UDP recv: stun packet");
                     let packet = Bytes::copy_from_slice(packet);
                     self.inner
                         .net_checker
                         .receive_stun_packet(packet, meta.addr);
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
                     // Disco?
-                    trace!("tick: disco packet: {:?}", meta);
-                    // todo: we drop disco packets here if the actor is slow to pick them up..
-                    if self
-                        .inner
-                        .ip_sender
-                        .try_send(IpPacket::Disco {
-                            sender,
-                            sealed_box: Bytes::copy_from_slice(sealed_box),
-                            src: SendAddr::Udp(meta.addr),
-                        })
-                        .is_err()
-                    {
-                        warn!("ip_sender slow");
-                        break;
-                    };
+                    trace!("UDP recv: disco packet: {:?}", meta);
+                    self.inner.handle_disco_message(
+                        sender,
+                        &sealed_box,
+                        SendAddr::Udp(meta.addr),
+                        None,
+                    );
                 }
                 start = end;
             }
@@ -892,10 +1197,10 @@ enum ActorMessage {
         derp_region: u16,
         endpoint_id: usize,
     },
-    SendCallMeMaybe {
+    SendDiscoMessage {
         dst: SendAddr,
         dst_key: PublicKey,
-        msg: disco::CallMeMaybe,
+        msg: disco::Message,
     },
     AddKnownAddr(PeerAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
@@ -909,9 +1214,8 @@ struct Actor {
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     // udp_actor_sender: mpsc::Sender<UdpActorMessage>,
     network_receiver: mpsc::Receiver<Vec<quinn_udp::Transmit>>,
-    ip_receiver: mpsc::Receiver<IpPacket>,
     /// Channel to send received derp messages on, for processing.
-    derp_recv_sender: flume::Sender<NetworkReadResult>,
+    derp_recv_sender: flume::Sender<DerpRecvResult>,
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
     /// Records the endpoints found during the previous
@@ -928,8 +1232,6 @@ struct Actor {
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<config::NetInfo>,
-    /// The state for an active DiscoKey.
-    disco_info: HashMap<PublicKey, DiscoInfo>,
     /// Tracks the networkmap node entity for each peer discovery key.
     peer_map: PeerMap,
     /// Path where connection info from [`Self::peer_map`] is persisted.
@@ -1011,17 +1313,6 @@ impl Actor {
                     trace!(?msg, "tick: msg");
                     if self.handle_actor_message(msg).await {
                         return Ok(());
-                    }
-                }
-                Some(msg) = self.ip_receiver.recv() => {
-                    trace!("tick: ip_receiver");
-                    match msg {
-                        IpPacket::Disco { sender, sealed_box, src } => {
-                            self.handle_disco_message(sender, &sealed_box, src, None).await;
-                        }
-                        IpPacket::Forward(mut forward) => {
-                            unreachable!("ip packets are not pushed over here anymore");
-                        }
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
@@ -1173,8 +1464,7 @@ impl Actor {
                 self.set_preferred_port(port).await;
                 let _ = s.send(());
             }
-            ActorMessage::SendCallMeMaybe { dst, dst_key, msg } => {
-                let msg = disco::Message::CallMeMaybe(msg);
+            ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
             ActorMessage::AddKnownAddr(addr, s) => {
@@ -1230,7 +1520,7 @@ impl Actor {
         (ipv4_addr, ipv6_addr)
     }
 
-    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<NetworkReadResult> {
+    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
         debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
             warn!("received empty derp packet");
@@ -1288,14 +1578,10 @@ impl Actor {
                         dst_ip,
                         ecn: None,
                     };
-                    out.push(NetworkReadResult::Ok {
-                        source: NetworkSource::Derp,
-                        bytes: part,
-                        meta,
-                    });
+                    out.push(DerpRecvResult::Ok { bytes: part, meta });
                 }
                 Err(e) => {
-                    out.push(NetworkReadResult::Error(e));
+                    out.push(DerpRecvResult::Error(e));
                 }
             }
         }
@@ -1872,10 +2158,10 @@ impl Actor {
             tokio::task::spawn(async move {
                 warn!("sending call me maybe to {public_key:?}");
                 if let Err(err) = msg_sender
-                    .send(ActorMessage::SendCallMeMaybe {
+                    .send(ActorMessage::SendDiscoMessage {
                         dst: SendAddr::Derp(derp_region),
                         dst_key: public_key,
-                        msg,
+                        msg: disco::Message::CallMeMaybe(msg),
                     })
                     .await
                 {
@@ -1984,9 +2270,14 @@ impl Actor {
         if self.inner.is_closed() {
             bail!("connection closed");
         }
-        let di = get_disco_info(&mut self.disco_info, &self.inner.secret_key, &dst_key);
-        let mut seal = msg.as_bytes();
-        di.shared_key.seal(&mut seal);
+
+        let seal = {
+            let mut disco_info = self.inner.disco_info.lock();
+            let di = get_disco_info(&mut disco_info, &self.inner.secret_key, &dst_key);
+            let mut seal = msg.as_bytes();
+            di.shared_key.seal(&mut seal);
+            seal
+        };
 
         let is_derp = dst.is_derp();
         if is_derp {
@@ -2070,229 +2361,10 @@ impl Actor {
     ) -> bool {
         match disco::source_and_box(msg) {
             Some((source, sealed_box)) => {
-                self.handle_disco_message(source, sealed_box, src, Some(derp_node_src))
-                    .await
+                self.inner
+                    .handle_disco_message(source, sealed_box, src, Some(derp_node_src))
             }
             None => false,
-        }
-    }
-
-    /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
-    ///
-    /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
-    /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
-    #[instrument(skip_all)]
-    async fn handle_disco_message(
-        &mut self,
-        sender: PublicKey,
-        sealed_box: &[u8],
-        src: SendAddr,
-        derp_node_src: Option<PublicKey>,
-    ) -> bool {
-        debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
-        if self.inner.is_closed() {
-            return true;
-        }
-
-        let mut unknown_sender = false;
-        if self.peer_map.endpoint_for_node_key_mut(&sender).is_none()
-            && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
-        {
-            // Disco Ping from unseen endpoint. We will have to add the
-            // endpoint later if the message is a ping
-            info!("disco: unknown sender {:?} - {}", sender, src);
-            unknown_sender = true;
-        }
-
-        // We're now reasonably sure we're expecting communication from
-        // this peer, do the heavy crypto lifting to see what they want.
-
-        let di = get_disco_info(&mut self.disco_info, &self.inner.secret_key, &sender);
-        let mut sealed_box = sealed_box.to_vec();
-        let payload = di.shared_key.open(&mut sealed_box);
-        if payload.is_err() {
-            // This could happen if we changed the key between restarts.
-            warn!(
-                "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
-                self.inner.public_key(),
-                sender,
-                payload,
-            );
-            inc!(MagicsockMetrics, recv_disco_bad_key);
-            return true;
-        }
-        let dm = disco::Message::from_bytes(&sealed_box);
-        debug!("disco: disco.parse = {:?}", dm);
-
-        if dm.is_err() {
-            // Couldn't parse it, but it was inside a correctly
-            // signed box, so just ignore it, assuming it's from a
-            // newer version of Tailscale that we don't
-            // understand. Not even worth logging about, lest it
-            // be too spammy for old clients.
-
-            inc!(MagicsockMetrics, recv_disco_bad_parse);
-            return true;
-        }
-
-        let dm = dm.unwrap();
-        let is_derp = src.is_derp();
-        if is_derp {
-            inc!(MagicsockMetrics, recv_disco_derp);
-        } else {
-            inc!(MagicsockMetrics, recv_disco_udp);
-        }
-
-        debug!("got disco message: {:?}", dm);
-        match dm {
-            disco::Message::Ping(ping) => {
-                inc!(MagicsockMetrics, recv_disco_ping);
-                // if we get here we got a valid ping from an unknown sender
-                // so insert an endpoint for them
-                if unknown_sender {
-                    warn!(
-                        "unknown sender: {:?} with region id {:?}",
-                        sender,
-                        src.derp_region()
-                    );
-                    self.peer_map.insert_endpoint(EndpointOptions {
-                        public_key: sender,
-                        derp_region: src.derp_region(),
-                        active: true,
-                    });
-                }
-                self.handle_ping(ping, &sender, src, derp_node_src).await;
-                true
-            }
-            disco::Message::Pong(pong) => {
-                inc!(MagicsockMetrics, recv_disco_pong);
-                let insert = if let Some(ep) =
-                    self.peer_map.endpoint_for_node_key_mut(&sender).as_mut()
-                {
-                    let (_, insert) = ep.handle_pong_conn(&self.inner.public_key(), &pong, di, src);
-                    insert
-                } else {
-                    None
-                };
-                if let Some((src, key)) = insert {
-                    self.peer_map.set_node_key_for_ip_port(&src, &key);
-                }
-                true
-            }
-            disco::Message::CallMeMaybe(cm) => {
-                inc!(MagicsockMetrics, recv_disco_call_me_maybe);
-                if !is_derp || derp_node_src.is_none() {
-                    // CallMeMaybe messages should only come via DERP.
-                    debug!("[unexpected] CallMeMaybe packets should only come via DERP");
-                    return true;
-                }
-                let node_key = derp_node_src.unwrap();
-                match self.peer_map.endpoint_for_node_key_mut(&node_key).as_mut() {
-                    None => {
-                        inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
-                        debug!(
-                            "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
-                            sender, node_key,
-                        );
-                    }
-                    Some(ep) => {
-                        info!(
-                            "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
-                            self.inner.public_key(),
-                            ep.public_key(),
-                            src,
-                            cm.my_number.len()
-                        );
-                        ep.handle_call_me_maybe(cm);
-                    }
-                }
-                true
-            }
-        }
-    }
-
-    /// di is the DiscoInfo of the source of the ping.
-    /// derp_node_src is non-zero if the ping arrived via DERP.
-    #[instrument(skip_all)]
-    async fn handle_ping(
-        &mut self,
-        dm: disco::Ping,
-        sender: &PublicKey,
-        src: SendAddr,
-        derp_node_src: Option<PublicKey>,
-    ) {
-        let di = get_disco_info(&mut self.disco_info, &self.inner.secret_key, sender);
-        let likely_heart_beat = Some(src) == di.last_ping_from
-            && di
-                .last_ping_time
-                .map(|s| s.elapsed() < Duration::from_secs(5))
-                .unwrap_or_default();
-        di.last_ping_from.replace(src);
-        di.last_ping_time.replace(Instant::now());
-        let is_derp = src.is_derp();
-
-        // If we got a ping over DERP, then derp_node_src is non-zero and we reply
-        // over DERP (in which case ip_dst is also a DERP address).
-        // But if the ping was over UDP (ip_dst is not a DERP address), then dst_key
-        // will be zero here, but that's fine: send_disco_message only requires
-        // a dstKey if the dst ip:port is DERP.
-
-        if is_derp {
-            assert!(derp_node_src.is_some());
-        } else {
-            assert!(derp_node_src.is_none());
-        }
-
-        let (dst_key, insert) = match derp_node_src {
-            Some(dst_key) => {
-                // From Derp
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key).as_mut() {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (dst_key, true)
-                } else {
-                    (dst_key, false)
-                }
-            }
-            None => {
-                if let Some(ep) = self
-                    .peer_map
-                    .endpoint_for_node_key_mut(&di.node_key)
-                    .as_mut()
-                {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (di.node_key, true)
-                } else {
-                    (di.node_key, false)
-                }
-            }
-        };
-
-        if insert {
-            self.peer_map.set_node_key_for_ip_port(&src, &dst_key);
-        }
-
-        if !likely_heart_beat {
-            info!(
-                "disco: {:?}<-{:?} ({dst_key:?}, {src:?})  got ping tx={:?}",
-                self.inner.public_key(),
-                di.node_key,
-                dm.tx_id
-            );
-        }
-
-        let ip_dst = src;
-        let pong = disco::Message::Pong(disco::Pong {
-            tx_id: dm.tx_id,
-            src: src.as_socket_addr(),
-        });
-        if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
-            warn!("disco: failed to send message to {ip_dst}: {err:?}");
         }
     }
 
