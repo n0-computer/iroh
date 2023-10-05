@@ -264,12 +264,12 @@ impl DocCommands {
                                 iroh_sync::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
-                                    format!("<incomplete: {}>", content)
+                                    format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
                                 iroh_sync::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
-                                    format!("<missing: {}>", content)
+                                    format!("<missing: {} ({})>", content, human_len(&entry))
                                 }
                             };
                             println!(
@@ -351,7 +351,7 @@ impl AuthorCommands {
     }
 }
 
-/// Format the content. If an error occurs it's returned in a formated, friendly way.
+/// Format the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let decode_failed = |_err: std::string::FromUtf8Error| "<invalid UTF-8>".to_string();
@@ -389,13 +389,18 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
     }
 }
 
+/// Human bytes for the contents of this entry.
+fn human_len(entry: &Entry) -> HumanBytes {
+    HumanBytes(entry.record().content_len())
+}
+
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry<'a>(doc: &'a Doc, entry: &'a Entry, mode: DisplayContentMode) -> String {
+async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
     let author = fmt_short(id.author());
     let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
-    let len = HumanBytes(entry.record().content_len());
+    let len = human_len(entry);
     format!("@{author}: {key} = {content} ({len})")
 }
 
