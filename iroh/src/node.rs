@@ -393,7 +393,7 @@ where
         );
 
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
-            tracing::info!("Starting GC task with interval {}s", gc_period.as_secs());
+            tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.db.clone();
             let cp = self.collection_parser.clone();
             let task = rt
@@ -578,9 +578,11 @@ where
     }
 
     async fn gc_loop(db: D, ds: S, cp: C, gc_period: Duration) {
+        tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
+            tracing::debug!("Starting GC");
             db.clear_live();
             let doc_hashes = match ds.content_hashes() {
                 Ok(hashes) => hashes,
@@ -590,16 +592,13 @@ where
                 }
             };
             let mut doc_db_error = false;
-            let doc_hashes = doc_hashes.filter_map(|e| {
-                let hash = match e {
-                    Ok(e) => e,
-                    Err(err) => {
-                        tracing::error!("Error getting doc hash: {}", err);
-                        doc_db_error = true;
-                        return None;
-                    }
-                };
-                Some(hash)
+            let doc_hashes = doc_hashes.filter_map(|e| match e {
+                Ok(hash) => Some(hash),
+                Err(err) => {
+                    tracing::error!("Error getting doc hash: {}", err);
+                    doc_db_error = true;
+                    None
+                }
             });
             db.add_live(doc_hashes);
             if doc_db_error {

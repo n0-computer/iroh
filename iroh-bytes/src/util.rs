@@ -77,6 +77,12 @@ impl From<String> for Tag {
     }
 }
 
+impl From<&str> for Tag {
+    fn from(value: &str) -> Self {
+        Self(Bytes::from(value.to_owned()))
+    }
+}
+
 impl Display for Tag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes = self.0.as_ref();
@@ -123,6 +129,18 @@ pub enum SetTagOption {
 /// A hash and format pair
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HashAndFormat(pub Hash, pub BlobFormat);
+
+impl HashAndFormat {
+    /// Create a new hash and format pair, using the default (raw) format.
+    pub fn raw(hash: Hash) -> Self {
+        Self(hash, BlobFormat::RAW)
+    }
+
+    /// Create a new hash and format pair, using the collection format.
+    pub fn collection(hash: Hash) -> Self {
+        Self(hash, BlobFormat::COLLECTION)
+    }
+}
 
 /// Hash type used throught.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
