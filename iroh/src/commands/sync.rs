@@ -18,11 +18,11 @@ const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
 #[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum DisplayContentMode {
-    /// Displays content if small enough, otherwise it displays the content hash exclusively.
+    /// Displays the content if small enough, otherwise it displays the content hash.
     Auto,
     /// Display the content unconditionally.
     Content,
-    /// Display the contents of the hash.
+    /// Display the hash of the content.
     Hash,
 }
 
@@ -256,16 +256,24 @@ impl DocCommands {
                             from,
                             content_status,
                         } => {
-                            let mode = match content_status {
-                                iroh_sync::ContentStatus::Complete => DisplayContentMode::Auto,
-                                iroh_sync::ContentStatus::Incomplete => DisplayContentMode::Hash,
-                                iroh_sync::ContentStatus::Missing => DisplayContentMode::Hash,
+                            let content = match content_status {
+                                iroh_sync::ContentStatus::Complete => {
+                                    fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
+                                }
+                                iroh_sync::ContentStatus::Incomplete => {
+                                    let (Ok(content) | Err(content)) =
+                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                    format!("<incomplete: {}>", content)
+                                }
+                                iroh_sync::ContentStatus::Missing => {
+                                    let (Ok(content) | Err(content)) =
+                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                    format!("<missing: {}>", content)
+                                }
                             };
-                            let content = fmt_entry(&doc, &entry, mode).await;
                             println!(
-                                "remote change via @{}, status: {:?}: {}",
+                                "remote change via @{}: {}",
                                 fmt_short(from.as_bytes()),
-                                content_status,
                                 content
                             )
                         }
@@ -342,51 +350,50 @@ impl AuthorCommands {
     }
 }
 
+/// Format the content. If an error occurs it's returned in a formated, friendly way.
+async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
+    let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
+    let decode_failed = |_err: std::string::FromUtf8Error| format!("<invalid UTF-8>");
+
+    match mode {
+        DisplayContentMode::Auto => {
+            if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
+                // small content: read fully as UTF-8
+                let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+                String::from_utf8(bytes.into()).map_err(decode_failed)
+            } else {
+                // large content: read just the first part as UTF-8
+                let mut blob_reader = doc.read(entry).await.map_err(read_failed)?;
+                let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize);
+
+                blob_reader
+                    .read_buf(&mut buf)
+                    .await
+                    .map_err(|io_err| read_failed(io_err.into()))?;
+                let mut repr = String::from_utf8(buf).map_err(decode_failed)?;
+                // let users know this is not shown in full
+                repr.push_str("...");
+                Ok(repr)
+            }
+        }
+        DisplayContentMode::Content => {
+            // read fully as UTF-8
+            let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+            String::from_utf8(bytes.into()).map_err(decode_failed)
+        }
+        DisplayContentMode::Hash => {
+            let hash = entry.record().content_hash();
+            Ok(fmt_short(hash.as_bytes()))
+        }
+    }
+}
+
 #[must_use = "this won't be printed, you need to print it yourself"]
 async fn fmt_entry<'a>(doc: &'a Doc, entry: &'a Entry, mode: DisplayContentMode) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
     let author = fmt_short(id.author());
-
-    let content = match mode {
-        DisplayContentMode::Auto => {
-            if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
-                match doc.read_to_bytes(entry).await {
-                    Ok(content) => String::from_utf8(content.into())
-                        .unwrap_or_else(|_| String::from("<invalid UTF-8>")),
-                    Err(err) => format!("<failed to get content: {err}>"),
-                }
-            } else {
-                match doc.read(entry).await {
-                    Ok(mut blob_reader) => {
-                        let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize);
-
-                        match blob_reader.read_buf(&mut buf).await {
-                            Ok(_n) => match String::from_utf8(buf) {
-                                Ok(mut repr) => {
-                                    repr.push_str("... (shortened)");
-                                    repr
-                                }
-                                Err(_) => String::from("<invalid UTF-8>"),
-                            },
-                            Err(err) => format!("<failed to get content: {err}>"),
-                        }
-                    }
-                    Err(err) => format!("<failed to get content: {err}>"),
-                }
-            }
-        }
-        DisplayContentMode::Content => match doc.read_to_bytes(entry).await {
-            Ok(content) => String::from_utf8(content.into())
-                .unwrap_or_else(|_| String::from("<invalid UTF-8>")),
-            Err(err) => format!("<failed to get content: {err}>"),
-        },
-        DisplayContentMode::Hash => {
-            let hash = entry.record().content_hash();
-            fmt_short(hash.as_bytes())
-        }
-    };
-
+    let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
     let len = HumanBytes(entry.record().content_len());
     format!("@{author}: {key} = {content} ({len})")
 }
