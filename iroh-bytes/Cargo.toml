@@ -22,7 +22,7 @@ flume = "0.10.14"
 futures = "0.3.25"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
-iroh-io = { version = "0.3.0" }
+iroh-io = { version = "0.3.0", features = ["stats"] }
 multibase = "0.9.1"
 num_cpus = "1.15.0"
 once_cell = "1.17.0"
