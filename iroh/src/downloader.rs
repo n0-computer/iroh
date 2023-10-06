@@ -699,12 +699,15 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// This removes the registered download intent and, depending on its state, it will either
     /// remove it from the scheduled requests, or cancel the future.
     fn handle_cancel_download(&mut self, id: Id, kind: DownloadKind) {
+        let hash = *kind.hash();
+        let mut download_removed = false;
         if let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(kind.clone()) {
             // remove the intent from the associated request
             let intents = &mut occupied_entry.get_mut().intents;
             intents.remove(&id);
             // if this was the last intent associated with the request cancel it
             if intents.is_empty() {
+                download_removed = true;
                 occupied_entry.remove().cancellation.cancel();
             }
         } else if let Entry::Occupied(mut occupied_entry) = self.scheduled_requests.entry(kind) {
@@ -716,7 +719,12 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             if intents.is_empty() {
                 let delay_key = occupied_entry.remove().delay_key;
                 self.scheduled_request_queue.remove(&delay_key);
+                download_removed = true;
             }
+        }
+
+        if download_removed && !self.is_needed(hash) {
+            self.providers.remove(hash)
         }
     }
 
