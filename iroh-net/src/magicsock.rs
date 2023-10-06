@@ -353,38 +353,60 @@ impl Inner {
         match self.peer_map.get_send_addrs_for_quic_mapped_addr(&dest) {
             // TODO: Handle ping actions
             Some((public_key, udp_addr, derp_region, mut msgs)) => {
-                trace!("Sending to endpoint for {:?} ({:?})", dest, public_key);
+                trace!(peer = %public_key.fmt_short(), quic_addr = %dest, n = %transmits.len(), "send");
                 // If we have pings to send, we *have* to send them out first.
                 if !msgs.is_empty() {
-                    ready!(self.poll_handle_ping_actions(cx, &mut msgs))?;
+                    if let Err(err) = ready!(self.poll_handle_ping_actions(cx, &mut msgs)) {
+                        warn!(peer = %public_key.fmt_short(), "failed to handle ping actions: {err:?}");
+                    }
                 }
+
+                let mut udp_sent = false;
+                let mut derp_sent = false;
+                let mut udp_error = None;
+
+                // send udp
                 if let Some(addr) = udp_addr {
+                    // rewrite target addresses.
                     for t in transmits.iter_mut() {
                         t.destination = addr;
                     }
-                    if addr.is_ipv6() && self.pconn6.is_none() {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "no IPv6 connection",
-                        )));
+                    match ready!(self.poll_send_udp(addr, &transmits, cx)) {
+                        Ok(n) => {
+                            debug!(peer = %public_key.fmt_short(), ?addr, ?n, "sent udp");
+                            // truncate the transmits to be sent over derp, otherwise we'd
+                            // potentially send the same transmits multiple times over derp.
+                            transmits.truncate(n);
+                            udp_sent = true;
+                            // record metrics.
+                            let total_bytes: u64 =
+                                transmits.iter().map(|x| x.contents.len() as u64).sum();
+                            if addr.is_ipv6() {
+                                inc_by!(MagicsockMetrics, send_ipv6, total_bytes);
+                            } else {
+                                inc_by!(MagicsockMetrics, send_ipv4, total_bytes);
+                            }
+                        }
+                        Err(err) => {
+                            error!(peer = %public_key.fmt_short(), ?addr, "failed to send udp: {err:?}");
+                            udp_error = Some(err);
+                        }
                     }
-                    let conn = if addr.is_ipv6() {
-                        self.pconn6.as_ref().unwrap()
-                    } else {
-                        &self.pconn4
-                    };
-                    let n = ready!(conn.poll_send(&self.udp_state, cx, &transmits))?;
-                    debug!(?public_key, ?addr, ?n, "sent udp");
-                    if let Some(derp_region) = derp_region {
-                        transmits.truncate(n);
-                        self.send_derp(derp_region, public_key, split_packets(transmits));
-                    }
-                    Poll::Ready(Ok(n))
-                } else if let Some(derp_region) = derp_region {
+                }
+
+                let n = transmits.len();
+
+                // send derp
+                if let Some(derp_region) = derp_region {
                     self.send_derp(derp_region, public_key, split_packets(transmits));
-                    Poll::Ready(Ok(n))
+                    derp_sent = true;
+                }
+
+                if !derp_sent && !udp_sent {
+                    warn!(peer = %public_key.fmt_short(), "failed to send: no UDP or DERP addr");
+                    let err = udp_error.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no UDP or Derp address available for peer"));
+                    Poll::Ready(Err(err))
                 } else {
-                    warn!("no UDP or DERP addr");
                     Poll::Ready(Ok(n))
                 }
             }
@@ -393,6 +415,27 @@ impl Inner {
                 Poll::Ready(Ok(n))
             }
         }
+    }
+
+    fn poll_send_udp(
+        &self,
+        addr: SocketAddr,
+        transmits: &[quinn_udp::Transmit],
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<usize>> {
+        let conn = self.conn_for_addr(addr)?;
+        conn.poll_send(&self.udp_state, cx, transmits)
+    }
+
+    fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&RebindingUdpConn> {
+        if addr.is_ipv6() && self.pconn6.is_none() {
+            return Err(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"));
+        }
+        Ok(if addr.is_ipv6() {
+            self.pconn6.as_ref().unwrap()
+        } else {
+            &self.pconn4
+        })
     }
 
     #[instrument(skip_all, fields(me = %self.me))]
@@ -2385,15 +2428,7 @@ impl Actor {
     ) -> io::Result<usize> {
         debug!("send_raw: {} packets", transmits.len());
 
-        if addr.is_ipv6() && self.pconn6.is_none() {
-            return Err(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"));
-        }
-
-        let conn = if addr.is_ipv6() {
-            self.pconn6.as_ref().unwrap()
-        } else {
-            &self.pconn4
-        };
+        let conn = self.inner.conn_for_addr(addr)?;
 
         if transmits.iter().any(|t| t.destination != addr) {
             for t in &mut transmits {
