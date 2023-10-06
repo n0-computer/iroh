@@ -307,7 +307,15 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
-    /// Manage a running Iroh node
+    /// Manage tags
+    ///
+    /// Tags are local, human-readable names for things iroh should keep.
+    /// Anything added with explicit commands like `iroh get` or `doc join`
+    /// will be tagged & kept until the tag is removed. If no tag is given
+    /// while running an explicit command, iroh will automatically generate
+    /// a tag.
+    ///
+    /// Any data iroh fetches without a tag will be periodically deleted.
     Tag {
         #[clap(subcommand)]
         command: TagCommands,
