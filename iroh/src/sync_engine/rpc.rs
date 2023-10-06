@@ -116,15 +116,15 @@ impl<S: Store> SyncEngine<S> {
             .live
             .subscribe(req.doc_id, {
                 move |event| {
-                        let s = s.clone();
-                        async move {
-                            // Send event over the channel, unsubscribe if the channel is closed.
-                            match s.send_async(Ok(DocSubscribeResponse { event })).await {
-                                Err(_err) => KeepCallback::Drop,
-                                Ok(()) => KeepCallback::Keep,
-                            }
+                    let s = s.clone();
+                    async move {
+                        // Send event over the channel, unsubscribe if the channel is closed.
+                        match s.send_async(Ok(DocSubscribeResponse { event })).await {
+                            Err(_err) => KeepCallback::Drop,
+                            Ok(()) => KeepCallback::Keep,
                         }
-                        .boxed()
+                    }
+                    .boxed()
                 }
             })
             .await;
