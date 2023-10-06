@@ -6,9 +6,9 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkNum};
 use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
+use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
-    collection::CollectionParser,
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
@@ -28,16 +28,15 @@ use tracing::trace;
 use crate::util::progress::ProgressSliceWriter2;
 
 /// Get a blob or collection
-pub async fn get<D: BaoStore, C: CollectionParser>(
+pub async fn get<D: BaoStore>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     hash: Hash,
     recursive: bool,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let res = if recursive {
-        get_collection(db, collection_parser, conn, &hash, sender).await
+        get_collection(db, conn, &hash, sender).await
     } else {
         get_blob(db, conn, &hash, sender).await
     };
@@ -66,7 +65,7 @@ pub async fn get_blob<D: BaoStore>(
             .unwrap_or_else(RangeSet2::all);
         let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
         // full request
-        let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -80,10 +79,7 @@ pub async fn get_blob<D: BaoStore>(
         get_blob_inner_partial(db, header, entry, progress).await?
     } else {
         // full request
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::single(*hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::single(*hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -281,9 +277,8 @@ pub(crate) async fn get_missing_ranges_collection<D: BaoStore>(
 }
 
 /// Get a collection
-pub async fn get_collection<D: BaoStore, C: CollectionParser>(
+pub async fn get_collection<D: BaoStore>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
@@ -293,12 +288,12 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(reader).await?;
+        let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
-                num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
+                num_blobs: Some(count),
+                total_blobs_size: None,
             })
             .await?;
         let mut children: Vec<Hash> = vec![];
@@ -315,7 +310,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
             .collect::<Vec<_>>();
         log!("requesting chunks {:?}", missing_iter);
         let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-        let request = get::fsm::start(conn, request.into());
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         log!("connected");
@@ -355,10 +350,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
     } else {
         tracing::info!("don't have collection - doing full download");
         // don't have the collection, so probably got nothing
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::all(*root_hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::all(*root_hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -372,12 +364,12 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         // read the collection fully for now
         let entry = db.get(root_hash).context("just downloaded")?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(reader).await?;
+        let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
-                num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
+                num_blobs: Some(count),
+                total_blobs_size: None,
             })
             .await?;
         let mut children = vec![];

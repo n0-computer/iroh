@@ -1125,8 +1125,6 @@ impl PacketForwarder for Client {
         tokio::spawn(async move {
             // attempt to send the packet 3 times
             for _ in 0..3 {
-                let srckey = srckey;
-                let dstkey = dstkey;
                 let packet = packet.clone();
                 debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {

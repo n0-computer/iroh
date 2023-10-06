@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let connection = iroh::dial::dial(dial_options).await?;
 
     // create a request for a single blob
-    let request = GetRequest::single(ticket.hash()).into();
+    let request = GetRequest::single(ticket.hash());
 
     // create the initial state of the finite state machine
     let initial = iroh::bytes::get::fsm::start(connection, request);

@@ -182,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut stream = if ticket.recursive() {
         // create a request for a single blob
-        let request = GetRequest::all(ticket.hash()).into();
+        let request = GetRequest::all(ticket.hash());
 
         // create the initial state of the finite state machine
         let initial = iroh::bytes::get::fsm::start(connection, request);
@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
         stream_children(initial).boxed_local()
     } else {
         // create a request for a single blob
-        let request = GetRequest::single(ticket.hash()).into();
+        let request = GetRequest::single(ticket.hash());
 
         // create the initial state of the finite state machine
         let initial = iroh::bytes::get::fsm::start(connection, request);

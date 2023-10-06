@@ -1,32 +1,32 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use console::style;
-use indicatif::{HumanBytes, HumanDuration, ProgressBar};
+use futures::StreamExt;
 use iroh::{
     collection::Collection,
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
-    util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
+    util::progress::ProgressSliceWriter,
 };
 use iroh_bytes::{
     baomap::range_collections::RangeSet2,
-    util::{BlobFormat, SetTagOption},
+    provider::GetProgress,
+    util::{
+        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+        BlobFormat, SetTagOption,
+    },
 };
 use iroh_bytes::{
     get::{
         self,
         fsm::{self, ConnectedNext, EndBlobNext},
     },
-    protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
+    protocol::{GetRequest, RangeSpecSeq, RequestToken},
     Hash,
 };
 use iroh_io::ConcatenateSliceWriter;
 use iroh_net::derp::DerpMode;
-use tokio::sync::mpsc;
 
 use crate::commands::show_download_progress;
-
-use super::make_download_pb;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -39,10 +39,8 @@ pub struct GetInteractive {
 }
 
 impl GetInteractive {
-    fn new_request(&self, query: RangeSpecSeq) -> Request {
-        GetRequest::new(self.hash, query)
-            .with_token(self.token.clone())
-            .into()
+    fn new_request(&self, query: RangeSpecSeq) -> GetRequest {
+        GetRequest::new(self.hash, query).with_token(self.token.clone())
     }
 
     /// Get into a file or directory
@@ -114,9 +112,11 @@ impl GetInteractive {
 
     /// Get to stdout, no resume possible.
     async fn get_to_stdout(self) -> Result<()> {
-        eprintln!("Fetching: {}", self.hash);
-        let pb = make_download_pb();
-        pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+        let hash = self.hash;
+        let (sender, receiver) = flume::bounded(1024);
+        let sender = FlumeProgressSender::new(sender);
+        let display_task =
+            tokio::task::spawn(show_download_progress(hash, receiver.into_stream().map(Ok)));
         let query = if self.format.is_raw() {
             // just get the entire first item
             RangeSpecSeq::from_ranges([RangeSet2::all()])
@@ -129,49 +129,67 @@ impl GetInteractive {
         let connection = iroh::dial::dial(self.opts).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
-        pb.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+        // we are connected
+        sender.send(GetProgress::Connected).await?;
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
             anyhow::bail!("expected root to be present");
         };
         let stats = if self.format.is_raw() {
-            get_to_stdout_single(curr).await?
+            get_to_stdout_single(curr, sender.clone()).await?
         } else {
-            get_to_stdout_multi(curr, pb.clone()).await?
+            get_to_stdout_multi(curr, sender.clone()).await?
         };
-        pb.finish_and_clear();
-        eprintln!(
-            "Transferred {} in {}, {}/s",
-            HumanBytes(stats.bytes_read),
-            HumanDuration(stats.elapsed),
-            HumanBytes((stats.bytes_read as f64 / stats.elapsed.as_secs_f64()) as u64)
-        );
+        sender
+            .send(GetProgress::NetworkDone {
+                bytes_written: stats.bytes_written,
+                bytes_read: stats.bytes_read,
+                elapsed: stats.elapsed,
+            })
+            .await?;
+        sender.send(GetProgress::AllDone).await?;
+        display_task.await??;
 
         Ok(())
     }
 }
 
-async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats> {
+async fn get_to_stdout_single(
+    curr: get::fsm::AtStartRoot,
+    sender: FlumeProgressSender<GetProgress>,
+) -> Result<get::Stats> {
     let curr = curr.next();
-    let mut writer = ConcatenateSliceWriter::new(tokio::io::stdout());
+    let id = sender.new_id();
+    let hash = curr.hash();
+    let (curr, size) = curr.next().await?;
+    sender.send(GetProgress::Found { id, hash, size }).await?;
+    let sender2 = sender.clone();
+    let mut writer = ProgressSliceWriter::new(
+        ConcatenateSliceWriter::new(tokio::io::stdout()),
+        move |offset| {
+            sender2.try_send(GetProgress::Progress { id, offset }).ok();
+        },
+    );
     let curr = curr.write_all(&mut writer).await?;
+    sender.send(GetProgress::Done { id }).await?;
     let EndBlobNext::Closing(curr) = curr.next() else {
         anyhow::bail!("expected end of stream")
     };
     Ok(curr.next().await?)
 }
 
-async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Result<get::Stats> {
+async fn get_to_stdout_multi(
+    curr: get::fsm::AtStartRoot,
+    sender: FlumeProgressSender<GetProgress>,
+) -> Result<get::Stats> {
+    let hash = *curr.hash();
     let (mut next, _links, collection) = Collection::read_fsm(curr).await?;
-    let count = collection.total_entries();
-    let missing_bytes = collection.total_blobs_size();
-    pb.set_message(format!(
-        "{} Downloading {} file(s) with total transfer size {}",
-        style("[3/3]").bold().dim(),
-        count,
-        HumanBytes(missing_bytes)
-    ));
-    pb.set_length(missing_bytes);
-    pb.reset();
+    sender
+        .send(GetProgress::FoundCollection {
+            hash,
+            num_blobs: Some(collection.total_entries()),
+            total_blobs_size: Some(collection.total_blobs_size()),
+        })
+        .await?;
     let collection = collection.into_inner();
     // read all the children
     let finishing = loop {
@@ -184,31 +202,27 @@ async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Re
             Some(blob) => blob,
             None => break start.finish(),
         };
-        let hash = blob.hash;
-        let name = &blob.name;
-        let name = if name.is_empty() {
-            PathBuf::from(hash.to_string())
-        } else {
-            pathbuf_from_name(name)
-        };
-        pb.set_message(format!("Receiving '{}'...", name.display()));
-        pb.reset();
         let header = start.next(blob.hash);
-        let (on_write, mut receive_on_write) = mpsc::channel(1);
-        let pb2 = pb.clone();
         // create task that updates the progress bar
-        let progress_task = tokio::task::spawn(async move {
-            while let Some((offset, _)) = receive_on_write.recv().await {
-                pb2.set_position(offset);
-            }
-        });
-        let mut io_writer =
-            ProgressSliceWriter::new(ConcatenateSliceWriter::new(tokio::io::stdout()), on_write);
-        let curr = header.write_all(&mut io_writer).await?;
-        drop(io_writer);
+        let id = sender.new_id();
+        let (curr, size) = header.next().await?;
+        sender
+            .send(GetProgress::Found {
+                id,
+                hash: blob.hash,
+                size,
+            })
+            .await?;
+        let sender2 = sender.clone();
+        let mut io_writer = ProgressSliceWriter::new(
+            ConcatenateSliceWriter::new(tokio::io::stdout()),
+            move |offset| {
+                sender2.try_send(GetProgress::Progress { id, offset }).ok();
+            },
+        );
+        let curr = curr.write_all(&mut io_writer).await?;
+        sender.send(GetProgress::Done { id }).await?;
         // wait for the progress task to finish, only after dropping the writer
-        progress_task.await.ok();
-        pb.finish();
         next = curr.next();
     };
     Ok(finishing.next().await?)
