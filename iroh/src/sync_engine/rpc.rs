@@ -13,12 +13,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
-        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse,
-        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-        DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
-        ShareMode,
+        DocCreateRequest, DocCreateResponse, DocDropRequest, DocDropResponse, DocGetManyRequest,
+        DocGetManyResponse, DocGetOneRequest, DocGetOneResponse, DocImportRequest,
+        DocImportResponse, DocInfoRequest, DocInfoResponse, DocLeaveRequest, DocLeaveResponse,
+        DocListRequest, DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -61,6 +61,14 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocCreateResponse {
             id: doc.namespace(),
         })
+    }
+
+    pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
+        let DocDropRequest { doc_id } = req;
+        let _replica = self.get_replica(&doc_id)?;
+        self.leave(doc_id, true).await?;
+        self.store.remove_replica(&doc_id)?;
+        Ok(DocDropResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
@@ -158,12 +166,9 @@ impl<S: Store> SyncEngine<S> {
     }
 
     pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
-        let DocLeaveRequest { doc_id, remove } = req;
+        let DocLeaveRequest { doc_id } = req;
         let _replica = self.get_replica(&doc_id)?;
-        self.leave(doc_id, remove).await?;
-        if remove {
-            self.store.remove_replica(&doc_id)?;
-        }
+        self.leave(doc_id, false).await?;
         Ok(DocLeaveResponse {})
     }
 

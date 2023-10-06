@@ -123,20 +123,25 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
     },
-    /// Leave a document, optionally removing it from this node.
+    /// Stop syncing a document.
     Leave {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
         /// Within the Iroh console, the active document can also set with `doc switch`.
         doc: Option<NamespaceId>,
-
-        /// Remove the document from this node.
+    },
+    /// Delete a document from the local node.
+    ///
+    /// This is a destructive operation. Both the document secret key and all entries in the
+    /// document will be permanently deleted from the node's storage. Content blobs will be deleted
+    /// through garbage collection unless they are referenced from another document or tag.
+    Drop {
+        /// Document to operate on.
         ///
-        /// If set, the document will be removed completely, and blobs referenced only from this document will
-        /// be deleted through garbage collection. This cannot be undone.
-        #[clap(long)]
-        remove: bool,
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        doc: Option<NamespaceId>,
     },
 }
 
@@ -255,20 +260,10 @@ impl DocCommands {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
             }
-            Self::Leave { doc, remove } => {
+            Self::Leave { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                doc.leave(remove).await?;
-                match remove {
-                    false => {
-                        println!(
-                            "Doc {} is now inactive (not syncing with any peers).",
-                            fmt_short(doc.id())
-                        );
-                    }
-                    true => {
-                        println!("Doc {} has been removed.", fmt_short(doc.id()));
-                    }
-                }
+                doc.leave().await?;
+                println!("Doc {} is now inactive", fmt_short(doc.id()));
             }
             Self::Watch { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
@@ -338,6 +333,11 @@ impl DocCommands {
                         LiveEvent::Closed => println!("document closed"),
                     }
                 }
+            }
+            Self::Drop { doc } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                iroh.docs.drop_doc(doc.id()).await?;
+                println!("Doc {} has been removed.", fmt_short(doc.id()));
             }
         }
         Ok(())

@@ -307,7 +307,7 @@ async fn sync_subscribe_stop() -> Result<()> {
 }
 
 #[tokio::test]
-async fn sync_remove_doc() -> Result<()> {
+async fn sync_drop_doc() -> Result<()> {
     setup_logging();
     let rt = test_runtime();
     let node = spawn_node(rt, 0).await?;
@@ -322,7 +322,7 @@ async fn sync_remove_doc() -> Result<()> {
     let ev = sub.next().await;
     assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
 
-    doc.leave(true).await?;
+    client.docs.drop_doc(doc.id()).await?;
     let res = doc.get_one(author, b"foo".to_vec()).await;
     assert!(res.is_err());
     let res = doc
