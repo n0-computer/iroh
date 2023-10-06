@@ -313,7 +313,6 @@ async fn doc_delete() -> Result<()> {
     let store = iroh_sync::store::memory::Store::default();
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db, store)
-        .enable_derp(iroh_net::defaults::default_derp_map())
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
         .runtime(&rt)
         .bind_addr(addr)
