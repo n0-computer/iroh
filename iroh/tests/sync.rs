@@ -250,6 +250,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer2: wait for 8 events (from sync with peers)");
     let actual = collect_some(&mut events2, 8, LIMIT).await?;
+    println!("events {actual:#?}");
     assert_each_unordered(
         actual,
         vec![
