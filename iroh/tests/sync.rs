@@ -24,8 +24,7 @@ use iroh_sync::{
     AuthorId, ContentStatus, Entry, NamespaceId,
 };
 
-/// Time limit for event collection in sync tests.
-const LIMIT: Duration = Duration::from_secs(60);
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -106,7 +105,7 @@ async fn sync_simple() -> Result<()> {
     let mut events1 = doc1.subscribe().await?;
     info!("node1: assert 4 events");
     assert_each_unordered(
-        collect_some(&mut events1, 4, LIMIT).await?,
+        collect_some(&mut events1, 4, TIMEOUT).await?,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
@@ -118,7 +117,7 @@ async fn sync_simple() -> Result<()> {
 
     info!("node0: assert 2 events");
     assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+        collect_some(&mut events0, 2, TIMEOUT).await?,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
             Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
@@ -191,7 +190,7 @@ async fn sync_full_basic() -> Result<()> {
     info!("peer1: wait for 4 events (for sync and join with peer0)");
     let mut events1 = doc1.subscribe().await?;
     assert_each_unordered(
-        collect_some(&mut events1, 4, LIMIT).await?,
+        collect_some(&mut events1, 4, TIMEOUT).await?,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
@@ -202,7 +201,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer1)");
     assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+        collect_some(&mut events0, 2, TIMEOUT).await?,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
             Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
@@ -226,7 +225,7 @@ async fn sync_full_basic() -> Result<()> {
     // peer0: assert events for entry received via gossip
     info!("peer0: wait for 2 events (gossip'ed entry from peer1)");
     assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+        collect_some(&mut events0, 2, TIMEOUT).await?,
         vec![
             Box::new(
                 move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == peer1),
@@ -249,7 +248,7 @@ async fn sync_full_basic() -> Result<()> {
     let mut events2 = doc2.subscribe().await?;
 
     info!("peer2: wait for 8 events (from sync with peers)");
-    let actual = collect_some(&mut events2, 8, LIMIT).await?;
+    let actual = collect_some(&mut events2, 8, TIMEOUT).await?;
     println!("events {actual:#?}");
     assert_each_unordered(
         actual,
@@ -277,7 +276,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer2)");
     assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+        collect_some(&mut events0, 2, TIMEOUT).await?,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
@@ -286,7 +285,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer1: wait for 2 events (join & accept sync finished from peer2)");
     assert_each_unordered(
-        collect_some(&mut events1, 2, LIMIT).await?,
+        collect_some(&mut events1, 2, TIMEOUT).await?,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
@@ -418,13 +417,9 @@ async fn sync_big() -> Result<()> {
         let expected = expected.clone();
         let me = peer_ids[i].fmt_short();
         let fut = async move {
-            wait_for_events(
-                events,
-                expected_inserts,
-                Duration::from_secs(30),
-                me.clone(),
-                |e| matches!(e, LiveEvent::InsertRemote { .. }),
-            )
+            wait_for_events(events, expected_inserts, TIMEOUT, me.clone(), |e| {
+                matches!(e, LiveEvent::InsertRemote { .. })
+            })
             .await?;
             let entries = get_all(&doc).await?;
             if entries != expected {
