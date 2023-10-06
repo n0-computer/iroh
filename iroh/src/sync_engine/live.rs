@@ -564,9 +564,33 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         })
     }
 
-    async fn start_sync(&mut self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<PeerAddr>) -> Result<()> {
         self.ensure_open(namespace)?;
         self.syncing_replicas.insert(namespace);
+        // add the peers stored for this document
+        match self.replica_store.get_sync_peers(&namespace) {
+            Ok(None) => {
+                // no peers for this document
+            }
+            Ok(Some(known_useful_peers)) => {
+                let as_peer_addr = known_useful_peers.filter_map(|peer_id_bytes| {
+                    // peers are stored as bytes, don't fail the operation if they can't be
+                    // decoded: simply ignore the peer
+                    match PublicKey::from_bytes(&peer_id_bytes) {
+                        Ok(public_key) => Some(PeerAddr::new(public_key)),
+                        Err(_signing_error) => {
+                            warn!("potential db corruption: peers per doc can't be decoded");
+                            None
+                        }
+                    }
+                });
+                peers.extend(as_peer_addr);
+            }
+            Err(e) => {
+                // try to continue if peers per doc can't be read since they are not vital for sync
+                warn!(%e, "db error reading peers per document")
+            }
+        }
         self.join_peers(namespace, peers).await?;
         Ok(())
     }
@@ -773,7 +797,16 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             }
         }
         let state = match result {
-            Ok(_) => SyncState::Finished,
+            Ok(_) => {
+                // register the peer as useful for the document
+                if let Err(e) = self
+                    .replica_store
+                    .register_useful_peer(namespace, *peer.as_bytes())
+                {
+                    debug!(%e, "failed to register peer for document")
+                }
+                SyncState::Finished
+            }
             Err(_) => SyncState::Failed,
         };
         self.set_sync_state(namespace, peer, state);

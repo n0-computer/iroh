@@ -9,8 +9,8 @@ use iroh_bytes::Hash;
 use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
-    Database, Range as TableRange, ReadOnlyTable, ReadTransaction, ReadableTable, StorageError,
-    TableDefinition,
+    Database, MultimapTableDefinition, Range as TableRange, ReadOnlyTable, ReadTransaction,
+    ReadableMultimapTable, ReadableTable, StorageError, TableDefinition,
 };
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
     sync::{
         Author, Entry, EntrySignature, Namespace, Record, RecordIdentifier, Replica, SignedEntry,
     },
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes,
 };
 
 use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
@@ -62,6 +62,17 @@ type DbResult<T> = Result<T, StorageError>;
 
 const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
+/// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
+/// last time a peer was useful in a document.
+// NOTE: resolution is nanoseconds, stored as a u64 since this covers ~500years from unix epoch,
+// which should be more than enough
+type Nanos = u64;
+/// Peers stored per document.
+/// - Key: [`NamespaceId::as_bytes`]
+/// - Value: ([`Nanos`], &[`PeerIdBytes`]) representing the last time a peer was used.
+const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
+    MultimapTableDefinition::new("sync-peers-1");
+
 impl Store {
     /// Create or open a store from a `path` to a database file.
     ///
@@ -75,6 +86,7 @@ impl Store {
             let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
+            let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
         }
         write_tx.commit()?;
 
@@ -115,6 +127,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
@@ -222,6 +235,95 @@ impl super::Store for Store {
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
+    }
+
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
+        let peer = &peer;
+        let namespace = namespace.as_bytes();
+        // calculate nanos since UNIX_EPOCH for a time measurement
+        let nanos = std::time::UNIX_EPOCH
+            .elapsed()
+            .map(|duration| duration.as_nanos() as u64)?;
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut peers_table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+            let mut namespace_peers = peers_table.get(namespace)?;
+
+            // get the oldest entry since it's candidate for removal
+            let maybe_oldest = namespace_peers.next().transpose()?.map(|guard| {
+                let (oldest_nanos, &oldest_peer) = guard.value();
+                (oldest_nanos, oldest_peer)
+            });
+            match maybe_oldest {
+                None => {
+                    // the table is empty so the peer can be inserted without further checks since
+                    // super::PEERS_PER_DOC_CACHE_SIZE is non zero
+                    drop(namespace_peers);
+                    peers_table.insert(namespace, (nanos, peer))?;
+                }
+                Some((oldest_nanos, oldest_peer)) => {
+                    let oldest_peer = &oldest_peer;
+
+                    if oldest_peer == peer {
+                        // oldest peer is the current one, so replacing the entry for the peer will
+                        // maintain the size
+                        drop(namespace_peers);
+                        peers_table.remove(namespace, (oldest_nanos, oldest_peer))?;
+                        peers_table.insert(namespace, (nanos, peer))?;
+                    } else {
+                        // calculate the len in the same loop since calling `len` is another fallible operation
+                        let mut len = 1;
+                        // find any previous entry for the same peer to remove it
+                        let mut prev_peer_nanos = None;
+
+                        for result in namespace_peers {
+                            len += 1;
+                            let guard = result?;
+                            let (peer_nanos, peer_bytes) = guard.value();
+                            if prev_peer_nanos.is_none() && peer_bytes == peer {
+                                prev_peer_nanos = Some(peer_nanos)
+                            }
+                        }
+
+                        match prev_peer_nanos {
+                            Some(prev_nanos) => {
+                                // the peer was already present, so we can remove the old entry and
+                                // insert the new one without checking the size
+                                peers_table.remove(namespace, (prev_nanos, peer))?;
+                                peers_table.insert(namespace, (nanos, peer))?;
+                            }
+                            None => {
+                                // the peer is new and the table is non empty, add it and check the
+                                // size to decide if the oldest peer should be evicted
+                                peers_table.insert(namespace, (nanos, peer))?;
+                                len += 1;
+                                if len > super::PEERS_PER_DOC_CACHE_SIZE.get() {
+                                    peers_table.remove(namespace, (oldest_nanos, oldest_peer))?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        write_tx.commit()?;
+
+        Ok(())
+    }
+
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
+        let read_tx = self.db.begin_read()?;
+        let peers_table = read_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+        let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
+        for result in peers_table.get(namespace.as_bytes())?.rev() {
+            let (_nanos, &peer) = result?.value();
+            peers.push(peer);
+        }
+        if peers.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(peers.into_iter()))
+        }
     }
 }
 
