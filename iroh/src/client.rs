@@ -559,7 +559,7 @@ where
             .await
     }
 
-    /// Wipe entries that match the given `author` and key `prefix`.
+    /// Delete entries that match the given `author` and key `prefix`.
     ///
     /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
     /// entries whose key starts with or is equal to the given `prefix`.

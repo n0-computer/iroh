@@ -182,7 +182,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
-    /// Wipe entries that match the given `author` and key `prefix`.
+    /// Delete entries that match the given `author` and key `prefix`.
     ///
     /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
     /// entries whose key starts with or is equal to the given `prefix`.
