@@ -1490,9 +1490,9 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
-            DocWipeAtPrefix(msg) => {
+            DocDeleteEntries(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_wipe_at_prefix(req).await
+                    handler.inner.sync.doc_delete(req).await
                 })
                 .await
             }

@@ -223,7 +223,7 @@ impl DocCommands {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
                 let key = prefix.as_bytes().to_vec();
-                let removed = doc.wipe_at_prefix(author, key).await?;
+                let removed = doc.delete(author, key).await?;
                 println!(
                     "Inserted an empty entry for author {} with key {prefix}.",
                     fmt_short(author)

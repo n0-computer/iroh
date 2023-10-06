@@ -188,7 +188,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// entries whose key starts with or is equal to the given `prefix`.
     ///
     /// Returns the number of entries removed as a consequence of this insertion,
-    pub fn wipe_at_prefix(
+    pub fn delete(
         &self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
@@ -393,7 +393,7 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// A newer entry exists for either this entry's key or a prefix of the key.
     #[error("A newer entry exists for either this entry's key or a prefix of the key.")]
     NewerEntryExists,
-    /// Attempted to insert an empty entry without calling [`Replica::wipe_at_prefix`].
+    /// Attempted to insert an empty entry without calling [`Replica::delete`].
     #[error("Attempted to insert an empty entry")]
     EntryIsEmpty,
 }
@@ -1463,7 +1463,7 @@ mod tests {
         );
 
         // delete
-        let deleted = replica.wipe_at_prefix(b"foo", &alice)?;
+        let deleted = replica.delete(b"foo", &alice)?;
         assert_eq!(deleted, 2);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
@@ -1473,27 +1473,27 @@ mod tests {
     }
 
     #[test]
-    fn test_replica_sync_wipe_memory() -> Result<()> {
+    fn test_replica_sync_delete_memory() -> Result<()> {
         let alice_store = store::memory::Store::default();
         let bob_store = store::memory::Store::default();
 
-        test_replica_sync_wipe(alice_store, bob_store)?;
+        test_replica_sync_delete(alice_store, bob_store)?;
         Ok(())
     }
 
     #[cfg(feature = "fs-store")]
     #[test]
-    fn test_replica_sync_wipe_fs() -> Result<()> {
+    fn test_replica_sync_delete_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
         let alice_store = store::fs::Store::new(alice_dbfile.path())?;
         let bob_dbfile = tempfile::NamedTempFile::new()?;
         let bob_store = store::fs::Store::new(bob_dbfile.path())?;
-        test_replica_sync_wipe(alice_store, bob_store)?;
+        test_replica_sync_delete(alice_store, bob_store)?;
 
         Ok(())
     }
 
-    fn test_replica_sync_wipe<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+    fn test_replica_sync_delete<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
         let alice_set = ["foot"];
         let bob_set = ["fool", "foo", "fog"];
 
@@ -1517,7 +1517,7 @@ mod tests {
         check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
 
-        alice.wipe_at_prefix("foo", &author)?;
+        alice.delete("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
         sync::<S>(&alice, &bob)?;
         check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
@@ -1527,24 +1527,24 @@ mod tests {
     }
 
     #[test]
-    fn test_replica_wipe_edge_cases_memory() -> Result<()> {
+    fn test_replica_delete_edge_cases_memory() -> Result<()> {
         let store = store::memory::Store::default();
 
-        test_replica_wipe_edge_cases(store)?;
+        test_replica_delete_edge_cases(store)?;
         Ok(())
     }
 
     #[cfg(feature = "fs-store")]
     #[test]
-    fn test_replica_wipe_edge_cases_fs() -> Result<()> {
+    fn test_replica_delete_edge_cases_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
         let store = store::fs::Store::new(dbfile.path())?;
-        test_replica_wipe_edge_cases(store)?;
+        test_replica_delete_edge_cases(store)?;
 
         Ok(())
     }
 
-    fn test_replica_wipe_edge_cases<S: store::Store>(store: S) -> Result<()> {
+    fn test_replica_delete_edge_cases<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
@@ -1562,7 +1562,7 @@ mod tests {
                 replica.insert(&key, &author, hash, len)?;
             }
             assert_keys(&store, namespace.id(), expected);
-            replica.wipe_at_prefix([prefix].to_vec(), &author)?;
+            replica.delete([prefix].to_vec(), &author)?;
             assert_keys(&store, namespace.id(), vec![]);
         }
 
@@ -1573,7 +1573,7 @@ mod tests {
         let key = vec![1u8, 2u8];
         replica.insert(&key, &author, hash, len)?;
         let prefix = vec![1u8, 1u8];
-        replica.wipe_at_prefix(prefix, &author)?;
+        replica.delete(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         let key = vec![0u8, 255u8];
@@ -1581,7 +1581,7 @@ mod tests {
         let key = vec![0u8, 0u8];
         replica.insert(&key, &author, hash, len)?;
         let prefix = vec![0u8];
-        replica.wipe_at_prefix(prefix, &author)?;
+        replica.delete(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         Ok(())

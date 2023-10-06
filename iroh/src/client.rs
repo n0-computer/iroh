@@ -29,10 +29,10 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCreateRequest, DocGetManyRequest, DocGetOneRequest,
-    DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
-    DocWipeAtPrefixRequest, DocWipeAtPrefixResponse, GetProgress, ListTagsRequest,
+    CounterStats, DeleteTagRequest, DocCreateRequest, DocDeleteEntriesRequest,
+    DocDeleteEntriesResponse, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
+    DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
+    DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
     ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
     NodeStatusResponse, ProviderService, ShareMode, WrapOption,
@@ -565,16 +565,16 @@ where
     /// entries whose key starts with or is equal to the given `prefix`.
     ///
     /// Returns the number of entries removed as a consequence of this insertion,
-    pub async fn wipe_at_prefix(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+    pub async fn delete(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
         let res = self
             .rpc
-            .rpc(DocWipeAtPrefixRequest {
+            .rpc(DocDeleteEntriesRequest {
                 doc_id: self.id,
                 author_id,
                 prefix,
             })
             .await??;
-        let DocWipeAtPrefixResponse { removed } = res;
+        let DocDeleteEntriesResponse { removed } = res;
         Ok(removed)
     }
 
