@@ -1562,24 +1562,24 @@ mod tests {
                 replica.insert(&key, &author, hash, len)?;
             }
             assert_keys(&store, namespace.id(), expected);
-            replica.delete([prefix].to_vec(), &author)?;
+            replica.delete([prefix], &author)?;
             assert_keys(&store, namespace.id(), vec![]);
         }
 
         let key = vec![1u8, 0u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         let key = vec![1u8, 1u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         let key = vec![1u8, 2u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         let prefix = vec![1u8, 1u8];
         replica.delete(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         let key = vec![0u8, 255u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         let key = vec![0u8, 0u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         let prefix = vec![0u8];
         replica.delete(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
@@ -1615,14 +1615,14 @@ mod tests {
         let len = 3;
 
         let key = vec![1u8, 0u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8]]);
         let key = vec![1u8, 2u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         let key = vec![0u8, 255u8];
-        replica.insert(&key, &author, hash, len)?;
+        replica.insert(key, &author, hash, len)?;
         assert_keys(
             &store,
             namespace.id(),
