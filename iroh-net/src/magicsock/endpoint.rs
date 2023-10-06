@@ -1140,7 +1140,11 @@ impl PeerMap {
     }
 
     /// Saves the known peer info to the given path, returning the number of peers persisted.
-    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
+    pub(super) async fn save_to_file(&mut self, path: &Path) -> anyhow::Result<usize> {
+        // Don't store out of date information
+        for (_, ep) in self.endpoints_mut() {
+            ep.cleanup_endpoint_state();
+        }
         let mut known_peers = self.known_peer_addresses().peekable();
         if known_peers.peek().is_none() {
             // prevent file handling if unnecesary
@@ -1262,12 +1266,30 @@ impl EndpointState {
 
     /// Reports whether we should delete this endpoint.
     fn should_delete(&self) -> bool {
-        if self.call_me_maybe_time.is_some() {
-            return false;
+        if let Some(call_me_maybe_time) = self.call_me_maybe_time {
+            // Still waiting on potential success
+            if call_me_maybe_time.elapsed() < PING_TIMEOUT_DURATION {
+                return false;
+            }
         }
+
         if let Some(last_got_ping) = self.last_got_ping {
             // Receiving no pings anymore, probably gone
-            return last_got_ping.elapsed() > SESSION_ACTIVE_TIMEOUT;
+            if last_got_ping.elapsed() > SESSION_ACTIVE_TIMEOUT {
+                return true;
+            }
+        }
+
+        if self.last_got_ping.is_none() && self.recent_pong().is_none() {
+            // No pings, no pongs
+            return true;
+        }
+
+        if let Some(recent_pong) = self.recent_pong() {
+            if recent_pong.pong_at.elapsed() > PING_TIMEOUT_DURATION {
+                // Our most recent pong is out of date
+                return true;
+            }
         }
 
         // keep by default
