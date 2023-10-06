@@ -49,13 +49,12 @@ where
     S: iroh_bytes::baomap::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
-    let node = Node::builder(bao_store, doc_store)
+    Node::builder(bao_store, doc_store)
         .runtime(&rt)
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(50)))
         .spawn()
         .await
-        .unwrap();
-    node
+        .unwrap()
 }
 
 async fn gc_test_node() -> (
@@ -292,16 +291,16 @@ async fn gc_flat_basics() -> Result<()> {
 /// Take some data and encode it
 #[allow(dead_code)]
 fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
-    let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(&data, IROH_BLOCK_SIZE);
+    let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
     let mut encoded = Vec::new();
     bao_tree::io::sync::encode_ranges_validated(
-        data.as_ref(),
+        data,
         &outboard,
         &ChunkRanges::all(),
         &mut encoded,
     )
     .unwrap();
-    let hash = outboard.root().into();
+    let hash = outboard.root();
     (hash, Cursor::new(encoded.into()))
 }
 
@@ -413,7 +412,7 @@ async fn gc_flat_stress() -> Result<()> {
     let mut deleted = Vec::new();
     let mut live = Vec::new();
     // download
-    for i in 0..1000 {
+    for i in 0..10000 {
         let data: Bytes = create_test_data(16 * 1024 * 3 + 1);
         let tt = simulate_download_protected(&bao_store, data).await.unwrap();
         if i % 100 == 0 {
