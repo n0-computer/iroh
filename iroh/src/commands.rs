@@ -251,7 +251,7 @@ impl FullCommands {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     let format = match collection {
-                        true => BlobFormat::COLLECTION,
+                        true => BlobFormat::HASHSEQ,
                         false => BlobFormat::RAW,
                     };
                     self::get::GetInteractive {
@@ -559,7 +559,7 @@ impl BlobCommands {
                 } else {
                     let format = match recursive {
                         Some(false) | None => BlobFormat::RAW,
-                        Some(true) => BlobFormat::COLLECTION,
+                        Some(true) => BlobFormat::HASHSEQ,
                     };
                     (
                         PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
