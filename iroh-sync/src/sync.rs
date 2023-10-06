@@ -116,6 +116,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Mark the replica as closed, prohibiting any further operations.
+    ///
+    /// This method is not public. Use [store::Store::close_replica] instead.
     pub(crate) fn close(&self) {
         self.unsubscribe();
         self.inner.closed.store(true, Ordering::Release);

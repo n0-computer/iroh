@@ -15,10 +15,10 @@ use crate::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
         DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocListRequest, DocListResponse, DocRemoveRequest, DocRemoveResponse,
+        DocInfoResponse, DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse,
         DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
-        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
+        ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -61,14 +61,6 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocCreateResponse {
             id: doc.namespace(),
         })
-    }
-
-    pub async fn doc_remove(&self, req: DocRemoveRequest) -> RpcResult<DocRemoveResponse> {
-        let DocRemoveRequest { id } = req;
-        let _replica = self.get_replica(&id)?;
-        self.stop_sync(id).await?;
-        self.store.remove_replica(&id)?;
-        Ok(DocRemoveResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
@@ -119,18 +111,22 @@ impl<S: Store> SyncEngine<S> {
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
         let (s, r) = flume::bounded(64);
+        let s2 = s.clone();
         let res = self
             .live
             .subscribe(req.doc_id, {
-                let s = s.clone();
                 move |event| {
-                    let s = s.clone();
-                    async move {
-                        // Send event over the channel, unsubscribe if the channel is closed.
-                        match s.send_async(Ok(DocSubscribeResponse { event })).await {
-                            Err(_err) => KeepCallback::Drop,
-                            Ok(()) => KeepCallback::Keep,
+                    {
+                        println!("EV! {event:?}");
+                        let s = s.clone();
+                        async move {
+                            // Send event over the channel, unsubscribe if the channel is closed.
+                            match s.send_async(Ok(DocSubscribeResponse { event })).await {
+                                Err(_err) => KeepCallback::Drop,
+                                Ok(()) => KeepCallback::Keep,
+                            }
                         }
+                        .boxed()
                     }
                     .boxed()
                 }
@@ -138,7 +134,7 @@ impl<S: Store> SyncEngine<S> {
             .await;
         match res {
             Err(err) => {
-                s.send_async(Err(err.into())).await.ok();
+                s2.send_async(Err(err.into())).await.ok();
             }
             Ok(_token) => {}
         };
@@ -165,10 +161,14 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocStartSyncResponse {})
     }
 
-    pub async fn doc_stop_sync(&self, req: DocStopSyncRequest) -> RpcResult<DocStopSyncResponse> {
-        let DocStopSyncRequest { doc_id } = req;
-        self.stop_sync(doc_id).await?;
-        Ok(DocStopSyncResponse {})
+    pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
+        let DocLeaveRequest { doc_id, remove } = req;
+        let _replica = self.get_replica(&doc_id)?;
+        self.leave(doc_id, remove).await?;
+        if remove {
+            self.store.remove_replica(&doc_id)?;
+        }
+        Ok(DocLeaveResponse {})
     }
 
     pub async fn doc_set<B: BaoStore>(

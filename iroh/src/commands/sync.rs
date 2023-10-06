@@ -257,16 +257,15 @@ impl DocCommands {
             }
             Self::Leave { doc, remove } => {
                 let doc = get_doc(iroh, env, doc).await?;
+                doc.leave(remove).await?;
                 match remove {
                     false => {
-                        doc.stop_sync().await?;
                         println!(
                             "Doc {} is now inactive (not syncing with any peers).",
                             fmt_short(doc.id())
                         );
                     }
                     true => {
-                        iroh.docs.remove(doc.id()).await?;
                         println!("Doc {} has been removed.", fmt_short(doc.id()));
                     }
                 }
@@ -336,6 +335,7 @@ impl DocCommands {
                         LiveEvent::NeighborDown(peer) => {
                             println!("neighbor peer down: {peer:?}");
                         }
+                        LiveEvent::Closed => println!("document closed"),
                     }
                 }
             }

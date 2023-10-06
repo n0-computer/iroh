@@ -30,11 +30,11 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCreateRequest, DocGetManyRequest, DocGetOneRequest,
-    DocImportRequest, DocInfoRequest, DocListRequest, DocRemoveRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
-    GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    DocImportRequest, DocInfoRequest, DocLeaveRequest, DocListRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -138,12 +138,6 @@ where
             rpc: self.rpc.clone(),
         };
         Ok(doc)
-    }
-
-    /// Remove a document.
-    pub async fn remove(&self, doc_id: NamespaceId) -> Result<()> {
-        self.rpc.rpc(DocRemoveRequest { id: doc_id }).await??;
-        Ok(())
     }
 
     /// Import a document from a ticket and join all peers in the ticket.
@@ -614,10 +608,16 @@ where
     }
 
     /// Stop the live sync for this document.
-    pub async fn stop_sync(&self) -> Result<()> {
+    ///
+    /// If `remove` is true, the document will be completely deleted from the node's store. This is
+    /// a destructive operation and cannot be undone.
+    pub async fn leave(&self, remove: bool) -> Result<()> {
         let _res = self
             .rpc
-            .rpc(DocStopSyncRequest { doc_id: self.id })
+            .rpc(DocLeaveRequest {
+                doc_id: self.id,
+                remove,
+            })
             .await??;
         Ok(())
     }

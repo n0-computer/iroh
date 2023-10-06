@@ -315,20 +315,24 @@ async fn sync_remove_doc() -> Result<()> {
 
     let doc = client.docs.create().await?;
     let author = client.authors.create().await?;
+
     let mut sub = doc.subscribe().await?;
     doc.set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
         .await?;
     let ev = sub.next().await;
     assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
-    client.docs.remove(doc.id()).await?;
+
+    doc.leave(true).await?;
     let res = doc.get_one(author, b"foo".to_vec()).await;
     assert!(res.is_err());
     let res = doc
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
         .await;
     assert!(res.is_err());
-    let doc = client.docs.get(doc.id()).await;
-    assert!(res.is_err());
+    let res = client.docs.get(doc.id()).await?;
+    assert!(res.is_none());
+    let ev = sub.next().await;
+    assert!(matches!(ev, Some(Ok(LiveEvent::Closed))));
     let ev = sub.next().await;
     assert!(matches!(ev, None));
 

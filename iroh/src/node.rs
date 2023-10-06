@@ -1477,12 +1477,6 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
-            DocRemove(msg) => {
-                chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_remove(req).await
-                })
-                .await
-            }
             DocImport(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_import(req).await
@@ -1514,9 +1508,9 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
-            DocStopSync(msg) => {
+            DocLeave(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_stop_sync(req).await
+                    handler.inner.sync.doc_leave(req).await
                 })
                 .await
             }
