@@ -1252,7 +1252,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         msg: DocSetStreamRequest,
         stream: impl Stream<Item = DocSetStreamUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = DocSetStreamResponse> {
-        let (tx, rx) = flume::bounded(32);
+        let (tx, rx) = flume::unbounded();
         let this = self.clone();
 
         self.rt().local_pool().spawn_pinned(|| async move {
