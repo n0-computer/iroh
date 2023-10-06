@@ -883,7 +883,11 @@ impl Store {
                 let temp_path = self.temp_path();
                 // copy the data, since it is not stable
                 progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                std::fs::copy(&path, &temp_path)?;
+                if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
+                    tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
+                } else {
+                    tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                }
                 ImportFile::TempFile(temp_path)
             }
         };
@@ -1165,7 +1169,11 @@ impl Store {
             tracing::debug!("copying {} to {}", source.display(), target.display());
             progress(0)?;
             // todo: progress
-            std::fs::copy(&source, &target)?;
+            if reflink_copy::reflink_or_copy(&source, &target)?.is_none() {
+                tracing::debug!("reflinked {} to {}", source.display(), target.display());
+            } else {
+                tracing::debug!("copied {} to {}", source.display(), target.display());
+            }
             progress(size)?;
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {
