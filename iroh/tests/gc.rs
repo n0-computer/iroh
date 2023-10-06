@@ -293,13 +293,8 @@ async fn gc_flat_basics() -> Result<()> {
 fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
     let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
     let mut encoded = Vec::new();
-    bao_tree::io::sync::encode_ranges_validated(
-        data,
-        &outboard,
-        &ChunkRanges::all(),
-        &mut encoded,
-    )
-    .unwrap();
+    bao_tree::io::sync::encode_ranges_validated(data, &outboard, &ChunkRanges::all(), &mut encoded)
+        .unwrap();
     let hash = outboard.root();
     (hash, Cursor::new(encoded.into()))
 }
