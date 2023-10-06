@@ -436,8 +436,15 @@ impl TagCommands {
     }
 }
 
+use tracing_subscriber::{prelude::*, EnvFilter};
+
 impl RpcCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .init();
+
         match self {
             Self::Node { command } => command.run(iroh).await,
             Self::Blob { command } => command.run(iroh).await,

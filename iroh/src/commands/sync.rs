@@ -655,6 +655,7 @@ struct ImportStats {
 /// and coordinates adding blobs to a document via the hash of the blob.
 /// It also creates and powers the [`ImportProgressBar`] and returns
 /// a tuple of the number of entries added, and the total size of those entries.
+#[tracing::instrument(skip_all)]
 async fn import_coordinator(
     doc_id: NamespaceId,
     root: PathBuf,
@@ -698,6 +699,7 @@ async fn import_coordinator(
                             ) {
                                 Ok(k) => k,
                                 Err(e) => {
+                                    tracing::trace!("error getting key from {}, id {id}", path_str);
                                     doc_set_updates
                                         .send(DocSetStreamUpdate::Abort)
                                         .await
@@ -706,6 +708,10 @@ async fn import_coordinator(
                                 }
                             };
                             // send update to doc
+                            tracing::trace!(
+                                "setting entry {} (id: {id}) to doc",
+                                String::from_utf8(key.clone()).unwrap()
+                            );
                             doc_set_updates
                                 .send(DocSetStreamUpdate::Entry {
                                     id,
@@ -717,7 +723,10 @@ async fn import_coordinator(
                                 .expect("receiver dropped");
                         }
                         None => {
-                            anyhow::bail!("Got Done for unknown collection id {id}");
+                            tracing::trace!(
+                                "error: got `AddProgress::Done` for unknown collectiojn id {id}"
+                            );
+                            anyhow::bail!("Got `AddProgress::Done` for unknown collection id {id}");
                         }
                     }
                 }
@@ -726,6 +735,7 @@ async fn import_coordinator(
                     break;
                 }
                 AddProgress::Abort(e) => {
+                    tracing::trace!("Error while adding data: {e}");
                     task_mp.error().await;
                     doc_set_updates
                         .send(DocSetStreamUpdate::Abort)
@@ -743,15 +753,18 @@ async fn import_coordinator(
     while let Some(res) = doc_set_progress.next().await {
         match res? {
             DocSetProgress::Done { id, size, .. } => {
+                tracing::trace!("DocSetProgress({id}, {size})");
                 mp.done(id).await;
                 entries += 1;
                 total_size += size;
             }
             DocSetProgress::AllDone => {
+                tracing::trace!("DocSetProgress::AllDone");
                 mp.all_done().await;
                 break;
             }
             DocSetProgress::Abort(e) => {
+                tracing::trace!("DocSetProgress::Abort");
                 mp.error().await;
                 anyhow::bail!("Error while adding entry to doc: {e}");
             }
@@ -813,7 +826,7 @@ impl ImportProgressBar {
                     }
                     ImportProgressEvent::AddingToDoc { id } => {
                         if let Some(pb) = pbs.get_mut(&id) {
-                            pb.finish_with_message(format!(
+                            pb.set_message(format!(
                                 "Adding to doc {}...",
                                 fmt_short(doc_id.as_bytes())
                             ));
@@ -864,10 +877,12 @@ impl ImportProgressBar {
     }
 
     async fn all_done(self) {
+        tracing::trace!("ImportProgressBar::all_done");
         self.0.send_async(ImportProgressEvent::AllDone).await.ok();
     }
 
     async fn error(self) {
+        tracing::trace!("ImportProgressBar::error");
         self.0.send_async(ImportProgressEvent::Error).await.ok();
     }
 }
