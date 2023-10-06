@@ -30,11 +30,11 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCreateRequest, DocGetManyRequest, DocGetOneRequest,
-    DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    DocImportRequest, DocInfoRequest, DocListRequest, DocRemoveRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket,
+    GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -138,6 +138,12 @@ where
             rpc: self.rpc.clone(),
         };
         Ok(doc)
+    }
+
+    /// Remove a document.
+    pub async fn remove(&self, doc_id: NamespaceId) -> Result<()> {
+        self.rpc.rpc(DocRemoveRequest { id: doc_id }).await??;
+        Ok(())
     }
 
     /// Import a document from a ticket and join all peers in the ticket.

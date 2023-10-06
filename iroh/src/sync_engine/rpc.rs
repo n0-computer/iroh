@@ -15,10 +15,10 @@ use crate::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
         DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
-        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocInfoResponse, DocListRequest, DocListResponse, DocRemoveRequest, DocRemoveResponse,
+        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -61,6 +61,14 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocCreateResponse {
             id: doc.namespace(),
         })
+    }
+
+    pub async fn doc_remove(&self, req: DocRemoveRequest) -> RpcResult<DocRemoveResponse> {
+        let DocRemoveRequest { id } = req;
+        let _replica = self.get_replica(&id)?;
+        self.stop_sync(id).await?;
+        self.store.remove_replica(&id)?;
+        Ok(DocRemoveResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {

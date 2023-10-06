@@ -123,6 +123,21 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
     },
+    /// Leave a document, optionally removing it from this node.
+    Leave {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        doc: Option<NamespaceId>,
+
+        /// Remove the document from this node.
+        ///
+        /// If set, the document will be removed completely, and blobs referenced only from this document will
+        /// be deleted through garbage collection. This cannot be undone.
+        #[clap(long)]
+        remove: bool,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -238,6 +253,13 @@ impl DocCommands {
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
+                }
+            }
+            Self::Leave { doc, remove } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                match remove {
+                    false => doc.stop_sync().await?,
+                    true => iroh.docs.remove(doc.id()).await?,
                 }
             }
             Self::Watch { doc } => {

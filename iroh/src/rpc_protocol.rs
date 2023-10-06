@@ -485,6 +485,21 @@ pub struct DocCreateResponse {
     pub id: NamespaceId,
 }
 
+/// Remove a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocRemoveRequest {
+    /// The document id
+    pub id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocRemoveRequest {
+    type Response = RpcResult<DocRemoveResponse>;
+}
+
+/// Response to [`DocRemoveRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocRemoveResponse {}
+
 /// Contains both a key (either secret or public) to a document, and a list of peers to join.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DocTicket {
@@ -797,6 +812,7 @@ pub enum ProviderRequest {
     DocInfo(DocInfoRequest),
     DocList(DocListRequest),
     DocCreate(DocCreateRequest),
+    DocRemove(DocRemoveRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
     DocGet(DocGetManyRequest),
@@ -837,6 +853,7 @@ pub enum ProviderResponse {
     DocInfo(RpcResult<DocInfoResponse>),
     DocList(RpcResult<DocListResponse>),
     DocCreate(RpcResult<DocCreateResponse>),
+    DocRemove(RpcResult<DocRemoveResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
