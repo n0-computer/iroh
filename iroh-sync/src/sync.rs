@@ -1526,6 +1526,127 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_replica_wipe_edge_cases_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+
+        test_replica_wipe_edge_cases(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_wipe_edge_cases_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_wipe_edge_cases(store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_wipe_edge_cases<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        let edgecases = [0u8, 1u8, 255u8];
+        let prefixes = [0u8, 255u8];
+        let hash = Hash::new(b"foo");
+        let len = 3;
+        for prefix in prefixes {
+            let mut expected = vec![];
+            for suffix in edgecases {
+                let key = [prefix, suffix].to_vec();
+                expected.push(key.clone());
+                replica.insert(&key, &author, hash, len)?;
+            }
+            assert_keys(&store, namespace.id(), expected);
+            replica.wipe_at_prefix([prefix].to_vec(), &author)?;
+            assert_keys(&store, namespace.id(), vec![]);
+        }
+
+        let key = vec![1u8, 0u8];
+        replica.insert(&key, &author, hash, len)?;
+        let key = vec![1u8, 1u8];
+        replica.insert(&key, &author, hash, len)?;
+        let key = vec![1u8, 2u8];
+        replica.insert(&key, &author, hash, len)?;
+        let prefix = vec![1u8, 1u8];
+        replica.wipe_at_prefix(prefix, &author)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+
+        let key = vec![0u8, 255u8];
+        replica.insert(&key, &author, hash, len)?;
+        let key = vec![0u8, 0u8];
+        replica.insert(&key, &author, hash, len)?;
+        let prefix = vec![0u8];
+        replica.wipe_at_prefix(prefix, &author)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_replica_byte_keys_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+
+        test_replica_byte_keys(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_byte_keys_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_byte_keys(store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_byte_keys<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        let hash = Hash::new(b"foo");
+        let len = 3;
+
+        let key = vec![1u8, 0u8];
+        replica.insert(&key, &author, hash, len)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8]]);
+        let key = vec![1u8, 2u8];
+        replica.insert(&key, &author, hash, len)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+
+        let key = vec![0u8, 255u8];
+        replica.insert(&key, &author, hash, len)?;
+        assert_keys(
+            &store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8], vec![0u8, 255u8]],
+        );
+        Ok(())
+    }
+
+    fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
+        expected.sort();
+        assert_eq!(expected, get_keys_sorted(store, namespace));
+    }
+
+    fn get_keys_sorted<S: store::Store>(store: &S, namespace: NamespaceId) -> Vec<Vec<u8>> {
+        let mut res = store
+            .get_many(namespace, GetFilter::All)
+            .unwrap()
+            .map(|e| e.map(|e| e.key().to_vec()))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        res.sort();
+        res
+    }
+
     fn get_entry<S: store::Store>(
         store: &S,
         namespace: NamespaceId,
@@ -1562,7 +1683,6 @@ mod tests {
         while let Some(msg) = next_to_bob.take() {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
-            println!("round {}", rounds);
             if let Some(msg) = bob
                 .sync_process_message(msg, alice_peer_id)
                 .map_err(Into::into)?

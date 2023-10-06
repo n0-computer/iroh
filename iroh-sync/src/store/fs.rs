@@ -322,6 +322,8 @@ fn increment_by_one(value: &mut [u8]) -> bool {
         if *char != 255 {
             *char += 1;
             return true;
+        } else {
+            *char = 0;
         }
     }
     false
