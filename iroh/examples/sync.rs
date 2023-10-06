@@ -25,12 +25,12 @@ use iroh::{
     downloader::Downloader,
     sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
+use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
     util::BlobFormat,
 };
-use iroh_bytes::{collection::LinkSeqCollectionParser, util::runtime};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
@@ -230,11 +230,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
-    let collection_parser = LinkSeqCollectionParser;
-
     // create the live syncer
-    let downloader =
-        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
+    let downloader = Downloader::new(db.clone(), endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
@@ -998,12 +995,10 @@ async fn copy(
 mod iroh_bytes_handlers {
     use std::sync::Arc;
 
-    use bytes::Bytes;
     use futures::{future::BoxFuture, FutureExt};
     use iroh_bytes::{
-        collection::LinkSeqCollectionParser,
-        protocol::{GetRequest, RequestToken},
-        provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
+        protocol::RequestToken,
+        provider::{EventSender, RequestAuthorizationHandler},
     };
 
     #[derive(Debug, Clone)]
@@ -1011,7 +1006,6 @@ mod iroh_bytes_handlers {
         db: iroh::baomap::flat::Store,
         rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
-        get_handler: Arc<NoopCustomGetHandler>,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
@@ -1020,7 +1014,6 @@ mod iroh_bytes_handlers {
                 db,
                 rt,
                 event_sender: NoopEventSender,
-                get_handler: Arc::new(NoopCustomGetHandler),
                 auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             }
         }
@@ -1029,8 +1022,6 @@ mod iroh_bytes_handlers {
                 conn,
                 self.db.clone(),
                 self.event_sender.clone(),
-                LinkSeqCollectionParser,
-                self.get_handler.clone(),
                 self.auth_handler.clone(),
                 self.rt.clone(),
             )
@@ -1044,17 +1035,6 @@ mod iroh_bytes_handlers {
     impl EventSender for NoopEventSender {
         fn send(&self, _event: iroh_bytes::provider::Event) -> BoxFuture<()> {
             async {}.boxed()
-        }
-    }
-    #[derive(Debug)]
-    struct NoopCustomGetHandler;
-    impl CustomGetHandler for NoopCustomGetHandler {
-        fn handle(
-            &self,
-            _token: Option<RequestToken>,
-            _request: Bytes,
-        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
         }
     }
     #[derive(Debug)]

@@ -125,7 +125,7 @@ async fn gc_hashseq() -> Result<()> {
         .into_iter()
         .collect::<LinkSeq>();
     let ttr = bao_store
-        .import_bytes(seq.into_inner(), BlobFormat::COLLECTION)
+        .import_bytes(seq.into_inner(), BlobFormat::HASHSEQ)
         .await?;
     let h1 = *tt1.hash();
     let h2 = *tt2.hash();
@@ -238,7 +238,7 @@ async fn gc_flat_basics() -> Result<()> {
         .into_iter()
         .collect::<LinkSeq>();
     let ttr = bao_store
-        .import_bytes(seq.into_inner(), BlobFormat::COLLECTION)
+        .import_bytes(seq.into_inner(), BlobFormat::HASHSEQ)
         .await?;
 
     let h1 = *tt1.hash();

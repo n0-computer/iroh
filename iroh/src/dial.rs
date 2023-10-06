@@ -127,7 +127,7 @@ impl Ticket {
 
     /// True if the ticket is for a collection and should retrieve all blobs in it.
     pub fn recursive(&self) -> bool {
-        self.format.is_collection()
+        self.format.is_hash_seq()
     }
 
     /// Get the contents of the ticket, consuming it.
@@ -193,7 +193,7 @@ mod tests {
             hash,
             peer: PeerAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
-            format: BlobFormat::COLLECTION,
+            format: BlobFormat::HASHSEQ,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");

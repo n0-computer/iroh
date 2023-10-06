@@ -23,17 +23,17 @@ impl BlobFormat {
     /// Raw format
     pub const RAW: Self = Self(0);
 
-    /// Collection format
-    pub const COLLECTION: Self = Self(1);
+    /// Hash sequence format
+    pub const HASHSEQ: Self = Self(1);
 
     /// true if this is a raw blob
     pub const fn is_raw(&self) -> bool {
         self.0 == Self::RAW.0
     }
 
-    /// true if this is an iroh collection
-    pub const fn is_collection(&self) -> bool {
-        self.0 == Self::COLLECTION.0
+    /// true if this is sequence of hashes
+    pub const fn is_hash_seq(&self) -> bool {
+        self.0 == Self::HASHSEQ.0
     }
 }
 
@@ -47,8 +47,8 @@ impl fmt::Debug for BlobFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self == &Self::RAW {
             f.write_str("Raw")
-        } else if self == &Self::COLLECTION {
-            f.write_str("Collection")
+        } else if self == &Self::HASHSEQ {
+            f.write_str("HashSeq")
         } else {
             f.debug_tuple("Other").field(&self.0).finish()
         }
@@ -137,8 +137,8 @@ impl HashAndFormat {
     }
 
     /// Create a new hash and format pair, using the collection format.
-    pub fn collection(hash: Hash) -> Self {
-        Self(hash, BlobFormat::COLLECTION)
+    pub fn hash_seq(hash: Hash) -> Self {
+        Self(hash, BlobFormat::HASHSEQ)
     }
 }
 

@@ -1,4 +1,4 @@
-//! Specifications for ranges selection in blobs and collections.
+//! Specifications for ranges selection in blobs and sequences of blobs.
 //!
 //! The [`RangeSpec`] allows specifying which BAO chunks inside a single blob should be
 //! selected.
