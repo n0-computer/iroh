@@ -187,8 +187,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
     /// entries whose key starts with or is equal to the given `prefix`.
     ///
-    /// Returns the number of entries removed as a consequence of this insertion,
-    pub fn delete(
+    /// Returns the number of entries deleted.
+    pub fn delete_prefix(
         &self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
@@ -1512,7 +1512,7 @@ mod tests {
         );
 
         // delete
-        let deleted = replica.delete(b"foo", &alice)?;
+        let deleted = replica.delete_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
         assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
@@ -1566,7 +1566,7 @@ mod tests {
         check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
 
-        alice.delete("foo", &author)?;
+        alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
         sync::<S>(&alice, &bob)?;
         check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
@@ -1611,7 +1611,7 @@ mod tests {
                 replica.insert(&key, &author, hash, len)?;
             }
             assert_keys(&store, namespace.id(), expected);
-            replica.delete([prefix], &author)?;
+            replica.delete_prefix([prefix], &author)?;
             assert_keys(&store, namespace.id(), vec![]);
         }
 
@@ -1622,7 +1622,7 @@ mod tests {
         let key = vec![1u8, 2u8];
         replica.insert(key, &author, hash, len)?;
         let prefix = vec![1u8, 1u8];
-        replica.delete(prefix, &author)?;
+        replica.delete_prefix(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         let key = vec![0u8, 255u8];
@@ -1630,7 +1630,7 @@ mod tests {
         let key = vec![0u8, 0u8];
         replica.insert(key, &author, hash, len)?;
         let prefix = vec![0u8];
-        replica.delete(prefix, &author)?;
+        replica.delete_prefix(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         Ok(())

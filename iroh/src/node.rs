@@ -1490,9 +1490,9 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
-            DocDeleteEntries(msg) => {
+            DocDel(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_delete(req).await
+                    handler.inner.sync.doc_del(req).await
                 })
                 .await
             }

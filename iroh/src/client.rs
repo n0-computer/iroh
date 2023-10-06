@@ -29,13 +29,12 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCreateRequest, DocDeleteEntriesRequest,
-    DocDeleteEntriesResponse, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
-    DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
-    DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
-    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
+    DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest,
+    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
+    DocTicket, GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -564,17 +563,17 @@ where
     /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
     /// entries whose key starts with or is equal to the given `prefix`.
     ///
-    /// Returns the number of entries removed as a consequence of this insertion,
-    pub async fn delete(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+    /// Returns the number of entries deleted.
+    pub async fn del(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
         let res = self
             .rpc
-            .rpc(DocDeleteEntriesRequest {
+            .rpc(DocDelRequest {
                 doc_id: self.id,
                 author_id,
                 prefix,
             })
             .await??;
-        let DocDeleteEntriesResponse { removed } = res;
+        let DocDelResponse { removed } = res;
         Ok(removed)
     }
 

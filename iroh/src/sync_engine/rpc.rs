@@ -13,12 +13,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDeleteEntriesRequest, DocDeleteEntriesResponse,
-        DocGetManyRequest, DocGetManyResponse, DocGetOneRequest, DocGetOneResponse,
-        DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest,
-        DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-        DocStartSyncRequest, DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse,
-        DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocGetManyRequest,
+        DocGetManyResponse, DocGetOneRequest, DocGetOneResponse, DocImportRequest,
+        DocImportResponse, DocInfoRequest, DocInfoResponse, DocListRequest, DocListResponse,
+        DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+        DocStartSyncResponse, DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -190,11 +190,8 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocSetResponse { entry })
     }
 
-    pub async fn doc_delete(
-        &self,
-        req: DocDeleteEntriesRequest,
-    ) -> RpcResult<DocDeleteEntriesResponse> {
-        let DocDeleteEntriesRequest {
+    pub async fn doc_del(&self, req: DocDelRequest) -> RpcResult<DocDelResponse> {
+        let DocDelRequest {
             doc_id,
             author_id,
             prefix,
@@ -202,9 +199,9 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
         let removed = replica
-            .delete(prefix, &author)
+            .delete_prefix(prefix, &author)
             .map_err(anyhow::Error::from)?;
-        Ok(DocDeleteEntriesResponse { removed })
+        Ok(DocDelResponse { removed })
     }
 
     pub fn doc_get_many(

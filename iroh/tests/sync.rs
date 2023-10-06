@@ -325,7 +325,7 @@ async fn doc_delete() -> Result<()> {
         .set_bytes(author, b"foo".to_vec(), b"hi".to_vec())
         .await?;
     assert_latest(&doc, b"foo", b"hi").await;
-    let deleted = doc.delete(author, b"foo".to_vec()).await?;
+    let deleted = doc.del(author, b"foo".to_vec()).await?;
     assert_eq!(deleted, 1);
 
     let entry = doc.get_one(author, b"foo".to_vec()).await?;

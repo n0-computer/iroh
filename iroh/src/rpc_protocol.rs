@@ -636,7 +636,7 @@ pub struct DocSetResponse {
 
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocDeleteEntriesRequest {
+pub struct DocDelRequest {
     /// The document id.
     pub doc_id: NamespaceId,
     /// Author of this entry.
@@ -645,13 +645,13 @@ pub struct DocDeleteEntriesRequest {
     pub prefix: Vec<u8>,
 }
 
-impl RpcMsg<ProviderService> for DocDeleteEntriesRequest {
-    type Response = RpcResult<DocDeleteEntriesResponse>;
+impl RpcMsg<ProviderService> for DocDelRequest {
+    type Response = RpcResult<DocDelResponse>;
 }
 
-/// Response to [`DocDeleteEntriesRequest`]
+/// Response to [`DocDelRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocDeleteEntriesResponse {
+pub struct DocDelResponse {
     /// The number of entries that were removed.
     pub removed: usize,
 }
@@ -823,7 +823,7 @@ pub enum ProviderRequest {
     DocSet(DocSetRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
-    DocDeleteEntries(DocDeleteEntriesRequest),
+    DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocStopSync(DocStopSyncRequest),
     DocShare(DocShareRequest),
@@ -864,7 +864,7 @@ pub enum ProviderResponse {
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
-    DocDeleteEntries(RpcResult<DocDeleteEntriesResponse>),
+    DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocStopSync(RpcResult<DocStopSyncResponse>),

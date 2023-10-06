@@ -97,7 +97,7 @@ pub enum DocCommands {
         mode: DisplayContentMode,
     },
     /// Delete all entries below a key prefix.
-    Delete {
+    Del {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
@@ -215,7 +215,7 @@ impl DocCommands {
                 let hash = doc.set_bytes(author, key, value).await?;
                 println!("{}", hash);
             }
-            Self::Delete {
+            Self::Del {
                 doc,
                 author,
                 prefix,
@@ -223,7 +223,7 @@ impl DocCommands {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
                 let key = prefix.as_bytes().to_vec();
-                let removed = doc.delete(author, key).await?;
+                let removed = doc.del(author, key).await?;
                 println!(
                     "Inserted an empty entry for author {} with key {prefix}.",
                     fmt_short(author)
