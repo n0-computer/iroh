@@ -393,7 +393,7 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// A newer entry exists for either this entry's key or a prefix of the key.
     #[error("A newer entry exists for either this entry's key or a prefix of the key.")]
     NewerEntryExists,
-    /// Attempted to insert an empty entry without calling [`Replica::delete`].
+    /// Attempted to insert an empty entry.
     #[error("Attempted to insert an empty entry")]
     EntryIsEmpty,
 }
