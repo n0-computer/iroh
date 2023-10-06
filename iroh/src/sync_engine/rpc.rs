@@ -117,7 +117,6 @@ impl<S: Store> SyncEngine<S> {
             .subscribe(req.doc_id, {
                 move |event| {
                     {
-                        println!("EV! {event:?}");
                         let s = s.clone();
                         async move {
                             // Send event over the channel, unsubscribe if the channel is closed.

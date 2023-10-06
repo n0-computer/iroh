@@ -334,7 +334,7 @@ async fn sync_remove_doc() -> Result<()> {
     let ev = sub.next().await;
     assert!(matches!(ev, Some(Ok(LiveEvent::Closed))));
     let ev = sub.next().await;
-    assert!(matches!(ev, None));
+    assert!(ev.is_none());
 
     Ok(())
 }
