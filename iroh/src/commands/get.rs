@@ -20,7 +20,7 @@ use iroh_bytes::{
         self,
         fsm::{self, ConnectedNext, EndBlobNext},
     },
-    protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
+    protocol::{GetRequest, RangeSpecSeq, RequestToken},
     Hash,
 };
 use iroh_io::ConcatenateSliceWriter;
@@ -39,10 +39,8 @@ pub struct GetInteractive {
 }
 
 impl GetInteractive {
-    fn new_request(&self, query: RangeSpecSeq) -> Request {
-        GetRequest::new(self.hash, query)
-            .with_token(self.token.clone())
-            .into()
+    fn new_request(&self, query: RangeSpecSeq) -> GetRequest {
+        GetRequest::new(self.hash, query).with_token(self.token.clone())
     }
 
     /// Get into a file or directory

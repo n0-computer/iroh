@@ -68,7 +68,7 @@ pub mod fsm {
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -79,7 +79,7 @@ pub mod fsm {
     }
 
     /// The entry point of the get response machine
-    pub fn start(connection: quinn::Connection, request: Request) -> AtInitial {
+    pub fn start(connection: quinn::Connection, request: GetRequest) -> AtInitial {
         AtInitial::new(connection, request)
     }
 
@@ -116,7 +116,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtInitial {
         connection: quinn::Connection,
-        request: Request,
+        request: GetRequest,
     }
 
     impl AtInitial {
@@ -124,7 +124,7 @@ pub mod fsm {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        pub fn new(connection: quinn::Connection, request: Request) -> Self {
+        pub fn new(connection: quinn::Connection, request: GetRequest) -> Self {
             Self {
                 connection,
                 request,
@@ -152,7 +152,7 @@ pub mod fsm {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
-        request: Request,
+        request: GetRequest,
     }
 
     /// Possible next states after the handshake has been sent
@@ -178,18 +178,6 @@ pub mod fsm {
         /// Error when writing the request to the [`quinn::SendStream`]
         #[error("write: {0}")]
         Write(#[from] quinn::WriteError),
-        /// Error when reading a custom request from the [`quinn::RecvStream`]
-        #[error("read: {0}")]
-        Read(quinn::ReadError),
-        /// The remote side sent a custom request that is too big
-        #[error("custom request too big")]
-        CustomRequestTooBig,
-        /// Response terminated early when reading a custom request
-        #[error("eof")]
-        Eof,
-        /// Error when deserializing a received custom request
-        #[error("postcard: {0}")]
-        PostcardDe(postcard::Error),
         /// A generic io error
         #[error("io {0}")]
         Io(io::Error),
@@ -197,13 +185,9 @@ pub mod fsm {
 
     impl ConnectedNextError {
         fn from_io(cause: io::Error) -> Self {
-            if cause.kind() == io::ErrorKind::UnexpectedEof {
-                Self::Eof
-            } else if let Some(inner) = cause.get_ref() {
+            if let Some(inner) = cause.get_ref() {
                 if let Some(e) = inner.downcast_ref::<quinn::WriteError>() {
                     Self::Write(e.clone())
-                } else if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
-                    Self::Read(e.clone())
                 } else {
                     Self::Io(cause)
                 }
@@ -217,13 +201,8 @@ pub mod fsm {
         fn from(cause: ConnectedNextError) -> Self {
             match cause {
                 ConnectedNextError::Write(cause) => cause.into(),
-                ConnectedNextError::Read(cause) => cause.into(),
-                ConnectedNextError::Eof => io::ErrorKind::UnexpectedEof.into(),
                 ConnectedNextError::Io(cause) => cause,
                 ConnectedNextError::PostcardSer(cause) => {
-                    io::Error::new(io::ErrorKind::Other, cause)
-                }
-                ConnectedNextError::PostcardDe(cause) => {
                     io::Error::new(io::ErrorKind::Other, cause)
                 }
                 _ => io::Error::new(io::ErrorKind::Other, cause),
@@ -241,15 +220,18 @@ pub mod fsm {
         pub async fn next(self) -> Result<ConnectedNext, ConnectedNextError> {
             let Self {
                 start,
-                mut reader,
+                reader,
                 mut writer,
-                request,
+                mut request,
             } = self;
             // 1. Send Request
             {
                 debug!("sending request");
+                let wrapped = Request::Get(request);
                 let request_bytes =
-                    postcard::to_stdvec(&request).map_err(ConnectedNextError::PostcardSer)?;
+                    postcard::to_stdvec(&wrapped).map_err(ConnectedNextError::PostcardSer)?;
+                let Request::Get(x) = wrapped;
+                request = x;
 
                 if request_bytes.len() > MAX_MESSAGE_SIZE {
                     return Err(ConnectedNextError::RequestTooBig);
@@ -266,36 +248,6 @@ pub mod fsm {
             let (mut writer, bytes_written) = writer.into_parts();
             writer.finish().await?;
 
-            // 3. Turn a possible custom request into a get request
-            let request = match request {
-                Request::Get(get_request) => {
-                    // we already have a get request, just return it
-                    get_request
-                }
-                Request::CustomGet(_) => {
-                    // we sent a custom request, so we need the actual GetRequest from the response
-                    let response_len = reader
-                        .read_u64_le()
-                        .await
-                        .map_err(ConnectedNextError::from_io)?;
-
-                    let mut response = if response_len < (MAX_MESSAGE_SIZE as u64) {
-                        Vec::with_capacity(response_len as usize)
-                    } else {
-                        return Err(ConnectedNextError::CustomRequestTooBig);
-                    };
-                    (&mut reader)
-                        .take(response_len)
-                        .read_to_end(&mut response)
-                        .await
-                        .map_err(ConnectedNextError::from_io)?;
-                    if response.len() != response_len as usize {
-                        return Err(ConnectedNextError::Eof);
-                    }
-                    postcard::from_bytes::<GetRequest>(&response)
-                        .map_err(ConnectedNextError::PostcardDe)?
-                }
-            };
             let hash = request.hash;
             let ranges_iter = RangesIter::new(request.ranges);
             // this is in a box so we don't have to memcpy it on every state transition

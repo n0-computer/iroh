@@ -432,8 +432,6 @@ impl Display for RequestToken {
 pub enum Request {
     /// A get request for a blob or collection
     Get(GetRequest),
-    /// A get request that allows the receiver to create a collection
-    CustomGet(CustomGetRequest),
 }
 
 impl Request {
@@ -441,7 +439,6 @@ impl Request {
     pub fn token(&self) -> Option<&RequestToken> {
         match self {
             Request::Get(get) => get.token(),
-            Request::CustomGet(get) => get.token.as_ref(),
         }
     }
 
@@ -449,21 +446,9 @@ impl Request {
     pub fn with_token(mut self, value: Option<RequestToken>) -> Self {
         match &mut self {
             Request::Get(get) => get.token = value,
-            Request::CustomGet(get) => get.token = value,
         }
         self
     }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-/// A get request that allows the receiver to create a collection
-/// Custom request handlers will receive this struct destructured into
-/// handler arguments
-pub struct CustomGetRequest {
-    /// The optional request token
-    pub token: Option<RequestToken>,
-    /// The opaque request data
-    pub data: Bytes,
 }
 
 /// A request
@@ -668,7 +653,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use super::{CustomGetRequest, GetRequest, Request, RequestToken};
+    use super::{GetRequest, Request, RequestToken};
 
     #[test]
     fn request_wire_format() {
@@ -702,32 +687,6 @@ mod tests {
                     54 4f 4b 45 4e # token content
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
-            ",
-            ),
-            (
-                Request::from(CustomGetRequest {
-                    token: None,
-                    data: Bytes::from(&b"hello"[..]),
-                }),
-                r"
-                    01 # enum variant for CustomGetRequest
-                    00 # no token
-                    05 # value length 5
-                    68 65 6c 6c 6f # value content 'hello'
-            ",
-            ),
-            (
-                Request::from(CustomGetRequest {
-                    token: Some(token),
-                    data: Bytes::from(&b"hello"[..]),
-                }),
-                r"
-                    01 # enum variant for CustomGetRequest
-                    01 # a token
-                    05 # length 5
-                    54 4f 4b 45 4e # token content
-                    05 # value length 5
-                    68 65 6c 6c 6f # value content 'hello'
             ",
             ),
         ];
