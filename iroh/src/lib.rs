@@ -7,7 +7,6 @@ pub use iroh_sync as sync;
 
 pub mod baomap;
 pub mod client;
-#[cfg(feature = "iroh-collection")]
 pub mod collection;
 pub mod dial;
 pub mod downloader;

@@ -1085,7 +1085,7 @@ mod tests {
     #[test]
     fn test_content_hashes_iterator_memory() -> Result<()> {
         let store = store::memory::Store::default();
-        test_basics(store)
+        test_content_hashes_iterator(store)
     }
 
     #[cfg(feature = "fs-store")]

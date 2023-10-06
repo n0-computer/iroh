@@ -35,7 +35,7 @@ use tokio::{
     task::JoinError,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, warn, Instrument};
+use tracing::{debug, error, error_span, warn, Instrument};
 
 pub use iroh_sync::ContentStatus;
 
@@ -183,7 +183,7 @@ impl<S: store::Store> LiveSync<S> {
         downloader: Downloader,
     ) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
-        let me = base32::fmt_short(endpoint.peer_id());
+        let me = endpoint.peer_id().fmt_short();
         let mut actor = Actor::new(
             endpoint,
             gossip,
@@ -193,12 +193,14 @@ impl<S: store::Store> LiveSync<S> {
             to_actor_rx,
             to_actor_tx.clone(),
         );
-        let span = debug_span!("sync", %me);
-        let task = rt.main().spawn(async move {
-            if let Err(err) = actor.run().instrument(span).await {
-                error!("live sync failed: {err:?}");
+        let task = rt.main().spawn(
+            async move {
+                if let Err(err) = actor.run().await {
+                    error!("live sync failed: {err:?}");
+                }
             }
-        });
+            .instrument(error_span!("sync", %me)),
+        );
         let handle = LiveSync {
             to_actor_tx,
             task: task.map_err(Arc::new).boxed().shared(),
@@ -1014,18 +1016,5 @@ async fn notify_all(subs: &mut HashMap<u64, OnLiveEventCallback>, event: LiveEve
         if matches!(res, KeepCallback::Drop) {
             subs.remove(&idx);
         }
-    }
-}
-
-/// Utilities for working with byte array identifiers
-// TODO: copy-pasted from iroh-gossip/src/proto/util.rs
-// Unify into iroh-common crate or similar
-pub(super) mod base32 {
-    /// Convert to a base32 string limited to the first 10 bytes
-    pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
-        let len = bytes.as_ref().len().min(10);
-        let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
-        text.make_ascii_lowercase();
-        text
     }
 }

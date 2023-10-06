@@ -25,19 +25,21 @@ use iroh::{
     downloader::Downloader,
     sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
+use iroh_bytes::util::runtime;
 use iroh_bytes::{
     baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
     util::progress::IgnoreProgressSender,
     util::BlobFormat,
 };
-use iroh_bytes::{collection::LinkSeqCollectionParser, util::runtime};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
 };
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
-    defaults::default_derp_map, derp::DerpMap, key::SecretKey, magic_endpoint::get_alpn,
+    derp::{DerpMap, DerpMode},
+    key::SecretKey,
+    magic_endpoint::get_alpn,
     MagicEndpoint, PeerAddr,
 };
 use iroh_sync::{
@@ -130,13 +132,13 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> our secret key: {}", secret_key);
 
     // configure our derp map
-    let derp_map = match (args.no_derp, args.derp) {
-        (false, None) => Some(default_derp_map()),
-        (false, Some(url)) => Some(DerpMap::from_url(url, 0)),
-        (true, None) => None,
+    let derp_mode = match (args.no_derp, args.derp) {
+        (false, None) => DerpMode::Default,
+        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, 0)),
+        (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
-    println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
+    println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
 
     // build our magic endpoint and the gossip protocol
     let (endpoint, gossip) = {
@@ -152,6 +154,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 SYNC_ALPN.to_vec(),
                 iroh_bytes::protocol::ALPN.to_vec(),
             ])
+            .derp_mode(derp_mode)
             .on_endpoints({
                 let gossip_cell = gossip_cell.clone();
                 Box::new(move |endpoints| {
@@ -162,12 +165,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     // trigger oneshot on the first endpoint update
                     initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
                 })
-            });
-        let endpoint = match derp_map {
-            Some(derp_map) => endpoint.enable_derp(derp_map),
-            None => endpoint,
-        };
-        let endpoint = endpoint.bind(args.bind_port).await?;
+            })
+            .bind(args.bind_port)
+            .await?;
 
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
@@ -230,11 +230,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::create_dir_all(&blob_path)?;
     let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
-    let collection_parser = LinkSeqCollectionParser;
-
     // create the live syncer
-    let downloader =
-        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
+    let downloader = Downloader::new(db.clone(), endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
@@ -517,7 +514,7 @@ impl ReplState {
                 let file_path = canonicalize_path(&file_path)?.canonicalize()?;
                 let (tag, len) = self
                     .db
-                    .import(
+                    .import_file(
                         file_path.clone(),
                         ImportMode::Copy,
                         BlobFormat::RAW,
@@ -553,7 +550,7 @@ impl ReplState {
                         let key = format!("{key_prefix}/{relative}");
                         let (tag, len) = self
                             .db
-                            .import(
+                            .import_file(
                                 file.path().into(),
                                 ImportMode::Copy,
                                 BlobFormat::RAW,
@@ -956,10 +953,11 @@ fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
     text.make_ascii_lowercase();
     format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
 }
-fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
-    match derp_map {
-        None => "None".to_string(),
-        Some(map) => map
+fn fmt_derp_mode(derp_mode: &DerpMode) -> String {
+    match derp_mode {
+        DerpMode::Disabled => "None".to_string(),
+        DerpMode::Default => "Default Derp servers".to_string(),
+        DerpMode::Custom(map) => map
             .regions()
             .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
             .collect::<Vec<_>>()
@@ -997,12 +995,10 @@ async fn copy(
 mod iroh_bytes_handlers {
     use std::sync::Arc;
 
-    use bytes::Bytes;
     use futures::{future::BoxFuture, FutureExt};
     use iroh_bytes::{
-        collection::LinkSeqCollectionParser,
-        protocol::{GetRequest, RequestToken},
-        provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
+        protocol::RequestToken,
+        provider::{EventSender, RequestAuthorizationHandler},
     };
 
     #[derive(Debug, Clone)]
@@ -1010,7 +1006,6 @@ mod iroh_bytes_handlers {
         db: iroh::baomap::flat::Store,
         rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
-        get_handler: Arc<NoopCustomGetHandler>,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
@@ -1019,7 +1014,6 @@ mod iroh_bytes_handlers {
                 db,
                 rt,
                 event_sender: NoopEventSender,
-                get_handler: Arc::new(NoopCustomGetHandler),
                 auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             }
         }
@@ -1028,8 +1022,6 @@ mod iroh_bytes_handlers {
                 conn,
                 self.db.clone(),
                 self.event_sender.clone(),
-                LinkSeqCollectionParser,
-                self.get_handler.clone(),
                 self.auth_handler.clone(),
                 self.rt.clone(),
             )
@@ -1043,17 +1035,6 @@ mod iroh_bytes_handlers {
     impl EventSender for NoopEventSender {
         fn send(&self, _event: iroh_bytes::provider::Event) -> BoxFuture<()> {
             async {}.boxed()
-        }
-    }
-    #[derive(Debug)]
-    struct NoopCustomGetHandler;
-    impl CustomGetHandler for NoopCustomGetHandler {
-        fn handle(
-            &self,
-            _token: Option<RequestToken>,
-            _request: Bytes,
-        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
         }
     }
     #[derive(Debug)]

@@ -65,13 +65,15 @@ pub fn response(tx: TransactionId, addr: SocketAddr) -> Vec<u8> {
     buffer
 }
 
+// Copied from stun_rs
+// const MAGIC_COOKIE: Cookie = Cookie(0x2112_A442);
+const COOKIE: [u8; 4] = 0x2112_A442u32.to_be_bytes();
+
 /// Reports whether b is a STUN message.
 pub fn is(b: &[u8]) -> bool {
-    let cookie: [u8; 4] = b[4..8].try_into().unwrap();
-
     b.len() >= stun_rs::MESSAGE_HEADER_SIZE &&
 	b[0]&0b11000000 == 0 && // top two bits must be zero
-	cookie == stun_rs::MAGIC_COOKIE
+	b[4..8] == COOKIE
 }
 
 /// Parses a STUN binding request.
@@ -506,6 +508,11 @@ mod tests {
         assert!(is(&req));
         let got_tx = parse_binding_request(&req).unwrap();
         assert_eq!(got_tx, tx);
+    }
+
+    #[test]
+    fn test_stun_cookie() {
+        assert_eq!(stun_rs::MAGIC_COOKIE, COOKIE);
     }
 
     #[test]

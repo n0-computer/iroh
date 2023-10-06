@@ -251,7 +251,7 @@ impl FullCommands {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     let format = match collection {
-                        true => BlobFormat::COLLECTION,
+                        true => BlobFormat::HASHSEQ,
                         false => BlobFormat::RAW,
                     };
                     self::get::GetInteractive {
@@ -307,7 +307,15 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
-    /// Manage a running Iroh node
+    /// Manage tags
+    ///
+    /// Tags are local, human-readable names for things iroh should keep.
+    /// Anything added with explicit commands like `iroh get` or `doc join`
+    /// will be tagged & kept until the tag is removed. If no tag is given
+    /// while running an explicit command, iroh will automatically generate
+    /// a tag.
+    ///
+    /// Any data iroh fetches without a tag will be periodically deleted.
     Tag {
         #[clap(subcommand)]
         command: TagCommands,
@@ -559,7 +567,7 @@ impl BlobCommands {
                 } else {
                     let format = match recursive {
                         Some(false) | None => BlobFormat::RAW,
-                        Some(true) => BlobFormat::COLLECTION,
+                        Some(true) => BlobFormat::HASHSEQ,
                     };
                     (
                         PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
@@ -722,19 +730,6 @@ fn make_download_pb() -> ProgressBar {
     pb
 }
 
-fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) -> Result<()> {
-    pb.set_message(format!(
-        "{} Downloading {} file(s) with total transfer size {}",
-        style("[3/3]").bold().dim(),
-        count,
-        HumanBytes(missing_bytes),
-    ));
-    pb.set_length(missing_bytes);
-    pb.reset();
-
-    Ok(())
-}
-
 pub async fn show_download_progress(
     hash: Hash,
     mut stream: impl Stream<Item = Result<GetProgress>> + Unpin,
@@ -743,6 +738,7 @@ pub async fn show_download_progress(
     let pb = make_download_pb();
     pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
     let mut sizes = BTreeMap::new();
+    let mut downloading = false;
     while let Some(x) = stream.next().await {
         match x? {
             GetProgress::Connected => {
@@ -753,13 +749,28 @@ pub async fn show_download_progress(
                 num_blobs,
                 ..
             } => {
-                init_download_progress(
-                    &pb,
-                    num_blobs.unwrap_or_default(),
-                    total_blobs_size.unwrap_or_default(),
-                )?;
+                let count = num_blobs.unwrap_or_default();
+                let missing_bytes = total_blobs_size.unwrap_or_default();
+                pb.set_message(format!(
+                    "{} Downloading {} file(s) with total transfer size {}",
+                    style("[3/3]").bold().dim(),
+                    count,
+                    HumanBytes(missing_bytes),
+                ));
+                pb.set_length(missing_bytes);
+                pb.reset();
+                downloading = true;
             }
             GetProgress::Found { id, size, .. } => {
+                if !downloading {
+                    pb.set_message(format!(
+                        "{} Downloading blob with size {}",
+                        style("[3/3]").bold().dim(),
+                        size,
+                    ));
+                    pb.set_length(size);
+                    pb.reset();
+                }
                 sizes.insert(id, (size, 0));
             }
             GetProgress::Progress { id, offset } => {

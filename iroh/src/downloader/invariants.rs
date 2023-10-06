@@ -13,6 +13,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.check_scheduled_requests_consistency();
         self.check_idle_peer_consistency();
         self.chech_concurrency_limits();
+        self.check_provider_map_prunning();
     }
 
     /// Checks concurrency limits are maintained.
@@ -95,5 +96,16 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             idle_peers,
             "inconsistent count of idle peers"
         );
+    }
+
+    /// Check that every hash in the provider map is needed.
+    #[track_caller]
+    fn check_provider_map_prunning(&self) {
+        for hash in self.providers.candidates.keys() {
+            assert!(
+                self.is_needed(*hash),
+                "provider map contains {hash:?} which should have been prunned"
+            );
+        }
     }
 }

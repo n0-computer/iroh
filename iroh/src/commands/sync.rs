@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
+use colored::Colorize;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
@@ -8,10 +9,22 @@ use iroh::{
     sync_engine::{LiveEvent, Origin},
 };
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
+use tokio::io::AsyncReadExt;
 
 use crate::config::ConsoleEnv;
 
-const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
+const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum DisplayContentMode {
+    /// Displays the content if small enough, otherwise it displays the content hash.
+    Auto,
+    /// Display the content unconditionally.
+    Content,
+    /// Display the hash of the content.
+    Hash,
+}
 
 #[derive(Debug, Clone, Parser)]
 pub enum DocCommands {
@@ -79,9 +92,9 @@ pub enum DocCommands {
         /// Filter by author.
         #[clap(short, long)]
         author: Option<AuthorId>,
-        /// Also print the content for each entry (but only if smaller than 1MB and valid UTf-8)
-        #[clap(short, long)]
-        content: bool,
+        /// How to show the contents of the key.
+        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        mode: DisplayContentMode,
     },
     /// Delete all entries below a key prefix.
     WipePrefix {
@@ -115,6 +128,9 @@ pub enum DocCommands {
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
+        /// How to show the contents of the keys.
+        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        mode: DisplayContentMode,
     },
     /// Watch for changes and events on a document
     Watch {
@@ -219,7 +235,7 @@ impl DocCommands {
                 key,
                 prefix,
                 author,
-                content,
+                mode,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
@@ -233,27 +249,28 @@ impl DocCommands {
                             .get_one(author, key)
                             .await?
                             .ok_or_else(|| anyhow!("Entry not found"))?;
-                        print_entry(&doc, &entry, content).await?;
+                        println!("{}", fmt_entry(&doc, &entry, mode).await);
                         return Ok(());
                     }
                 };
 
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    print_entry(&doc, &entry, content).await?;
+                    println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
             }
             Self::Keys {
                 doc,
                 prefix,
                 author,
+                mode,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let filter = GetFilter::author_prefix(author, prefix);
 
                 let mut stream = doc.get_many(filter).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(&entry));
+                    println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
             }
             Self::Watch { doc } => {
@@ -263,18 +280,35 @@ impl DocCommands {
                     let event = event?;
                     match event {
                         LiveEvent::InsertLocal { entry } => {
-                            println!("local change:  {}", fmt_entry(&entry))
+                            println!(
+                                "local change:  {}",
+                                fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
+                            )
                         }
                         LiveEvent::InsertRemote {
                             entry,
                             from,
                             content_status,
                         } => {
+                            let content = match content_status {
+                                iroh_sync::ContentStatus::Complete => {
+                                    fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
+                                }
+                                iroh_sync::ContentStatus::Incomplete => {
+                                    let (Ok(content) | Err(content)) =
+                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                    format!("<incomplete: {} ({})>", content, human_len(&entry))
+                                }
+                                iroh_sync::ContentStatus::Missing => {
+                                    let (Ok(content) | Err(content)) =
+                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                    format!("<missing: {} ({})>", content, human_len(&entry))
+                                }
+                            };
                             println!(
-                                "remote change: {} (via @{}, content {:?})",
-                                fmt_entry(&entry),
+                                "remote change via @{}: {}",
                                 fmt_short(from.as_bytes()),
-                                content_status
+                                content
                             )
                         }
                         LiveEvent::ContentReady { hash } => {
@@ -292,7 +326,7 @@ impl DocCommands {
                                     fmt_short(event.peer)
                                 ),
                                 Err(err) => println!(
-                                    "failed to synced doc {} with peer {} ({origin}): {err}",
+                                    "failed to sync doc {} with peer {} ({origin}): {err}",
                                     fmt_short(event.namespace),
                                     fmt_short(event.peer)
                                 ),
@@ -350,14 +384,57 @@ impl AuthorCommands {
     }
 }
 
-fn fmt_entry(entry: &Entry) -> String {
+/// Format the content. If an error occurs it's returned in a formatted, friendly way.
+async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
+    let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
+    let decode_failed = |_err: std::string::FromUtf8Error| "<invalid UTF-8>".to_string();
+
+    match mode {
+        DisplayContentMode::Auto => {
+            if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
+                // small content: read fully as UTF-8
+                let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+                String::from_utf8(bytes.into()).map_err(decode_failed)
+            } else {
+                // large content: read just the first part as UTF-8
+                let mut blob_reader = doc.read(entry).await.map_err(read_failed)?;
+                let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize);
+
+                blob_reader
+                    .read_buf(&mut buf)
+                    .await
+                    .map_err(|io_err| read_failed(io_err.into()))?;
+                let mut repr = String::from_utf8(buf).map_err(decode_failed)?;
+                // let users know this is not shown in full
+                repr.push_str("...");
+                Ok(repr)
+            }
+        }
+        DisplayContentMode::Content => {
+            // read fully as UTF-8
+            let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+            String::from_utf8(bytes.into()).map_err(decode_failed)
+        }
+        DisplayContentMode::Hash => {
+            let hash = entry.record().content_hash();
+            Ok(fmt_short(hash.as_bytes()))
+        }
+    }
+}
+
+/// Human bytes for the contents of this entry.
+fn human_len(entry: &Entry) -> HumanBytes {
+    HumanBytes(entry.record().content_len())
+}
+
+#[must_use = "this won't be printed, you need to print it yourself"]
+async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
     let id = entry.id();
-    let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
+    let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
     let author = fmt_short(id.author());
-    let hash = entry.record().content_hash();
-    let hash = fmt_short(hash.as_bytes());
-    let len = HumanBytes(entry.record().content_len());
-    format!("@{author}: {key} = {hash} ({len})",)
+    let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
+    let len = human_len(entry);
+    format!("@{author}: {key} = {content} ({len})")
 }
 
 /// Format the first 5 bytes of a byte string in bas32
@@ -365,25 +442,4 @@ pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
     text.make_ascii_lowercase();
     format!("{}…", &text)
-}
-
-async fn print_entry(doc: &Doc, entry: &Entry, content: bool) -> anyhow::Result<()> {
-    println!("{}", fmt_entry(entry));
-    if content {
-        if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
-            match doc.read_to_bytes(entry).await {
-                Ok(content) => match String::from_utf8(content.into()) {
-                    Ok(s) => println!("{s}"),
-                    Err(_err) => println!("<invalid UTF-8>"),
-                },
-                Err(err) => println!("<failed to get content: {err}>"),
-            }
-        } else {
-            println!(
-                "<skipping content with len {}: too large to print>",
-                HumanBytes(entry.content_len())
-            )
-        }
-    }
-    Ok(())
 }

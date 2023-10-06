@@ -2,7 +2,7 @@
 use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use crate::{
-    collection::CollectionParser,
+    hashseq::parse_hash_seq,
     util::{
         progress::{IdGenerator, ProgressSender},
         BlobFormat, HashAndFormat, RpcError, Tag,
@@ -11,12 +11,12 @@ use crate::{
 };
 use bao_tree::{blake3, ChunkNum};
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, StreamExt};
+use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::{io::AsyncRead, sync::mpsc};
 
 pub use bao_tree;
 pub use range_collections;
@@ -181,7 +181,7 @@ pub trait Store: ReadableStore + PartialMap {
     ///
     /// Returns the hash of the imported file. The reason to have this method is that some database
     /// implementations might be able to import a file without copying it.
-    fn import(
+    fn import_file(
         &self,
         data: PathBuf,
         mode: ImportMode,
@@ -189,10 +189,29 @@ pub trait Store: ReadableStore + PartialMap {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
 
-    /// This trait method imports data from memory.
+    /// Import data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
+
+    /// Import data from a stream of bytes.
+    fn import_stream(
+        &self,
+        data: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
+
+    /// Import data from an async byte reader.
+    fn import_reader(
+        &self,
+        data: impl AsyncRead + Send + Unpin + 'static,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+        let stream = tokio_util::io::ReaderStream::new(data);
+        self.import_stream(stream, format, progress)
+    }
 
     /// Set a tag
     fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>>;
@@ -215,11 +234,10 @@ pub trait Store: ReadableStore + PartialMap {
     /// in the gc_sweep phase.
     fn gc_mark<'a>(
         &'a self,
-        cp: impl CollectionParser + 'a,
         extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     ) -> LocalBoxStream<'a, GcMarkEvent> {
         Gen::new(|co| async move {
-            if let Err(e) = gc_mark_task(self, cp, extra_roots, &co).await {
+            if let Err(e) = gc_mark_task(self, extra_roots, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
@@ -348,7 +366,6 @@ impl Drop for TempTag {
 /// Implementation of the gc method.
 async fn gc_mark_task<'a>(
     store: &'a impl Store,
-    cp: impl CollectionParser + 'a,
     extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
@@ -399,11 +416,11 @@ async fn gc_mark_task<'a>(
                     warn!("gc: {} creating data reader failed", hash);
                     continue;
                 };
-                let Ok((mut iter, stats)) = cp.parse(reader).await else {
+                let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
                     warn!("gc: {} parse failed", hash);
                     continue;
                 };
-                info!("parsed collection {} {:?}", hash, stats);
+                info!("parsed collection {} {:?}", hash, count);
                 loop {
                     let item = match iter.next().await {
                         Ok(Some(item)) => item,
@@ -456,7 +473,7 @@ pub enum ImportProgress {
     /// Found a path
     ///
     /// This will be the first message for an id
-    Found { id: u64, path: PathBuf },
+    Found { id: u64, name: String },
     /// Progress when copying the file to the store
     ///
     /// This will be omitted if the store can use the file in place

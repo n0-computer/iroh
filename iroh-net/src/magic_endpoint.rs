@@ -10,7 +10,7 @@ use tracing::{debug, trace};
 use crate::{
     config,
     defaults::default_derp_map,
-    derp::DerpMap,
+    derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
     magicsock::{self, Callbacks, MagicSock},
     tls,
@@ -112,7 +112,7 @@ impl PeerAddr {
 #[derive(Debug)]
 pub struct MagicEndpointBuilder {
     secret_key: Option<SecretKey>,
-    derp_map: Option<DerpMap>,
+    derp_mode: DerpMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     concurrent_connections: Option<u32>,
@@ -126,7 +126,7 @@ impl Default for MagicEndpointBuilder {
     fn default() -> Self {
         Self {
             secret_key: Default::default(),
-            derp_map: Some(default_derp_map()),
+            derp_mode: DerpMode::Default,
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
@@ -162,32 +162,19 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Enables using DERP servers to assist in establishing connectivity.
+    /// Sets the DERP servers to assist in establishing connectivity.
     ///
     /// DERP servers are used to discover other peers by [`PublicKey`] and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// The provided `derp_map` must contain at least one region with a configured derp
-    /// node.  If an invalid [`DerpMap`] is provided [`bind`] will result in an error.
-    ///
-    /// When calling neither this, nor [`disable_derp`] the builder uses the
-    /// [`default_derp_map`] containing number0's global derp servers.
+    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
+    /// region with a configured derp node.  If an invalid [`DerpMap`] is provided [`bind`]
+    /// will result in an error.
     ///
     /// [`bind`]: MagicEndpointBuilder::bind
-    /// [`disable_derp`]: MagicEndpointBuilder::disable_derp
-    pub fn enable_derp(mut self, derp_map: DerpMap) -> Self {
-        self.derp_map = Some(derp_map);
-        self
-    }
-
-    /// Disables using DERP servers.
-    ///
-    /// See [`enable_derp`] for details.
-    ///
-    /// [`enable_derp`]: MagicEndpointBuilder::enable_derp
-    pub fn disable_derp(mut self) -> Self {
-        self.derp_map = None;
+    pub fn derp_mode(mut self, derp_mode: DerpMode) -> Self {
+        self.derp_mode = derp_mode;
         self
     }
 
@@ -253,13 +240,14 @@ impl MagicEndpointBuilder {
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
-        ensure!(
-            self.derp_map
-                .as_ref()
-                .map(|m| !m.is_empty())
-                .unwrap_or(true),
-            "Derp server enabled but DerpMap is empty",
-        );
+        let derp_map = match self.derp_mode {
+            DerpMode::Disabled => DerpMap::empty(),
+            DerpMode::Default => default_derp_map(),
+            DerpMode::Custom(derp_map) => {
+                ensure!(!derp_map.is_empty(), "Empty custom Derp server map",);
+                derp_map
+            }
+        };
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let mut server_config = make_server_config(
             &secret_key,
@@ -273,7 +261,7 @@ impl MagicEndpointBuilder {
         let msock_opts = magicsock::Options {
             port: bind_port,
             secret_key,
-            derp_map: self.derp_map.unwrap_or_default(),
+            derp_map,
             callbacks: self.callbacks,
             peers_path: self.peers_path,
         };
@@ -377,11 +365,17 @@ impl MagicEndpoint {
     }
 
     /// Get the [`PeerAddr`] for this endpoint.
-    // TODO: We can save an async call by exposing this on the msock.
     pub async fn my_addr(&self) -> Result<PeerAddr> {
         let addrs = self.local_endpoints().await?;
         let derp = self.my_derp().await;
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
+        Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
+    }
+
+    /// Get the [`PeerAddr`] for this endpoint, while providing the endpoints.
+    pub async fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<PeerAddr> {
+        let derp = self.my_derp().await;
+        let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
     }
 
@@ -579,7 +573,7 @@ mod tests {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .enable_derp(derp_map)
+                        .derp_mode(DerpMode::Custom(derp_map))
                         .bind(0)
                         .await
                         .unwrap();
@@ -612,7 +606,7 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .enable_derp(derp_map)
+                    .derp_mode(DerpMode::Custom(derp_map))
                     .bind(0)
                     .await
                     .unwrap();

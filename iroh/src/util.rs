@@ -1,4 +1,6 @@
-//! utilites for io and for reporting progress
+//! Utilites for working with iroh.
+
 pub mod fs;
 pub mod io;
+pub mod path;
 pub mod progress;
