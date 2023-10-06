@@ -97,7 +97,7 @@ pub enum DocCommands {
         mode: DisplayContentMode,
     },
     /// Delete all entries below a key prefix.
-    DeletePrefix {
+    Delete {
         /// Document to operate on.
         ///
         /// Required unless the document is set through the IROH_DOC environment variable.
@@ -215,7 +215,7 @@ impl DocCommands {
                 let hash = doc.set_bytes(author, key, value).await?;
                 println!("{}", hash);
             }
-            Self::DeletePrefix {
+            Self::Delete {
                 doc,
                 author,
                 prefix,
