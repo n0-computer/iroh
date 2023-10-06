@@ -721,30 +721,30 @@ impl ImportProgressBar {
                     ImportProgressEvent::Found { name, id, size } => {
                         let pb = mp.add(ProgressBar::new(size));
                         pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
             .progress_chars("=>-"));
-                        pb.set_message(name);
+                        pb.set_message(format!("Importing {name}..."));
                         pb.set_length(size);
                         pb.set_position(0);
                         pb.enable_steady_tick(Duration::from_millis(500));
-                        pbs.insert(id, pb);
+                        pbs.insert(id, (name, pb));
                     }
                     ImportProgressEvent::AddProgress { id, progress } => {
-                        if let Some(pb) = pbs.get_mut(&id) {
+                        if let Some((_, pb)) = pbs.get_mut(&id) {
                             pb.set_position(progress);
                         }
                     }
                     ImportProgressEvent::AddingToDoc { id } => {
-                        if let Some(pb) = pbs.get_mut(&id) {
+                        if let Some((name, pb)) = pbs.get_mut(&id) {
                             pb.set_message(format!(
-                                "Adding to doc {}...",
+                                "Inserting {name} in doc {}...",
                                 fmt_short(doc_id.as_bytes())
                             ));
                         }
                     }
                     ImportProgressEvent::Done { id } => {
-                        if let Some(pb) = pbs.remove(&id) {
-                            pb.finish_and_clear();
+                        if let Some((name, pb)) = pbs.remove(&id) {
+                            pb.finish_with_message(format!("Imported {name}"));
                             mp.remove(&pb);
                         }
                     }
