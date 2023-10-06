@@ -97,8 +97,8 @@ impl super::Store for Store {
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
         self.close_replica(namespace);
-        self.replicas.write().remove(&namespace);
-        self.replica_records.write().remove(&namespace);
+        self.replicas.write().remove(namespace);
+        self.replica_records.write().remove(namespace);
         Ok(())
     }
 
