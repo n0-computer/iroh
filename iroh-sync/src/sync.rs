@@ -1386,7 +1386,7 @@ mod tests {
 
         // may not reopen removed replica
         let res = store.open_replica(&namespace.id())?;
-        assert!(matches!(res, None));
+        assert!(res.is_none());
 
         // may recreate replica
         let replica = store.new_replica(namespace.clone())?;
