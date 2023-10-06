@@ -306,6 +306,35 @@ async fn sync_subscribe_stop() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn sync_remove_doc() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt, 0).await?;
+    let client = node.client();
+
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
+    let mut sub = doc.subscribe().await?;
+    doc.set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
+        .await?;
+    let ev = sub.next().await;
+    assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
+    client.docs.remove(doc.id()).await?;
+    let res = doc.get_one(author, b"foo".to_vec()).await;
+    assert!(res.is_err());
+    let res = doc
+        .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
+        .await;
+    assert!(res.is_err());
+    let doc = client.docs.get(doc.id()).await;
+    assert!(res.is_err());
+    let ev = sub.next().await;
+    assert!(matches!(ev, None));
+
+    Ok(())
+}
+
 async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());
