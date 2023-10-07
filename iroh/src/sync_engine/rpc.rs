@@ -230,9 +230,16 @@ impl<S: Store> SyncEngine<S> {
         // iterate over stream and insert
         while let Some(entry) = stream.next().await {
             let (id, key, hash, len) = entry?;
-            replica
+            if let Err(e) = replica
                 .insert(&key, &author, hash, len)
-                .map_err(anyhow::Error::from)?;
+                .map_err(anyhow::Error::from)
+            {
+                let err_str = e.to_string();
+                progress
+                    .send(DocSetProgress::Abort(RpcError::from(e)))
+                    .await?;
+                anyhow::bail!("error inserting hash into document: {err_str}")
+            }
             progress
                 .send(DocSetProgress::Done { id, key, size: len })
                 .await?;
