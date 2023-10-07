@@ -309,8 +309,16 @@ impl MagicEndpoint {
         let msock = magicsock::MagicSock::new(msock_opts).await?;
         trace!("created magicsock");
 
+        let mut endpoint_config  = quinn::EndpointConfig::default();
+        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // the packet if grease_quic_bit is set to false.
+        endpoint_config.grease_quic_bit(false);
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
+            endpoint_config,
             server_config,
             msock.clone(),
             Arc::new(quinn::TokioRuntime),

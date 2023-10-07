@@ -477,10 +477,12 @@ impl Inner {
 
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
-        let mut num_msgs = 0;
+        let mut num_quic_msgs = 0;
 
-        for (meta, buf) in metas.into_iter().zip(bufs.iter()).take(msgs) {
+        for (meta, buf) in metas.into_iter().zip(bufs.iter_mut()).take(msgs) {
             let mut start = 0;
+            let mut is_quic = true;
+            let count = meta.len / meta.stride;
 
             // find disco and stun packets and forward them to the actor
             loop {
@@ -489,40 +491,52 @@ impl Inner {
                     break;
                 }
                 let packet = &buf[start..end];
+                let mut packet_is_quic = true;
                 if stun::is(&packet) {
                     trace!("UDP recv: stun packet");
-                    let packet = Bytes::copy_from_slice(packet);
-                    self.net_checker.receive_stun_packet(packet, meta.addr);
+                    let packet2 = Bytes::copy_from_slice(packet);
+                    self.net_checker.receive_stun_packet(packet2, meta.addr);
+                    packet_is_quic = false;
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
                     // Disco?
                     trace!("UDP recv: disco packet: {:?}", meta);
                     self.handle_disco_message(sender, &sealed_box, SendAddr::Udp(meta.addr), None);
+                    packet_is_quic = false;
+                }
+
+                if !packet_is_quic {
+                    // overwrite the first byte of the packets with zero.
+                    // this makes quinn reliably and quickly ignore the packet as long as
+                    // [`quinn::EndpointConfig::grease_quic_bit`] is set to `true`.
+                    buf[start] = 0u8;
+                    is_quic = false;
                 }
                 start = end;
             }
 
-            // remap addr
-            match self
-                .peer_map
-                .get_quic_mapped_addr_for_ip_port(&SendAddr::Udp(meta.addr))
-            {
-                None => {
-                    warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
-                }
-                Some(quic_mapped_addr) => {
-                    debug!("peer_map state found for {}", meta.addr);
-                    num_msgs += meta.len / meta.stride;
-                    meta.addr = quic_mapped_addr.0;
+            if is_quic {
+                // remap addr
+                match self
+                    .peer_map
+                    .get_quic_mapped_addr_for_ip_port(&SendAddr::Udp(meta.addr))
+                {
+                    None => {
+                        warn!(peer=?meta.addr, len = meta.len, ?count, "no peer state found, skipping");
+                    }
+                    Some(quic_mapped_addr) => {
+                        trace!(peer = ?meta.addr, len = meta.len, ?count, "recv ok, peer state found");
+                        num_quic_msgs += meta.len / meta.stride;
+                        meta.addr = quic_mapped_addr.0;
+                    }
                 }
             }
             // Normalize local_ip
             meta.dst_ip = dst_ip;
         }
 
-        if num_msgs > 0 {
-            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
-            trace!("received {} datagrams", num_msgs);
-            return Poll::Ready(Ok(num_msgs));
+        if num_quic_msgs > 0 {
+            inc_by!(MagicsockMetrics, recv_datagrams, num_quic_msgs as _);
+            trace!("received {} datagrams", num_quic_msgs);
         }
 
         Poll::Ready(Ok(msgs))
