@@ -469,8 +469,9 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
+    // TODO: Make sync
     pub async fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
-        self.msock.add_peer_addr(peer_addr).await?;
+        self.msock.add_peer_addr(peer_addr);
         Ok(())
     }
 

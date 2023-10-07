@@ -404,7 +404,12 @@ impl Inner {
 
                 if !derp_sent && !udp_sent {
                     warn!(peer = %public_key.fmt_short(), "failed to send: no UDP or DERP addr");
-                    let err = udp_error.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no UDP or Derp address available for peer"));
+                    let err = udp_error.unwrap_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            "no UDP or Derp address available for peer",
+                        )
+                    });
                     Poll::Ready(Err(err))
                 } else {
                     Poll::Ready(Ok(n))
@@ -827,81 +832,82 @@ impl Inner {
             return Poll::Ready(Ok(()));
         }
         while let Some(msg) = msgs.pop() {
-            // Abort sending as soon as we know we are shutting down.
-            if self.is_closing() || self.is_closed() {
-                return Poll::Ready(Ok(()));
+            if let Poll::Pending = self.poll_handle_ping_action(cx, &msg)? {
+                msgs.push(msg);
+                return Poll::Pending;
             }
-            match msg {
-                PingAction::EnqueueCallMeMaybe {
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_handle_ping_action(
+        &self,
+        cx: &mut Context<'_>,
+        msg: &PingAction,
+    ) -> Poll<io::Result<()>> {
+        // Abort sending as soon as we know we are shutting down.
+        if self.is_closing() || self.is_closed() {
+            return Poll::Ready(Ok(()));
+        }
+        match *msg {
+            PingAction::EnqueueCallMeMaybe {
+                derp_region,
+                endpoint_id,
+            } => {
+                let msg = ActorMessage::EnqueueCallMeMaybe {
                     derp_region,
                     endpoint_id,
-                } => {
-                    let msg = ActorMessage::EnqueueCallMeMaybe {
-                        derp_region,
-                        endpoint_id,
-                    };
-                    match self.actor_sender.try_send(msg) {
-                        Ok(_) => {}
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            error!("magicsock actor dropped");
-                        }
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            warn!("actor channel is full, dropping CallMeMaybe message");
-                        }
+                };
+                match self.actor_sender.try_send(msg) {
+                    Ok(_) => {}
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        error!("magicsock actor dropped");
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        warn!("actor channel is full, dropping CallMeMaybe message");
                     }
                 }
-                PingAction::SendPing {
-                    id,
-                    dst,
-                    dst_key,
+            }
+            PingAction::SendPing {
+                id,
+                dst,
+                dst_key,
+                tx_id,
+                purpose,
+            } => {
+                let msg = disco::Message::Ping(disco::Ping {
                     tx_id,
-                    purpose,
-                } => {
-                    let msg = disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        node_key: self.public_key(),
-                    });
-                    let pkt = self.encode_disco_message(dst_key, &msg);
-                    let is_derp = dst.is_derp();
-                    if is_derp {
-                        inc!(MagicsockMetrics, send_disco_derp);
-                    } else {
-                        inc!(MagicsockMetrics, send_disco_udp);
-                    }
+                    node_key: self.public_key(),
+                });
+                let pkt = self.encode_disco_message(dst_key, &msg);
+                let is_derp = dst.is_derp();
+                if is_derp {
+                    inc!(MagicsockMetrics, send_disco_derp);
+                } else {
+                    inc!(MagicsockMetrics, send_disco_udp);
+                }
 
-                    match dst {
-                        SendAddr::Udp(addr) => {
-                            let transmit = quinn_udp::Transmit {
-                                destination: addr,
-                                contents: pkt,
-                                ecn: None,
-                                segment_size: None,
-                                src_ip: None, // TODO
-                            };
-                            let conn = if addr.is_ipv6() {
-                                self.pconn6.as_ref().unwrap()
-                            } else {
-                                &self.pconn4
-                            };
-                            ready!(conn.poll_send(&self.udp_state, cx, &[transmit]))?;
-                            let msg_sender = self.actor_sender.clone();
-                            self.peer_map.write(move |pm| {
-                                if let Some(ep) = pm.by_id_mut(&id) {
-                                    ep.ping_sent(dst, tx_id, purpose, msg_sender);
-                                }
-                            });
-                        }
-                        SendAddr::Derp(region) => {
-                            self.send_derp(region, dst_key, vec![pkt]);
-                            let msg_sender = self.actor_sender.clone();
-                            self.peer_map.write(move |pm| {
-                                if let Some(ep) = pm.by_id_mut(&id) {
-                                    ep.ping_sent(dst, tx_id, purpose, msg_sender);
-                                }
-                            })
-                        }
+                match dst {
+                    SendAddr::Udp(addr) => {
+                        let transmit = quinn_udp::Transmit {
+                            destination: addr,
+                            contents: pkt,
+                            ecn: None,
+                            segment_size: None,
+                            src_ip: None, // TODO
+                        };
+                        ready!(self.poll_send_udp(addr, &[transmit], cx))?;
+                    }
+                    SendAddr::Derp(region) => {
+                        self.send_derp(region, dst_key, vec![pkt]);
                     }
                 }
+                let msg_sender = self.actor_sender.clone();
+                self.peer_map.write(move |pm| {
+                    if let Some(ep) = pm.by_id_mut(&id) {
+                        ep.ping_sent(dst, tx_id, purpose, msg_sender);
+                    }
+                });
             }
         }
         Poll::Ready(Ok(()))
@@ -1237,14 +1243,8 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub async fn add_peer_addr(&self, addr: PeerAddr) -> Result<()> {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::AddKnownAddr(addr, s))
-            .await?;
-        r.await?;
-        Ok(())
+    pub fn add_peer_addr(&self, addr: PeerAddr) {
+        self.inner.peer_map.add_peer_addr(addr);
     }
 
     /// Closes the connection.
@@ -1344,7 +1344,6 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
 }
 
 impl AsyncUdpSocket for MagicSock {
-    #[instrument(skip_all, fields(me = %self.inner.me))]
     fn poll_send(
         &self,
         _udp_state: &quinn_udp::UdpState,
@@ -1354,7 +1353,6 @@ impl AsyncUdpSocket for MagicSock {
         self.inner.poll_send(cx, transmits)
     }
 
-    #[instrument(skip_all, fields(me = %self.inner.me))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -1409,7 +1407,6 @@ enum ActorMessage {
         dst_key: PublicKey,
         msg: disco::Message,
     },
-    AddKnownAddr(PeerAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
 }
@@ -1634,10 +1631,6 @@ impl Actor {
             }
             ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
                 let _res = self.send_disco_message(dst, dst_key, msg).await;
-            }
-            ActorMessage::AddKnownAddr(addr, s) => {
-                self.add_known_addr(addr);
-                s.send(()).ok();
             }
             ActorMessage::ReceiveDerp(read_result) => {
                 let passthroughs = self.process_derp_read_result(read_result).await;
@@ -2410,11 +2403,6 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all)]
-    fn add_known_addr(&mut self, peer_addr: PeerAddr) {
-        self.inner.peer_map.add_peer_addr(peer_addr)
-    }
-
     /// Returns the current IPv4 listener's port number.
     fn local_port_v4(&self) -> u16 {
         self.pconn4.port()
@@ -2860,7 +2848,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                let _ = m.endpoint.magic_sock().add_peer_addr(addr).await;
+                m.endpoint.magic_sock().add_peer_addr(addr);
             }
         }
 
