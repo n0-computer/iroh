@@ -71,11 +71,10 @@ reflink-copy = { version = "0.1.8", optional = true }
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table"]
 metrics = ["iroh-metrics"]
 mem-db = []
 flat-db = ["reflink-copy"]
-iroh-collection = []
 test = []
 example-sync = ["cli"]
 
@@ -100,11 +99,11 @@ required-features = ["cli"]
 
 [[example]]
 name = "collection"
-required-features = ["mem-db", "iroh-collection"]
+required-features = ["mem-db"]
 
 [[example]]
 name = "dump-blob-stream"
-required-features = ["mem-db", "iroh-collection"]
+required-features = ["mem-db"]
 
 [[example]]
 name = "hello-world"

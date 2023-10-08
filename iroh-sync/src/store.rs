@@ -1,5 +1,7 @@
 //! Storage trait and implementation for iroh-sync documents
 
+use std::num::NonZeroUsize;
+
 use anyhow::Result;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
@@ -9,7 +11,7 @@ use crate::{
     heads::AuthorHeads,
     ranger,
     sync::{Author, Namespace, Replica, SignedEntry},
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
@@ -17,6 +19,12 @@ pub mod fs;
 pub mod memory;
 mod pubkeys;
 pub use pubkeys::*;
+
+/// Number of [`PeerIdBytes`] objects to cache per document.
+pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
+    Some(val) => val,
+    None => panic!("this is clearly non zero"),
+};
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
@@ -40,6 +48,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Iterator over authors in the store, returned from [`Self::list_authors`]
     type AuthorsIter<'a>: Iterator<Item = Result<Author>>
+    where
+        Self: 'a;
+
+    /// Iterator over peers in the store for a document, returned from [`Self::get_sync_peers`].
+    type PeersIter<'a>: Iterator<Item = PeerIdBytes>
     where
         Self: 'a;
 
@@ -110,6 +123,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         let has_news_for_us = heads.has_news_for(&our_heads);
         Ok(has_news_for_us)
     }
+
+    /// Register a peer that has been useful to sync a document.
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes) -> Result<()>;
+
+    /// Get peers to use for syncing a document.
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
 }
 
 /// Filter a get query onto a namespace

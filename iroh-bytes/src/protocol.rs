@@ -351,17 +351,15 @@
 //! In case nodes are permanently exchanging data, it is probably valuable to
 //! keep a connection open and reuse it for multiple requests.
 use std::fmt::{self, Display};
-use std::io;
 use std::str::FromStr;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Result};
 use bao_tree::ChunkNum;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use derive_more::From;
 use quinn::VarInt;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
 pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
 
@@ -432,8 +430,6 @@ impl Display for RequestToken {
 pub enum Request {
     /// A get request for a blob or collection
     Get(GetRequest),
-    /// A get request that allows the receiver to create a collection
-    CustomGet(CustomGetRequest),
 }
 
 impl Request {
@@ -441,7 +437,6 @@ impl Request {
     pub fn token(&self) -> Option<&RequestToken> {
         match self {
             Request::Get(get) => get.token(),
-            Request::CustomGet(get) => get.token.as_ref(),
         }
     }
 
@@ -449,21 +444,9 @@ impl Request {
     pub fn with_token(mut self, value: Option<RequestToken>) -> Self {
         match &mut self {
             Request::Get(get) => get.token = value,
-            Request::CustomGet(get) => get.token = value,
         }
         self
     }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-/// A get request that allows the receiver to create a collection
-/// Custom request handlers will receive this struct destructured into
-/// handler arguments
-pub struct CustomGetRequest {
-    /// The optional request token
-    pub token: Option<RequestToken>,
-    /// The opaque request data
-    pub data: Bytes,
 }
 
 /// A request
@@ -543,64 +526,6 @@ impl GetRequest {
     }
 }
 
-/// Write the given data to the provider sink, with a unsigned varint length prefix.
-pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
-    ensure!(
-        data.len() < MAX_MESSAGE_SIZE,
-        "sending message is too large"
-    );
-
-    // send length prefix
-    let data_len = data.len() as u64;
-    writer.write_u64_le(data_len).await?;
-
-    // write message
-    writer.write_all(data).await?;
-    Ok(())
-}
-
-/// Reads a length prefixed message.
-///
-/// # Returns
-///
-/// The message as raw bytes.  If the end of the stream is reached and there is no partial
-/// message, returns `None`.
-pub async fn read_lp(
-    mut reader: impl AsyncRead + Unpin,
-    buffer: &mut BytesMut,
-) -> Result<Option<Bytes>> {
-    let size = match reader.read_u64_le().await {
-        Ok(size) => size,
-        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-
-    let reader = reader.take(size);
-    read_fixed_size(reader, buffer, size).await
-}
-
-pub(crate) async fn read_fixed_size(
-    reader: impl AsyncRead + Unpin,
-    buffer: &mut BytesMut,
-    size: u64,
-) -> Result<Option<Bytes>> {
-    if size > MAX_MESSAGE_SIZE as u64 {
-        bail!("Incoming message exceeds MAX_MESSAGE_SIZE");
-    }
-
-    let mut reader = reader.take(size);
-    let size = usize::try_from(size).context("frame larger than usize")?;
-
-    buffer.reserve(size);
-    loop {
-        let r = reader.read_buf(buffer).await?;
-        if r == 0 {
-            break;
-        }
-    }
-    Ok(Some(buffer.split_to(size).freeze()))
-}
-
 /// Reasons to close connections or stop streams.
 ///
 /// A QUIC **connection** can be *closed* and a **stream** can request the other side to
@@ -668,7 +593,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use super::{CustomGetRequest, GetRequest, Request, RequestToken};
+    use super::{GetRequest, Request, RequestToken};
 
     #[test]
     fn request_wire_format() {
@@ -702,32 +627,6 @@ mod tests {
                     54 4f 4b 45 4e # token content
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
-            ",
-            ),
-            (
-                Request::from(CustomGetRequest {
-                    token: None,
-                    data: Bytes::from(&b"hello"[..]),
-                }),
-                r"
-                    01 # enum variant for CustomGetRequest
-                    00 # no token
-                    05 # value length 5
-                    68 65 6c 6c 6f # value content 'hello'
-            ",
-            ),
-            (
-                Request::from(CustomGetRequest {
-                    token: Some(token),
-                    data: Bytes::from(&b"hello"[..]),
-                }),
-                r"
-                    01 # enum variant for CustomGetRequest
-                    01 # a token
-                    05 # length 5
-                    54 4f 4b 45 4e # token content
-                    05 # value length 5
-                    68 65 6c 6c 6f # value content 'hello'
             ",
             ),
         ];

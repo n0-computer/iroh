@@ -4,9 +4,9 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use futures::FutureExt;
 use iroh_bytes::baomap::range_collections::RangeSet2;
+use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::{
     baomap::{MapEntry, PartialMapEntry, Store},
-    collection::CollectionParser,
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
@@ -28,23 +28,19 @@ use crate::util::progress::ProgressSliceWriter2;
 use super::{DownloadKind, FailureAction, GetFut, Getter};
 
 /// [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
-pub(crate) struct IoGetter<S: Store, C: CollectionParser> {
+pub(crate) struct IoGetter<S: Store> {
     pub store: S,
-    pub collection_parser: C,
 }
 
-impl<S: Store, C: CollectionParser> Getter for IoGetter<S, C> {
+impl<S: Store> Getter for IoGetter<S> {
     type Connection = quinn::Connection;
 
     fn get(&mut self, kind: DownloadKind, conn: Self::Connection) -> GetFut {
         let store = self.store.clone();
-        let collection_parser = self.collection_parser.clone();
         let fut = async move {
             let get = match kind {
-                DownloadKind::Blob { hash } => get(&store, &collection_parser, conn, hash, false),
-                DownloadKind::Collection { hash } => {
-                    get(&store, &collection_parser, conn, hash, true)
-                }
+                DownloadKind::Blob { hash } => get(&store, conn, hash, false),
+                DownloadKind::Collection { hash } => get(&store, conn, hash, true),
             };
 
             let res = get.await;
@@ -163,19 +159,6 @@ impl From<iroh_bytes::get::fsm::ConnectedNextError> for FailureAction {
                 FailureAction::AbortRequest(e.into())
             }
             Write(e) => e.into(),
-            Read(e) => e.into(),
-            e @ CustomRequestTooBig => {
-                // something wrong with the request itself
-                FailureAction::AbortRequest(e.into())
-            }
-            e @ Eof => {
-                // TODO(@divma): unsure about this based on docs
-                FailureAction::RetryLater(e.into())
-            }
-            e @ PostcardDe(_) => {
-                // serialization errors can't be recovered
-                FailureAction::AbortRequest(e.into())
-            }
             e @ Io(_) => {
                 // io errors are likely recoverable
                 FailureAction::RetryLater(e.into())
@@ -235,15 +218,14 @@ impl From<std::io::Error> for FailureAction {
 }
 
 /// Get a blob or collection
-pub async fn get<D: Store, C: CollectionParser>(
+pub async fn get<D: Store>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     hash: Hash,
     recursive: bool,
 ) -> Result<Stats, FailureAction> {
     if recursive {
-        get_collection(db, collection_parser, conn, &hash).await
+        get_collection(db, conn, &hash).await
     } else {
         get_blob(db, conn, &hash).await
     }
@@ -267,7 +249,7 @@ pub async fn get_blob<D: Store>(
             .unwrap_or_else(RangeSet2::all);
         let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
         // full request
-        let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -283,10 +265,7 @@ pub async fn get_blob<D: Store>(
         get_blob_inner_partial(db, header, entry).await?
     } else {
         // full request
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::single(*hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::single(*hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -399,9 +378,8 @@ async fn get_blob_inner_partial<D: Store>(
 }
 
 /// Get a collection
-pub async fn get_collection<D: Store, C: CollectionParser>(
+pub async fn get_collection<D: Store>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     root_hash: &Hash,
 ) -> Result<Stats, FailureAction> {
@@ -410,7 +388,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, _) = collection_parser.parse(reader).await.map_err(|e| {
+        let (mut collection, _) = parse_hash_seq(reader).await.map_err(|e| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection : {e}"
             ))
@@ -433,7 +411,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
             .collect::<Vec<_>>();
         log!("requesting chunks {:?}", missing_iter);
         let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-        let request = get::fsm::start(conn, request.into());
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         log!("connected");
@@ -484,10 +462,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
     } else {
         tracing::info!("don't have collection - doing full download");
         // don't have the collection, so probably got nothing
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::all(*root_hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::all(*root_hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -505,7 +480,7 @@ pub async fn get_collection<D: Store, C: CollectionParser>(
             FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
         })?;
         let reader = entry.data_reader().await?;
-        let (mut collection, _) = collection_parser.parse(reader).await.map_err(|_| {
+        let (mut collection, _) = parse_hash_seq(reader).await.map_err(|_| {
             FailureAction::DropPeer(anyhow::anyhow!(
                 "peer sent data that can't be parsed as collection"
             ))
