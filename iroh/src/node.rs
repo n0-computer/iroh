@@ -1269,7 +1269,10 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             }
         });
 
-        self.inner.sync.doc_set_hash(msg, stream, progress).await
+        self.inner
+            .sync
+            .doc_set_hash_streaming(msg, stream, progress)
+            .await
     }
 
     fn blob_add_stream(
@@ -1529,6 +1532,12 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 let bao_store = handler.inner.db.clone();
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_set(&bao_store, req).await
+                })
+                .await
+            }
+            DocSetHash(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_set_hash(req).await
                 })
                 .await
             }
