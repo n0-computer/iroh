@@ -124,7 +124,7 @@ pub enum SetTagOption {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HashAndFormat(pub Hash, pub BlobFormat);
 
-/// Hash type used throught.
+/// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);
 
@@ -256,6 +256,14 @@ impl FromStr for Hash {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let sb = s.as_bytes();
+        if sb.len() == 64 {
+            // this is most likely a hex encoded cid
+            // try to decode it as hex
+            let mut bytes = [0u8; 32];
+            if hex::decode_to_slice(sb, &mut bytes).is_ok() {
+                return Ok(Self::from(bytes));
+            }
+        }
         if sb.len() == 59 && sb[0] == b'b' {
             // this is a base32 encoded cid, we can decode it directly
             let mut t = [0u8; 58];
@@ -392,6 +400,20 @@ mod tests {
     use super::*;
 
     use serde_test::{assert_tokens, Token};
+
+    #[test]
+    fn test_display_parse_roundtrip() {
+        for i in 0..100 {
+            let hash: Hash = blake3::hash(&[i]).into();
+            let text = hash.to_string();
+            let hash1 = text.parse::<Hash>().unwrap();
+            assert_eq!(hash, hash1);
+
+            let text = hash.to_hex();
+            let hash1 = Hash::from_str(&text).unwrap();
+            assert_eq!(hash, hash1);
+        }
+    }
 
     #[test]
     fn test_hash() {
