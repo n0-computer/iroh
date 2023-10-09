@@ -68,6 +68,7 @@ colored = { version = "2.0.4", optional = true }
 # Examples
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional = true }
 reflink-copy = { version = "0.1.8", optional = true }
+dialoguer = { version = "0.11.0", default-features = false }
 
 [features]
 default = ["cli", "metrics"]

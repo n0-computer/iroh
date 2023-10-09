@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
+use dialoguer::Confirm;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
@@ -222,13 +223,23 @@ impl DocCommands {
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
-                let key = prefix.as_bytes().to_vec();
-                let removed = doc.del(author, key).await?;
-                println!(
-                    "Inserted an empty entry for author {} with key {prefix}.",
-                    fmt_short(author)
-                );
-                println!("Deleted {removed} entries.");
+                let prompt =
+                    format!("Deleting all entries whose key starts with {prefix}. Continue?");
+                if Confirm::new()
+                    .with_prompt(prompt)
+                    .interact()
+                    .unwrap_or(false)
+                {
+                    let key = prefix.as_bytes().to_vec();
+                    let removed = doc.del(author, key).await?;
+                    println!("Deleted {removed} entries.");
+                    println!(
+                        "Inserted an empty entry for author {} with key {prefix}.",
+                        fmt_short(author)
+                    );
+                } else {
+                    println!("Aborted.")
+                }
             }
             Self::Get {
                 doc,
