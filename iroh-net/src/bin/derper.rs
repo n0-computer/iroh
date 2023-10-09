@@ -284,10 +284,24 @@ impl Config {
         if !path.as_ref().is_file() {
             bail!("config-path must be a valid toml file");
         }
-        let config_ser = tokio::fs::read_to_string(path)
+        let mut config_ser = tokio::fs::read_to_string(&path)
             .await
             .context("unable to read config")?;
-        let config = toml::from_str(&config_ser).context("unable to decode config")?;
+        let mut secret_key_injected = false;
+        if !config_ser.contains("secret_key") {
+            config_ser = format!(
+                r#"
+                secret_key = "{}"
+                {}"#,
+                SecretKey::generate(),
+                config_ser
+            );
+            secret_key_injected = true;
+        }
+        let config: Self = toml::from_str(&config_ser).context("unable to decode config")?;
+        if secret_key_injected {
+            config.write_to_file(path).await?;
+        }
 
         Ok(config)
     }
