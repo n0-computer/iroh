@@ -1203,7 +1203,7 @@ struct EndpointState {
     /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
     call_me_maybe_time: Option<Instant>,
 
-    /// Ring buffer up to PongHistoryCount entries
+    /// Last [`PongReply`] received.
     recent_pong: Option<PongReply>,
 }
 
