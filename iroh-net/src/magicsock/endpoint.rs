@@ -31,9 +31,6 @@ const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 /// resetting the counter, as the first pings likely didn't through the firewall)
 const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 
-/// How many `PongReply` values we keep per `EndpointState`.
-const PONG_HISTORY_COUNT: usize = 64;
-
 /// The latency at or under which we don't try to upgrade to a better path.
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
@@ -1207,9 +1204,7 @@ struct EndpointState {
     call_me_maybe_time: Option<Instant>,
 
     /// Ring buffer up to PongHistoryCount entries
-    recent_pongs: Vec<PongReply>,
-    /// Index into recentPongs of most recent; older before, wrapped
-    recent_pong: usize,
+    recent_pong: Option<PongReply>,
 }
 
 /// The type of connection we have to the endpoint.
@@ -1246,18 +1241,7 @@ pub struct EndpointInfo {
 
 impl EndpointState {
     fn add_pong_reply(&mut self, r: PongReply) {
-        let n = self.recent_pongs.len();
-        if n < PONG_HISTORY_COUNT {
-            self.recent_pong = n;
-            self.recent_pongs.push(r);
-        } else {
-            let mut i = self.recent_pong + 1;
-            if i == PONG_HISTORY_COUNT {
-                i = 0;
-            }
-            self.recent_pongs[i] = r;
-            self.recent_pong = i;
-        }
+        self.recent_pong = Some(r);
     }
 
     /// Reports whether we should delete this endpoint.
@@ -1276,7 +1260,7 @@ impl EndpointState {
 
     /// Returns the most recent pong if available.
     fn recent_pong(&self) -> Option<&PongReply> {
-        self.recent_pongs.get(self.recent_pong)
+        self.recent_pong.as_ref()
     }
 
     fn needs_ping(&self, now: &Instant) -> bool {
@@ -1375,13 +1359,12 @@ mod tests {
                     last_got_ping: None,
                     last_got_ping_tx_id: None,
                     call_me_maybe_time: None,
-                    recent_pongs: vec![PongReply {
+                    recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Udp(socket_addr),
                         pong_src,
-                    }],
-                    recent_pong: 0,
+                    }),
                 },
             )]);
             let key = SecretKey::generate();
@@ -1418,13 +1401,12 @@ mod tests {
                     last_got_ping: None,
                     last_got_ping_tx_id: None,
                     call_me_maybe_time: None,
-                    recent_pongs: vec![PongReply {
+                    recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Derp(0),
                         pong_src,
-                    }],
-                    recent_pong: 0,
+                    }),
                 },
             )]);
             let key = SecretKey::generate();
@@ -1481,13 +1463,12 @@ mod tests {
                         last_got_ping: None,
                         last_got_ping_tx_id: None,
                         call_me_maybe_time: None,
-                        recent_pongs: vec![PongReply {
+                        recent_pong: Some(PongReply {
                             latency,
                             pong_at: now,
                             from: SendAddr::Udp(socket_addr),
                             pong_src,
-                        }],
-                        recent_pong: 0,
+                        }),
                     },
                 ),
                 (
@@ -1497,13 +1478,12 @@ mod tests {
                         last_got_ping: None,
                         last_got_ping_tx_id: None,
                         call_me_maybe_time: None,
-                        recent_pongs: vec![PongReply {
+                        recent_pong: Some(PongReply {
                             latency,
                             pong_at: now,
                             from: SendAddr::Derp(0),
                             pong_src,
-                        }],
-                        recent_pong: 0,
+                        }),
                     },
                 ),
             ]);
