@@ -683,6 +683,7 @@ mod tests {
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
         endpoint.add_peer_addr(peer_addr).await.unwrap();
+        endpoint.connect(PeerAddr::new(peer_id), TEST_ALPN).await;
 
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();

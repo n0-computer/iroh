@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
@@ -616,7 +616,7 @@ impl Endpoint {
 
     fn cleanup_endpoint_state(&mut self) {
         self.endpoint_state.retain(|ep, st| {
-            if st.should_delete() {
+            if !st.considered_active() {
                 if let Some(best_addr) = self.best_addr.take() {
                     if *ep == best_addr.addr {
                         // no longer relying on a direct connection, remove conn count
@@ -1207,9 +1207,8 @@ struct EndpointState {
     call_me_maybe_time: Option<Instant>,
 
     /// Ring buffer up to PongHistoryCount entries
-    recent_pongs: Vec<PongReply>,
-    /// Index into recentPongs of most recent; older before, wrapped
-    recent_pong: usize,
+    // TODO: explain when do we ping, why do we keep this many? hopefully someone knows this
+    recent_pongs: VecDeque<PongReply>,
 }
 
 /// The type of connection we have to the endpoint.
@@ -1246,37 +1245,36 @@ pub struct EndpointInfo {
 
 impl EndpointState {
     fn add_pong_reply(&mut self, r: PongReply) {
-        let n = self.recent_pongs.len();
-        if n < PONG_HISTORY_COUNT {
-            self.recent_pong = n;
-            self.recent_pongs.push(r);
+        if self.recent_pongs.len() < PONG_HISTORY_COUNT {
+            self.recent_pongs.push_back(r)
         } else {
-            let mut i = self.recent_pong + 1;
-            if i == PONG_HISTORY_COUNT {
-                i = 0;
-            }
-            self.recent_pongs[i] = r;
-            self.recent_pong = i;
+            self.recent_pongs.pop_front();
+            self.recent_pongs.push_back(r);
         }
     }
 
-    /// Reports whether we should delete this endpoint.
-    fn should_delete(&self) -> bool {
-        if self.call_me_maybe_time.is_some() {
-            return false;
-        }
-        if let Some(last_got_ping) = self.last_got_ping {
-            // Receiving no pings anymore, probably gone
-            return last_got_ping.elapsed() > SESSION_ACTIVE_TIMEOUT;
-        }
-
-        // keep by default
-        false
+    /// Checks whether the peer is considered active.
+    ///
+    /// This checks if any of the following conditions holds:
+    /// - We have received a recent pong
+    /// - We have been pinged recently
+    /// - Recently advertised via [`disco::CallMeMaybe`]
+    ///
+    /// Recent is understood as within the last [`SESSION_ACTIVE_TIMEOUT`].
+    fn considered_active(&self) -> bool {
+        let now = Instant::now();
+        let is_recent = |instant: Instant| instant + SESSION_ACTIVE_TIMEOUT > now;
+        self.recent_pongs
+            .back()
+            .map(|pong| is_recent(pong.pong_at))
+            .unwrap_or_default()
+            || self.last_got_ping.map(is_recent).unwrap_or_default()
+            || self.call_me_maybe_time.map(is_recent).unwrap_or_default()
     }
 
     /// Returns the most recent pong if available.
     fn recent_pong(&self) -> Option<&PongReply> {
-        self.recent_pongs.get(self.recent_pong)
+        self.recent_pongs.back()
     }
 
     fn needs_ping(&self, now: &Instant) -> bool {
@@ -1375,13 +1373,13 @@ mod tests {
                     last_got_ping: None,
                     last_got_ping_tx_id: None,
                     call_me_maybe_time: None,
-                    recent_pongs: vec![PongReply {
+                    recent_pongs: [PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Udp(socket_addr),
                         pong_src,
-                    }],
-                    recent_pong: 0,
+                    }]
+                    .into(),
                 },
             )]);
             let key = SecretKey::generate();
@@ -1418,13 +1416,13 @@ mod tests {
                     last_got_ping: None,
                     last_got_ping_tx_id: None,
                     call_me_maybe_time: None,
-                    recent_pongs: vec![PongReply {
+                    recent_pongs: [PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Derp(0),
                         pong_src,
-                    }],
-                    recent_pong: 0,
+                    }]
+                    .into(),
                 },
             )]);
             let key = SecretKey::generate();
@@ -1481,13 +1479,13 @@ mod tests {
                         last_got_ping: None,
                         last_got_ping_tx_id: None,
                         call_me_maybe_time: None,
-                        recent_pongs: vec![PongReply {
+                        recent_pongs: [PongReply {
                             latency,
                             pong_at: now,
                             from: SendAddr::Udp(socket_addr),
                             pong_src,
-                        }],
-                        recent_pong: 0,
+                        }]
+                        .into(),
                     },
                 ),
                 (
@@ -1497,13 +1495,13 @@ mod tests {
                         last_got_ping: None,
                         last_got_ping_tx_id: None,
                         call_me_maybe_time: None,
-                        recent_pongs: vec![PongReply {
+                        recent_pongs: [PongReply {
                             latency,
                             pong_at: now,
                             from: SendAddr::Derp(0),
                             pong_src,
-                        }],
-                        recent_pong: 0,
+                        }]
+                        .into(),
                     },
                 ),
             ]);
