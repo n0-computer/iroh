@@ -10,7 +10,8 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use tokio::io::AsyncReadExt;
+use iroh_net::util::AbortingJoinHandle;
+use tokio::{io::AsyncReadExt, task::JoinSet};
 
 use iroh::{
     client::quic::{Doc, Iroh},
@@ -393,7 +394,7 @@ impl DocCommands {
                         WrapOption::NoWrap,
                     )
                     .await?;
-                let (updates, progress) = doc.set_hash_streaming(author).await?;
+                // let (updates, progress) = doc.set_hash_streaming(author).await?;
                 let root_prefix = match root.parent() {
                     Some(p) => p.to_path_buf(),
                     None => PathBuf::new(),
@@ -401,8 +402,7 @@ impl DocCommands {
                 let ImportStats {
                     total_entries,
                     total_size,
-                } = import_coordinator(doc.id(), root_prefix, prefix, stream, updates, progress)
-                    .await?;
+                } = import_coordinator(doc, author, root_prefix, prefix, stream).await?;
                 println!(
                     "Imported {} entries totaling {}",
                     total_entries,
@@ -656,16 +656,11 @@ struct ImportStats {
 /// a tuple of the number of entries added, and the total size of those entries.
 #[tracing::instrument(skip_all)]
 async fn import_coordinator(
-    doc_id: NamespaceId,
+    doc: Doc,
+    author_id: AuthorId,
     root: PathBuf,
     prefix: String,
     mut blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
-    mut doc_set_updates: UpdateSink<
-        ProviderService,
-        QuinnConnection<ProviderResponse, ProviderRequest>,
-        DocSetStreamUpdate,
-    >,
-    mut doc_set_progress: impl Stream<Item = Result<DocSetProgress>> + Unpin,
 ) -> Result<ImportStats> {
     // let mut amp = AddProgressBar::new();
     // new task to iterate through the stream of added files
@@ -675,10 +670,23 @@ async fn import_coordinator(
     let mut total_size = 0;
     // let mut imp = ImportProgressBar::new(doc_id);
     // let mut task_imp = imp.clone();
+    let (sender, receiver) = flume::bounded(1000);
     let task = tokio::spawn(async move {
         let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
         while let Some(item) = blob_add_progress.next().await {
-            match item? {
+            let item = match item {
+                Err(e) => {
+                    sender
+                        .send_async(ImportProgress::Abort(anyhow::anyhow!(
+                            "Error adding files: {e}"
+                        )))
+                        .await
+                        .expect("receiver dropped");
+                    return;
+                }
+                Ok(i) => i,
+            };
+            match item {
                 AddProgress::Found { name, id, size } => {
                     tracing::info!("Found({id},{name},{size})");
                     // amp.found(name.clone(), id, size);
@@ -703,12 +711,14 @@ async fn import_coordinator(
                                 Ok(k) => k,
                                 Err(e) => {
                                     tracing::info!("error getting key from {}, id {id}", path_str);
-                                    doc_set_updates
-                                        .send(DocSetStreamUpdate::Abort)
+                                    sender
+                                        .send_async(ImportProgress::Abort(anyhow!(
+                                            "Issue creating a key for entry {hash:?}: {e}"
+                                        )))
                                         .await
                                         .expect("receiver dropped");
                                     // amp.error();
-                                    anyhow::bail!("issue creating key for entry {hash:?}: {e}");
+                                    return;
                                 }
                             };
                             // send update to doc
@@ -716,8 +726,8 @@ async fn import_coordinator(
                                 "setting entry {} (id: {id}) to doc",
                                 String::from_utf8(key.clone()).unwrap()
                             );
-                            doc_set_updates
-                                .send(DocSetStreamUpdate::Entry {
+                            sender
+                                .send_async(ImportProgress::Entry {
                                     id,
                                     key,
                                     hash,
@@ -730,12 +740,14 @@ async fn import_coordinator(
                             tracing::info!(
                                 "error: got `AddProgress::Done` for unknown collection id {id}"
                             );
-                            doc_set_updates
-                                .send(DocSetStreamUpdate::Abort)
+                            sender
+                                .send_async(ImportProgress::Abort(anyhow::anyhow!(
+                                    "Received progress information on an unknown file."
+                                )))
                                 .await
                                 .expect("receiver dropped");
                             // amp.error();
-                            anyhow::bail!("Got `AddProgress::Done` for unknown collection id {id}");
+                            return;
                         }
                     }
                 }
@@ -745,58 +757,62 @@ async fn import_coordinator(
                 }
                 AddProgress::Abort(e) => {
                     tracing::info!("Error while adding data: {e}");
-                    doc_set_updates
-                        .send(DocSetStreamUpdate::Abort)
+                    sender
+                        .send_async(ImportProgress::Abort(anyhow::anyhow!(
+                            "Error while adding files: {e}"
+                        )))
                         .await
                         .expect("receiver dropped");
                     // amp.error();
-                    anyhow::bail!("Error while adding data: {e}");
+                    return;
                 }
             }
         }
-        Ok(doc_set_updates)
     });
 
-    let res = loop {
-        match doc_set_progress.next().await {
-            None => {
-                // imp.error();
-                break Err(anyhow!("Unexpected end of import progress stream"));
-            }
-            Some(Err(e)) => {
-                // imp.error();
-                break Err(anyhow!("Error setting entry in document: {e}"));
-            }
-            Some(Ok(DocSetProgress::Done { id, size, .. })) => {
-                total_entries += 1;
-                total_size += size;
-                // imp.done(id);
-            }
-            Some(Ok(DocSetProgress::AllDone)) => {
-                // imp.all_done();
-                return Ok(ImportStats {
-                    total_entries,
-                    total_size,
-                });
-            }
-            Some(Ok(DocSetProgress::Abort(e))) => {
-                tracing::info!("Error while adding data: {e}");
-                // imp.error();
-                break Err(anyhow!("Error while setting entry on doc: {e}"));
-            }
-        }
-    };
+    let _task = AbortingJoinHandle::from(task);
+    let recv_stream = receiver.into_stream();
+    let mut chunks = recv_stream.chunks(50);
 
-    match res {
-        Err(e) => {
-            task.abort();
-            Err(e)
+    while let Some(chunks) = chunks.next().await {
+        let mut set = JoinSet::new();
+        for chunk in chunks {
+            match chunk {
+                ImportProgress::Entry {
+                    key, hash, size, ..
+                } => {
+                    total_entries += 1;
+                    total_size += size;
+                    let doc = doc.clone();
+                    set.spawn(async move { doc.set_hash(author_id, key, hash, size).await });
+                }
+                ImportProgress::Abort(e) => {
+                    set.shutdown().await;
+                    return Err(e);
+                }
+            }
         }
-        Ok(stats) => {
-            let _doc_set_updates = task.await??;
-            Ok(stats)
+        while let Some(res) = set.join_next().await {
+            if let Err(e) = res? {
+                set.shutdown().await;
+                bail!(e);
+            }
         }
     }
+    Ok(ImportStats {
+        total_entries,
+        total_size,
+    })
+}
+
+enum ImportProgress {
+    Entry {
+        id: u64,
+        key: Vec<u8>,
+        hash: Hash,
+        size: u64,
+    },
+    Abort(anyhow::Error),
 }
 
 fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {

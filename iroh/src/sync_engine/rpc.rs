@@ -17,10 +17,10 @@ use crate::{
         DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
         DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
         DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
-        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetRequest,
-        DocSetResponse, DocSetStreamRequest, DocShareRequest, DocShareResponse,
-        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
+        DocSetHashResponse, DocSetRequest, DocSetResponse, DocSetStreamRequest, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -215,7 +215,23 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocDelResponse { removed })
     }
 
-    pub async fn doc_set_hash(
+    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
+        let DocSetHashRequest {
+            doc_id,
+            author_id,
+            key,
+            hash,
+            size,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        replica
+            .insert(&key, &author, hash, size)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocSetHashResponse {})
+    }
+
+    pub async fn doc_set_hash_streaming(
         &self,
         req: DocSetStreamRequest,
         mut stream: impl Stream<Item = Result<(u64, Vec<u8>, Hash, u64), std::io::Error>>
