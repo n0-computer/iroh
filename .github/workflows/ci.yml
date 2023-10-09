@@ -61,13 +61,13 @@ jobs:
         toolchain: ${{ matrix.rust }}
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
+      run: cargo test --release --workspace --all-features --lib --bins --tests
       
     - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
+      run: cargo test --release --workspace --no-default-features --lib --bins --tests
 
     - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
+      run: cargo test --release --workspace --lib --bins --tests
 
     - name: doctests
       run: cargo test --workspace --all-features --doc
@@ -104,13 +104,13 @@ jobs:
     - uses: msys2/setup-msys2@v2
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo test --release --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
 
     - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo test --release --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
       
     - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo test --release --workspace --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
     timeout-minutes: 60
@@ -248,7 +248,7 @@ jobs:
       # cross tests are currently broken vor armv7 and aarch64
       # see https://github.com/cross-rs/cross/issues/1311
       if: matrix.target == 'i686-unknown-linux-gnu'
-      run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
+      run: cross test --release --all --target ${{ matrix.target }} -- --test-threads=12
 
   check_fmt_and_docs:
     timeout-minutes: 30

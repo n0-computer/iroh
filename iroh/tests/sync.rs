@@ -340,7 +340,7 @@ async fn sync_big() -> Result<()> {
     let rt = test_runtime();
     let n_nodes = std::env::var("NODES")
         .map(|v| v.parse().expect("NODES must be a number"))
-        .unwrap_or(10);
+        .unwrap_or(20);
     let n_entries_init = 1;
     // let n_entries_live = 2;
     // let n_entries_phase2 = 5;
