@@ -94,7 +94,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
     alice: &Replica<S::Instance>,
     peer: PublicKey,
 ) -> Result<SyncOutcome, ConnectError> {
-    let peer = *peer.as_bytes();
+    let peer_bytes = *peer.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
 
@@ -109,7 +109,7 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
             .await
             .map_err(ConnectError::sync)?,
     };
-    trace!(?peer, "run_alice: send init message");
+    trace!(peer = %peer.fmt_short(), "run_alice: send init message");
     writer
         .send(init_message)
         .await
@@ -123,13 +123,13 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
                 return Err(ConnectError::sync(anyhow!("unexpected init message")));
             }
             Message::Sync(msg) => {
-                trace!(?peer, "run_alice: recv process message");
+                trace!(peer = %peer.fmt_short(), "run_alice: recv process message");
                 let reply = alice
-                    .sync_process_message(msg, peer, &mut progress)
+                    .sync_process_message(msg, peer_bytes, &mut progress)
                     .await
                     .map_err(ConnectError::sync)?;
                 if let Some(msg) = reply {
-                    trace!(?peer, "run_alice: send process message");
+                    trace!(peer = %peer.fmt_short(), "run_alice: send process message");
                     writer
                         .send(Message::Sync(msg))
                         .await
@@ -223,7 +223,7 @@ impl<S: store::Store> BobState<S> {
                             });
                         }
                     };
-                    trace!(?namespace, peer = ?self.peer, "run_bob: recv init message");
+                    trace!(namespace = %namespace.fmt_short(), peer = ?self.peer, "run_bob: recv init message");
                     let next = replica
                         .sync_process_message(message, *self.peer.as_bytes(), &mut self.progress)
                         .await;
@@ -231,7 +231,7 @@ impl<S: store::Store> BobState<S> {
                     next
                 }
                 (Message::Sync(msg), Some(replica)) => {
-                    trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv process message");
+                    trace!(namespace = %replica.namespace().fmt_short(), peer = %self.peer.fmt_short(), "run_bob: recv process message");
                     replica
                         .sync_process_message(msg, *self.peer.as_bytes(), &mut self.progress)
                         .await
@@ -249,7 +249,7 @@ impl<S: store::Store> BobState<S> {
             let next = next.map_err(|e| self.fail(e))?;
             match next {
                 Some(msg) => {
-                    trace!(namespace = ?self.namespace(), peer = ?self.peer, "run_bob: send process message");
+                    trace!(namespace = %self.fmt_namespace(), peer = %self.peer.fmt_short(), "run_bob: send process message");
                     writer
                         .send(Message::Sync(msg))
                         .await
@@ -259,7 +259,7 @@ impl<S: store::Store> BobState<S> {
             }
         }
 
-        trace!(namespace = ?self.namespace().unwrap(), peer = ?self.peer, "run_bob: finished");
+        trace!(namespace = %self.fmt_namespace(), peer = %self.peer.fmt_short(), "run_bob: finished");
 
         self.namespace()
             .ok_or_else(|| self.fail(anyhow!("Stream closed before init message")))
@@ -268,6 +268,13 @@ impl<S: store::Store> BobState<S> {
     /// Get the namespace that is synced, if available.
     pub fn namespace(&self) -> Option<NamespaceId> {
         self.replica.as_ref().map(|r| r.namespace()).to_owned()
+    }
+
+    pub fn fmt_namespace(&self) -> String {
+        match self.namespace() {
+            Some(ns) => ns.fmt_short(),
+            None => "none".to_string(),
+        }
     }
 
     /// Consume self and get the [`SyncOutcome`] for this connection.

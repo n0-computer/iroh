@@ -338,7 +338,6 @@ pub(super) mod base32 {
         let len = bytes.as_ref().len().min(10);
         let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
         text.make_ascii_lowercase();
-        text.push('…');
         text
     }
     /// Parse from a base32 string into a byte array
@@ -413,6 +412,12 @@ impl AuthorId {
     pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<AuthorPublicKey, SignatureError> {
         AuthorPublicKey::from_bytes(&self.0)
     }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.0)
+    }
 }
 
 impl NamespaceId {
@@ -441,6 +446,12 @@ impl NamespaceId {
     /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
     pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<NamespacePublicKey, SignatureError> {
         NamespacePublicKey::from_bytes(&self.0)
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.0)
     }
 }
 

@@ -34,7 +34,7 @@ pub async fn connect_and_sync<S: store::Store>(
 ) -> Result<SyncFinished, ConnectError> {
     let t_start = Instant::now();
     let peer_id = peer.peer_id;
-    debug!(?peer_id, "sync[dial]: connect");
+    debug!(peer = %peer_id.fmt_short(), "sync[dial]: connect");
     let namespace = replica.namespace();
     let connection = endpoint
         .connect(peer, SYNC_ALPN)
@@ -45,7 +45,7 @@ pub async fn connect_and_sync<S: store::Store>(
         connection.open_bi().await.map_err(ConnectError::connect)?;
 
     let t_connect = t_start.elapsed();
-    debug!(?peer_id, ?namespace, ?t_connect, "sync[dial]: connected");
+    debug!(peer = %peer_id.fmt_short(), namespace = %namespace.fmt_short(), ?t_connect, "sync[dial]: connected");
 
     let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, replica, peer_id).await;
 
@@ -63,14 +63,29 @@ pub async fn connect_and_sync<S: store::Store>(
     }
 
     let t_process = t_start.elapsed() - t_connect;
-    debug!(
-        ?peer_id,
-        ?namespace,
-        ?res,
-        ?t_connect,
-        ?t_process,
-        "sync[dial]: done"
-    );
+    match &res {
+        Ok(res) => {
+            debug!(
+                peer = %peer_id.fmt_short(),
+                namespace = %namespace.fmt_short(),
+                ?t_connect,
+                ?t_process,
+                sent = %res.num_sent,
+                recv = %res.num_recv,
+                "sync[dial]: done, sucess"
+            );
+        }
+        Err(err) => {
+            debug!(
+                peer = %peer_id.fmt_short(),
+                namespace = %namespace.fmt_short(),
+                ?t_connect,
+                ?t_process,
+                ?err,
+                "sync[dial]: done, failed"
+            );
+        }
+    }
 
     let outcome = res?;
 
@@ -139,16 +154,17 @@ where
         .await
         .map_err(|error| AcceptError::close(peer, namespace, error))?;
 
+    let t_process = t_start.elapsed() - t_connect;
     let namespace = res?;
 
-    let t_process = t_start.elapsed() - t_connect;
-
     debug!(
-        ?peer,
-        ?namespace,
+        peer = %peer.fmt_short(),
+        namespace = %namespace.fmt_short(),
         ?t_process,
         ?t_connect,
-        "sync[accept]: done"
+        sent = %progress.num_sent,
+        recv = %progress.num_recv,
+        "sync[accept]: done, success"
     );
 
     let timings = Timings {

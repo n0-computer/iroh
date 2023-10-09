@@ -467,7 +467,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     let (topic, event) = event.context("gossip_events closed")??;
                     if let Err(err) = self.on_gossip_event(topic, event).await {
                         let namespace: NamespaceId = topic.as_bytes().into();
-                        error!(?namespace, ?err, "Failed to process gossip event");
+                        error!(namespace = %namespace.fmt_short(), ?err, "Failed to process gossip event");
                     }
                 },
                 event = self.replica_events.next(), if !self.replica_events.is_empty() => {
@@ -475,14 +475,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     let (origin, entry) = event.context("replica_events closed")?;
                     let namespace = entry.namespace();
                     if let Err(err) = self.on_replica_event(origin, entry).await {
-                        error!(?namespace, ?err, "Failed to process replica event");
+                        error!(namespace = %namespace.fmt_short(), ?err, "Failed to process replica event");
                     }
                 }
                 res = self.running_sync_connect.next(), if !self.running_sync_connect.is_empty() => {
                     trace!(?i, "tick: on_sync_via_connect_finished");
                     let (namespace, peer, reason, res) = res.context("running_sync_connect closed")?;
                     if let Err(err) = self.on_sync_via_connect_finished(namespace, peer, reason, res).await {
-                        error!(?namespace, ?err, "Failed to process outgoing sync request");
+                        error!(namespace = %namespace.fmt_short(), ?err, "Failed to process outgoing sync request");
                     }
 
                 }
@@ -495,11 +495,11 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 }
                 res = self.pending_joins.next(), if !self.pending_joins.is_empty() => {
                     trace!(?i, "tick: pending_joins");
-                    let (namespace, res )= res.context("pending_joins closed")?;
+                    let (namespace, res) = res.context("pending_joins closed")?;
                     if let Err(err) = res {
-                        error!(?namespace, %err, "failed to join gossip");
+                        error!(namespace = %namespace.fmt_short(), %err, "failed to join gossip");
                     } else {
-                        debug!(?namespace, "joined gossip");
+                        debug!(namespace = %namespace.fmt_short(), "joined gossip");
                     }
                     // TODO: maintain some join state
                 }
@@ -567,7 +567,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 _ => return,
             },
         };
-        debug!(?namespace, peer = %peer.fmt_short(), ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: start");
+        debug!(namespace = %namespace.fmt_short(), peer = %peer.fmt_short(), ?reason, last_state = ?self.get_sync_state(namespace, peer), "sync[dial]: start");
 
         self.set_sync_state(namespace, peer, SyncState::Dialing);
         let endpoint = self.endpoint.clone();
@@ -742,9 +742,13 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             let peer_ids = peer_ids.clone();
             let gossip = self.gossip.clone();
             async move {
-                match gossip.join(namespace.into(), peer_ids).await {
+                match gossip.join(namespace.into(), peer_ids.clone()).await {
                     Err(err) => (namespace, Err(err)),
-                    Ok(fut) => (namespace, fut.await),
+                    Ok(fut) => {
+                        let res = (namespace, fut.await);
+                        debug!(?res, ?peer_ids, namespace = %namespace.fmt_short(), "gossip join");
+                        res
+                    }
                 }
             }
             .boxed()
@@ -768,7 +772,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             Err(ConnectError::RemoteAbort(AbortReason::AlreadySyncing)) => {
                 debug!(
                     peer = %peer.fmt_short(),
-                    ?namespace,
+                    namespace = %namespace.fmt_short(),
                     ?reason,
                     "sync[dial]: remote abort, already syncing"
                 );
@@ -801,7 +805,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 reason,
             }) if reason == AbortReason::AlreadySyncing => {
                 // In case we aborted the sync: do nothing (our outgoing sync is in progress)
-                debug!(peer = %peer.fmt_short(), ?namespace, ?reason, "sync[accept]: aborted by us");
+                debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), ?reason, "sync[accept]: aborted by us");
                 Ok(())
             }
             Err(err) => {
@@ -833,7 +837,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         // debug log the result, warn in case of errors
         match &result {
             Ok(res) => log_finished(&origin, res),
-            Err(err) => warn!(?peer, ?namespace, ?err, ?origin, "sync failed"),
+            Err(err) => {
+                warn!(?peer, namespace = %namespace.fmt_short(), ?err, ?origin, "sync failed")
+            }
         }
         let state = match result {
             Ok(_) => {
@@ -860,8 +866,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 };
                 let op = Op::SyncReport(report);
                 debug!(
-                    ?namespace,
-                    "broadcast to neighbors: sync report from {peer:?})"
+                    namespace = %namespace.fmt_short(),
+                    from_peer = %peer.fmt_short(),
+                    "broadcast sync report to neighbors"
                 );
                 let msg = postcard::to_stdvec(&op)?;
                 // TODO: We should debounce and merge these neighbor announcements likely.
@@ -871,7 +878,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                     .await
                 {
                     error!(
-                        ?namespace,
+                        namespace = %namespace.fmt_short(),
+                        from_peer = %peer.fmt_short(),
                         ?err,
                         "Failed to broadcast SyncReport to neighbors"
                     );
@@ -907,7 +915,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
                     Op::Put(entry) => {
-                        debug!(peer = ?msg.delivered_from, ?namespace, "received entry via gossip");
+                        debug!(peer = ?msg.delivered_from, namespace = %namespace.fmt_short(), "received entry via gossip");
                         // Insert the entry into our replica.
                         // If the message was broadcast with neighbor scope, or is received
                         // directly from the author, we assume that the content is available at
@@ -939,14 +947,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             .replica_store
                             .has_news_for_us(report.namespace, &report.heads)?
                         {
-                            debug!(?namespace, peer = %peer.fmt_short(), "recv sync report: have news, sync now");
+                            debug!(namespace = %namespace.fmt_short(), peer = %peer.fmt_short(), "recv sync report: have news, sync now");
                             self.sync_with_peer(
                                 report.namespace,
                                 peer,
                                 SyncReason::ResyncAfterReport,
                             );
                         } else {
-                            debug!(?namespace, peer = %peer.fmt_short(), "recv sync report: no news");
+                            debug!(namespace = %namespace.fmt_short(), peer = %peer.fmt_short(), "recv sync report: no news");
                         }
                     }
                 }
@@ -955,14 +963,14 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             // [Self::sync_with_peer] will check to not resync with peers synced previously in the
             // same session. TODO: Maybe this is too broad and leads to too many sync requests.
             Event::NeighborUp(peer) => {
-                debug!(peer = %peer.fmt_short(), ?namespace, "neighbor up");
+                debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), "neighbor up");
                 self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
                 if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
                     notify_all(subs, LiveEvent::NeighborUp(peer)).await;
                 }
             }
             Event::NeighborDown(peer) => {
-                debug!(peer = %peer.fmt_short(), ?namespace, "neighbor down");
+                debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), "neighbor down");
                 if let Some(subs) = self.event_subscriptions.get_mut(&namespace) {
                     notify_all(subs, LiveEvent::NeighborDown(peer)).await;
                 }
@@ -986,7 +994,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // A new entry was inserted locally. Broadcast a gossip message.
                 let op = Op::Put(signed_entry);
                 let message = postcard::to_stdvec(&op)?.into();
-                debug!(?namespace, "broadcast new entry");
+                debug!(namespace = %namespace.fmt_short(), "broadcast new entry");
                 self.gossip.broadcast(topic, message).await?;
 
                 // Notify subscribers about the event
