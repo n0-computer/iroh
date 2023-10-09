@@ -290,6 +290,7 @@ impl Config {
             .context("unable to read config")?;
         let config: Self = toml::from_str(&config_ser).context("unable to decode config")?;
         if !config_ser.contains("secret_key") {
+            info!("generating new secret key and updating config file");
             config.write_to_file(path).await?;
         }
 
