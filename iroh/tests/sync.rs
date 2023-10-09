@@ -248,29 +248,56 @@ async fn sync_full_basic() -> Result<()> {
     let mut events2 = doc2.subscribe().await?;
 
     info!("peer2: wait for 8 events (from sync with peers)");
-    let actual = collect_some(&mut events2, 8, TIMEOUT).await?;
+    let mut actual = collect_some(&mut events2, 8, TIMEOUT).await?;
+    // it may happen that we run sync two times against the first peer:
+    // if the first sync (as a result of us joining the peer manually through the ticket) completes
+    // before the peer shows up as a neighbor, we run sync again for the NeighborUp event.
+    if let Ok(events) = collect_some(&mut events2, 1, Duration::from_millis(200)).await {
+        actual.extend_from_slice(&events);
+        assert_each_unordered(
+            &actual,
+            vec![
+                Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
+                Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+                // 3 SyncFinished events
+                Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+                Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+                Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+                // 2 InsertRemote events
+                Box::new(
+                    move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
+                ),
+                Box::new(
+                    move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash1),
+                ),
+                // 2 ContentReady events
+                Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+                Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+            ],
+        );
+    } else {
+        assert_each_unordered(
+            &actual,
+            vec![
+                Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
+                Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+                // 2 SyncFinished events
+                Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+                Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+                // 2 InsertRemote events
+                Box::new(
+                    move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
+                ),
+                Box::new(
+                    move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash1),
+                ),
+                // 2 ContentReady events
+                Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+                Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+            ],
+        );
+    };
     println!("events {actual:#?}");
-    assert_each_unordered(
-        actual,
-        vec![
-            // 2 NeighborUp events
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
-            // 2 SyncFinished events
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
-            // 2 InsertRemote events
-            Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
-            ),
-            Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash1),
-            ),
-            // 2 ContentReady events
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
-        ],
-    );
     assert_latest(&doc2, b"k1", b"v1").await;
     assert_latest(&doc2, b"k2", b"v2").await;
 
