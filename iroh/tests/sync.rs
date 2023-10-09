@@ -641,6 +641,7 @@ async fn next<T: std::fmt::Debug>(mut stream: impl Stream<Item = Result<T>> + Un
     event
 }
 
+#[allow(clippy::type_complexity)]
 fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool>>) -> bool {
     for i in 0..matchers.len() {
         if matchers[i](item) {
