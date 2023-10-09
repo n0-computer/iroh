@@ -166,6 +166,7 @@ fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 struct Config {
     /// [`SecretKey`] for this Derper.
     #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "SecretKey::generate")]
     secret_key: SecretKey,
     /// Server listen address.
     ///
@@ -284,10 +285,14 @@ impl Config {
         if !path.as_ref().is_file() {
             bail!("config-path must be a valid toml file");
         }
-        let config_ser = tokio::fs::read_to_string(path)
+        let config_ser = tokio::fs::read_to_string(&path)
             .await
             .context("unable to read config")?;
-        let config = toml::from_str(&config_ser).context("unable to decode config")?;
+        let config: Self = toml::from_str(&config_ser).context("unable to decode config")?;
+        if !config_ser.contains("secret_key") {
+            info!("generating new secret key and updating config file");
+            config.write_to_file(path).await?;
+        }
 
         Ok(config)
     }
