@@ -254,6 +254,7 @@ async fn sync_full_basic() -> Result<()> {
     // before the peer shows up as a neighbor, we run sync again for the NeighborUp event.
     if let Ok(events) = collect_some(&mut events2, 1, Duration::from_millis(200)).await {
         actual.extend_from_slice(&events);
+    println!("events {actual:#?}");
         assert_each_unordered(
             &actual,
             vec![
@@ -276,6 +277,7 @@ async fn sync_full_basic() -> Result<()> {
             ],
         );
     } else {
+    println!("events {actual:#?}");
         assert_each_unordered(
             &actual,
             vec![
@@ -297,7 +299,6 @@ async fn sync_full_basic() -> Result<()> {
             ],
         );
     };
-    println!("events {actual:#?}");
     assert_latest(&doc2, b"k1", b"v1").await;
     assert_latest(&doc2, b"k2", b"v2").await;
 
