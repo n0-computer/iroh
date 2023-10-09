@@ -416,7 +416,7 @@ impl AuthorId {
     /// Convert to a base32 string limited to the first 10 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.0)
+        base32::fmt_short(self.0)
     }
 }
 
@@ -451,7 +451,7 @@ impl NamespaceId {
     /// Convert to a base32 string limited to the first 10 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.0)
+        base32::fmt_short(self.0)
     }
 }
 

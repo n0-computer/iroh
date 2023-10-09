@@ -367,7 +367,7 @@ struct Actor<S: store::Store, B: baomap::Store> {
     /// Next [`RemovalToken`] for external replica event subscriptions.
     event_removal_id: AtomicU64,
 
-    gossip_joined: HashSet<NamespaceId>
+    gossip_joined: HashSet<NamespaceId>,
 }
 
 /// Token needed to remove inserted callbacks.
@@ -405,7 +405,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             event_subscriptions: Default::default(),
             event_removal_id: Default::default(),
             pending_downloads: Default::default(),
-            gossip_joined: Default::default()
+            gossip_joined: Default::default(),
         }
     }
 
