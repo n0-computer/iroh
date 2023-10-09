@@ -1473,6 +1473,46 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_latest_iter_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_latest_iter(store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_latest_iter_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_latest_iter(store)
+    }
+
+    fn test_latest_iter<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author0 = Author::new(&mut rng);
+        let author1 = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        replica.hash_and_insert(b"a0.1", &author0, b"hi")?;
+        let latest = store
+            .get_latest(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].2, b"a0.1".to_vec());
+
+        replica.hash_and_insert(b"a1.1", &author1, b"hi")?;
+        replica.hash_and_insert(b"a0.2", &author0, b"hi")?;
+        let latest = store
+            .get_latest(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+        let mut latest_keys: Vec<Vec<u8>> = latest.iter().map(|r| r.2.to_vec()).collect();
+        latest_keys.sort();
+        assert_eq!(latest_keys, vec![b"a0.2".to_vec(), b"a1.1".to_vec()]);
+
+        Ok(())
+    }
+
     fn get_entry<S: store::Store>(
         store: &S,
         namespace: NamespaceId,

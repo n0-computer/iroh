@@ -53,14 +53,23 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
 // Value:
 //    (u64, [u8; 32], [u8; 32], u64, [u8; 32])
 //  # (timestamp, signature_namespace, signature_author, len, hash)
+const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
+
+// Latest
+// Table
+// Key: ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
+// Value: (u64, Vec<u8>) # (Timestamp, Key)
+const LATEST_TABLE: TableDefinition<LatestKey, LatestValue> = TableDefinition::new("latest-1");
+type LatestKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
+type LatestValue<'a> = (u64, &'a [u8]);
+type LatestTable<'a> = ReadOnlyTable<'a, LatestKey<'static>, LatestValue<'static>>;
+type LatestRange<'a> = TableRange<'a, LatestKey<'static>, LatestValue<'static>>;
 
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 type DbResult<T> = Result<T, StorageError>;
-
-const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
 /// last time a peer was useful in a document.
@@ -86,6 +95,7 @@ impl Store {
             let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
+            let _table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
         }
         write_tx.commit()?;
@@ -125,6 +135,7 @@ impl super::Store for Store {
     type Instance = StoreInstance;
     type GetIter<'a> = RangeIterator<'a>;
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
+    type LatestIter<'a> = LatestIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
@@ -249,6 +260,10 @@ impl super::Store for Store {
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
+    }
+
+    fn get_latest(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
+        LatestIterator::create(&self.db, namespace)
     }
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
@@ -518,6 +533,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let write_tx = self.store.db.begin_write()?;
         {
+            // insert into record table
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
             let key = (
                 &e.id().namespace().to_bytes(),
@@ -533,6 +549,12 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 hash.as_bytes(),
             );
             record_table.insert(key, value)?;
+
+            // insert into latest table
+            let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
+            let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
+            let value = (e.timestamp(), e.id().key());
+            latest_table.insert(key, value)?;
         }
         write_tx.commit()?;
         Ok(())
@@ -653,6 +675,52 @@ impl Iterator for ContentHashesIterator<'_> {
             Some(Ok((_key, value))) => {
                 let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value.value();
                 Some(Ok(Hash::from(hash)))
+            }
+        })
+    }
+}
+
+/// Iterator over the latest entry per author.
+#[self_referencing]
+pub struct LatestIterator<'a> {
+    read_tx: ReadTransaction<'a>,
+    #[borrows(read_tx)]
+    #[covariant]
+    record_table: LatestTable<'this>,
+    #[covariant]
+    #[borrows(record_table)]
+    records: LatestRange<'this>,
+}
+impl<'a> LatestIterator<'a> {
+    fn create(db: &'a Arc<Database>, namespace: NamespaceId) -> anyhow::Result<Self> {
+        let iter = Self::try_new(
+            db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_table(LATEST_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            |table| {
+                let start = (namespace.as_bytes(), &[u8::MIN; 32]);
+                let end = (namespace.as_bytes(), &[u8::MAX; 32]);
+                table.range(start..=end).map_err(anyhow::Error::from)
+            },
+        )?;
+        Ok(iter)
+    }
+}
+
+impl Iterator for LatestIterator<'_> {
+    type Item = Result<(AuthorId, u64, Vec<u8>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.with_mut(|fields| match fields.records.next() {
+            None => None,
+            Some(Err(err)) => Some(Err(err.into())),
+            Some(Ok((key, value))) => {
+                let (_namespace, author) = key.value();
+                let (timestamp, key) = value.value();
+                Some(Ok((author.into(), timestamp, key.to_vec())))
             }
         })
     }
