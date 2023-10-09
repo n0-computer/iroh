@@ -441,7 +441,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             self.stop_sync(namespace).await?;
                         }
                         ToActor::JoinPeers { namespace, peers } => {
-                            self.join_peers(namespace, peers).await?;
+                            self.join_peers(namespace, peers).await.context("join peers")?;
                         },
                         ToActor::Subscribe { namespace, cb, s } => {
                             let result = self.subscribe(namespace, cb).await;
@@ -467,7 +467,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // new gossip message
                 event = self.gossip_events.next() => {
                     trace!(?i, "tick: gossip_event");
-                    let (topic, event) = event.context("gossip_events closed")??;
+                    let (topic, event) = event.context("gossip_events closed")?.context("gossip_events failed")?;
                     if let Err(err) = self.on_gossip_event(topic, event).await {
                         let namespace: NamespaceId = topic.as_bytes().into();
                         error!(namespace = %namespace.fmt_short(), ?err, "Failed to process gossip event");
@@ -929,7 +929,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
                     Op::Put(entry) => {
-                        debug!(peer = ?msg.delivered_from, namespace = %namespace.fmt_short(), "received entry via gossip");
+                        debug!(peer = %msg.delivered_from.fmt_short(), namespace = %namespace.fmt_short(), "received entry via gossip");
                         // Insert the entry into our replica.
                         // If the message was broadcast with neighbor scope, or is received
                         // directly from the author, we assume that the content is available at
@@ -946,7 +946,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                                 *msg.delivered_from.as_bytes(),
                                 content_status,
                             )
-                            .await?
+                            .await?;
                     }
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content
