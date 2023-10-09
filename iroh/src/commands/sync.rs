@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
+use dialoguer::Confirm;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
@@ -336,8 +337,21 @@ impl DocCommands {
             }
             Self::Drop { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                iroh.docs.drop_doc(doc.id()).await?;
-                println!("Doc {} has been removed.", fmt_short(doc.id()));
+                println!(
+                    "Deleting a document will permanently remove the document secret key, all document entries, \n\
+                    and all content blobs which are not referenced from other docs or tags."
+                );
+                let prompt = format!("Delete document {}?", fmt_short(doc.id()));
+                if Confirm::new()
+                    .with_prompt(prompt)
+                    .interact()
+                    .unwrap_or(false)
+                {
+                    iroh.docs.drop_doc(doc.id()).await?;
+                    println!("Doc {} has been deleted.", fmt_short(doc.id()));
+                } else {
+                    println!("Aborted.")
+                }
             }
         }
         Ok(())
