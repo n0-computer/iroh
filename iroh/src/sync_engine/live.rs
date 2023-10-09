@@ -366,6 +366,8 @@ struct Actor<S: store::Store, B: baomap::Store> {
     event_subscriptions: HashMap<NamespaceId, HashMap<u64, OnLiveEventCallback>>,
     /// Next [`RemovalToken`] for external replica event subscriptions.
     event_removal_id: AtomicU64,
+
+    gossip_joined: HashSet<NamespaceId>
 }
 
 /// Token needed to remove inserted callbacks.
@@ -403,6 +405,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             event_subscriptions: Default::default(),
             event_removal_id: Default::default(),
             pending_downloads: Default::default(),
+            gossip_joined: Default::default()
         }
     }
 
@@ -500,6 +503,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         error!(namespace = %namespace.fmt_short(), %err, "failed to join gossip");
                     } else {
                         debug!(namespace = %namespace.fmt_short(), "joined gossip");
+                        self.gossip_joined.insert(namespace);
                     }
                     // TODO: maintain some join state
                 }
@@ -515,7 +519,9 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                         // Inform our neighbors that we have new content ready.
                         let op = Op::ContentReady(hash);
                         let message = postcard::to_stdvec(&op)?.into();
-                        self.gossip.broadcast_neighbors(namespace.into(), message).await?;
+                        if self.gossip_joined.contains(&namespace) {
+                            self.gossip.broadcast_neighbors(namespace.into(), message).await?;
+                        }
                     }
 
                 }
@@ -716,6 +722,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     async fn stop_sync(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
         if self.syncing_replicas.remove(&namespace) {
             self.gossip.quit(namespace.into()).await?;
+            self.gossip_joined.remove(&namespace);
             self.sync_state.retain(|(n, _peer), _value| *n != namespace);
             self.maybe_close_replica(namespace);
         }
@@ -729,7 +736,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     ) -> anyhow::Result<()> {
         let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.peer_id).collect();
 
-        // add addresses of initial peers to our endpoint address book
+        // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
             let peer_id = peer.peer_id;
             if let Err(err) = self.endpoint.add_peer_addr(peer).await {
@@ -744,11 +751,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             async move {
                 match gossip.join(namespace.into(), peer_ids.clone()).await {
                     Err(err) => (namespace, Err(err)),
-                    Ok(fut) => {
-                        let res = (namespace, fut.await);
-                        debug!(?res, ?peer_ids, namespace = %namespace.fmt_short(), "gossip join");
-                        res
-                    }
+                    Ok(fut) => (namespace, fut.await),
                 }
             }
             .boxed()
@@ -836,9 +839,20 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     ) -> Result<()> {
         // debug log the result, warn in case of errors
         match &result {
-            Ok(res) => log_finished(&origin, res),
+            Ok(details) => {
+                debug!(
+                    peer = %details.peer.fmt_short(),
+                    namespace = ?details.namespace,
+                    sent = ?details.outcome.num_sent,
+                    recv = ?details.outcome.num_recv,
+                    t_connect = ?details.timings.connect,
+                    t_process = ?details.timings.process,
+                    ?origin,
+                    "sync finished",
+                )
+            }
             Err(err) => {
-                warn!(?peer, namespace = %namespace.fmt_short(), ?err, ?origin, "sync failed")
+                warn!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), ?err, ?origin, "sync failed")
             }
         }
         let state = match result {
@@ -858,7 +872,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // Broadcast a sync report to our neighbors, but only if we received new entries.
         if let Ok(state) = &result {
-            if state.outcome.num_recv > 0 {
+            if state.outcome.num_recv > 0 && self.gossip_joined.contains(&namespace) {
                 let report = SyncReport {
                     peer,
                     namespace,
@@ -994,8 +1008,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                 // A new entry was inserted locally. Broadcast a gossip message.
                 let op = Op::Put(signed_entry);
                 let message = postcard::to_stdvec(&op)?.into();
-                debug!(namespace = %namespace.fmt_short(), "broadcast new entry");
-                self.gossip.broadcast(topic, message).await?;
+                if self.gossip_joined.contains(&namespace) {
+                    debug!(namespace = %namespace.fmt_short(), "local insert, broadcast via gossip");
+                    self.gossip.broadcast(topic, message).await?;
+                } else {
+                    debug!(namespace = %namespace.fmt_short(), "local insert, no broadcast because gossip not joined");
+                }
 
                 // Notify subscribers about the event
                 if let Some(subs) = subs {
@@ -1165,17 +1183,4 @@ async fn notify_all(subs: &mut HashMap<u64, OnLiveEventCallback>, event: LiveEve
             subs.remove(&idx);
         }
     }
-}
-
-fn log_finished(origin: &Origin, details: &SyncFinished) {
-    debug!(
-        peer = %details.peer.fmt_short(),
-        namespace = ?details.namespace,
-        sent = ?details.outcome.num_sent,
-        recv = ?details.outcome.num_recv,
-        t_connect = ?details.timings.connect,
-        t_process = ?details.timings.process,
-        origin = ?origin,
-        "sync finished",
-    )
 }
