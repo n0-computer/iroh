@@ -330,7 +330,9 @@ async fn sync_subscribe_stop() -> Result<()> {
     Ok(())
 }
 
-// #[tokio::test(flavor = "multi_thread")]
+/// Test sync between many nodes with propagation through sync reports.
+// Disabled until `iroh::sync_engine::live::SYNC_REPORTS_ENABLED` is switch to `true`.
+#[ignore]
 #[tokio::test]
 async fn sync_big() -> Result<()> {
     #[cfg(tokio_unstable)]

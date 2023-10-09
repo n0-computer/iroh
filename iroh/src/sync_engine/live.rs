@@ -45,6 +45,9 @@ const ACTOR_CHANNEL_CAP: usize = 8;
 /// Capacity of the subscription channel for replica events.
 const REPLICA_SUBSCRIBE_CHANNEL_CAP: usize = 64;
 
+/// Compile-time flag to enable sync reports (disabled until tested better).
+const SYNC_REPORTS_ENABLED: bool = false;
+
 /// An iroh-sync operation
 ///
 /// This is the message that is broadcast over iroh-gossip.
@@ -872,7 +875,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // Broadcast a sync report to our neighbors, but only if we received new entries.
         if let Ok(state) = &result {
-            if state.outcome.num_recv > 0 && self.gossip_joined.contains(&namespace) {
+            if SYNC_REPORTS_ENABLED && state.outcome.num_recv > 0 && self.gossip_joined.contains(&namespace) {
                 let report = SyncReport {
                     peer,
                     namespace,
