@@ -957,6 +957,55 @@ mod tests {
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
+        test_lru_cache_like_behaviour(&store, my_replica.namespace())
+    }
+
+    /// Test that [`Store::register_useful_peer`] behaves like a LRUCache of size
+    /// [`super::store::PEERS_PER_DOC_CACHE_SIZE`].
+    fn test_lru_cache_like_behaviour<S: store::Store>(
+        store: &S,
+        namespace: NamespaceId,
+    ) -> Result<()> {
+        /// Helper to verify the store returns the expected peers for the namespace.
+        #[track_caller]
+        fn verify_peers<S: store::Store>(
+            store: &S,
+            namespace: NamespaceId,
+            expected_peers: &Vec<[u8; 32]>,
+        ) {
+            assert_eq!(
+                expected_peers,
+                &store
+                    .get_sync_peers(&namespace)
+                    .unwrap()
+                    .unwrap()
+                    .collect::<Vec<_>>(),
+                "sync peers differ"
+            );
+        }
+
+        let count = super::store::PEERS_PER_DOC_CACHE_SIZE.get();
+        // expected peers: newest peers are to the front, oldest to the back
+        let mut expected_peers = Vec::with_capacity(count);
+        for i in 0..count as u8 {
+            let peer = [i; 32];
+            expected_peers.insert(0, peer);
+            store.register_useful_peer(namespace, peer)?;
+        }
+        verify_peers(store, namespace, &expected_peers);
+
+        // one more peer should evict the last peer
+        expected_peers.pop();
+        let newer_peer = [count as u8; 32];
+        expected_peers.insert(0, newer_peer);
+        store.register_useful_peer(namespace, newer_peer)?;
+        verify_peers(store, namespace, &expected_peers);
+
+        // move one existing peer up
+        let refreshed_peer = expected_peers.remove(2);
+        expected_peers.insert(0, refreshed_peer);
+        store.register_useful_peer(namespace, refreshed_peer)?;
+        verify_peers(store, namespace, &expected_peers);
         Ok(())
     }
 
