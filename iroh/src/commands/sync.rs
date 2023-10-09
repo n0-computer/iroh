@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -10,7 +11,7 @@ use colored::Colorize;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh_net::util::AbortingJoinHandle;
-use tokio::{io::AsyncReadExt, task::JoinSet};
+use tokio::{io::AsyncReadExt, sync::RwLock, task::JoinSet};
 
 use iroh::{
     client::quic::{Doc, Iroh},
@@ -576,13 +577,12 @@ async fn import_coordinator(
     // new task to iterate through the stream of added files
     // and send them through the `doc_set_updates` `UpdateSink`
     // to get added to the doc
-    let mut total_entries = 0;
-    let mut total_size = 0;
-    // let mut imp = ImportProgressBar::new(doc_id);
-    // let mut task_imp = imp.clone();
-    let (sender, receiver) = flume::bounded(1000);
+
+    let imp = ImportProgressBar::new(&root.display().to_string(), doc.id());
+    let task_imp = imp.clone();
+    let (sender, receiver) = flume::unbounded();
     let task = tokio::spawn(async move {
-        let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
+        let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>, u64)>::new();
         while let Some(item) = blob_add_progress.next().await {
             let item = match item {
                 Err(e) => {
@@ -599,19 +599,24 @@ async fn import_coordinator(
             match item {
                 AddProgress::Found { name, id, size } => {
                     tracing::info!("Found({id},{name},{size})");
-                    // amp.found(name.clone(), id, size);
-                    collections.insert(id, (name, size, None));
+                    imp.add_found(name.clone(), size);
+                    collections.insert(id, (name, size, None, 0));
                 }
                 AddProgress::Progress { id, offset } => {
                     tracing::info!("Progress({id}, {offset})");
-                    // amp.add_progress(id, offset);
+                    if let Some((_, size, _, last_val)) = collections.get_mut(&id) {
+                        assert!(*last_val <= offset, "wtf");
+                        assert!(offset <= *size, "wtf2");
+                        imp.add_progress(offset - *last_val);
+                        *last_val = offset;
+                    }
                 }
                 AddProgress::Done { hash, id } => {
                     tracing::info!("Done({id},{hash:?})");
-                    // amp.done(id);
                     match collections.get_mut(&id) {
-                        Some((path_str, size, ref mut h)) => {
-                            // task_imp.found(path_str.clone(), id);
+                        Some((path_str, size, ref mut h, last_val)) => {
+                            imp.add_progress(*size - *last_val);
+                            imp.import_found(path_str.clone(), *size);
                             *h = Some(hash);
                             let key = match key_from_path_str(
                                 root.clone(),
@@ -662,7 +667,7 @@ async fn import_coordinator(
                     }
                 }
                 AddProgress::AllDone { hash, .. } => {
-                    // amp.all_done();
+                    imp.add_done();
                     tracing::info!("AddProgress::AllDone({hash:?})");
                 }
                 AddProgress::Abort(e) => {
@@ -680,38 +685,36 @@ async fn import_coordinator(
         }
     });
 
-    let _task = AbortingJoinHandle::from(task);
     let recv_stream = receiver.into_stream();
-    let mut chunks = recv_stream.chunks(50);
+    let stats: Vec<u64> = recv_stream
+        .map(anyhow::Ok)
+        .map_ok(|chunk| {
+            let doc = doc.clone();
+            let imp = task_imp.clone();
+            async move {
+                match chunk {
+                    ImportProgress::Entry {
+                        key, hash, size, ..
+                    } => {
+                        doc.set_hash(author_id, key, hash, size).await?;
+                        imp.import_progress(size);
+                        anyhow::Ok(size)
+                    }
+                    ImportProgress::Abort(e) => Err(e),
+                }
+            }
+        })
+        .try_buffer_unordered(24)
+        .try_collect()
+        .await?;
 
-    while let Some(chunks) = chunks.next().await {
-        let mut set = JoinSet::new();
-        for chunk in chunks {
-            match chunk {
-                ImportProgress::Entry {
-                    key, hash, size, ..
-                } => {
-                    total_entries += 1;
-                    total_size += size;
-                    let doc = doc.clone();
-                    set.spawn(async move { doc.set_hash(author_id, key, hash, size).await });
-                }
-                ImportProgress::Abort(e) => {
-                    set.shutdown().await;
-                    return Err(e);
-                }
-            }
-        }
-        while let Some(res) = set.join_next().await {
-            if let Err(e) = res? {
-                set.shutdown().await;
-                bail!(e);
-            }
-        }
-    }
+    task_imp.all_done();
+
+    task.await?;
+
     Ok(ImportStats {
-        total_entries,
-        total_size,
+        total_entries: stats.len() as _,
+        total_size: stats.into_iter().sum(),
     })
 }
 
@@ -737,7 +740,7 @@ fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<
     Ok(key)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct AddProgressBar {
     mp: MultiProgress,
     pbs: HashMap<u64, ProgressBar>,
@@ -788,35 +791,63 @@ impl AddProgressBar {
 #[derive(Debug, Clone)]
 struct ImportProgressBar {
     mp: MultiProgress,
-    pbs: HashMap<u64, (String, ProgressBar)>,
+    import: ProgressBar,
+    add: ProgressBar,
     doc_id: NamespaceId,
 }
 
 impl ImportProgressBar {
-    fn new(doc_id: NamespaceId) -> Self {
+    fn new(source: &str, doc_id: NamespaceId) -> Self {
+        let mp = MultiProgress::new();
+        let add = mp.add(ProgressBar::new(0));
+        add.set_style(ProgressStyle::default_bar()
+            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .progress_chars("=>-"));
+        add.set_message(format!("Importing from {source}..."));
+        add.set_length(0);
+        add.set_position(0);
+        add.enable_steady_tick(Duration::from_millis(500));
+
+        let import = mp.add(ProgressBar::new(0));
+        import.set_style(ProgressStyle::default_bar()
+            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .progress_chars("=>-"));
+        import.set_message(format!("Adding to doc {}...", doc_id));
+        import.set_length(0);
+        import.set_position(0);
+        import.enable_steady_tick(Duration::from_millis(500));
+
         Self {
-            mp: MultiProgress::new(),
-            pbs: HashMap::new(),
+            mp,
+            import,
+            add,
             doc_id,
         }
     }
 
-    fn found(&mut self, name: String, id: u64) {
-        let pb = self.mp.add(ProgressBar::new(0));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.purple} {msg}")
-                .unwrap(),
-        );
-        pb.set_message(format!("Adding {name} to doc {}...", self.doc_id));
-        self.pbs.insert(id, (name, pb));
+    fn add_found(&self, _name: String, size: u64) {
+        self.add.inc_length(size);
     }
 
-    fn done(&mut self, id: u64) {
-        if let Some((name, pb)) = self.pbs.remove(&id) {
-            pb.finish_with_message(format!("Imported {name}"));
-            self.mp.remove(&pb);
-        }
+    fn import_found(&self, _name: String, size: u64) {
+        self.import.inc_length(size);
+    }
+
+    fn add_progress(&self, size: u64) {
+        self.add.inc(size);
+    }
+
+    fn import_progress(&self, size: u64) {
+        self.import.inc(size);
+    }
+
+    fn add_done(&self) {
+        self.add.set_position(self.add.length().unwrap_or_default());
+    }
+
+    fn import_done(&self) {
+        self.import
+            .set_position(self.import.length().unwrap_or_default());
     }
 
     fn all_done(self) {
