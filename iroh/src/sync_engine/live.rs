@@ -875,7 +875,10 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
 
         // Broadcast a sync report to our neighbors, but only if we received new entries.
         if let Ok(state) = &result {
-            if SYNC_REPORTS_ENABLED && state.outcome.num_recv > 0 && self.gossip_joined.contains(&namespace) {
+            if SYNC_REPORTS_ENABLED
+                && state.outcome.num_recv > 0
+                && self.gossip_joined.contains(&namespace)
+            {
                 let report = SyncReport {
                     peer,
                     namespace,
