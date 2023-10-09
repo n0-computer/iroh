@@ -1,16 +1,16 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
+    rc::Rc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
-use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
-use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use iroh_net::util::AbortingJoinHandle;
+use futures::{Stream, StreamExt, TryStreamExt};
+use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
 use tokio::{io::AsyncReadExt, sync::RwLock, task::JoinSet};
 
 use iroh::{
@@ -333,11 +333,13 @@ impl DocCommands {
                 let ImportStats {
                     total_entries,
                     total_size,
+                    duration,
                 } = import_coordinator(doc, author, root_prefix, prefix, stream).await?;
                 println!(
-                    "Imported {} entries totaling {}",
+                    "Imported {} entries totaling {} in {}",
                     total_entries,
-                    HumanBytes(total_size)
+                    HumanBytes(total_size),
+                    HumanDuration(duration,)
                 );
             }
             Self::Export { doc, key, out } => {
@@ -559,6 +561,7 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 struct ImportStats {
     total_entries: u64,
     total_size: u64,
+    duration: Duration,
 }
 
 /// Takes the appropriate streams and sinks from [`BlobsClient::add_from_path`] and [`DocsClient::set_hash_streaming`]
@@ -571,49 +574,43 @@ async fn import_coordinator(
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,
-    mut blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
+    blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
 ) -> Result<ImportStats> {
-    // let mut amp = AddProgressBar::new();
-    // new task to iterate through the stream of added files
-    // and send them through the `doc_set_updates` `UpdateSink`
-    // to get added to the doc
-
+    let start = Instant::now();
     let imp = ImportProgressBar::new(&root.display().to_string(), doc.id());
     let task_imp = imp.clone();
-    let (sender, receiver) = flume::unbounded();
-    let task = tokio::spawn(async move {
-        let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>, u64)>::new();
-        while let Some(item) = blob_add_progress.next().await {
-            let item = match item {
-                Err(e) => {
-                    sender
-                        .send_async(ImportProgress::Abort(anyhow::anyhow!(
-                            "Error adding files: {e}"
-                        )))
-                        .await
-                        .expect("receiver dropped");
-                    return;
-                }
-                Ok(i) => i,
+
+    let collections = Rc::new(RefCell::new(BTreeMap::<
+        u64,
+        (String, u64, Option<Hash>, u64),
+    >::new()));
+
+    let stats: Vec<u64> = blob_add_progress
+        .filter_map(|item| async {
+            let item = match item.context("Error adding files") {
+                Err(e) => return Some(Err(e.into())),
+                Ok(item) => item,
             };
             match item {
                 AddProgress::Found { name, id, size } => {
                     tracing::info!("Found({id},{name},{size})");
                     imp.add_found(name.clone(), size);
-                    collections.insert(id, (name, size, None, 0));
+                    collections.borrow_mut().insert(id, (name, size, None, 0));
+                    None
                 }
                 AddProgress::Progress { id, offset } => {
                     tracing::info!("Progress({id}, {offset})");
-                    if let Some((_, size, _, last_val)) = collections.get_mut(&id) {
+                    if let Some((_, size, _, last_val)) = collections.borrow_mut().get_mut(&id) {
                         assert!(*last_val <= offset, "wtf");
                         assert!(offset <= *size, "wtf2");
                         imp.add_progress(offset - *last_val);
                         *last_val = offset;
                     }
+                    None
                 }
                 AddProgress::Done { hash, id } => {
                     tracing::info!("Done({id},{hash:?})");
-                    match collections.get_mut(&id) {
+                    match collections.borrow_mut().get_mut(&id) {
                         Some((path_str, size, ref mut h, last_val)) => {
                             imp.add_progress(*size - *last_val);
                             imp.import_found(path_str.clone(), *size);
@@ -626,14 +623,9 @@ async fn import_coordinator(
                                 Ok(k) => k,
                                 Err(e) => {
                                     tracing::info!("error getting key from {}, id {id}", path_str);
-                                    sender
-                                        .send_async(ImportProgress::Abort(anyhow!(
-                                            "Issue creating a key for entry {hash:?}: {e}"
-                                        )))
-                                        .await
-                                        .expect("receiver dropped");
-                                    // amp.error();
-                                    return;
+                                    return Some(Err(anyhow::anyhow!(
+                                        "Issue creating a key for entry {hash:?}: {e}"
+                                    )));
                                 }
                             };
                             // send update to doc
@@ -641,91 +633,53 @@ async fn import_coordinator(
                                 "setting entry {} (id: {id}) to doc",
                                 String::from_utf8(key.clone()).unwrap()
                             );
-                            sender
-                                .send_async(ImportProgress::Entry {
-                                    id,
-                                    key,
-                                    hash,
-                                    size: *size,
-                                })
-                                .await
-                                .expect("receiver dropped");
+                            Some(Ok((key, hash, *size)))
                         }
                         None => {
                             tracing::info!(
                                 "error: got `AddProgress::Done` for unknown collection id {id}"
                             );
-                            sender
-                                .send_async(ImportProgress::Abort(anyhow::anyhow!(
-                                    "Received progress information on an unknown file."
-                                )))
-                                .await
-                                .expect("receiver dropped");
-                            // amp.error();
-                            return;
+                            Some(Err(anyhow::anyhow!(
+                                "Received progress information on an unknown file."
+                            )))
                         }
                     }
                 }
                 AddProgress::AllDone { hash, .. } => {
                     imp.add_done();
                     tracing::info!("AddProgress::AllDone({hash:?})");
+                    None
                 }
                 AddProgress::Abort(e) => {
                     tracing::info!("Error while adding data: {e}");
-                    sender
-                        .send_async(ImportProgress::Abort(anyhow::anyhow!(
-                            "Error while adding files: {e}"
-                        )))
-                        .await
-                        .expect("receiver dropped");
-                    // amp.error();
-                    return;
-                }
-            }
-        }
-    });
-
-    let recv_stream = receiver.into_stream();
-    let stats: Vec<u64> = recv_stream
-        .map(anyhow::Ok)
-        .map_ok(|chunk| {
-            let doc = doc.clone();
-            let imp = task_imp.clone();
-            async move {
-                match chunk {
-                    ImportProgress::Entry {
-                        key, hash, size, ..
-                    } => {
-                        doc.set_hash(author_id, key, hash, size).await?;
-                        imp.import_progress(size);
-                        anyhow::Ok(size)
-                    }
-                    ImportProgress::Abort(e) => Err(e),
+                    Some(Err(anyhow::anyhow!("Error while adding files: {e}")))
                 }
             }
         })
-        .try_buffer_unordered(24)
+        .try_chunks(1024)
+        .map_ok(|chunks| {
+            futures::stream::iter(chunks.into_iter().map(|(key, hash, size)| {
+                let doc = doc.clone();
+                let imp = task_imp.clone();
+                Ok(async move {
+                    doc.set_hash(author_id, key, hash, size).await?;
+                    imp.import_progress(size);
+                    anyhow::Ok(size)
+                })
+            }))
+        })
+        .try_flatten()
+        .try_buffer_unordered(64)
         .try_collect()
         .await?;
 
     task_imp.all_done();
 
-    task.await?;
-
     Ok(ImportStats {
         total_entries: stats.len() as _,
         total_size: stats.into_iter().sum(),
+        duration: start.elapsed(),
     })
-}
-
-enum ImportProgress {
-    Entry {
-        id: u64,
-        key: Vec<u8>,
-        hash: Hash,
-        size: u64,
-    },
-    Abort(anyhow::Error),
 }
 
 fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
@@ -740,60 +694,11 @@ fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<
     Ok(key)
 }
 
-#[derive(Debug)]
-struct AddProgressBar {
-    mp: MultiProgress,
-    pbs: HashMap<u64, ProgressBar>,
-}
-
-impl AddProgressBar {
-    fn new() -> Self {
-        Self {
-            mp: MultiProgress::new(),
-            pbs: HashMap::new(),
-        }
-    }
-
-    fn found(&mut self, name: String, id: u64, size: u64) {
-        let pb = self.mp.add(ProgressBar::new(size));
-        pb.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
-            .progress_chars("=>-"));
-        pb.set_message(format!("Importing {name}..."));
-        pb.set_length(size);
-        pb.set_position(0);
-        pb.enable_steady_tick(Duration::from_millis(500));
-        self.pbs.insert(id, pb);
-    }
-
-    fn add_progress(&mut self, id: u64, progress: u64) {
-        if let Some(pb) = self.pbs.get_mut(&id) {
-            pb.set_position(progress);
-        }
-    }
-
-    fn done(&mut self, id: u64) {
-        if let Some(pb) = self.pbs.remove(&id) {
-            pb.finish_and_clear();
-            self.mp.remove(&pb);
-        }
-    }
-
-    fn all_done(&mut self) {
-        self.mp.clear().ok();
-    }
-
-    fn error(self) {
-        self.mp.clear().ok();
-    }
-}
-
 #[derive(Debug, Clone)]
 struct ImportProgressBar {
     mp: MultiProgress,
     import: ProgressBar,
     add: ProgressBar,
-    doc_id: NamespaceId,
 }
 
 impl ImportProgressBar {
@@ -817,12 +722,7 @@ impl ImportProgressBar {
         import.set_position(0);
         import.enable_steady_tick(Duration::from_millis(500));
 
-        Self {
-            mp,
-            import,
-            add,
-            doc_id,
-        }
+        Self { mp, import, add }
     }
 
     fn add_found(&self, _name: String, size: u64) {
@@ -843,11 +743,6 @@ impl ImportProgressBar {
 
     fn add_done(&self) {
         self.add.set_position(self.add.length().unwrap_or_default());
-    }
-
-    fn import_done(&self) {
-        self.import
-            .set_position(self.import.length().unwrap_or_default());
     }
 
     fn all_done(self) {
