@@ -1295,7 +1295,6 @@ impl Actor {
                     derp_region: Some(region_id),
                     active: true,
                 });
-                // TODO(@divma): removed here
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
                 ep.quic_mapped_addr
             }
