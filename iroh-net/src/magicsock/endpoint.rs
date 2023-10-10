@@ -155,10 +155,9 @@ impl Endpoint {
             .endpoint_state
             .iter()
             .filter_map(|(addr, endpoint_state)| match addr {
-                SendAddr::Udp(addr) => Some((
-                    SocketAddr::from(*addr),
-                    endpoint_state.recent_pong().map(|pong| pong.latency),
-                )),
+                SendAddr::Udp(addr) => {
+                    Some((*addr, endpoint_state.recent_pong().map(|pong| pong.latency)))
+                }
                 _ => None,
             })
             .collect();
