@@ -1229,10 +1229,7 @@ impl Actor {
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
-        match self
-            .peer_map
-            .endpoint_for_ip_port(&SendAddr::Udp(meta.addr))
-        {
+        match self.peer_map.endpoint_for_ip_port(meta.addr) {
             None => {
                 warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
                 return false;

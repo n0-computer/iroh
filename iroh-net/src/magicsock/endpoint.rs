@@ -155,9 +155,10 @@ impl Endpoint {
             .endpoint_state
             .iter()
             .filter_map(|(addr, endpoint_state)| match addr {
-                SendAddr::Udp(addr) => {
-                    Some((*addr, endpoint_state.recent_pong().map(|pong| pong.latency)))
-                }
+                SendAddr::Udp(addr) => Some((
+                    SocketAddr::from(*addr),
+                    endpoint_state.recent_pong().map(|pong| pong.latency),
+                )),
                 _ => None,
             })
             .collect();
@@ -964,6 +965,31 @@ pub struct AddrLatency {
     pub latency: Option<Duration>,
 }
 
+#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq)]
+#[display("{}", SocketAddr::from(*self))]
+pub struct IpPort {
+    ip: IpAddr,
+    port: u16,
+}
+
+/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
+/// addresses include fields that can't be assumed consitent even within a single connection.
+impl From<SocketAddr> for IpPort {
+    fn from(socket_addr: SocketAddr) -> Self {
+        Self {
+            ip: socket_addr.ip(),
+            port: socket_addr.port(),
+        }
+    }
+}
+
+impl From<IpPort> for SocketAddr {
+    fn from(ip_port: IpPort) -> Self {
+        let IpPort { ip, port } = ip_port;
+        (ip, port).into()
+    }
+}
+
 /// Map of the [`Endpoint`] information for all the known peers.
 ///
 /// The peers can be looked up by:
@@ -985,7 +1011,7 @@ pub struct AddrLatency {
 #[derive(Default, Debug)]
 pub(super) struct PeerMap {
     by_node_key: HashMap<PublicKey, usize>,
-    by_ip_port: HashMap<SendAddr, usize>,
+    by_ip_port: HashMap<IpPort, usize>,
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
     by_id: HashMap<usize, Endpoint>,
     next_id: usize,
@@ -1032,7 +1058,7 @@ impl PeerMap {
             ep.update_from_node_addr(&info);
             let id = ep.id;
             for endpoint in &info.direct_addresses {
-                self.set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
+                self.set_endpoint_for_ip_port(*endpoint, id);
             }
         }
     }
@@ -1062,13 +1088,15 @@ impl PeerMap {
     }
 
     /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
-    pub(super) fn endpoint_for_ip_port(&self, ipp: &SendAddr) -> Option<&Endpoint> {
-        self.by_ip_port.get(ipp).and_then(|id| self.by_id(id))
+    pub(super) fn endpoint_for_ip_port(&self, ipp: impl Into<IpPort>) -> Option<&Endpoint> {
+        self.by_ip_port
+            .get(&ipp.into())
+            .and_then(|id| self.by_id(id))
     }
 
-    pub fn endpoint_for_ip_port_mut(&mut self, ipp: &SendAddr) -> Option<&mut Endpoint> {
+    pub fn endpoint_for_ip_port_mut(&mut self, ipp: impl Into<IpPort>) -> Option<&mut Endpoint> {
         self.by_ip_port
-            .get(ipp)
+            .get(&ipp.into())
             .and_then(|id| self.by_id.get_mut(id))
     }
 
@@ -1118,22 +1146,24 @@ impl PeerMap {
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: &SendAddr, nk: &PublicKey) {
-        if let Some(id) = self.by_ip_port.get(ipp) {
+    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
+        let ipp = ipp.into();
+        if let Some(id) = self.by_ip_port.get(&ipp) {
             if !self.by_node_key.contains_key(nk) {
                 self.by_node_key.insert(*nk, *id);
             }
-            self.by_ip_port.remove(ipp);
+            self.by_ip_port.remove(&ipp);
         }
         if let Some(id) = self.by_node_key.get(nk) {
             trace!("insert ip -> id: {:?} -> {}", ipp, id);
-            self.by_ip_port.insert(*ipp, *id);
+            self.by_ip_port.insert(ipp, *id);
         }
     }
 
-    pub(super) fn set_endpoint_for_ip_port(&mut self, ipp: &SendAddr, id: usize) {
+    pub(super) fn set_endpoint_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
+        let ipp = ipp.into();
         trace!("insert ip -> id: {:?} -> {}", ipp, id);
-        self.by_ip_port.insert(*ipp, id);
+        self.by_ip_port.insert(ipp, id);
     }
 
     /// Saves the known peer info to the given path, returning the number of peers persisted.
@@ -1553,8 +1583,8 @@ mod tests {
                 (d_endpoint.public_key, d_endpoint.id),
             ]),
             by_ip_port: HashMap::from([
-                (SendAddr::Udp(a_socket_addr), a_endpoint.id),
-                (SendAddr::Udp(d_socket_addr), d_endpoint.id),
+                (a_socket_addr.into(), a_endpoint.id),
+                (d_socket_addr.into(), d_endpoint.id),
             ]),
             by_quic_mapped_addr: HashMap::from([
                 (a_endpoint.quic_mapped_addr, a_endpoint.id),
