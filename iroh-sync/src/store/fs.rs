@@ -989,17 +989,24 @@ mod tests {
         let namespace = Namespace::new(&mut rand::thread_rng());
 
         // create a store and add some data
-        let store = Store::new(dbfile.path())?;
-        let author1 = store.new_author(&mut rand::thread_rng())?;
-        let author2 = store.new_author(&mut rand::thread_rng())?;
-        let replica = store.new_replica(namespace.clone())?;
-        replica.hash_and_insert(b"k1", &author1, b"v1")?;
-        replica.hash_and_insert(b"k2", &author2, b"v1")?;
-        replica.hash_and_insert(b"k3", &author1, b"v1")?;
+        let expected = {
+            let store = Store::new(dbfile.path())?;
+            let author1 = store.new_author(&mut rand::thread_rng())?;
+            let author2 = store.new_author(&mut rand::thread_rng())?;
+            let replica = store.new_replica(namespace.clone())?;
+            replica.hash_and_insert(b"k1", &author1, b"v1")?;
+            replica.hash_and_insert(b"k2", &author2, b"v1")?;
+            replica.hash_and_insert(b"k3", &author1, b"v1")?;
 
-        let expected = store
-            .get_latest(namespace.id())?
-            .collect::<Result<Vec<_>>>()?;
+            let expected = store
+                .get_latest(namespace.id())?
+                .collect::<Result<Vec<_>>>()?;
+            // drop everything to clear file locks.
+            drop(replica);
+            store.close_replica(&namespace.id());
+            drop(store);
+            expected
+        };
         assert_eq!(expected.len(), 2);
 
         // create a copy of our db file with the latest table deleted.
