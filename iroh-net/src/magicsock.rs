@@ -1295,7 +1295,7 @@ impl Actor {
                     derp_region: Some(region_id),
                     active: true,
                 });
-                self.peer_map.set_endpoint_for_ip_port(&ipp, id);
+                // TODO(@divma): removed here
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
                 ep.quic_mapped_addr
             }
@@ -2134,13 +2134,17 @@ impl Actor {
         }
 
         let mut unknown_sender = false;
-        if self.peer_map.endpoint_for_node_key(&sender).is_none()
-            && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
-        {
+        if self.peer_map.endpoint_for_node_key(&sender).is_none() {
+            unknown_sender = match src {
+                SendAddr::Udp(addr) => self.peer_map.endpoint_for_ip_port_mut(addr).is_none(),
+                SendAddr::Derp(_) => true,
+            };
+        }
+
+        if unknown_sender {
             // Disco Ping from unseen endpoint. We will have to add the
             // endpoint later if the message is a ping
             info!("disco: unknown sender {:?} - {}", sender, src);
-            unknown_sender = true;
         }
 
         // We're now reasonably sure we're expecting communication from
@@ -2206,11 +2210,11 @@ impl Actor {
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
-                    let (_, insert) = ep
+                    let insert = ep
                         .handle_pong_conn(&self.inner.public_key(), &pong, di, src)
                         .await;
                     if let Some((src, key)) = insert {
-                        self.peer_map.set_node_key_for_ip_port(&src, &key);
+                        self.peer_map.set_node_key_for_ip_port(src, &key);
                     }
                 }
                 true

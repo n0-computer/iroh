@@ -641,14 +641,14 @@ impl Endpoint {
 
     /// Handles a Pong message (a reply to an earlier ping).
     ///
-    /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
+    /// It report the address and key that should be inserted for the endpoint if any.
     pub(super) async fn handle_pong_conn(
         &mut self,
         conn_disco_public: &PublicKey,
         m: &disco::Pong,
         _di: &mut DiscoInfo,
         src: SendAddr,
-    ) -> (bool, Option<(SendAddr, PublicKey)>) {
+    ) -> Option<(SocketAddr, PublicKey)> {
         let is_derp = src.is_derp();
 
         info!(
@@ -662,27 +662,26 @@ impl Endpoint {
                     "disco: received unexpected pong {:?} from {:?}",
                     m.tx_id, src,
                 );
-                (false, None)
+                None
             }
             Some(sp) => {
                 sp.timer.stop().await;
 
-                let known_tx_id = true;
                 let mut peer_map_insert = None;
 
                 let now = Instant::now();
                 let latency = now - sp.at;
 
-                if !is_derp {
+                if let SendAddr::Udp(addr) = src {
                     let key = self.public_key;
                     match self.endpoint_state.get_mut(&sp.to) {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
                             // This is no longer an endpoint we care about.
-                            return (known_tx_id, peer_map_insert);
+                            return peer_map_insert;
                         }
                         Some(st) => {
-                            peer_map_insert = Some((src, key));
+                            peer_map_insert = Some((addr, key));
                             st.add_pong_reply(PongReply {
                                 latency,
                                 pong_at: now,
@@ -763,7 +762,7 @@ impl Endpoint {
                     }
                 }
 
-                (known_tx_id, peer_map_insert)
+                peer_map_insert
             }
         }
     }
