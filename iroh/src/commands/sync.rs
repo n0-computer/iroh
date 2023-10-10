@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
+use dialoguer::Confirm;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
@@ -123,6 +124,26 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
     },
+    /// Stop syncing a document.
+    Leave {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        doc: Option<NamespaceId>,
+    },
+    /// Delete a document from the local node.
+    ///
+    /// This is a destructive operation. Both the document secret key and all entries in the
+    /// document will be permanently deleted from the node's storage. Content blobs will be deleted
+    /// through garbage collection unless they are referenced from another document or tag.
+    Drop {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        doc: Option<NamespaceId>,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -240,6 +261,11 @@ impl DocCommands {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
             }
+            Self::Leave { doc } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                doc.leave().await?;
+                println!("Doc {} is now inactive", fmt_short(doc.id()));
+            }
             Self::Watch { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let mut stream = doc.subscribe().await?;
@@ -305,7 +331,26 @@ impl DocCommands {
                         LiveEvent::NeighborDown(peer) => {
                             println!("neighbor peer down: {peer:?}");
                         }
+                        LiveEvent::Closed => println!("document closed"),
                     }
+                }
+            }
+            Self::Drop { doc } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                println!(
+                    "Deleting a document will permanently remove the document secret key, all document entries, \n\
+                    and all content blobs which are not referenced from other docs or tags."
+                );
+                let prompt = format!("Delete document {}?", fmt_short(doc.id()));
+                if Confirm::new()
+                    .with_prompt(prompt)
+                    .interact()
+                    .unwrap_or(false)
+                {
+                    iroh.docs.drop_doc(doc.id()).await?;
+                    println!("Doc {} has been deleted.", fmt_short(doc.id()));
+                } else {
+                    println!("Aborted.")
                 }
             }
         }
@@ -354,24 +399,25 @@ impl AuthorCommands {
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
-    let decode_failed = |_err: std::string::FromUtf8Error| "<invalid UTF-8>".to_string();
+    let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
+    let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
 
     match mode {
         DisplayContentMode::Auto => {
             if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
                 // small content: read fully as UTF-8
                 let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
-                String::from_utf8(bytes.into()).map_err(decode_failed)
+                Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
             } else {
                 // large content: read just the first part as UTF-8
                 let mut blob_reader = doc.read(entry).await.map_err(read_failed)?;
-                let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize);
+                let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize + 5);
 
                 blob_reader
                     .read_buf(&mut buf)
                     .await
                     .map_err(|io_err| read_failed(io_err.into()))?;
-                let mut repr = String::from_utf8(buf).map_err(decode_failed)?;
+                let mut repr = as_utf8(buf).unwrap_or_else(encode_hex);
                 // let users know this is not shown in full
                 repr.push_str("...");
                 Ok(repr)
@@ -380,7 +426,7 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
         DisplayContentMode::Content => {
             // read fully as UTF-8
             let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
-            String::from_utf8(bytes.into()).map_err(decode_failed)
+            Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
         DisplayContentMode::Hash => {
             let hash = entry.record().content_hash();

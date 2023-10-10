@@ -778,14 +778,12 @@ async fn test_token_passthrough() -> Result<()> {
     node.subscribe(move |event| {
         let events_sender = events_sender.clone();
         async move {
-            match event {
-                Event::ByteProvide(bp_msg) => {
-                    if let iroh_bytes::provider::Event::GetRequestReceived { token: tok, .. } =
-                        bp_msg
-                    {
-                        events_sender.send(tok).expect("receiver dropped");
-                    }
-                }
+            if let Event::ByteProvide(iroh_bytes::provider::Event::GetRequestReceived {
+                token: tok,
+                ..
+            }) = event
+            {
+                events_sender.send(tok).expect("receiver dropped");
             }
         }
         .boxed()

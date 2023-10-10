@@ -83,15 +83,22 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+/// Default interval between GC runs.
+const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 /// Policy for garbage collection.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GcPolicy {
     /// Garbage collection is disabled.
-    #[default]
     Disabled,
     /// Garbage collection is run at the given interval.
     Interval(Duration),
+}
+
+impl Default for GcPolicy {
+    fn default() -> Self {
+        Self::Interval(DEFAULT_GC_INTERVAL)
+    }
 }
 
 /// Builder for the [`Node`].
@@ -328,12 +335,14 @@ where
             downloader,
         );
 
+        let callbacks = Callbacks::default();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
-            tracing::info!("Starting GC task with interval {}s", gc_period.as_secs());
+            tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.db.clone();
+            let callbacks = callbacks.clone();
             let task = rt
                 .local_pool()
-                .spawn_pinned(move || Self::gc_loop(db, ds, gc_period));
+                .spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
             Some(AbortingJoinHandle(task))
         } else {
             None
@@ -341,7 +350,6 @@ where
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
         let rt3 = rt.clone();
-        let callbacks = Callbacks::default();
         let inner = Arc::new(NodeInner {
             db: self.db,
             endpoint: endpoint.clone(),
@@ -505,10 +513,15 @@ where
             .ok();
     }
 
-    async fn gc_loop(db: D, ds: S, gc_period: Duration) {
+    async fn gc_loop(db: D, ds: S, gc_period: Duration, callbacks: Callbacks) {
+        tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
+            tracing::debug!("Starting GC");
+            callbacks
+                .send(Event::Db(iroh_bytes::baomap::Event::GcStarted))
+                .await;
             db.clear_live();
             let doc_hashes = match ds.content_hashes() {
                 Ok(hashes) => hashes,
@@ -518,16 +531,13 @@ where
                 }
             };
             let mut doc_db_error = false;
-            let doc_hashes = doc_hashes.filter_map(|e| {
-                let hash = match e {
-                    Ok(e) => e,
-                    Err(err) => {
-                        tracing::error!("Error getting doc hash: {}", err);
-                        doc_db_error = true;
-                        return None;
-                    }
-                };
-                Some(hash)
+            let doc_hashes = doc_hashes.filter_map(|e| match e {
+                Ok(hash) => Some(hash),
+                Err(err) => {
+                    tracing::error!("Error getting doc hash: {}", err);
+                    doc_db_error = true;
+                    None
+                }
             });
             db.add_live(doc_hashes);
             if doc_db_error {
@@ -551,6 +561,7 @@ where
                     }
                 }
             }
+
             tracing::info!("Starting GC sweep phase");
             let mut stream = db.gc_sweep();
             while let Some(item) = stream.next().await {
@@ -567,6 +578,9 @@ where
                     }
                 }
             }
+            callbacks
+                .send(Event::Db(iroh_bytes::baomap::Event::GcCompleted))
+                .await;
         }
     }
 }
@@ -655,7 +669,6 @@ struct NodeInner<D, S: DocStore> {
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
     cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
-    #[allow(dead_code)]
     callbacks: Callbacks,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
@@ -668,6 +681,8 @@ struct NodeInner<D, S: DocStore> {
 pub enum Event {
     /// Events from the iroh-bytes transfer protocol.
     ByteProvide(iroh_bytes::provider::Event),
+    /// Events from database
+    Db(iroh_bytes::baomap::Event),
 }
 
 impl<D: ReadableStore, S: DocStore> Node<D, S> {
@@ -1477,6 +1492,12 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
+            DocDrop(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_drop(req).await
+                })
+                .await
+            }
             DocImport(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_import(req).await
@@ -1508,9 +1529,9 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
-            DocStopSync(msg) => {
+            DocLeave(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_stop_sync(req).await
+                    handler.inner.sync.doc_leave(req).await
                 })
                 .await
             }
