@@ -1570,7 +1570,7 @@ mod tests {
         let alice_store = store::memory::Store::default();
         let bob_store = store::memory::Store::default();
 
-        test_replica_sync_delete(alice_store, bob_store)?;
+        test_replica_sync_delete(alice_store, bob_store)
     }
 
     #[cfg(feature = "fs-store")]
@@ -1580,7 +1580,7 @@ mod tests {
         let alice_store = store::fs::Store::new(alice_dbfile.path())?;
         let bob_dbfile = tempfile::NamedTempFile::new()?;
         let bob_store = store::fs::Store::new(bob_dbfile.path())?;
-        test_replica_sync_delete(alice_store, bob_store)?;
+        test_replica_sync_delete(alice_store, bob_store)
     }
 
     fn test_replica_sync_delete<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
