@@ -79,20 +79,24 @@ enum ToActor<S: store::Store> {
     StartSync {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
+        #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     JoinPeers {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
     },
-    StopSync {
+    Leave {
         namespace: NamespaceId,
+        /// If true removes all active client subscriptions.
+        force_remove: bool,
     },
     Shutdown,
     Subscribe {
         namespace: NamespaceId,
         #[debug("cb")]
         cb: OnLiveEventCallback,
+        #[debug("oneshot::Sender")]
         s: sync::oneshot::Sender<Result<RemovalToken>>,
     },
     Unsubscribe {
@@ -106,6 +110,7 @@ enum ToActor<S: store::Store> {
     AcceptSyncRequest {
         namespace: NamespaceId,
         peer: PublicKey,
+        #[debug("oneshot::Sender")]
         reply: sync::oneshot::Sender<AcceptOutcome<S>>,
     },
 }
@@ -152,6 +157,8 @@ pub enum LiveEvent {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    /// The document was closed. No further events will be emitted.
+    Closed,
 }
 
 fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
@@ -241,9 +248,12 @@ impl<S: store::Store> LiveSync<S> {
     /// Stop the live sync for a document.
     ///
     /// This will leave the gossip swarm for this document.
-    pub async fn stop_sync(&self, namespace: NamespaceId) -> Result<()> {
+    pub async fn leave(&self, namespace: NamespaceId, force_remove: bool) -> Result<()> {
         self.to_actor_tx
-            .send(ToActor::<S>::StopSync { namespace })
+            .send(ToActor::<S>::Leave {
+                namespace,
+                force_remove,
+            })
             .await?;
         Ok(())
     }
@@ -400,8 +410,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             let res = self.start_sync(namespace, peers).await;
                             reply.send(res).ok();
                         },
-                        Some(ToActor::StopSync { namespace }) => {
-                            self.stop_sync(namespace).await?;
+                        Some(ToActor::Leave { namespace, force_remove }) => {
+                            self.leave(namespace, force_remove).await?;
                         }
                         Some(ToActor::JoinPeers { namespace, peers }) => {
                             self.join_peers(namespace, peers).await?;
@@ -532,11 +542,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for namespace in self.open_replicas.drain() {
-            self.syncing_replicas.remove(&namespace);
-            self.gossip.quit(namespace.into()).await?;
-            self.event_subscriptions.remove(&namespace);
-            self.replica_store.close_replica(&namespace);
+        // we have to clone the list of replicas here to reuse the Self::leave code.
+        let namespaces = self.open_replicas.iter().cloned().collect::<Vec<_>>();
+        for namespace in namespaces {
+            if let Err(err) = self.leave(namespace, true).await {
+                warn!(?namespace, "Error while closing: {err:?}");
+            }
         }
         Ok(())
     }
@@ -665,12 +676,18 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         false
     }
 
-    async fn stop_sync(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
+    async fn leave(&mut self, namespace: NamespaceId, force_remove: bool) -> anyhow::Result<()> {
         if self.syncing_replicas.remove(&namespace) {
             self.gossip.quit(namespace.into()).await?;
             self.sync_state.retain(|(n, _peer), _value| *n != namespace);
-            self.maybe_close_replica(namespace);
         }
+        if force_remove {
+            let subs = self.event_subscriptions.remove(&namespace);
+            if let Some(mut subs) = subs {
+                notify_all(&mut subs, LiveEvent::Closed).await;
+            }
+        }
+        self.maybe_close_replica(namespace);
         Ok(())
     }
 

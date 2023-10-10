@@ -143,7 +143,7 @@ use iroh_bytes::baomap::{
     self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
     PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
 };
-use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
+use iroh_bytes::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
@@ -895,6 +895,21 @@ impl Store {
         Ok((tag, size))
     }
 
+    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+        let temp_data_path = self.temp_path();
+        std::fs::write(&temp_data_path, &data)?;
+        let id = 0;
+        let file = ImportFile::TempFile(temp_data_path);
+        let progress = IgnoreProgressSender::default();
+        let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
+        // we have the data in memory, so we can just insert it right now
+        if data.len() < self.0.options.inline_threshold as usize {
+            let mut state = self.0.state.write().unwrap();
+            state.data.insert(*tag.hash(), data);
+        }
+        Ok(tag)
+    }
+
     fn finalize_import_sync(
         &self,
         file: ImportFile,
@@ -902,7 +917,6 @@ impl Store {
         id: u64,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<(TempTag, u64)> {
-        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         let size = file.path().metadata()?.len();
         progress.blocking_send(ImportProgress::Size { id, size })?;
         let progress2 = progress.clone();
@@ -910,27 +924,36 @@ impl Store {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
         })?;
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-        let (tag, new, outboard) = match file {
-            ImportFile::External(path) => {
-                use baomap::Store;
-                let tag = self.temp_tag(HashAndFormat(hash, format));
-                (tag, CompleteEntry::new_external(size, path), outboard)
-            }
-            ImportFile::TempFile(path) => {
+        use baomap::Store;
+        // from here on, everything related to the hash is protected by the temp tag
+        let tag = self.temp_tag(HashAndFormat(hash, format));
+        let hash = *tag.hash();
+        let temp_outboard_path = if let Some(outboard) = outboard.as_ref() {
+            let uuid = new_uuid();
+            // we write the outboard to a temp file first, since while it is being written it is not complete.
+            // it is protected from deletion by the temp tag.
+            let temp_outboard_path = self.0.options.partial_outboard_path(hash, &uuid);
+            std::fs::write(&temp_outboard_path, outboard)?;
+            Some(temp_outboard_path)
+        } else {
+            None
+        };
+        // before here we did not touch the complete files at all.
+        // all writes here are protected by the temp tag
+        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
+        // move the data file into place, or create a reference to it
+        let new = match file {
+            ImportFile::External(path) => CompleteEntry::new_external(size, path),
+            ImportFile::TempFile(temp_data_path) => {
                 let data_path = self.owned_data_path(&hash);
-                use baomap::Store;
-                // the blob must be pinned before we move the file, otherwise there is a race condition
-                // where it might be deleted here.
-                let tag = self.temp_tag(HashAndFormat(hash, BlobFormat::RAW));
-                std::fs::rename(path, data_path)?;
-                (tag, CompleteEntry::new_default(size), outboard)
+                std::fs::rename(temp_data_path, data_path)?;
+                CompleteEntry::new_default(size)
             }
         };
-        // all writes here are protected by the temp tag
-        let hash = *tag.hash();
-        if let Some(outboard) = outboard.as_ref() {
+        // move the outboard file into place if we have one
+        if let Some(temp_outboard_path) = temp_outboard_path {
             let outboard_path = self.owned_outboard_path(&hash);
-            std::fs::write(outboard_path, outboard)?;
+            std::fs::rename(temp_outboard_path, outboard_path)?;
         }
         let size = new.size;
         let mut state = self.0.state.write().unwrap();
@@ -993,30 +1016,6 @@ impl Store {
         write_atomic(&temp_path, &final_path, &serialized)?;
         *tags = new_tags;
         drop(tags);
-        Ok(tag)
-    }
-
-    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
-        let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
-        let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
-        let hash = hash.into();
-        use baomap::Store;
-        let tag = self.temp_tag(HashAndFormat(hash, format));
-        let data_path = self.owned_data_path(&hash);
-        std::fs::write(data_path, &data)?;
-        if outboard.len() > 8 {
-            let outboard_path = self.owned_outboard_path(&hash);
-            std::fs::write(outboard_path, &outboard)?;
-        }
-        let size = data.len() as u64;
-        let mut state = self.0.state.write().unwrap();
-        let entry = state.complete.entry(hash).or_default();
-        entry.union_with(CompleteEntry::new_default(size))?;
-        state.outboard.insert(hash, outboard.into());
-        if size < self.0.options.inline_threshold {
-            state.data.insert(hash, data.to_vec().into());
-        }
-        drop(complete_io_guard);
         Ok(tag)
     }
 

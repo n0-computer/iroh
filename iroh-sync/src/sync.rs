@@ -9,7 +9,10 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    sync::Arc,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
     time::{Duration, SystemTime},
 };
 
@@ -78,20 +81,21 @@ pub enum ContentStatus {
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    inner: Arc<RwLock<InnerReplica<S>>>,
-    #[allow(clippy::type_complexity)]
-    on_insert_sender: Arc<RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>>,
-
-    #[allow(clippy::type_complexity)]
-    #[debug("ContentStatusCallback")]
-    content_status_cb:
-        Arc<RwLock<Option<Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>>>>,
+    inner: Arc<InnerReplica<S>>,
 }
 
 #[derive(derive_more::Debug)]
 struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
-    peer: Peer<SignedEntry, S>,
+    peer: RwLock<Peer<SignedEntry, S>>,
+    #[allow(clippy::type_complexity)]
+    on_insert_sender: RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>,
+
+    #[allow(clippy::type_complexity)]
+    #[debug("ContentStatusCallback")]
+    content_status_cb: RwLock<Option<Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>>>,
+
+    closed: AtomicBool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,13 +109,22 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
         Replica {
-            inner: Arc::new(RwLock::new(InnerReplica {
+            inner: Arc::new(InnerReplica {
                 namespace,
-                peer: Peer::from_store(store),
-            })),
-            on_insert_sender: Arc::new(RwLock::new(None)),
-            content_status_cb: Arc::new(RwLock::new(None)),
+                peer: RwLock::new(Peer::from_store(store)),
+                on_insert_sender: RwLock::new(None),
+                content_status_cb: RwLock::new(None),
+                closed: AtomicBool::new(false),
+            }),
         }
+    }
+
+    /// Mark the replica as closed, prohibiting any further operations.
+    ///
+    /// This method is not public. Use [store::Store::close_replica] instead.
+    pub(crate) fn close(&self) {
+        self.unsubscribe();
+        self.inner.closed.store(true, atomic::Ordering::Release);
     }
 
     /// Subscribe to insert events.
@@ -124,7 +137,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// the receiver to be received from.
     // TODO: Allow to clear a previous subscription?
     pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
-        let mut on_insert_sender = self.on_insert_sender.write();
+        let mut on_insert_sender = self.inner.on_insert_sender.write();
         match &*on_insert_sender {
             Some(_sender) => None,
             None => {
@@ -137,7 +150,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Remove the subscription.
     pub fn unsubscribe(&self) -> bool {
-        self.on_insert_sender.write().take().is_some()
+        self.inner.on_insert_sender.write().take().is_some()
     }
 
     /// Set the content status callback.
@@ -148,7 +161,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         &self,
         cb: Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>,
     ) -> bool {
-        let mut content_status_cb = self.content_status_cb.write();
+        let mut content_status_cb = self.inner.content_status_cb.write();
         match &*content_status_cb {
             Some(_cb) => false,
             None => {
@@ -156,6 +169,23 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 true
             }
         }
+    }
+
+    fn ensure_open(&self) -> Result<(), InsertError<S>> {
+        if self.closed() {
+            Err(InsertError::Closed)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Returns true if the replica is closed.
+    ///
+    /// If a replica is closed, no further operations can be performed. A replica cannot be closed
+    /// manually, it must be closed via [`store::Store::close_replica`] or
+    /// [`store::Store::remove_replica`]
+    pub fn closed(&self) -> bool {
+        self.inner.closed.load(atomic::Ordering::Acquire)
     }
 
     /// Insert a new record at the given key.
@@ -175,10 +205,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         if len == 0 || hash == Hash::EMPTY {
             return Err(InsertError::EntryIsEmpty);
         }
+        self.ensure_open()?;
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
-        let signed_entry = entry.sign(&self.inner.read().namespace, author);
+        let signed_entry = entry.sign(&self.inner.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -193,9 +224,10 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         prefix: impl AsRef<[u8]>,
         author: &Author,
     ) -> Result<usize, InsertError<S>> {
+        self.ensure_open()?;
         let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
         let entry = Entry::new_empty(id);
-        let signed_entry = entry.sign(&self.inner.read().namespace, author);
+        let signed_entry = entry.sign(&self.inner.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -212,6 +244,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         received_from: PeerIdBytes,
         content_status: ContentStatus,
     ) -> Result<usize, InsertError<S>> {
+        self.ensure_open()?;
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
@@ -233,8 +266,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
-        let mut inner = self.inner.write();
-        let store = inner.peer.store();
+        let mut peer = self.inner.peer.write();
+        let store = peer.store();
         validate_entry(
             system_time_now(),
             store,
@@ -243,16 +276,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             &origin,
         )?;
 
-        let outcome = inner.peer.put(entry.clone()).map_err(InsertError::Store)?;
+        let outcome = peer.put(entry.clone()).map_err(InsertError::Store)?;
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
             InsertOutcome::NotInserted => return Err(InsertError::NewerEntryExists),
         };
 
-        drop(inner);
+        drop(peer);
 
-        if let Some(sender) = self.on_insert_sender.read().as_ref() {
+        if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
             sender.send((origin.clone(), entry)).ok();
         }
 
@@ -283,6 +316,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         author: &Author,
         data: impl AsRef<[u8]>,
     ) -> anyhow::Result<Hash> {
+        self.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
         self.insert(key, author, hash, len)?;
@@ -291,13 +325,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the identifier for an entry in this replica.
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        let inner = self.inner.read();
-        RecordIdentifier::new(inner.namespace.id(), author.id(), key)
+        RecordIdentifier::new(self.inner.namespace.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(&self) -> Result<crate::ranger::Message<SignedEntry>, S::Error> {
-        self.inner.read().peer.initial_message()
+    pub fn sync_initial_message(
+        &self,
+    ) -> Result<crate::ranger::Message<SignedEntry>, anyhow::Error> {
+        self.ensure_open()?;
+        self.inner.peer.read().initial_message().map_err(Into::into)
     }
 
     /// Process a set reconciliation message from a remote peer.
@@ -307,46 +343,52 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         &self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
-    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, S::Error> {
+    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
+        self.ensure_open()?;
         let expected_namespace = self.namespace();
         let now = system_time_now();
-        let reply = self.inner.write().peer.process_message(
-            message,
-            |store, entry, content_status| {
-                let origin = InsertOrigin::Sync {
-                    from: from_peer,
-                    content_status,
-                };
-                if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
-                    if let Some(sender) = self.on_insert_sender.read().as_ref() {
-                        sender.send((origin, entry.clone())).ok();
+        let reply = self
+            .inner
+            .peer
+            .write()
+            .process_message(
+                message,
+                |store, entry, content_status| {
+                    let origin = InsertOrigin::Sync {
+                        from: from_peer,
+                        content_status,
+                    };
+                    if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
+                        if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
+                            sender.send((origin, entry.clone())).ok();
+                        }
+                        true
+                    } else {
+                        false
                     }
-                    true
-                } else {
-                    false
-                }
-            },
-            |_store, entry| {
-                if let Some(cb) = self.content_status_cb.read().as_ref() {
-                    cb(entry.content_hash())
-                } else {
-                    ContentStatus::Missing
-                }
-            },
-        )?;
+                },
+                |_store, entry| {
+                    if let Some(cb) = self.inner.content_status_cb.read().as_ref() {
+                        cb(entry.content_hash())
+                    } else {
+                        ContentStatus::Missing
+                    }
+                },
+            )
+            .map_err(Into::into)?;
 
         Ok(reply)
     }
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn namespace(&self) -> NamespaceId {
-        self.inner.read().namespace.id()
+        self.inner.namespace.id()
     }
 
     /// Get the byte represenation of the [`Namespace`] key for this replica.
     // TODO: Why return [u8; 32] and not `Namespace` here?
     pub fn secret_key(&self) -> [u8; 32] {
-        self.inner.read().namespace.to_bytes()
+        self.inner.namespace.to_bytes()
     }
 }
 
@@ -396,6 +438,9 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Attempted to insert an empty entry.
     #[error("Attempted to insert an empty entry")]
     EntryIsEmpty,
+    /// The replica is closed, no operations may be performed.
+    #[error("replica is closed")]
+    Closed,
 }
 
 /// Reason why entry validation failed
@@ -1065,8 +1110,8 @@ mod tests {
         // Get Range of all should return all latest
         let entries_second: Vec<_> = replica
             .inner
-            .read()
             .peer
+            .read()
             .store()
             .get_range(Range::new(
                 RecordIdentifier::default(),
@@ -1464,23 +1509,6 @@ mod tests {
     }
 
     #[test]
-    fn test_prefix_delete_memory() -> Result<()> {
-        let store = store::memory::Store::default();
-        test_prefix_delete(store)?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "fs-store")]
-    #[test]
-    fn test_prefix_delete_fs() -> Result<()> {
-        let dbfile = tempfile::NamedTempFile::new()?;
-        let store = store::fs::Store::new(dbfile.path())?;
-        test_prefix_delete(store)?;
-        Ok(())
-    }
-
-    #[test]
     fn test_insert_empty() -> Result<()> {
         let store = store::memory::Store::default();
         let mut rng = rand::thread_rng();
@@ -1490,6 +1518,22 @@ mod tests {
         let hash = Hash::new(b"");
         let res = replica.insert(b"foo", &alice, hash, 0);
         assert!(matches!(res, Err(InsertError::EntryIsEmpty)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefix_delete_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_prefix_delete(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_prefix_delete_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_prefix_delete(store)?;
         Ok(())
     }
 
@@ -1527,7 +1571,6 @@ mod tests {
         let bob_store = store::memory::Store::default();
 
         test_replica_sync_delete(alice_store, bob_store)?;
-        Ok(())
     }
 
     #[cfg(feature = "fs-store")]
@@ -1538,8 +1581,6 @@ mod tests {
         let bob_dbfile = tempfile::NamedTempFile::new()?;
         let bob_store = store::fs::Store::new(bob_dbfile.path())?;
         test_replica_sync_delete(alice_store, bob_store)?;
-
-        Ok(())
     }
 
     fn test_replica_sync_delete<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
@@ -1576,11 +1617,65 @@ mod tests {
     }
 
     #[test]
+    fn test_replica_remove_memory() -> Result<()> {
+        let alice_store = store::memory::Store::default();
+        test_replica_remove(alice_store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_remove_fs() -> Result<()> {
+        let alice_dbfile = tempfile::NamedTempFile::new()?;
+        let alice_store = store::fs::Store::new(alice_dbfile.path())?;
+        test_replica_remove(alice_store)
+    }
+
+    fn test_replica_remove<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let namespace = Namespace::new(&mut rng);
+        let author = Author::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        // insert entry
+        let hash = replica.hash_and_insert(b"foo", &author, b"bar")?;
+        let res = store
+            .get_many(namespace.id(), GetFilter::All)?
+            .collect::<Vec<_>>();
+        assert_eq!(res.len(), 1);
+
+        // remove replica
+        store.remove_replica(&namespace.id())?;
+        let res = store
+            .get_many(namespace.id(), GetFilter::All)?
+            .collect::<Vec<_>>();
+        assert_eq!(res.len(), 0);
+
+        // may not insert on removed replica
+        let res = replica.insert(b"foo", &author, hash, 3);
+        assert!(matches!(res, Err(InsertError::Closed)));
+        let res = store
+            .get_many(namespace.id(), GetFilter::All)?
+            .collect::<Vec<_>>();
+        assert_eq!(res.len(), 0);
+
+        // may not reopen removed replica
+        let res = store.open_replica(&namespace.id())?;
+        assert!(res.is_none());
+
+        // may recreate replica
+        let replica = store.new_replica(namespace.clone())?;
+        replica.insert(b"foo", &author, hash, 3)?;
+        let res = store
+            .get_many(namespace.id(), GetFilter::All)?
+            .collect::<Vec<_>>();
+        assert_eq!(res.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_replica_delete_edge_cases_memory() -> Result<()> {
         let store = store::memory::Store::default();
-
-        test_replica_delete_edge_cases(store)?;
-        Ok(())
+        test_replica_delete_edge_cases(store)
     }
 
     #[cfg(feature = "fs-store")]
@@ -1588,9 +1683,7 @@ mod tests {
     fn test_replica_delete_edge_cases_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
         let store = store::fs::Store::new(dbfile.path())?;
-        test_replica_delete_edge_cases(store)?;
-
-        Ok(())
+        test_replica_delete_edge_cases(store)
     }
 
     fn test_replica_delete_edge_cases<S: store::Store>(store: S) -> Result<()> {
@@ -1727,18 +1820,14 @@ mod tests {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
         // Sync alice - bob
-        let mut next_to_bob = Some(alice.sync_initial_message().map_err(Into::into)?);
+        let mut next_to_bob = Some(alice.sync_initial_message()?);
         let mut rounds = 0;
         while let Some(msg) = next_to_bob.take() {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
-            if let Some(msg) = bob
-                .sync_process_message(msg, alice_peer_id)
-                .map_err(Into::into)?
-            {
-                next_to_bob = alice
-                    .sync_process_message(msg, bob_peer_id)
-                    .map_err(Into::into)?;
+            println!("round {}", rounds);
+            if let Some(msg) = bob.sync_process_message(msg, alice_peer_id)? {
+                next_to_bob = alice.sync_process_message(msg, bob_peer_id)?
             }
         }
         Ok(())

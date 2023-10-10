@@ -593,20 +593,35 @@ impl RpcMsg<ProviderService> for DocStartSyncRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocStartSyncResponse {}
 
-/// Stop the live sync for a doc.
+/// Stop the live sync for a doc, and optionally delete the document.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocStopSyncRequest {
+pub struct DocLeaveRequest {
     /// The document id
     pub doc_id: NamespaceId,
 }
 
-impl RpcMsg<ProviderService> for DocStopSyncRequest {
-    type Response = RpcResult<DocStopSyncResponse>;
+impl RpcMsg<ProviderService> for DocLeaveRequest {
+    type Response = RpcResult<DocLeaveResponse>;
 }
 
-/// Response to [`DocStopSyncRequest`]
+/// Response to [`DocLeaveRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocStopSyncResponse {}
+pub struct DocLeaveResponse {}
+
+/// Stop the live sync for a doc, and optionally delete the document.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDropRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocDropRequest {
+    type Response = RpcResult<DocDropResponse>;
+}
+
+/// Response to [`DocDropRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDropResponse {}
 
 /// Set an entry in a document
 #[derive(Serialize, Deserialize, Debug)]
@@ -819,13 +834,14 @@ pub enum ProviderRequest {
     DocInfo(DocInfoRequest),
     DocList(DocListRequest),
     DocCreate(DocCreateRequest),
+    DocDrop(DocDropRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
     DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
-    DocStopSync(DocStopSyncRequest),
+    DocLeave(DocLeaveRequest),
     DocShare(DocShareRequest),
     DocSubscribe(DocSubscribeRequest),
 
@@ -860,6 +876,7 @@ pub enum ProviderResponse {
     DocInfo(RpcResult<DocInfoResponse>),
     DocList(RpcResult<DocListResponse>),
     DocCreate(RpcResult<DocCreateResponse>),
+    DocDrop(RpcResult<DocDropResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
@@ -867,7 +884,7 @@ pub enum ProviderResponse {
     DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
-    DocStopSync(RpcResult<DocStopSyncResponse>),
+    DocLeave(RpcResult<DocLeaveResponse>),
     DocSubscribe(RpcResult<DocSubscribeResponse>),
 
     AuthorList(RpcResult<AuthorListResponse>),

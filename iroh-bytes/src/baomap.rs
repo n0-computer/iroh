@@ -251,7 +251,7 @@ pub trait Store: ReadableStore + PartialMap {
     ///
     /// Sweeping might take long, but it can safely be done in the background.
     fn gc_sweep(&self) -> LocalBoxStream<'_, GcSweepEvent> {
-        let blobs = self.blobs();
+        let blobs = self.blobs().chain(self.partial_blobs());
         Gen::new(|co| async move {
             let mut count = 0;
             for hash in blobs {
@@ -606,4 +606,13 @@ pub enum ValidateProgress {
     AllDone,
     /// We got an error and need to abort.
     Abort(RpcError),
+}
+
+/// Database events
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// A GC was started
+    GcStarted,
+    /// A GC was completed
+    GcCompleted,
 }

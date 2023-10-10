@@ -30,11 +30,12 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
-    DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest, DocListRequest,
-    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest,
-    DocTicket, GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
+    DocLeaveRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
+    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
+    ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -138,6 +139,16 @@ where
             rpc: self.rpc.clone(),
         };
         Ok(doc)
+    }
+
+    /// Delete a document from the local node.
+    ///
+    /// This is a destructive operation. Both the document secret key and all entries in the
+    /// document will be permanently deleted from the node's storage. Content blobs will be deleted
+    /// through garbage collection unless they are referenced from another document or tag.
+    pub async fn drop_doc(&self, doc_id: NamespaceId) -> Result<()> {
+        self.rpc.rpc(DocDropRequest { doc_id }).await??;
+        Ok(())
     }
 
     /// Import a document from a ticket and join all peers in the ticket.
@@ -627,11 +638,8 @@ where
     }
 
     /// Stop the live sync for this document.
-    pub async fn stop_sync(&self) -> Result<()> {
-        let _res = self
-            .rpc
-            .rpc(DocStopSyncRequest { doc_id: self.id })
-            .await??;
+    pub async fn leave(&self) -> Result<()> {
+        let _res = self.rpc.rpc(DocLeaveRequest { doc_id: self.id }).await??;
         Ok(())
     }
 

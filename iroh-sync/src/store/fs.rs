@@ -147,7 +147,7 @@ impl super::Store for Store {
 
     fn close_replica(&self, namespace_id: &NamespaceId) {
         if let Some(replica) = self.replicas.write().remove(namespace_id) {
-            replica.unsubscribe();
+            replica.close();
         }
     }
 
@@ -204,6 +204,22 @@ impl super::Store for Store {
 
         self.replicas.write().insert(id, replica.clone());
         Ok(replica)
+    }
+
+    fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
+        self.close_replica(namespace);
+        self.replicas.write().remove(namespace);
+        let start = range_start(namespace);
+        let end = range_end(namespace);
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
+            record_table.drain(start..=end)?;
+            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            namespace_table.remove(namespace.as_bytes())?;
+        }
+        write_tx.commit()?;
+        Ok(())
     }
 
     fn get_many(
@@ -562,7 +578,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 // iterator for all entries in replica
                 let iter = RangeIterator::with_range(
                     &self.store.db,
-                    |table| table.range(start..end),
+                    |table| table.range(start..=end),
                     RangeFilter::None,
                 )?;
                 // empty iterator, returns nothing
@@ -598,7 +614,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 // iterator for entries from range.x to end
                 let iter2 = RangeIterator::with_range(
                     &self.store.db,
-                    |table| table.range(start..end),
+                    |table| table.range(start..=end),
                     RangeFilter::None,
                 )?;
                 iter.chain(iter2)

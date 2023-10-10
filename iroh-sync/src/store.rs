@@ -73,6 +73,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// instance from the store's cache.
     fn close_replica(&self, namespace: &NamespaceId);
 
+    /// Remove a replica.
+    ///
+    /// Completely removes a replica and deletes both the namespace private key and all document
+    /// entries.
+    fn remove_replica(&self, namespace: &NamespaceId) -> Result<()>;
+
     /// Create a new author key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
         let author = Author::new(rng);

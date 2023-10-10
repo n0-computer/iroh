@@ -53,7 +53,7 @@ impl super::Store for Store {
 
     fn close_replica(&self, namespace_id: &NamespaceId) {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
-            replica.unsubscribe();
+            replica.close();
         }
     }
 
@@ -98,6 +98,13 @@ impl super::Store for Store {
             .write()
             .insert(replica.namespace(), replica.clone());
         Ok(replica)
+    }
+
+    fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
+        self.close_replica(namespace);
+        self.replicas.write().remove(namespace);
+        self.replica_records.write().remove(namespace);
+        Ok(())
     }
 
     fn get_many(
