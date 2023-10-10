@@ -2269,48 +2269,31 @@ impl Actor {
                 .unwrap_or_default();
         di.last_ping_from.replace(src);
         di.last_ping_time.replace(Instant::now());
-        let is_derp = src.is_derp();
-
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
         // over DERP (in which case ip_dst is also a DERP address).
         // But if the ping was over UDP (ip_dst is not a DERP address), then dst_key
         // will be zero here, but that's fine: send_disco_message only requires
         // a dstKey if the dst ip:port is DERP.
 
-        if is_derp {
-            assert!(derp_node_src.is_some());
-        } else {
-            assert!(derp_node_src.is_none());
-        }
-
-        let (dst_key, insert) = match derp_node_src {
+        let dst_key = match derp_node_src {
             Some(dst_key) => {
-                // From Derp
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (dst_key, true)
-                } else {
-                    (dst_key, false)
-                }
+                assert!(src.is_derp());
+                dst_key
             }
             None => {
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&di.node_key) {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (di.node_key, true)
-                } else {
-                    (di.node_key, false)
-                }
+                assert!(!src.is_derp());
+                di.node_key
             }
         };
 
-        if insert {
-            self.peer_map.set_node_key_for_ip_port(&src, &dst_key);
+        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
+            if ep.add_candidate_endpoint(src, dm.tx_id) {
+                debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+                return;
+            }
+            if let SendAddr::Udp(addr) = src {
+                self.peer_map.set_node_key_for_ip_port(addr, &dst_key);
+            }
         }
 
         if !likely_heart_beat {
