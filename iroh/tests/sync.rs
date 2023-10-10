@@ -337,6 +337,7 @@ async fn doc_delete() -> Result<()> {
     let bytes = client.blobs.read_to_bytes(hash).await;
     assert!(bytes.is_err());
     node.shutdown();
+    Ok(())
 }
 
 #[tokio::test]
