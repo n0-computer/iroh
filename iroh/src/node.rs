@@ -83,15 +83,22 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+/// Default interval between GC runs.
+const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 /// Policy for garbage collection.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GcPolicy {
     /// Garbage collection is disabled.
-    #[default]
     Disabled,
     /// Garbage collection is run at the given interval.
     Interval(Duration),
+}
+
+impl Default for GcPolicy {
+    fn default() -> Self {
+        Self::Interval(DEFAULT_GC_INTERVAL)
+    }
 }
 
 /// Builder for the [`Node`].
