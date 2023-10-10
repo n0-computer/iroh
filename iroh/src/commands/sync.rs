@@ -354,24 +354,25 @@ impl AuthorCommands {
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
-    let decode_failed = |_err: std::string::FromUtf8Error| "<invalid UTF-8>".to_string();
+    let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
+    let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
 
     match mode {
         DisplayContentMode::Auto => {
             if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
                 // small content: read fully as UTF-8
                 let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
-                String::from_utf8(bytes.into()).map_err(decode_failed)
+                Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
             } else {
                 // large content: read just the first part as UTF-8
                 let mut blob_reader = doc.read(entry).await.map_err(read_failed)?;
-                let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize);
+                let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize + 5);
 
                 blob_reader
                     .read_buf(&mut buf)
                     .await
                     .map_err(|io_err| read_failed(io_err.into()))?;
-                let mut repr = String::from_utf8(buf).map_err(decode_failed)?;
+                let mut repr = as_utf8(buf).unwrap_or_else(encode_hex);
                 // let users know this is not shown in full
                 repr.push_str("...");
                 Ok(repr)
@@ -380,7 +381,7 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
         DisplayContentMode::Content => {
             // read fully as UTF-8
             let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
-            String::from_utf8(bytes.into()).map_err(decode_failed)
+            Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
         DisplayContentMode::Hash => {
             let hash = entry.record().content_hash();
