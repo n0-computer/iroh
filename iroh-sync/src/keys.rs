@@ -221,13 +221,13 @@ impl fmt::Debug for Author {
 
 impl fmt::Debug for NamespacePublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespaceId({})", self)
+        write!(f, "NamespacePublicKey({})", self)
     }
 }
 
 impl fmt::Debug for AuthorPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuthorId({})", self)
+        write!(f, "AuthorPublicKey({})", self)
     }
 }
 
@@ -410,7 +410,7 @@ impl AuthorId {
     /// Convert into [`AuthorPublicKey`].
     ///
     /// Fails if the bytes of this [`AuthorId`] are not a valid [`ed25519_dalek`] curve point.
-    pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<AuthorPublicKey, SignatureError> {
+    pub fn into_public_key(&self) -> Result<AuthorPublicKey, SignatureError> {
         AuthorPublicKey::from_bytes(&self.0)
     }
 }
@@ -439,7 +439,7 @@ impl NamespaceId {
     /// Convert into [`NamespacePublicKey`].
     ///
     /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
-    pub fn into_public_key<S: PublicKeyStore>(&self) -> Result<NamespacePublicKey, SignatureError> {
+    pub fn into_public_key(&self) -> Result<NamespacePublicKey, SignatureError> {
         NamespacePublicKey::from_bytes(&self.0)
     }
 }

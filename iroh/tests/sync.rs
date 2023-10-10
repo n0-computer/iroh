@@ -306,6 +306,39 @@ async fn sync_subscribe_stop() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn sync_drop_doc() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt, 0).await?;
+    let client = node.client();
+
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
+
+    let mut sub = doc.subscribe().await?;
+    doc.set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
+        .await?;
+    let ev = sub.next().await;
+    assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
+
+    client.docs.drop_doc(doc.id()).await?;
+    let res = doc.get_one(author, b"foo".to_vec()).await;
+    assert!(res.is_err());
+    let res = doc
+        .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
+        .await;
+    assert!(res.is_err());
+    let res = client.docs.get(doc.id()).await?;
+    assert!(res.is_none());
+    let ev = sub.next().await;
+    assert!(matches!(ev, Some(Ok(LiveEvent::Closed))));
+    let ev = sub.next().await;
+    assert!(ev.is_none());
+
+    Ok(())
+}
+
 async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
+use dialoguer::Confirm;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::HumanBytes;
 use iroh::{
@@ -123,6 +124,26 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
     },
+    /// Stop syncing a document.
+    Leave {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        doc: Option<NamespaceId>,
+    },
+    /// Delete a document from the local node.
+    ///
+    /// This is a destructive operation. Both the document secret key and all entries in the
+    /// document will be permanently deleted from the node's storage. Content blobs will be deleted
+    /// through garbage collection unless they are referenced from another document or tag.
+    Drop {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        doc: Option<NamespaceId>,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -240,6 +261,11 @@ impl DocCommands {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
             }
+            Self::Leave { doc } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                doc.leave().await?;
+                println!("Doc {} is now inactive", fmt_short(doc.id()));
+            }
             Self::Watch { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let mut stream = doc.subscribe().await?;
@@ -305,7 +331,26 @@ impl DocCommands {
                         LiveEvent::NeighborDown(peer) => {
                             println!("neighbor peer down: {peer:?}");
                         }
+                        LiveEvent::Closed => println!("document closed"),
                     }
+                }
+            }
+            Self::Drop { doc } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                println!(
+                    "Deleting a document will permanently remove the document secret key, all document entries, \n\
+                    and all content blobs which are not referenced from other docs or tags."
+                );
+                let prompt = format!("Delete document {}?", fmt_short(doc.id()));
+                if Confirm::new()
+                    .with_prompt(prompt)
+                    .interact()
+                    .unwrap_or(false)
+                {
+                    iroh.docs.drop_doc(doc.id()).await?;
+                    println!("Doc {} has been deleted.", fmt_short(doc.id()));
+                } else {
+                    println!("Aborted.")
                 }
             }
         }

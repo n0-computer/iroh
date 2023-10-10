@@ -13,12 +13,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
-        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
-        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocDropRequest, DocDropResponse, DocGetManyRequest,
+        DocGetManyResponse, DocGetOneRequest, DocGetOneResponse, DocImportRequest,
+        DocImportResponse, DocInfoRequest, DocInfoResponse, DocLeaveRequest, DocLeaveResponse,
+        DocListRequest, DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest,
+        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -61,6 +61,14 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocCreateResponse {
             id: doc.namespace(),
         })
+    }
+
+    pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
+        let DocDropRequest { doc_id } = req;
+        let _replica = self.get_replica(&doc_id)?;
+        self.leave(doc_id, true).await?;
+        self.store.remove_replica(&doc_id)?;
+        Ok(DocDropResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
@@ -111,10 +119,10 @@ impl<S: Store> SyncEngine<S> {
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
         let (s, r) = flume::bounded(64);
+        let s2 = s.clone();
         let res = self
             .live
             .subscribe(req.doc_id, {
-                let s = s.clone();
                 move |event| {
                     let s = s.clone();
                     async move {
@@ -130,7 +138,7 @@ impl<S: Store> SyncEngine<S> {
             .await;
         match res {
             Err(err) => {
-                s.send_async(Err(err.into())).await.ok();
+                s2.send_async(Err(err.into())).await.ok();
             }
             Ok(_token) => {}
         };
@@ -157,10 +165,11 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocStartSyncResponse {})
     }
 
-    pub async fn doc_stop_sync(&self, req: DocStopSyncRequest) -> RpcResult<DocStopSyncResponse> {
-        let DocStopSyncRequest { doc_id } = req;
-        self.stop_sync(doc_id).await?;
-        Ok(DocStopSyncResponse {})
+    pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
+        let DocLeaveRequest { doc_id } = req;
+        let _replica = self.get_replica(&doc_id)?;
+        self.leave(doc_id, false).await?;
+        Ok(DocLeaveResponse {})
     }
 
     pub async fn doc_set<B: BaoStore>(

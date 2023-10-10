@@ -53,6 +53,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 comfy-table = { version = "7.0.1", optional = true }
 config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"], optional = true }
 console = { version = "0.15.5", optional = true }
+dialoguer = { version = "0.11.0", default-features = false, optional = true }
 dirs-next = { version = "2.0.0", optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 human-time = { version = "0.1.6", optional = true }
@@ -71,7 +72,7 @@ reflink-copy = { version = "0.1.8", optional = true }
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer"]
 metrics = ["iroh-metrics"]
 mem-db = []
 flat-db = ["reflink-copy"]
