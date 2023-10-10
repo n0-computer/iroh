@@ -175,6 +175,8 @@ impl Endpoint {
     /// Returns the derp region of this endpoint
     pub fn derp_region(&self) -> Option<u16> {
         self.derp_region
+            .as_ref()
+            .map(|(region_id, _state)| *region_id)
     }
 
     /// Adds a derp region for this endpoint
@@ -187,7 +189,7 @@ impl Endpoint {
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
-            return (None, self.derp_region, false);
+            return (None, self.derp_region(), false);
         }
         match self.best_addr {
             Some(ref best_addr) => {
@@ -198,7 +200,7 @@ impl Endpoint {
                         now, best_addr, self.trust_best_addr_until
                     );
 
-                    (Some(best_addr.addr), self.derp_region, true)
+                    (Some(best_addr.addr), self.derp_region(), true)
                 } else {
                     // Address is current and can be used
                     (Some(best_addr.addr), None, false)
@@ -209,7 +211,7 @@ impl Endpoint {
 
                 // Provide backup derp region if no known latency or no addr.
                 let derp_region = if should_ping || addr.is_none() {
-                    self.derp_region
+                    self.derp_region()
                 } else {
                     None
                 };
@@ -486,14 +488,12 @@ impl Endpoint {
             }
         }
 
-        let derp_region = self.derp_region;
-
         if send_call_me_maybe && (sent_any || !have_endpoints) {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
             // of potential UDP addresses.
             //
             // Otherwise it is used for hole punching, as described below.
-            if let Some(derp_region) = derp_region {
+            if let Some(derp_region) = self.derp_region() {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
                 // it doesn't know already) and then send a CallMeMaybe
                 // message to our peer via DERP informing them that we've
@@ -523,7 +523,7 @@ impl Endpoint {
             }
         }
 
-        if n.derp_region.is_some() && n.derp_region != self.derp_region {
+        if n.derp_region.is_some() && n.derp_region != self.derp_region() {
             debug!(
                 "Changing derp region for {:?} from {:?} to {:?}",
                 self.public_key, self.derp_region, n.derp_region
@@ -949,7 +949,7 @@ impl Endpoint {
         PeerAddr {
             peer_id: self.public_key,
             info: AddrInfo {
-                derp_region: self.derp_region,
+                derp_region: self.derp_region(),
                 direct_addresses,
             },
         }
@@ -1376,6 +1376,10 @@ mod tests {
 
     #[test]
     fn test_endpoint_infos() {
+        let new_relay_and_state = |region_id: Option<u16>| {
+            region_id.map(|region_id| (region_id, EndpointState::default()))
+        };
+
         // endpoint with a `best_addr` that has a latency
         let pong_src = "0.0.0.0:1".parse().unwrap();
         let latency = Duration::from_millis(50);
@@ -1404,7 +1408,7 @@ mod tests {
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     public_key: key.public(),
                     last_full_ping: None,
-                    derp_region: Some(0),
+                    derp_region: new_relay_and_state(Some(0)),
                     best_addr: Some(AddrLatency {
                         addr: socket_addr,
                         latency: Some(latency),
@@ -1445,7 +1449,7 @@ mod tests {
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 public_key: key.public(),
                 last_full_ping: None,
-                derp_region: Some(0),
+                derp_region: new_relay_and_state(Some(0)),
                 best_addr: None,
                 best_addr_at: None,
                 trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
@@ -1468,7 +1472,7 @@ mod tests {
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 public_key: key.public(),
                 last_full_ping: None,
-                derp_region: Some(0),
+                derp_region: new_relay_and_state(Some(0)),
                 best_addr: None,
                 best_addr_at: None,
                 trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
@@ -1524,7 +1528,7 @@ mod tests {
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     public_key: key.public(),
                     last_full_ping: None,
-                    derp_region: Some(0),
+                    derp_region: new_relay_and_state(Some(0)),
                     best_addr: Some(AddrLatency {
                         addr: socket_addr,
                         latency: Some(Duration::from_millis(80)),
@@ -1544,7 +1548,7 @@ mod tests {
             EndpointInfo {
                 id: a_endpoint.id,
                 public_key: a_endpoint.public_key,
-                derp_region: a_endpoint.derp_region,
+                derp_region: a_endpoint.derp_region(),
                 addrs: Vec::from([(a_socket_addr, Some(latency))]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
@@ -1552,7 +1556,7 @@ mod tests {
             EndpointInfo {
                 id: b_endpoint.id,
                 public_key: b_endpoint.public_key,
-                derp_region: b_endpoint.derp_region,
+                derp_region: b_endpoint.derp_region(),
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
@@ -1560,7 +1564,7 @@ mod tests {
             EndpointInfo {
                 id: c_endpoint.id,
                 public_key: c_endpoint.public_key,
-                derp_region: c_endpoint.derp_region,
+                derp_region: c_endpoint.derp_region(),
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: None,
@@ -1568,7 +1572,7 @@ mod tests {
             EndpointInfo {
                 id: d_endpoint.id,
                 public_key: d_endpoint.public_key,
-                derp_region: d_endpoint.derp_region,
+                derp_region: d_endpoint.derp_region(),
                 addrs: Vec::from([(d_socket_addr, Some(latency))]),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
