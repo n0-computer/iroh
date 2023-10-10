@@ -607,3 +607,12 @@ pub enum ValidateProgress {
     /// We got an error and need to abort.
     Abort(RpcError),
 }
+
+/// Database events
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// A GC was started
+    GcStarted,
+    /// A GC was completed
+    GcCompleted,
+}

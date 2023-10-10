@@ -1,4 +1,4 @@
-#![cfg(all(feature = "mem-db", feature = "iroh-collection"))]
+#![cfg(feature = "mem-db")]
 use std::{
     io::{self, Cursor},
     path::PathBuf,
@@ -15,6 +15,7 @@ use bao_tree::{
     ChunkRanges,
 };
 use bytes::Bytes;
+use futures::FutureExt;
 use iroh::{baomap, node::Node};
 use iroh_io::AsyncSliceWriter;
 use rand::RngCore;
@@ -22,7 +23,7 @@ use testdir::testdir;
 
 use iroh_bytes::{
     baomap::{EntryStatus, Map, PartialMap, PartialMapEntry, Store, TempTag},
-    collection::LinkSeq,
+    hashseq::HashSeq,
     util::{runtime, BlobFormat, HashAndFormat, Tag},
     IROH_BLOCK_SIZE,
 };
@@ -57,25 +58,54 @@ where
         .unwrap()
 }
 
+async fn attach_db_events<D: iroh_bytes::baomap::Store, S: iroh_sync::store::Store>(
+    node: &Node<D, S>,
+) -> flume::Receiver<iroh_bytes::baomap::Event> {
+    let (db_send, db_recv) = flume::unbounded();
+    node.subscribe(move |ev| {
+        let db_send = db_send.clone();
+        async move {
+            if let iroh::node::Event::Db(ev) = ev {
+                db_send.into_send_async(ev).await.ok();
+            }
+        }
+        .boxed()
+    })
+    .await
+    .unwrap();
+    db_recv
+}
+
 async fn gc_test_node() -> (
     Node<baomap::mem::Store, iroh_sync::store::memory::Store>,
     baomap::mem::Store,
+    flume::Receiver<iroh_bytes::baomap::Event>,
 ) {
     let rt = test_runtime();
     let bao_store = baomap::mem::Store::new(rt.clone());
     let node = wrap_in_node(bao_store.clone(), rt).await;
-    (node, bao_store)
+    let db_recv = attach_db_events(&node).await;
+    (node, bao_store, db_recv)
 }
 
-async fn step() {
-    tokio::time::sleep(Duration::from_millis(100)).await;
+async fn step(evs: &flume::Receiver<iroh_bytes::baomap::Event>) {
+    while let Ok(ev) = evs.recv_async().await {
+        if let iroh_bytes::baomap::Event::GcCompleted = ev {
+            break;
+        }
+    }
+    while let Ok(ev) = evs.recv_async().await {
+        if let iroh_bytes::baomap::Event::GcCompleted = ev {
+            break;
+        }
+    }
 }
 
 /// Test the absolute basics of gc, temp tags and tags for blobs.
 #[tokio::test]
 async fn gc_basics() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
-    let (node, bao_store) = gc_test_node().await;
+    let (node, bao_store, evs) = gc_test_node().await;
     let data1 = create_test_data(1234);
     let tt1 = bao_store.import_bytes(data1, BlobFormat::RAW).await?;
     let data2 = create_test_data(5678);
@@ -83,13 +113,13 @@ async fn gc_basics() -> Result<()> {
     let h1 = *tt1.hash();
     let h2 = *tt2.hash();
     // temp tags are still there, so the entries should be there
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h1), EntryStatus::Complete);
     assert_eq!(bao_store.contains(&h2), EntryStatus::Complete);
 
     // drop the first tag, the entry should be gone after some time
     drop(tt1);
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h1), EntryStatus::NotFound);
     assert_eq!(bao_store.contains(&h2), EntryStatus::Complete);
 
@@ -99,12 +129,12 @@ async fn gc_basics() -> Result<()> {
         .set_tag(tag.clone(), Some(HashAndFormat::raw(h2)))
         .await?;
     drop(tt2);
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h2), EntryStatus::Complete);
 
     // delete the explicit tag, entry should be gone
     bao_store.set_tag(tag, None).await?;
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h2), EntryStatus::NotFound);
 
     node.shutdown();
@@ -116,14 +146,14 @@ async fn gc_basics() -> Result<()> {
 #[tokio::test]
 async fn gc_hashseq() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
-    let (node, bao_store) = gc_test_node().await;
+    let (node, bao_store, evs) = gc_test_node().await;
     let data1 = create_test_data(1234);
     let tt1 = bao_store.import_bytes(data1, BlobFormat::RAW).await?;
     let data2 = create_test_data(5678);
     let tt2 = bao_store.import_bytes(data2, BlobFormat::RAW).await?;
     let seq = vec![*tt1.hash(), *tt2.hash()]
         .into_iter()
-        .collect::<LinkSeq>();
+        .collect::<HashSeq>();
     let ttr = bao_store
         .import_bytes(seq.into_inner(), BlobFormat::HASHSEQ)
         .await?;
@@ -134,7 +164,7 @@ async fn gc_hashseq() -> Result<()> {
     drop(tt2);
 
     // there is a temp tag for the link seq, so it and its entries should be there
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h1), EntryStatus::Complete);
     assert_eq!(bao_store.contains(&h2), EntryStatus::Complete);
     assert_eq!(bao_store.contains(&hr), EntryStatus::Complete);
@@ -142,10 +172,10 @@ async fn gc_hashseq() -> Result<()> {
     // make a permanent tag for the link seq, then delete the temp tag. Entries should still be there.
     let tag = Tag::from("test");
     bao_store
-        .set_tag(tag.clone(), Some(HashAndFormat::collection(hr)))
+        .set_tag(tag.clone(), Some(HashAndFormat::hash_seq(hr)))
         .await?;
     drop(ttr);
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h1), EntryStatus::Complete);
     assert_eq!(bao_store.contains(&h2), EntryStatus::Complete);
     assert_eq!(bao_store.contains(&hr), EntryStatus::Complete);
@@ -154,14 +184,14 @@ async fn gc_hashseq() -> Result<()> {
     bao_store
         .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
         .await?;
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h1), EntryStatus::NotFound);
     assert_eq!(bao_store.contains(&h2), EntryStatus::NotFound);
     assert_eq!(bao_store.contains(&hr), EntryStatus::Complete);
 
     // delete the permanent tag, everything should be gone
     bao_store.set_tag(tag, None).await?;
-    step().await;
+    step(&evs).await;
     assert_eq!(bao_store.contains(&h1), EntryStatus::NotFound);
     assert_eq!(bao_store.contains(&h2), EntryStatus::NotFound);
     assert_eq!(bao_store.contains(&hr), EntryStatus::NotFound);
@@ -226,6 +256,7 @@ async fn gc_flat_basics() -> Result<()> {
 
     let bao_store = baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
     let node = wrap_in_node(bao_store.clone(), rt).await;
+    let evs = attach_db_events(&node).await;
     let data1 = create_test_data(123456);
     let tt1 = bao_store
         .import_bytes(data1.clone(), BlobFormat::RAW)
@@ -236,7 +267,7 @@ async fn gc_flat_basics() -> Result<()> {
         .await?;
     let seq = vec![*tt1.hash(), *tt2.hash()]
         .into_iter()
-        .collect::<LinkSeq>();
+        .collect::<HashSeq>();
     let ttr = bao_store
         .import_bytes(seq.into_inner(), BlobFormat::HASHSEQ)
         .await?;
@@ -245,7 +276,7 @@ async fn gc_flat_basics() -> Result<()> {
     let h2 = *tt2.hash();
     let hr = *ttr.hash();
 
-    step().await;
+    step(&evs).await;
     assert!(path(&h1).exists());
     assert!(outboard_path(&h1).exists());
     assert!(path(&h2).exists());
@@ -257,11 +288,11 @@ async fn gc_flat_basics() -> Result<()> {
     drop(tt2);
     let tag = Tag::from("test");
     bao_store
-        .set_tag(tag.clone(), Some(HashAndFormat::collection(*ttr.hash())))
+        .set_tag(tag.clone(), Some(HashAndFormat::hash_seq(*ttr.hash())))
         .await?;
     drop(ttr);
 
-    step().await;
+    step(&evs).await;
     assert!(path(&h1).exists());
     assert!(outboard_path(&h1).exists());
     assert!(path(&h2).exists());
@@ -272,7 +303,7 @@ async fn gc_flat_basics() -> Result<()> {
     bao_store
         .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
         .await?;
-    step().await;
+    step(&evs).await;
     assert!(!path(&h1).exists());
     assert!(!outboard_path(&h1).exists());
     assert!(!path(&h2).exists());
@@ -280,7 +311,7 @@ async fn gc_flat_basics() -> Result<()> {
     assert!(path(&hr).exists());
 
     bao_store.set_tag(tag, None).await?;
-    step().await;
+    step(&evs).await;
     assert!(!path(&hr).exists());
 
     node.shutdown();
@@ -365,6 +396,7 @@ async fn gc_flat_partial() -> Result<()> {
 
     let bao_store = baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
     let node = wrap_in_node(bao_store.clone(), rt).await;
+    let evs = attach_db_events(&node).await;
 
     let data1: Bytes = create_test_data(123456);
     let (_o1, h1) = bao_tree::io::outboard(&data1, IROH_BLOCK_SIZE);
@@ -376,13 +408,13 @@ async fn gc_flat_partial() -> Result<()> {
     let _ow = entry.outboard_mut().await?;
 
     // partial data and outboard files should be there
-    step().await;
+    step(&evs).await;
     assert!(count_partial_data(&h1)? == 1);
     assert!(count_partial_outboard(&h1)? == 1);
 
     drop(tt1);
     // partial data and outboard files should be gone
-    step().await;
+    step(&evs).await;
     assert!(count_partial_data(&h1)? == 0);
     assert!(count_partial_outboard(&h1)? == 0);
 
