@@ -640,7 +640,7 @@ impl Endpoint {
 
     /// Handles a Pong message (a reply to an earlier ping).
     ///
-    /// It report the address and key that should be inserted for the endpoint if any.
+    /// It reports the address and key that should be inserted for the endpoint if any.
     pub(super) async fn handle_pong_conn(
         &mut self,
         conn_disco_public: &PublicKey,
@@ -963,6 +963,10 @@ pub struct AddrLatency {
     pub latency: Option<Duration>,
 }
 
+/// An (Ip, Port) pair.
+///
+/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
+/// addresses include fields that can't be assumed consistent even within a single connection.
 #[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq)]
 #[display("{}", SocketAddr::from(*self))]
 pub struct IpPort {
@@ -970,8 +974,6 @@ pub struct IpPort {
     port: u16,
 }
 
-/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
-/// addresses include fields that can't be assumed consitent even within a single connection.
 impl From<SocketAddr> for IpPort {
     fn from(socket_addr: SocketAddr) -> Self {
         Self {
