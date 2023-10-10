@@ -1,6 +1,7 @@
 //! Utilities for filesystem operations.
 use std::{
     borrow::Cow,
+    fs::read_dir,
     path::{Component, Path, PathBuf},
 };
 
@@ -171,11 +172,70 @@ pub async fn load_secret_key(key_path: PathBuf) -> anyhow::Result<SecretKey> {
     }
 }
 
+/// Information about the content on a path
+#[derive(Debug, Clone)]
+pub struct PathContent {
+    /// total size of all the files in the directory
+    pub size: u64,
+    /// total number of files in the directory
+    pub files: u64,
+}
+
+/// Walks the directory to get the total size and number of files in directory or file
+pub fn path_content_info(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
+    path_content_info0(path)
+}
+
+fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
+    let mut files = 0;
+    let mut size = 0;
+    let path = path.as_ref();
+
+    if path.is_dir() {
+        for entry in read_dir(&path).context("read_dir err")? {
+            let path0 = entry.context("entry err")?.path();
+
+            match path_content_info0(path0) {
+                Ok(path_content) => {
+                    size += path_content.size;
+                    files += path_content.files;
+                }
+                Err(e) => bail!(e),
+            }
+        }
+    } else {
+        match path.try_exists() {
+            Ok(true) => {
+                size = path
+                    .metadata()
+                    .context(format!("metadata error: {path:?}"))?
+                    .len();
+                files = 1;
+            }
+            Ok(false) => {
+                tracing::warn!("Not including broking symlink at {path:?}");
+            }
+            Err(e) => {
+                bail!(e);
+            }
+        }
+    }
+    Ok(PathContent { size, files })
+}
+
 #[cfg(test)]
 mod tests {
 
     #[test]
     fn test_canonicalize_path() {
         assert_eq!(super::canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    }
+
+    #[test]
+    fn test_get_path_content() {
+        todo!();
+        // emtpy dir -> size = 0 files = 0
+        // dir 3 files -> size w/e files = 3
+        // dir 1 file dir 1 file dir 1 file -> size w/e files 3
     }
 }

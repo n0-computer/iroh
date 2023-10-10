@@ -18,6 +18,7 @@ use iroh::{
     client::quic::{Doc, Iroh},
     rpc_protocol::{DocTicket, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
+    util::fs::{path_content_info, PathContent},
 };
 use iroh_bytes::{
     provider::AddProgress,
@@ -380,6 +381,21 @@ impl DocCommands {
                 }
                 let root = canonicalize_path(&path)?.canonicalize()?;
                 let tag = tag_from_file_name(&root)?;
+
+                println!("Preparing import...");
+                // get information about the directory or file we are trying to import
+                // and confirm with the user that they still want to import the file
+                let PathContent { size, files } = path_content_info(root.clone())?;
+                let prompt = format!("Import {files} files totaling {}?", HumanBytes(size));
+                if !Confirm::new()
+                    .with_prompt(prompt)
+                    .interact()
+                    .unwrap_or(false)
+                {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+
                 let stream = iroh
                     .blobs
                     .add_from_path(
@@ -389,7 +405,6 @@ impl DocCommands {
                         WrapOption::NoWrap,
                     )
                     .await?;
-                // let (updates, progress) = doc.set_hash_streaming(author).await?;
                 let root_prefix = match root.parent() {
                     Some(p) => p.to_path_buf(),
                     None => PathBuf::new(),
@@ -398,7 +413,8 @@ impl DocCommands {
                     total_entries,
                     total_size,
                     duration,
-                } = import_coordinator(doc, author, root_prefix, prefix, stream).await?;
+                } = import_coordinator(doc, author, root_prefix, prefix, stream, size, files)
+                    .await?;
                 println!(
                     "Imported {} entries totaling {} in {}",
                     total_entries,
@@ -659,9 +675,16 @@ async fn import_coordinator(
     root: PathBuf,
     prefix: String,
     blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
+    expected_size: u64,
+    expected_entries: u64,
 ) -> Result<ImportStats> {
     let start = Instant::now();
-    let imp = ImportProgressBar::new(&root.display().to_string(), doc.id());
+    let imp = ImportProgressBar::new(
+        &root.display().to_string(),
+        doc.id(),
+        expected_size,
+        expected_entries,
+    );
     let task_imp = imp.clone();
 
     let collections = Rc::new(RefCell::new(BTreeMap::<
@@ -697,7 +720,7 @@ async fn import_coordinator(
                     match collections.borrow_mut().get_mut(&id) {
                         Some((path_str, size, ref mut h, last_val)) => {
                             imp.add_progress(*size - *last_val);
-                            imp.import_found(path_str.clone(), *size);
+                            imp.import_found(path_str.clone());
                             *h = Some(hash);
                             let key = match key_from_path_str(
                                 root.clone(),
@@ -747,7 +770,7 @@ async fn import_coordinator(
                 let imp = task_imp.clone();
                 Ok(async move {
                     doc.set_hash(author_id, key, hash, size).await?;
-                    imp.import_progress(size);
+                    imp.import_progress();
                     anyhow::Ok(size)
                 })
             }))
@@ -783,46 +806,55 @@ struct ImportProgressBar {
     mp: MultiProgress,
     import: ProgressBar,
     add: ProgressBar,
+    doc_id: String,
 }
 
 impl ImportProgressBar {
-    fn new(source: &str, doc_id: NamespaceId) -> Self {
+    fn new(source: &str, doc_id: NamespaceId, expected_size: u64, expected_entries: u64) -> Self {
         let mp = MultiProgress::new();
         let add = mp.add(ProgressBar::new(0));
         add.set_style(ProgressStyle::default_bar()
             .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
             .progress_chars("=>-"));
         add.set_message(format!("Importing from {source}..."));
-        add.set_length(0);
+        add.set_length(expected_size);
         add.set_position(0);
         add.enable_steady_tick(Duration::from_millis(500));
 
+        let doc_id = fmt_short(doc_id.to_bytes());
         let import = mp.add(ProgressBar::new(0));
         import.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {pos}/{human_len} ({per_sec}, eta {eta})").unwrap()
             .progress_chars("=>-"));
-        import.set_message(format!("Adding to doc {}...", doc_id));
-        import.set_length(0);
+        import.set_message(format!("Adding to doc {doc_id}..."));
+        import.set_length(expected_entries);
         import.set_position(0);
         import.enable_steady_tick(Duration::from_millis(500));
 
-        Self { mp, import, add }
+        Self {
+            mp,
+            import,
+            add,
+            doc_id,
+        }
     }
 
-    fn add_found(&self, _name: String, size: u64) {
-        self.add.inc_length(size);
+    fn add_found(&self, name: String, size: u64) {
+        self.add
+            .set_message(format!("Importing file {name} ({})...", HumanBytes(size)));
     }
 
-    fn import_found(&self, _name: String, size: u64) {
-        self.import.inc_length(size);
+    fn import_found(&self, name: String) {
+        self.import
+            .set_message(format!("Adding {name} to {}...", self.doc_id));
     }
 
     fn add_progress(&self, size: u64) {
         self.add.inc(size);
     }
 
-    fn import_progress(&self, size: u64) {
-        self.import.inc(size);
+    fn import_progress(&self) {
+        self.import.inc(1);
     }
 
     fn add_done(&self) {
