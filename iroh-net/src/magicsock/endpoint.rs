@@ -227,15 +227,13 @@ impl Endpoint {
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
         for (ipp, state) in self.direct_addr_state.iter() {
-            if let SendAddr::Udp(ipp) = ipp {
-                if let Some(pong) = state.recent_pong() {
-                    // Lower latency, or when equal, prever IPv6.
-                    if pong.latency < lowest_latency
-                        || (pong.latency == lowest_latency && ipp.is_ipv6())
-                    {
-                        lowest_latency = pong.latency;
-                        last_pong.replace(pong);
-                    }
+            if let Some(pong) = state.recent_pong() {
+                // Lower latency, or when equal, prefer IPv6.
+                if pong.latency < lowest_latency
+                    || (pong.latency == lowest_latency && ipp.ip().is_ipv6())
+                {
+                    lowest_latency = pong.latency;
+                    last_pong.replace(pong);
                 }
             }
         }
@@ -267,9 +265,9 @@ impl Endpoint {
         let udp_addr = self
             .direct_addr_state
             .keys()
-            .filter_map(|k| k.as_udp())
             .choose_stable(&mut rand::thread_rng())
-            .copied();
+            .copied()
+            .map(SocketAddr::from);
 
         (udp_addr, udp_addr.is_some())
     }
@@ -937,10 +935,7 @@ impl Endpoint {
     pub fn direct_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
         self.direct_addr_state
             .keys()
-            .filter_map(|send_addr| match send_addr {
-                SendAddr::Udp(socket_addr) => Some(*socket_addr),
-                SendAddr::Derp(_) => None,
-            })
+            .map(|ip_port| SocketAddr::from(*ip_port))
     }
 
     /// Get the adressing information of this endpoint.
@@ -987,6 +982,16 @@ impl From<IpPort> for SocketAddr {
     fn from(ip_port: IpPort) -> Self {
         let IpPort { ip, port } = ip_port;
         (ip, port).into()
+    }
+}
+
+impl IpPort {
+    pub fn ip(&self) -> &IpAddr {
+        &self.ip
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
     }
 }
 
@@ -1369,7 +1374,7 @@ impl AddrLatency {
 
 #[cfg(test)]
 mod tests {
-    use std::env::temp_dir;
+    use std::{env::temp_dir, net::Ipv4Addr};
 
     use super::*;
     use crate::key::SecretKey;
@@ -1384,10 +1389,13 @@ mod tests {
         let pong_src = "0.0.0.0:1".parse().unwrap();
         let latency = Duration::from_millis(50);
         let (a_endpoint, a_socket_addr) = {
-            let socket_addr = "0.0.0.0:10".parse().unwrap();
+            let ip_port = IpPort {
+                ip: Ipv4Addr::UNSPECIFIED.into(),
+                port: 10,
+            };
             let now = Instant::now();
             let endpoint_state = HashMap::from([(
-                SendAddr::Udp(socket_addr),
+                ip_port,
                 EndpointState {
                     last_ping: None,
                     last_got_ping: None,
@@ -1396,7 +1404,7 @@ mod tests {
                     recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
-                        from: SendAddr::Udp(socket_addr),
+                        from: SendAddr::Udp(ip_port.into()),
                         pong_src,
                     }),
                 },
@@ -1410,7 +1418,7 @@ mod tests {
                     last_full_ping: None,
                     derp_region: new_relay_and_state(Some(0)),
                     best_addr: Some(AddrLatency {
-                        addr: socket_addr,
+                        addr: ip_port.into(),
                         latency: Some(latency),
                     }),
                     best_addr_at: Some(now),
@@ -1421,39 +1429,36 @@ mod tests {
                     sent_ping: HashMap::new(),
                     last_active: Some(now),
                 },
-                socket_addr,
+                ip_port.into(),
             )
         };
         // endpoint w/ no best addr but a derp  w/ latency
         let b_endpoint = {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
             let now = Instant::now();
-            let endpoint_state = HashMap::from([(
-                SendAddr::Derp(0),
-                EndpointState {
-                    last_ping: None,
-                    last_got_ping: None,
-                    last_got_ping_tx_id: None,
-                    call_me_maybe_time: None,
-                    recent_pong: Some(PongReply {
-                        latency,
-                        pong_at: now,
-                        from: SendAddr::Derp(0),
-                        pong_src,
-                    }),
-                },
-            )]);
+            let relay_state = EndpointState {
+                last_ping: None,
+                last_got_ping: None,
+                last_got_ping_tx_id: None,
+                call_me_maybe_time: None,
+                recent_pong: Some(PongReply {
+                    latency,
+                    pong_at: now,
+                    from: SendAddr::Derp(0),
+                    pong_src,
+                }),
+            };
             let key = SecretKey::generate();
             Endpoint {
                 id: 1,
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 public_key: key.public(),
                 last_full_ping: None,
-                derp_region: new_relay_and_state(Some(0)),
+                derp_region: Some((0, relay_state)),
                 best_addr: None,
                 best_addr_at: None,
                 trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
-                direct_addr_state: endpoint_state,
+                direct_addr_state: HashMap::default(),
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
@@ -1486,41 +1491,36 @@ mod tests {
 
         // endpoint w/ expired best addr
         let (d_endpoint, d_socket_addr) = {
-            let socket_addr = "0.0.0.0:7".parse().unwrap();
+            let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
             let now = Instant::now();
             let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
-            let endpoint_state = HashMap::from([
-                (
-                    SendAddr::Udp(socket_addr),
-                    EndpointState {
-                        last_ping: None,
-                        last_got_ping: None,
-                        last_got_ping_tx_id: None,
-                        call_me_maybe_time: None,
-                        recent_pong: Some(PongReply {
-                            latency,
-                            pong_at: now,
-                            from: SendAddr::Udp(socket_addr),
-                            pong_src,
-                        }),
-                    },
-                ),
-                (
-                    SendAddr::Derp(0),
-                    EndpointState {
-                        last_ping: None,
-                        last_got_ping: None,
-                        last_got_ping_tx_id: None,
-                        call_me_maybe_time: None,
-                        recent_pong: Some(PongReply {
-                            latency,
-                            pong_at: now,
-                            from: SendAddr::Derp(0),
-                            pong_src,
-                        }),
-                    },
-                ),
-            ]);
+            let endpoint_state = HashMap::from([(
+                IpPort::from(socket_addr),
+                EndpointState {
+                    last_ping: None,
+                    last_got_ping: None,
+                    last_got_ping_tx_id: None,
+                    call_me_maybe_time: None,
+                    recent_pong: Some(PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Udp(socket_addr),
+                        pong_src,
+                    }),
+                },
+            )]);
+            let relay_state = EndpointState {
+                last_ping: None,
+                last_got_ping: None,
+                last_got_ping_tx_id: None,
+                call_me_maybe_time: None,
+                recent_pong: Some(PongReply {
+                    latency,
+                    pong_at: now,
+                    from: SendAddr::Derp(0),
+                    pong_src,
+                }),
+            };
             let key = SecretKey::generate();
             (
                 Endpoint {
@@ -1528,7 +1528,7 @@ mod tests {
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     public_key: key.public(),
                     last_full_ping: None,
-                    derp_region: new_relay_and_state(Some(0)),
+                    derp_region: Some((0, relay_state)),
                     best_addr: Some(AddrLatency {
                         addr: socket_addr,
                         latency: Some(Duration::from_millis(80)),
@@ -1623,7 +1623,7 @@ mod tests {
         let region_y = 2;
 
         fn addr(port: u16) -> SocketAddr {
-            (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port).into()
+            (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
         }
 
         let direct_addresses_a = [addr(4000), addr(4001)];
