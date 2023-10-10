@@ -73,7 +73,7 @@ pub(super) struct Endpoint {
     last_full_ping: Option<Instant>,
     /// The region id of DERP node that we can relay over to communicate.
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    derp_region: Option<u16>,
+    derp_region: Option<(u16, EndpointState)>,
     /// Best non-DERP path.
     best_addr: Option<AddrLatency>,
     /// Time best address re-confirmed.
@@ -81,7 +81,7 @@ pub(super) struct Endpoint {
     /// Time when best_addr expires.
     trust_best_addr_until: Option<Instant>,
     /// [`EndpointState`] for this peer's direct addresses.
-    direct_addr_state: HashMap<SendAddr, EndpointState>,
+    direct_addr_state: HashMap<IpPort, EndpointState>,
     is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
 
     /// Any outstanding "tailscale ping" commands running
@@ -122,7 +122,9 @@ impl Endpoint {
             quic_mapped_addr,
             public_key: options.public_key,
             last_full_ping: None,
-            derp_region: options.derp_region,
+            derp_region: options
+                .derp_region
+                .map(|region| (region, EndpointState::default())),
             best_addr: None,
             best_addr_at: None,
             trust_best_addr_until: None,
@@ -143,11 +145,8 @@ impl Endpoint {
         let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
             let addr_info = self.best_addr.as_ref().expect("checked");
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
-        } else if let Some(region_id) = self.derp_region {
-            let latency = match self.direct_addr_state.get(&SendAddr::Derp(region_id)) {
-                Some(endpoint_state) => endpoint_state.recent_pong().map(|pong| pong.latency),
-                None => None,
-            };
+        } else if let Some((region_id, relay_state)) = self.derp_region {
+            let latency = relay_state.recent_pong().map(|pong| pong.latency);
             (ConnectionType::Relay(region_id), latency)
         } else {
             (ConnectionType::None, None)
@@ -155,18 +154,18 @@ impl Endpoint {
         let addrs = self
             .direct_addr_state
             .iter()
-            .filter_map(|(addr, endpoint_state)| match addr {
-                SendAddr::Udp(addr) => {
-                    Some((*addr, endpoint_state.recent_pong().map(|pong| pong.latency)))
-                }
-                _ => None,
+            .map(|(addr, endpoint_state)| {
+                (
+                    SocketAddr::from(*addr),
+                    endpoint_state.recent_pong().map(|pong| pong.latency),
+                )
             })
             .collect();
 
         EndpointInfo {
             id: self.id,
             public_key: self.public_key,
-            derp_region: self.derp_region,
+            derp_region: self.derp_region(),
             addrs,
             conn_type,
             latency,
