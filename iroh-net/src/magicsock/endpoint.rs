@@ -80,7 +80,8 @@ pub(super) struct Endpoint {
     best_addr_at: Option<Instant>,
     /// Time when best_addr expires.
     trust_best_addr_until: Option<Instant>,
-    endpoint_state: HashMap<SendAddr, EndpointState>,
+    /// [`EndpointState`] for this peer's direct addresses.
+    direct_addr_state: HashMap<SendAddr, EndpointState>,
     is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
 
     /// Any outstanding "tailscale ping" commands running
@@ -126,7 +127,7 @@ impl Endpoint {
             best_addr_at: None,
             trust_best_addr_until: None,
             sent_ping: HashMap::new(),
-            endpoint_state: HashMap::new(),
+            direct_addr_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
             last_active: options.active.then(Instant::now),
@@ -143,7 +144,7 @@ impl Endpoint {
             let addr_info = self.best_addr.as_ref().expect("checked");
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
         } else if let Some(region_id) = self.derp_region {
-            let latency = match self.endpoint_state.get(&SendAddr::Derp(region_id)) {
+            let latency = match self.direct_addr_state.get(&SendAddr::Derp(region_id)) {
                 Some(endpoint_state) => endpoint_state.recent_pong().map(|pong| pong.latency),
                 None => None,
             };
@@ -152,7 +153,7 @@ impl Endpoint {
             (ConnectionType::None, None)
         };
         let addrs = self
-            .endpoint_state
+            .direct_addr_state
             .iter()
             .filter_map(|(addr, endpoint_state)| match addr {
                 SendAddr::Udp(addr) => {
@@ -224,7 +225,7 @@ impl Endpoint {
     fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
-        for (ipp, state) in self.endpoint_state.iter() {
+        for (ipp, state) in self.direct_addr_state.iter() {
             if let SendAddr::Udp(ipp) = ipp {
                 if let Some(pong) = state.recent_pong() {
                     // Lower latency, or when equal, prever IPv6.
@@ -263,7 +264,7 @@ impl Endpoint {
 
         // Randomly select an address to use until we retrieve latency information.
         let udp_addr = self
-            .endpoint_state
+            .direct_addr_state
             .keys()
             .filter_map(|k| k.as_udp())
             .choose_stable(&mut rand::thread_rng())
@@ -337,7 +338,7 @@ impl Endpoint {
                     msgs.push(msg);
                 }
             } else {
-                let eps: Vec<_> = self.endpoint_state.keys().cloned().collect();
+                let eps: Vec<_> = self.direct_addr_state.keys().cloned().collect();
                 for ep in eps {
                     if let Some(msg) = self.start_ping(ep, DiscoPingPurpose::Cli) {
                         msgs.push(msg);
@@ -366,7 +367,7 @@ impl Endpoint {
                 "disco: timeout waiting for pong {:?} from {:?} ({:?})",
                 txid, sp.to, self.public_key,
             );
-            if let Some(ep_state) = self.endpoint_state.get_mut(&sp.to) {
+            if let Some(ep_state) = self.direct_addr_state.get_mut(&sp.to) {
                 ep_state.last_ping = None;
             }
 
@@ -415,7 +416,7 @@ impl Endpoint {
 
         let now = Instant::now();
         if purpose != DiscoPingPurpose::Cli {
-            if let Some(st) = self.endpoint_state.get_mut(&to) {
+            if let Some(st) = self.direct_addr_state.get_mut(&to) {
                 st.last_ping.replace(now);
             } else {
                 // Shouldn't happen. But don't ping an endpoint that's not active for us.
@@ -459,7 +460,7 @@ impl Endpoint {
         self.cleanup_endpoint_state();
 
         let pings: Vec<_> = self
-            .endpoint_state
+            .direct_addr_state
             .iter()
             .filter_map(|(ep, st)| {
                 if st.needs_ping(&now) {
@@ -470,7 +471,7 @@ impl Endpoint {
             })
             .collect();
         let sent_any = !pings.is_empty();
-        let have_endpoints = !self.endpoint_state.is_empty();
+        let have_endpoints = !self.direct_addr_state.is_empty();
 
         if sent_any {
             debug!("sending pings to {:?}", pings);
@@ -533,7 +534,7 @@ impl Endpoint {
 
         for addr in n.direct_addresses.iter() {
             let addr = SendAddr::Udp(*addr);
-            self.endpoint_state.entry(addr).or_default();
+            self.direct_addr_state.entry(addr).or_default();
         }
 
         // Delete outdated endpoints
@@ -555,7 +556,7 @@ impl Endpoint {
         self.best_addr_at = None;
         self.trust_best_addr_until = None;
 
-        for es in self.endpoint_state.values_mut() {
+        for es in self.direct_addr_state.values_mut() {
             es.last_ping = None;
         }
     }
@@ -570,7 +571,7 @@ impl Endpoint {
         ep: SendAddr,
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
-        if let Some(st) = self.endpoint_state.get_mut(&ep) {
+        if let Some(st) = self.direct_addr_state.get_mut(&ep) {
             let duplicate_ping = Some(for_rx_ping_tx_id) == st.last_got_ping_tx_id;
             if !duplicate_ping {
                 st.last_got_ping_tx_id.replace(for_rx_ping_tx_id);
@@ -588,7 +589,7 @@ impl Endpoint {
             "disco: adding {:?} as candidate endpoint for {:?}",
             ep, self.public_key
         );
-        self.endpoint_state.insert(
+        self.direct_addr_state.insert(
             ep,
             EndpointState {
                 last_got_ping: Some(Instant::now()),
@@ -598,10 +599,10 @@ impl Endpoint {
         );
 
         // If for some reason this gets very large, do some cleanup.
-        let size = self.endpoint_state.len();
+        let size = self.direct_addr_state.len();
         if size > 100 {
             self.cleanup_endpoint_state();
-            let size2 = self.endpoint_state.len();
+            let size2 = self.direct_addr_state.len();
             info!(
                 "disco: addCandidateEndpoint pruned candidate set from {} to {} entries",
                 size, size2
@@ -612,7 +613,7 @@ impl Endpoint {
     }
 
     fn cleanup_endpoint_state(&mut self) {
-        self.endpoint_state.retain(|ep, st| {
+        self.direct_addr_state.retain(|ep, st| {
             if st.should_delete() {
                 if let Some(best_addr) = self.best_addr.take() {
                     if *ep == best_addr.addr {
@@ -673,7 +674,7 @@ impl Endpoint {
 
                 if let SendAddr::Udp(addr) = src {
                     let key = self.public_key;
-                    match self.endpoint_state.get_mut(&sp.to) {
+                    match self.direct_addr_state.get_mut(&sp.to) {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
                             // This is no longer an endpoint we care about.
@@ -787,10 +788,10 @@ impl Endpoint {
             }
             self.is_call_me_maybe_ep.insert(*ep, true);
             let ep = SendAddr::Udp(*ep);
-            if let Some(es) = self.endpoint_state.get_mut(&ep) {
+            if let Some(es) = self.direct_addr_state.get_mut(&ep) {
                 es.call_me_maybe_time.replace(now);
             } else {
-                self.endpoint_state.insert(
+                self.direct_addr_state.insert(
                     ep,
                     EndpointState {
                         call_me_maybe_time: Some(now),
@@ -828,7 +829,7 @@ impl Endpoint {
 
         // Zero out all the last_ping times to force send_pings to send new ones,
         // even if it's been less than 5 seconds ago.
-        for st in self.endpoint_state.values_mut() {
+        for st in self.direct_addr_state.values_mut() {
             st.last_ping = None;
         }
         self.send_pings(Instant::now(), false)
@@ -844,7 +845,7 @@ impl Endpoint {
     }
 
     fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
-        self.endpoint_state.get(addr).and_then(|ep| ep.last_ping)
+        self.direct_addr_state.get(addr).and_then(|ep| ep.last_ping)
     }
 
     /// Checks if this `Endpoint` is currently actively being used.
@@ -935,7 +936,7 @@ impl Endpoint {
 
     /// Get the direct addresses for this endpoint.
     pub fn direct_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
-        self.endpoint_state
+        self.direct_addr_state
             .keys()
             .filter_map(|send_addr| match send_addr {
                 SendAddr::Udp(socket_addr) => Some(*socket_addr),
@@ -1411,7 +1412,7 @@ mod tests {
                     }),
                     best_addr_at: Some(now),
                     trust_best_addr_until: now.checked_add(Duration::from_secs(100)),
-                    endpoint_state,
+                    direct_addr_state: endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
@@ -1449,7 +1450,7 @@ mod tests {
                 best_addr: None,
                 best_addr_at: None,
                 trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
-                endpoint_state,
+                direct_addr_state: endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
@@ -1472,7 +1473,7 @@ mod tests {
                 best_addr: None,
                 best_addr_at: None,
                 trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
-                endpoint_state,
+                direct_addr_state: endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
@@ -1531,7 +1532,7 @@ mod tests {
                     }),
                     best_addr_at: Some(now),
                     trust_best_addr_until: Some(expired),
-                    endpoint_state,
+                    direct_addr_state: endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
