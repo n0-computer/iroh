@@ -402,10 +402,12 @@ async fn gc_flat_partial() -> Result<()> {
     let (_o1, h1) = bao_tree::io::outboard(&data1, IROH_BLOCK_SIZE);
     let h1 = h1.into();
     let tt1 = bao_store.temp_tag(HashAndFormat::raw(h1));
-    let entry = bao_store.get_or_create_partial(h1, data1.len() as u64)?;
-    let mut dw = entry.data_writer().await?;
-    dw.write_bytes_at(0, data1.slice(..32 * 1024)).await?;
-    let _ow = entry.outboard_mut().await?;
+    {
+        let entry = bao_store.get_or_create_partial(h1, data1.len() as u64)?;
+        let mut dw = entry.data_writer().await?;
+        dw.write_bytes_at(0, data1.slice(..32 * 1024)).await?;
+        let _ow = entry.outboard_mut().await?;
+    }
 
     // partial data and outboard files should be there
     step(&evs).await;
