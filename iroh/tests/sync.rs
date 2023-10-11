@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
 use iroh::{
     client::mem::Doc,
     node::{Builder, Node},
@@ -478,6 +478,263 @@ async fn sync_subscribe_stop_close() -> Result<()> {
     assert!(!status.sync);
 
     Ok(())
+}
+
+/// Test sync between many nodes with propagation through sync reports.
+#[tokio::test]
+async fn sync_big() -> Result<()> {
+    #[cfg(tokio_unstable)]
+    console_subscriber::init();
+    let mut rng = test_rng(b"sync_big");
+    setup_logging();
+    let rt = test_runtime();
+    let n_nodes = std::env::var("NODES")
+        .map(|v| v.parse().expect("NODES must be a number"))
+        .unwrap_or(10);
+    let n_entries_init = 1;
+    // let n_entries_live = 2;
+    // let n_entries_phase2 = 5;
+
+    tokio::task::spawn(async move {
+        for i in 0.. {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("tick {i}");
+        }
+    });
+
+    let nodes = spawn_nodes(rt, n_nodes, &mut rng).await?;
+    let peer_ids = nodes.iter().map(|node| node.peer_id()).collect::<Vec<_>>();
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+    let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
+
+    let doc0 = clients[0].docs.create().await?;
+    let mut ticket = doc0.share(ShareMode::Write).await?;
+    // do not join for now, just import without any peer info
+    let peer0 = ticket.peers[0].clone();
+    ticket.peers = vec![];
+
+    let mut docs = vec![];
+    docs.push(doc0);
+    docs.extend_from_slice(
+        &collect_futures(
+            clients
+                .iter()
+                .skip(1)
+                .map(|c| c.docs.import(ticket.clone())),
+        )
+        .await?,
+    );
+
+    let mut expected = vec![];
+
+    // create initial data on each node
+    publish(&docs, &mut expected, n_entries_init, |i, j| {
+        (
+            authors[i],
+            format!("init/{}/{j}", peer_ids[i].fmt_short()),
+            format!("init:{i}:{j}"),
+        )
+    })
+    .await?;
+
+    // assert initial data
+    for (i, doc) in docs.iter().enumerate() {
+        let entries = get_all_with_content(doc).await?;
+        let mut expected = expected
+            .iter()
+            .filter(|e| e.author == authors[i])
+            .cloned()
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(entries, expected, "phase1 pre-sync correct");
+    }
+
+    // setup event streams
+    let events = collect_futures(docs.iter().map(|d| d.subscribe())).await?;
+
+    // join nodes together
+    for (i, doc) in docs.iter().enumerate().skip(1) {
+        info!(me = %peer_ids[i].fmt_short(), peer = %peer0.peer_id.fmt_short(), "join");
+        doc.start_sync(vec![peer0.clone()]).await?;
+    }
+
+    // wait for InsertRemote events stuff to happen
+    info!("wait for all peers to receive insert events");
+    let expected_inserts = (n_nodes - 1) * n_entries_init;
+    let mut futs = vec![];
+    for (i, events) in events.into_iter().enumerate() {
+        let doc = docs[i].clone();
+        let expected = expected.clone();
+        let me = peer_ids[i].fmt_short();
+        let fut = async move {
+            wait_for_events(events, expected_inserts, TIMEOUT, me.clone(), |e| {
+                matches!(e, LiveEvent::InsertRemote { .. })
+            })
+            .await?;
+            let entries = get_all(&doc).await?;
+            if entries != expected {
+                Err(anyhow!(
+                    "node {i} failed (have {} but expected {})",
+                    entries.len(),
+                    expected.len()
+                ))
+            } else {
+                info!(%me, "received and checked all {} expected entries", expected.len());
+                Ok(())
+            }
+        };
+        let fut = fut.map(move |r| r.with_context(move || format!("node {i}")));
+        futs.push(fut);
+    }
+    futures::future::try_join_all(futs).await?;
+
+    assert_all_docs(&docs, &peer_ids, &expected, "after initial sync").await;
+
+    // the latter part of the test is working already.
+    // disabled for now - will move into another test.
+    //
+    // add entries while everyone is live.
+    // create initial data on each node
+    // info!("publish {n_entries_live} entries on each node");
+    // publish(&docs, &mut expected, n_entries_live, |i, j| {
+    //     (authors[i], format!("live/{j}"), format!("live:{i}:{j}"))
+    // })
+    // .await?;
+    //
+    // // wait for stuff to happen!
+    // info!("sleep 3s");
+    // tokio::time::sleep(Duration::from_secs(3)).await;
+    //
+    // // assert that everyone has everything...
+    // assert_all_docs(&docs, &peer_ids, &expected, "after gossip").await;
+    //
+    // info!(
+    //     "peer1 {:?} goes offline and adds a new entry",
+    //     nodes[1].peer_id()
+    // );
+    // docs[1].stop_sync().await?;
+    // publish(&[docs[1].clone()], &mut expected, 1, |i, j| {
+    //     (authors[1], format!("change/{j}"), format!("change:{i}:{j}"))
+    // })
+    // .await?;
+    // info!(
+    //     "peer1 {:?} goes online again and joins peer0 {:?}",
+    //     nodes[1].peer_id(),
+    //     nodes[0].peer_id(),
+    // );
+    // docs[1].start_sync(vec![peer0.clone()]).await?;
+    //
+    // info!("sleep 3s");
+    // tokio::time::sleep(Duration::from_secs(3)).await;
+    // assert_all_docs(&docs, &peer_ids, &expected, "after peer1 published").await;
+
+    info!("shutdown");
+    for node in nodes {
+        node.shutdown();
+    }
+
+    Ok(())
+}
+
+/// Get all entries of a document.
+async fn get_all(doc: &Doc) -> anyhow::Result<Vec<Entry>> {
+    let entries = doc.get_many(GetFilter::All).await?;
+    let entries = entries.collect::<Vec<_>>().await;
+    entries.into_iter().collect()
+}
+
+/// Get all entries of a document with the blob content.
+async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
+    let entries = doc.get_many(GetFilter::All).await?;
+    let entries = entries.and_then(|entry| async {
+        let content = doc.read_to_bytes(&entry).await;
+        content.map(|c| (entry, c))
+    });
+    let entries = entries.collect::<Vec<_>>().await;
+    let entries = entries.into_iter().collect::<Result<Vec<_>>>()?;
+    Ok(entries)
+}
+
+async fn publish(
+    docs: &[Doc],
+    expected: &mut Vec<ExpectedEntry>,
+    n: usize,
+    cb: impl Fn(usize, usize) -> (AuthorId, String, String),
+) -> anyhow::Result<()> {
+    for (i, doc) in docs.iter().enumerate() {
+        for j in 0..n {
+            let (author, key, value) = cb(i, j);
+            doc.set_bytes(author, key.as_bytes().to_vec(), value.as_bytes().to_vec())
+                .await?;
+            expected.push(ExpectedEntry { author, key, value });
+        }
+    }
+    expected.sort();
+    Ok(())
+}
+
+/// Collect an iterator into futures by joining them all and failing if any future failed.
+async fn collect_futures<T>(
+    futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
+) -> anyhow::Result<Vec<T>> {
+    futures::future::join_all(futs)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()
+}
+
+/// Collect `count` events from the `events` stream, only collecting events for which `matcher`
+/// returns true.
+async fn wait_for_events(
+    mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
+    count: usize,
+    timeout: Duration,
+    me: String,
+    matcher: impl Fn(&LiveEvent) -> bool,
+) -> anyhow::Result<Vec<LiveEvent>> {
+    let mut res = Vec::with_capacity(count);
+    let sleep = tokio::time::sleep(timeout);
+    tokio::pin!(sleep);
+    while res.len() < count {
+        tokio::select! {
+            () = &mut sleep => {
+                bail!("Failed to collect {count} elements in {timeout:?} (collected only {})", res.len());
+            },
+            event = events.try_next() => {
+                let event = event?;
+                match event {
+                    None => bail!("stream ended after {} items, but expected {count}", res.len()),
+                    Some(event) => if matcher(&event) {
+                        res.push(event);
+                        debug!(%me, "recv event {} of {count}", res.len());
+                    }
+                }
+            }
+        }
+    }
+    Ok(res)
+}
+
+async fn assert_all_docs(
+    docs: &[Doc],
+    peer_ids: &[PublicKey],
+    expected: &Vec<ExpectedEntry>,
+    label: &str,
+) {
+    info!("validate all peers: {label}");
+    for (i, doc) in docs.iter().enumerate() {
+        let entries = get_all(doc).await.unwrap_or_else(|err| {
+            panic!("failed to get entries for peer {:?}: {err:?}", peer_ids[i])
+        });
+        assert_eq!(
+            &entries,
+            expected,
+            "{label}: peer {i} {:?} failed (have {} but expected {})",
+            peer_ids[i],
+            entries.len(),
+            expected.len()
+        );
+    }
 }
 
 #[derive(Debug, Ord, Eq, PartialEq, PartialOrd, Clone)]

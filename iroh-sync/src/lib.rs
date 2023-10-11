@@ -30,6 +30,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub mod actor;
+mod heads;
 mod keys;
 #[cfg(feature = "metrics")]
 pub mod metrics;
@@ -39,5 +40,6 @@ mod ranger;
 pub mod store;
 pub mod sync;
 
+pub use heads::*;
 pub use keys::*;
 pub use sync::*;

@@ -17,7 +17,7 @@ use iroh_sync::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
         SyncFinished,
     },
-    ContentStatus, InsertOrigin, NamespaceId, SignedEntry,
+    ContentStatus, InsertOrigin, NamespaceId, SignedEntry,AuthorHeads
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -37,6 +37,16 @@ pub enum Op {
     Put(SignedEntry),
     /// A peer now has content available for a hash.
     ContentReady(Hash),
+    /// We synced with another peer, here's the news.
+    SyncReport(SyncReport),
+}
+
+/// Report of a successful sync with the new heads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncReport {
+    peer: PublicKey,
+    namespace: NamespaceId,
+    heads: AuthorHeads,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +95,11 @@ pub enum ToLiveActor {
         peer: PublicKey,
         #[debug("oneshot::Sender")]
         reply: sync::oneshot::Sender<AcceptOutcome>,
+    },
+
+    IncomingSyncReport {
+        from: PublicKey,
+        report: SyncReport,
     },
     NeighborUp {
         namespace: NamespaceId,
@@ -258,6 +273,9 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             ToLiveActor::Shutdown => {
                 return Ok(false);
             }
+            ToLiveActor::IncomingSyncReport { from, report } => {
+                self.on_sync_report(from, report).await
+            }
             ToLiveActor::NeighborUp { namespace, peer } => {
                 debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), "neighbor up");
                 self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
@@ -342,7 +360,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             // always rerun if we failed or did not run yet
             SyncState::Failed | SyncState::None => {}
             // if we finished previously, only re-run if explicitly requested.
-            SyncState::Finished => return,
+            SyncState::Finished => match reason {
+                SyncReason::ResyncAfterReport => {}
+                _ => return,
+            },
         };
         debug!(?reason, last_state = ?self.get_sync_state(namespace, peer), "start");
 
@@ -558,6 +579,37 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
 
         self.set_sync_state(namespace, peer, state);
 
+        // Broadcast a sync report to our neighbors, but only if we received new entries.
+        if let Ok(state) = &result {
+            if state.outcome.num_recv > 0 && self.is_syncing(&namespace) {
+                let report = SyncReport {
+                    peer,
+                    namespace,
+                    heads: state.outcome.heads_received.clone(),
+                };
+                let op = Op::SyncReport(report);
+                debug!(
+                    namespace = %namespace.fmt_short(),
+                    from_peer = %peer.fmt_short(),
+                    "broadcast sync report to neighbors"
+                );
+                let msg = postcard::to_stdvec(&op)?;
+                // TODO: We should debounce and merge these neighbor announcements likely.
+                if let Err(err) = self
+                    .gossip
+                    .broadcast_neighbors(namespace.into(), msg.into())
+                    .await
+                {
+                    error!(
+                        namespace = %namespace.fmt_short(),
+                        from_peer = %peer.fmt_short(),
+                        ?err,
+                        "Failed to broadcast SyncReport to neighbors"
+                    );
+                }
+            }
+        }
+
         let ev = SyncEvent {
             namespace,
             peer,
@@ -571,7 +623,32 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         self.subscribers
             .send(&namespace, Event::SyncFinished(ev))
             .await;
+
         Ok(())
+    }
+
+    async fn on_sync_report(&mut self, from: PublicKey, report: SyncReport) {
+        let namespace = report.namespace;
+        if !self.is_syncing(&namespace) {
+            return;
+        }
+        let has_news = match self
+            .sync
+            .has_news_for_us(report.namespace, report.heads)
+            .await
+        {
+            Ok(has_news) => has_news,
+            Err(err) => {
+                warn!("sync actor error: {err:?}");
+                return;
+            }
+        };
+        if has_news {
+            debug!(namespace = %namespace.fmt_short(), peer = %from.fmt_short(), "recv sync report: have news, sync now");
+            self.sync_with_peer(report.namespace, from, SyncReason::ResyncAfterReport);
+        } else {
+            debug!(namespace = %namespace.fmt_short(), peer = %from.fmt_short(), "recv sync report: no news");
+        }
     }
 
     fn is_syncing(&self, namespace: &NamespaceId) -> bool {
@@ -728,6 +805,8 @@ pub enum SyncReason {
     DirectJoin,
     /// Peer showed up as new neighbor in the gossip swarm
     NewNeighbor,
+    /// We synced after receiving a [`SyncReport`] that indicated news for us
+    ResyncAfterReport,
 }
 
 /// Why we performed a sync exchange

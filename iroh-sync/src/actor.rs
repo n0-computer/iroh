@@ -15,8 +15,8 @@ use tracing::{debug, error, error_span, trace, warn};
 use crate::{
     ranger::Message,
     store::{self, GetFilter},
-    Author, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace, NamespaceId,
-    PeerIdBytes, Replica, SignedEntry, SyncOutcome,
+    Author, AuthorHeads, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace,
+    NamespaceId, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
 };
 
 #[derive(derive_more::Debug, derive_more::Display)]
@@ -134,6 +134,11 @@ enum ReplicaAction {
     },
     ExportSecretKey {
         reply: oneshot::Sender<Result<Namespace>>,
+    },
+    HasNewsForUs {
+        heads: AuthorHeads,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<bool>>,
     },
 }
 
@@ -344,6 +349,17 @@ impl SyncHandle {
     ) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::RegisterUsefulPeer { reply, peer };
+        self.send_replica(namespace, action).await?;
+        rx.await?
+    }
+
+    pub async fn has_news_for_us(
+        &self,
+        namespace: NamespaceId,
+        heads: AuthorHeads,
+    ) -> Result<bool> {
+        let (reply, rx) = oneshot::channel();
+        let action = ReplicaAction::HasNewsForUs { reply, heads };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -597,6 +613,10 @@ impl<S: store::Store> Actor<S> {
                     subscribers: state.replica.subscribers_count(),
                 })
             }),
+            ReplicaAction::HasNewsForUs { heads, reply } => {
+                let res = self.store.has_news_for_us(namespace, &heads);
+                send_reply(reply, res)
+            }
         }
     }
 

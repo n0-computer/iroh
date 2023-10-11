@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
-use parking_lot::{RwLock, RwLockReadGuard};
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
@@ -29,6 +29,8 @@ pub struct Store {
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
+    /// Stores the latest entry for each author
+    latest: Arc<RwLock<LatestMapOwned>>,
     pubkeys: MemPublicKeyStore,
     /// Cache of peers that have been used for sync.
     peers_per_doc: SyncPeersCache,
@@ -39,6 +41,10 @@ type Rvalue = SignedEntry;
 type RecordMap = BTreeMap<Rid, Rvalue>;
 type ReplicaRecordsOwned = BTreeMap<NamespaceId, RecordMap>;
 
+type LatestByAuthorMapOwned = BTreeMap<AuthorId, (u64, Vec<u8>)>;
+type LatestMapOwned = HashMap<NamespaceId, LatestByAuthorMapOwned>;
+type LatestByAuthorMap<'a> = MappedRwLockReadGuard<'a, LatestByAuthorMapOwned>;
+
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
     type GetIter<'a> = RangeIterator<'a>;
@@ -46,6 +52,7 @@ impl super::Store for Store {
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
+    type LatestIter<'a> = LatestIterator<'a>;
 
     fn open_replica(&self, id: &NamespaceId) -> Result<Replica<Self::Instance>, OpenError> {
         if self.open_replicas.read().contains(id) {
@@ -155,6 +162,15 @@ impl super::Store for Store {
             records,
             namespace_i: 0,
             record_i: 0,
+        })
+    }
+
+    fn get_latest(&self, namespace: NamespaceId) -> Result<LatestIterator<'_>> {
+        let records =
+            RwLockReadGuard::try_map(self.latest.read(), move |map| map.get(&namespace)).ok();
+        Ok(LatestIterator {
+            records,
+            author_i: 0,
         })
     }
 
@@ -321,6 +337,27 @@ impl<'a> Iterator for ContentHashesIterator<'a> {
     }
 }
 
+/// Iterator over the latest timestamp/key for each author
+#[derive(Debug)]
+pub struct LatestIterator<'a> {
+    records: Option<LatestByAuthorMap<'a>>,
+    author_i: usize,
+}
+
+impl<'a> Iterator for LatestIterator<'a> {
+    type Item = Result<(AuthorId, u64, Vec<u8>)>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let records = self.records.as_ref()?;
+        match records.iter().nth(self.author_i) {
+            None => None,
+            Some((author, (timestamp, key))) => {
+                self.author_i += 1;
+                Some(Ok((*author, *timestamp, key.to_vec())))
+            }
+        }
+    }
+}
+
 /// Iterator over entries in the memory store
 #[derive(Debug)]
 pub struct RangeIterator<'a> {
@@ -414,6 +451,15 @@ impl ReplicaStoreInstance {
         f(value)
     }
 
+    fn with_latest_mut_with_default<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&mut LatestByAuthorMapOwned) -> T,
+    {
+        let mut guard = self.store.latest.write();
+        let value = guard.entry(self.namespace).or_default();
+        f(value)
+    }
+
     fn records_iter(&self) -> RecordsIter<'_> {
         RecordsIter {
             namespace: self.namespace,
@@ -488,6 +534,9 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     }
 
     fn put(&mut self, e: SignedEntry) -> Result<(), Self::Error> {
+        self.with_latest_mut_with_default(|records| {
+            records.insert(e.author_bytes(), (e.timestamp(), e.key().to_vec()));
+        });
         self.with_records_mut_with_default(|records| {
             records.insert((e.author_bytes(), e.key().to_vec()), e);
         });
