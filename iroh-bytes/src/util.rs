@@ -161,6 +161,12 @@ impl<T: fmt::Display> fmt::Debug for DD<T> {
 }
 
 impl Hash {
+    /// The hash for the empty byte range (`b""`).
+    pub const EMPTY: Hash = Hash::from_bytes([
+        175, 19, 73, 185, 245, 249, 161, 166, 160, 64, 77, 234, 54, 220, 201, 73, 155, 203, 37,
+        201, 173, 193, 18, 183, 204, 154, 147, 202, 228, 31, 50, 98,
+    ]);
+
     /// Calculate the hash of the provide bytes.
     pub fn new(buf: impl AsRef<[u8]>) -> Self {
         let val = blake3::hash(buf.as_ref());
@@ -170,6 +176,11 @@ impl Hash {
     /// Bytes of the hash.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    /// Create a `Hash` from its raw bytes representation.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(blake3::Hash::from_bytes(bytes))
     }
 
     /// Get the cid as bytes.
@@ -440,6 +451,12 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_empty_hash() {
+        let hash = Hash::new(b"");
+        assert_eq!(hash, Hash::EMPTY);
     }
 
     #[test]
