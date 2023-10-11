@@ -394,6 +394,8 @@ impl DocCommands {
                 {
                     println!("Aborted.");
                     return Ok(());
+                } else {
+                    print!("\r");
                 }
 
                 let stream = iroh
@@ -409,18 +411,9 @@ impl DocCommands {
                     Some(p) => p.to_path_buf(),
                     None => PathBuf::new(),
                 };
-                let ImportStats {
-                    total_entries,
-                    total_size,
-                    duration,
-                } = import_coordinator(doc, author, root_prefix, prefix, stream, size, files)
-                    .await?;
-                println!(
-                    "Imported {} entries totaling {} in {}",
-                    total_entries,
-                    HumanBytes(total_size),
-                    HumanDuration(duration,)
-                );
+                let start = Instant::now();
+                import_coordinator(doc, author, root_prefix, prefix, stream, size, files).await?;
+                println!("Success! ({})", HumanDuration(start.elapsed()));
             }
             Self::Export { doc, key, out } => {
                 let doc = get_doc(iroh, env, doc).await?;
@@ -658,12 +651,6 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
     }
 }
 
-struct ImportStats {
-    total_entries: u64,
-    total_size: u64,
-    duration: Duration,
-}
-
 /// Takes the appropriate streams and sinks from [`BlobsClient::add_from_path`] and [`DocsClient::set_hash_streaming`]
 /// and coordinates adding blobs to a document via the hash of the blob.
 /// It also creates and powers the [`ImportProgressBar`] and returns
@@ -677,8 +664,7 @@ async fn import_coordinator(
     blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
     expected_size: u64,
     expected_entries: u64,
-) -> Result<ImportStats> {
-    let start = Instant::now();
+) -> Result<()> {
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
         doc.id(),
@@ -692,7 +678,7 @@ async fn import_coordinator(
         (String, u64, Option<Hash>, u64),
     >::new()));
 
-    let stats: Vec<u64> = blob_add_progress
+    let _stats: Vec<u64> = blob_add_progress
         .filter_map(|item| async {
             let item = match item.context("Error adding files") {
                 Err(e) => return Some(Err(e.into())),
@@ -781,12 +767,7 @@ async fn import_coordinator(
         .await?;
 
     task_imp.all_done();
-
-    Ok(ImportStats {
-        total_entries: stats.len() as _,
-        total_size: stats.into_iter().sum(),
-        duration: start.elapsed(),
-    })
+    Ok(())
 }
 
 fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
@@ -806,7 +787,6 @@ struct ImportProgressBar {
     mp: MultiProgress,
     import: ProgressBar,
     add: ProgressBar,
-    doc_id: String,
 }
 
 impl ImportProgressBar {
@@ -824,30 +804,19 @@ impl ImportProgressBar {
         let doc_id = fmt_short(doc_id.to_bytes());
         let import = mp.add(ProgressBar::new(0));
         import.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {pos}/{human_len} ({per_sec}, eta {eta})").unwrap()
+            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({per_sec}, eta {eta})").unwrap()
             .progress_chars("=>-"));
         import.set_message(format!("Adding to doc {doc_id}..."));
         import.set_length(expected_entries);
         import.set_position(0);
         import.enable_steady_tick(Duration::from_millis(500));
 
-        Self {
-            mp,
-            import,
-            add,
-            doc_id,
-        }
+        Self { mp, import, add }
     }
 
-    fn add_found(&self, name: String, size: u64) {
-        self.add
-            .set_message(format!("Importing file {name} ({})...", HumanBytes(size)));
-    }
+    fn add_found(&self, _name: String, _size: u64) {}
 
-    fn import_found(&self, name: String) {
-        self.import
-            .set_message(format!("Adding {name} to {}...", self.doc_id));
-    }
+    fn import_found(&self, _name: String) {}
 
     fn add_progress(&self, size: u64) {
         self.add.inc(size);
