@@ -617,13 +617,13 @@ impl Endpoint {
                 return duplicate_ping;
             }
             st.last_got_ping.replace(Instant::now());
-            return duplicate_ping;
+            duplicate_ping
         };
 
         match ep {
             SendAddr::Udp(addr) => match self.direct_addr_state.entry(addr.into()) {
                 Entry::Occupied(mut occupied) => return update_endpoint(occupied.get_mut()),
-                Entry::Vacant(mut vacant) => {
+                Entry::Vacant(vacant) => {
                     let addr = vacant.key();
                     let peer = self.public_key.fmt_short();
                     info!(%peer, %addr, "disco: new direct addr for peer");

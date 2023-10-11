@@ -2454,13 +2454,6 @@ impl SendAddr {
         matches!(self, Self::Derp(_))
     }
 
-    fn as_udp(&self) -> Option<&SocketAddr> {
-        match self {
-            Self::Derp(_) => None,
-            Self::Udp(addr) => Some(addr),
-        }
-    }
-
     fn derp_region(&self) -> Option<u16> {
         match self {
             Self::Derp(region) => Some(*region),
