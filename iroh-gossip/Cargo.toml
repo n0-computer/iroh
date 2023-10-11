@@ -38,7 +38,7 @@ genawaiter = { version = "0.99.1", default-features = false, features = ["future
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-iroh-test = { version = "0.6.0", path = "../iroh-test" }
+iroh-test = { path = "../iroh-test" }
 rand_chacha = "0.3.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.4.0"

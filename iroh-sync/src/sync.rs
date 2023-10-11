@@ -955,8 +955,6 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
-
-    #[cfg(feature = "fs-store")]
     use std::collections::HashSet;
 
     use anyhow::Result;
@@ -1190,7 +1188,6 @@ mod tests {
         test_content_hashes_iterator(store)
     }
 
-    #[cfg(feature = "fs-store")]
     fn test_content_hashes_iterator<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let mut expected = HashSet::new();
