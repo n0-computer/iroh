@@ -1,4 +1,3 @@
-#![cfg(feature = "mem-db")]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -148,7 +147,6 @@ fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Option
     }
 }
 
-#[cfg(feature = "mem-db")]
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
@@ -345,7 +343,6 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
 }
 
-#[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
     let rt = test_runtime();

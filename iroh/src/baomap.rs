@@ -1,12 +1,10 @@
 //! Various database implementations for storing blob data
 #[cfg(feature = "flat-db")]
 pub mod flat;
-#[cfg(feature = "mem-db")]
 pub mod mem;
 
 pub mod readonly_mem;
 
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 fn flatten_to_io<T>(
     e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,
 ) -> std::io::Result<T> {
@@ -17,19 +15,16 @@ fn flatten_to_io<T>(
 }
 
 /// Create a 16 byte unique ID.
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 fn new_uuid() -> [u8; 16] {
     use rand::Rng;
     rand::thread_rng().gen::<[u8; 16]>()
 }
 
 /// Create temp file name based on a 16 byte UUID.
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 fn temp_name() -> String {
     format!("{}.temp", hex::encode(new_uuid()))
 }
 
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 #[derive(Debug, Default, Clone)]
 struct TempCounters {
     /// number of raw temp tags for a hash
@@ -38,7 +33,6 @@ struct TempCounters {
     hash_seq: u64,
 }
 
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 impl TempCounters {
     fn counter(&mut self, format: iroh_bytes::util::BlobFormat) -> &mut u64 {
         match format {
@@ -62,11 +56,9 @@ impl TempCounters {
     }
 }
 
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 #[derive(Debug, Clone, Default)]
 struct TempCounterMap(std::collections::BTreeMap<iroh_bytes::Hash, TempCounters>);
 
-#[cfg(any(feature = "mem-db", feature = "flat-db"))]
 impl TempCounterMap {
     fn inc(&mut self, value: &iroh_bytes::util::HashAndFormat) {
         let iroh_bytes::util::HashAndFormat { hash, format } = value;

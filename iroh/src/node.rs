@@ -1673,7 +1673,6 @@ mod tests {
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
 
-    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
         use iroh_bytes::util::SetTagOption;
@@ -1699,7 +1698,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         use iroh_bytes::util::SetTagOption;
