@@ -315,10 +315,11 @@ impl TempTag {
     /// Create a new temp tag for the given hash and format
     ///
     /// This should only be used by store implementations.
+    ///
+    /// The caller is responsible for increasing the refcount on creation and to
+    /// make sure that temp tags that are created between a mark phase and a sweep
+    /// phase are protected.
     pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
-        if let Some(liveness) = liveness.as_ref() {
-            liveness.on_clone(&inner);
-        }
         Self { inner, liveness }
     }
 

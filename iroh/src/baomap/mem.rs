@@ -556,6 +556,14 @@ impl baomap::Store for Store {
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
+        let mut state = self.0.state.write().unwrap();
+        // add to live set immediately. This prevents this blob from being deleted
+        // if this happens between a mark and a sweep phase.
+        state.live.insert(tag.0);
+        // increase the ref count
+        let entry = state.temp.entry(tag).or_default();
+        // panic if we overflow an u64
+        *entry = entry.checked_add(1).unwrap();
         TempTag::new(tag, Some(self.0.clone()))
     }
 
@@ -586,6 +594,7 @@ impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
+        state.live.insert(inner.0);
         let entry = state.temp.entry(*inner).or_default();
         // panic if we overflow an u64
         *entry = entry.checked_add(1).unwrap();

@@ -763,8 +763,16 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
-        TempTag::new(inner, Some(self.0.clone()))
+    fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
+        let mut state = self.0.state.write().unwrap();
+        // add to live set immediately. This prevents this blob from being deleted
+        // if this happens between a mark and a sweep phase.
+        state.live.insert(tag.0);
+        // increase the ref count
+        let entry = state.temp.entry(tag).or_default();
+        // panic if we overflow an u64
+        *entry = entry.checked_add(1).unwrap();
+        TempTag::new(tag, Some(self.0.clone()))
     }
 
     fn clear_live(&self) {
