@@ -13,12 +13,13 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDropRequest, DocDropResponse, DocGetManyRequest,
-        DocGetManyResponse, DocGetOneRequest, DocGetOneResponse, DocImportRequest,
-        DocImportResponse, DocInfoRequest, DocInfoResponse, DocLeaveRequest, DocLeaveResponse,
-        DocListRequest, DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest,
-        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest,
-        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
+        DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
+        DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetRequest,
+        DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
+        DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
+        ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -197,6 +198,20 @@ impl<S: Store> SyncEngine<S> {
             .get_one(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
+    }
+
+    pub async fn doc_del(&self, req: DocDelRequest) -> RpcResult<DocDelResponse> {
+        let DocDelRequest {
+            doc_id,
+            author_id,
+            prefix,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        let removed = replica
+            .delete_prefix(prefix, &author)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocDelResponse { removed })
     }
 
     pub fn doc_get_many(

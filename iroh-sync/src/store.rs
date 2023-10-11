@@ -65,8 +65,6 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
-    //
-    // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
     /// Close a replica.

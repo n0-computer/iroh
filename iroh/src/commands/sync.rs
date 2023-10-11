@@ -97,6 +97,24 @@ pub enum DocCommands {
         #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
         mode: DisplayContentMode,
     },
+    /// Delete all entries below a key prefix.
+    Del {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Author of the entry.
+        ///
+        /// Required unless the author is set through the IROH_AUTHOR environment variable.
+        /// Within the Iroh console, the active author can also set with `author switch`.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
+        /// Prefix to delete. All entries whose key starts with or is equal to the prefix will be
+        /// deleted.
+        prefix: String,
+    },
     /// List all keys in a document.
     #[clap(alias = "ls")]
     Keys {
@@ -217,6 +235,31 @@ impl DocCommands {
                 let value = value.as_bytes().to_vec();
                 let hash = doc.set_bytes(author, key, value).await?;
                 println!("{}", hash);
+            }
+            Self::Del {
+                doc,
+                author,
+                prefix,
+            } => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let author = env.author(author)?;
+                let prompt =
+                    format!("Deleting all entries whose key starts with {prefix}. Continue?");
+                if Confirm::new()
+                    .with_prompt(prompt)
+                    .interact()
+                    .unwrap_or(false)
+                {
+                    let key = prefix.as_bytes().to_vec();
+                    let removed = doc.del(author, key).await?;
+                    println!("Deleted {removed} entries.");
+                    println!(
+                        "Inserted an empty entry for author {} with key {prefix}.",
+                        fmt_short(author)
+                    );
+                } else {
+                    println!("Aborted.")
+                }
             }
             Self::Get {
                 doc,
