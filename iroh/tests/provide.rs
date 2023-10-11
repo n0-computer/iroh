@@ -21,10 +21,9 @@ use iroh_net::{
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_bytes::{
     baomap::{PartialMap, Store},
     get::{
@@ -710,14 +709,14 @@ async fn test_collection_stat() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         // first 1024 bytes
-        let header = RangeSet2::from(..ChunkNum(1));
+        let header = ChunkRanges::from(..ChunkNum(1));
         // last chunk, whatever it is, to verify the size
-        let end = RangeSet2::from(ChunkNum(u64::MAX)..);
+        let end = ChunkRanges::from(ChunkNum(u64::MAX)..);
         // combine them
         let ranges = &header | &end;
         let request = GetRequest::new(
             hash,
-            RangeSpecSeq::from_ranges_infinite([RangeSet2::all(), ranges]),
+            RangeSpecSeq::from_ranges_infinite([ChunkRanges::all(), ranges]),
         );
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;

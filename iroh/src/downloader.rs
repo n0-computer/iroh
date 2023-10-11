@@ -31,9 +31,10 @@ use std::{
     num::NonZeroUsize,
 };
 
+use bao_tree::ChunkRanges;
 use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
-    baomap::{range_collections::RangeSet2, Store, TempTag},
+    baomap::{Store, TempTag},
     protocol::RangeSpecSeq,
     util::HashAndFormat,
     Hash,
@@ -171,7 +172,7 @@ impl DownloadKind {
     #[allow(dead_code)]
     fn ranges(&self) -> RangeSpecSeq {
         match self {
-            DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
+            DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([ChunkRanges::all()]),
             DownloadKind::HashSeq { .. } => RangeSpecSeq::all(),
         }
     }
@@ -740,28 +741,28 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// Checks if this hash is needed.
     fn is_needed(&self, hash: Hash) -> bool {
         let as_blob = DownloadKind::Blob { hash };
-        let as_collection = DownloadKind::HashSeq { hash };
+        let as_hash_seq = DownloadKind::HashSeq { hash };
         self.current_requests.contains_key(&as_blob)
             || self.scheduled_requests.contains_key(&as_blob)
-            || self.current_requests.contains_key(&as_collection)
-            || self.scheduled_requests.contains_key(&as_collection)
+            || self.current_requests.contains_key(&as_hash_seq)
+            || self.scheduled_requests.contains_key(&as_hash_seq)
     }
 
     /// Check if this hash is currently being downloaded.
     fn is_current_request(&self, hash: Hash) -> bool {
         let as_blob = DownloadKind::Blob { hash };
-        let as_collection = DownloadKind::HashSeq { hash };
+        let as_hash_seq = DownloadKind::HashSeq { hash };
         self.current_requests.contains_key(&as_blob)
-            || self.current_requests.contains_key(&as_collection)
+            || self.current_requests.contains_key(&as_hash_seq)
     }
 
     /// Remove a hash from the scheduled queue.
     fn unschedule(&mut self, hash: Hash) -> Option<(DownloadKind, PendingRequestInfo)> {
         let as_blob = DownloadKind::Blob { hash };
-        let as_collection = DownloadKind::HashSeq { hash };
+        let as_hash_seq = DownloadKind::HashSeq { hash };
         let info = match self.scheduled_requests.remove(&as_blob) {
             Some(req) => Some(req),
-            None => self.scheduled_requests.remove(&as_collection),
+            None => self.scheduled_requests.remove(&as_hash_seq),
         };
         if let Some(info) = info {
             let kind = self.scheduled_request_queue.remove(&info.delay_key);

@@ -2,8 +2,8 @@
 
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
+use bao_tree::ChunkRanges;
 use futures::FutureExt;
-use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::TempTag;
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::util::{BlobFormat, HashAndFormat};
@@ -22,7 +22,7 @@ use iroh_bytes::{
 use iroh_metrics::{inc, inc_by};
 use tracing::trace;
 
-use crate::get::{get_missing_ranges_blob, get_missing_ranges_collection, BlobInfo};
+use crate::get::{get_missing_ranges_blob, get_missing_ranges_hash_seq, BlobInfo};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
@@ -247,7 +247,7 @@ pub async fn get_blob<D: Store>(
         let required_ranges = get_missing_ranges_blob::<D>(&entry)
             .await
             .ok()
-            .unwrap_or_else(RangeSet2::all);
+            .unwrap_or_else(ChunkRanges::all);
         let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
         // full request
         let request = get::fsm::start(conn, request);
@@ -402,12 +402,12 @@ pub async fn get_hash_seq<D: Store>(
         })? {
             children.push(hash);
         }
-        let missing_info = get_missing_ranges_collection(db, &children).await?;
+        let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
         if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
             log!("nothing to do");
             return Ok(Stats::default());
         }
-        let missing_iter = std::iter::once(RangeSet2::empty())
+        let missing_iter = std::iter::once(ChunkRanges::empty())
             .chain(missing_info.iter().map(|x| x.missing_chunks()))
             .collect::<Vec<_>>();
         log!("requesting chunks {:?}", missing_iter);

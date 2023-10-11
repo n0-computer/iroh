@@ -1,19 +1,12 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
+use bao_tree::ChunkRanges;
 use futures::StreamExt;
 use iroh::{
     collection::Collection,
     rpc_protocol::{BlobDownloadRequest, DownloadLocation},
     util::progress::ProgressSliceWriter,
-};
-use iroh_bytes::{
-    baomap::range_collections::RangeSet2,
-    provider::GetProgress,
-    util::{
-        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
-        BlobFormat, SetTagOption,
-    },
 };
 use iroh_bytes::{
     get::{
@@ -22,6 +15,13 @@ use iroh_bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq, RequestToken},
     Hash,
+};
+use iroh_bytes::{
+    provider::GetProgress,
+    util::{
+        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+        BlobFormat, SetTagOption,
+    },
 };
 use iroh_io::ConcatenateSliceWriter;
 use iroh_net::derp::DerpMode;
@@ -119,7 +119,7 @@ impl GetInteractive {
             tokio::task::spawn(show_download_progress(hash, receiver.into_stream().map(Ok)));
         let query = if self.format.is_raw() {
             // just get the entire first item
-            RangeSpecSeq::from_ranges([RangeSet2::all()])
+            RangeSpecSeq::from_ranges([ChunkRanges::all()])
         } else {
             // get everything (collection and children)
             RangeSpecSeq::all()

@@ -14,7 +14,7 @@ use bao_tree::{
         outboard::{PreOrderMemOutboard, PreOrderOutboard},
         sync::Outboard,
     },
-    ChunkNum,
+    ChunkRanges,
 };
 use bytes::{Bytes, BytesMut};
 use futures::{
@@ -23,8 +23,8 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{
-        self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
-        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
+        self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+        PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
     },
     util::{
         progress::{IdGenerator, ProgressSender},
@@ -178,8 +178,8 @@ impl MapEntry<Store> for Entry {
         self.data.len() as u64
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
@@ -282,7 +282,7 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }

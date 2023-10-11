@@ -21,7 +21,7 @@ use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::outboard_size;
 use bao_tree::BaoTree;
 use bao_tree::ByteNum;
-use bao_tree::ChunkNum;
+use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use bytes::BytesMut;
 use derive_more::From;
@@ -29,7 +29,6 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::{Stream, StreamExt};
 use iroh_bytes::baomap;
-use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::EntryStatus;
 use iroh_bytes::baomap::ExportMode;
 use iroh_bytes::baomap::ImportMode;
@@ -225,8 +224,8 @@ impl MapEntry<Store> for Entry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn size(&self) -> u64 {
@@ -259,8 +258,8 @@ impl MapEntry<Store> for PartialEntry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn size(&self) -> u64 {

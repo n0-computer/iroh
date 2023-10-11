@@ -19,7 +19,6 @@ use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::ChunkNum;
 use quinn::RecvStream;
-use range_collections::RangeSet2;
 use tracing::{debug, error};
 
 use crate::protocol::RangeSpecSeq;
@@ -64,7 +63,7 @@ pub mod fsm {
             },
             StartDecodeError,
         },
-        TreeNode,
+        ChunkRanges, TreeNode,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
@@ -102,7 +101,7 @@ pub mod fsm {
     }
 
     impl Iterator for RangesIter {
-        type Item = (u64, RangeSet2<ChunkNum>);
+        type Item = (u64, ChunkRanges);
 
         fn next(&mut self) -> Option<Self::Item> {
             self.0.with_dependent_mut(|_owner, iter| {
@@ -284,7 +283,7 @@ pub mod fsm {
     /// State of the get response when we start reading a collection
     #[derive(Debug)]
     pub struct AtStartRoot {
-        ranges: RangeSet2<ChunkNum>,
+        ranges: ChunkRanges,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
         hash: Hash,
@@ -293,7 +292,7 @@ pub mod fsm {
     /// State of the get response when we start reading a child
     #[derive(Debug)]
     pub struct AtStartChild {
-        ranges: RangeSet2<ChunkNum>,
+        ranges: ChunkRanges,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
         child_offset: u64,
@@ -310,7 +309,7 @@ pub mod fsm {
         }
 
         /// The ranges we have requested for the child
-        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+        pub fn ranges(&self) -> &ChunkRanges {
             &self.ranges
         }
 
@@ -342,7 +341,7 @@ pub mod fsm {
 
     impl AtStartRoot {
         /// The ranges we have requested for the child
-        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+        pub fn ranges(&self) -> &ChunkRanges {
             &self.ranges
         }
 
@@ -512,7 +511,7 @@ pub mod fsm {
         }
 
         /// The ranges we have requested for the current hash.
-        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+        pub fn ranges(&self) -> &ChunkRanges {
             self.stream.ranges()
         }
     }
