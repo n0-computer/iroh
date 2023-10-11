@@ -130,7 +130,7 @@ pub enum DocCommands {
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
         /// How to show the contents of the keys.
-        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        #[clap(short, long, default_value_t=DisplayContentMode::Hash)]
         mode: DisplayContentMode,
     },
     /// Watch for changes and events on a document
