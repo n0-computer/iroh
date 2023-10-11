@@ -10,6 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use bao_tree::{ChunkNum, ChunkRanges, ByteNum};
+use iroh_bytes::get::fsm::{BlobContentNext, EndBlobNext};
+use iroh_bytes::hashseq::HashSeq;
+use iroh_bytes::protocol::RangeSpecSeq;
+use iroh_bytes::util::Hash;
 
 const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
 
@@ -100,7 +105,8 @@ use derive_more::Display;
 use iroh::dial::Ticket;
 use iroh_bytes::util::HashAndFormat;
 use iroh_net::key::{PublicKey, SecretKey};
-use iroh_net::{AddrInfo, PeerAddr};
+use iroh_net::{AddrInfo, PeerAddr, MagicEndpoint};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -195,7 +201,11 @@ struct DbInner {
 #[derive(Debug, Clone, Default)]
 struct DbState {
     // key of the inner map is the bytes of the public key
-    data: BTreeMap<HashAndFormat, BTreeMap<[u8; 32], PeerInfo>>,
+    peer_info: BTreeMap<HashAndFormat, BTreeMap<[u8; 32], PeerInfo>>,
+    // cache for verified sizes of hashes, used during probing
+    sizes: BTreeMap<Hash, u64>,
+    // cache for collections, used during collection probing
+    collections: BTreeMap<Hash, HashSeq>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -237,6 +247,107 @@ impl Default for Options {
 
 const REQUEST_SIZE_LIMIT: usize = 1024 * 16;
 
+async fn unverified_size(connection: &quinn::Connection, hash: &Hash) -> anyhow::Result<u64> {
+    let request = iroh_bytes::protocol::GetRequest::new(*hash, RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX) ..)])).into();
+    let request = iroh_bytes::get::fsm::start(connection.clone(), request);
+    let connected = request.next().await?;
+    let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
+        anyhow::bail!("expected start root");
+    };
+    let header = start.next();
+    let (_curr, size) = header.next().await?;
+    // todo: finish connection
+    Ok(size)
+}
+
+async fn verified_size(connection: &quinn::Connection, hash: &Hash) -> anyhow::Result<u64> {
+    let request = iroh_bytes::protocol::GetRequest::new(*hash, RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX) ..)])).into();
+    let request = iroh_bytes::get::fsm::start(connection.clone(), request);
+    let connected = request.next().await?;
+    let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
+        anyhow::bail!("expected start root");
+    };
+    let header = start.next();
+    let (mut curr, size) = header.next().await?;
+    let end = loop {
+        match curr.next().await {
+            BlobContentNext::More((next, res)) => {
+                let _ = res?;
+                curr = next;
+            }
+            BlobContentNext::Done(end) => {
+                break end;
+            }
+        }
+    };
+    let EndBlobNext::Closing(closing) = end.next() else {
+        anyhow::bail!("expected closing");
+    };
+    let _stats = closing.next().await?;
+    Ok(size)
+}
+
+async fn chunk_probe(connection: &quinn::Connection, hash: &Hash, chunk: ChunkNum) -> anyhow::Result<bool> {
+    let request = iroh_bytes::protocol::GetRequest::new(*hash, RangeSpecSeq::from_ranges(vec![ChunkRanges::from(chunk .. chunk + 1)])).into();
+    let request = iroh_bytes::get::fsm::start(connection.clone(), request);
+    let connected = request.next().await?;
+    let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
+        anyhow::bail!("expected start root");
+    };
+    let header = start.next();
+    let (mut curr, _size) = header.next().await?;
+    let end = loop {
+        match curr.next().await {
+            BlobContentNext::More((next, res)) => {
+                if let Err(_cause) = res {
+                    return Ok(false);
+                }
+                curr = next;
+            }
+            BlobContentNext::Done(end) => {
+                break end;
+            }
+        }
+    };
+    let EndBlobNext::Closing(closing) = end.next() else {
+        anyhow::bail!("expected closing");
+    };
+    let _stats = closing.next().await?;
+    Ok(true)
+}
+
+async fn probe(endpoint: MagicEndpoint, db: Db, content: HashAndFormat, peer: [u8; 32], info: &AddrInfo) -> anyhow::Result<bool> {
+    let peer_addr = PeerAddr {
+        peer_id: PublicKey::from_bytes(&peer).unwrap(),
+        info: info.clone(),
+    };
+    let state = &db.0.state;
+    let conn = endpoint.connect(peer_addr, &iroh_bytes::protocol::ALPN).await?;
+    let HashAndFormat(hash, format) = content;
+    match format {
+        iroh_bytes::util::BlobFormat::RAW => {
+            let size = match state.read().unwrap().sizes.get(&hash).copied() {
+                Some(size) => size,
+                None => {
+                    let size = verified_size(&conn, &hash).await?;
+                    state.write().unwrap().sizes.insert(content.0, size);
+                    size
+                }
+            };
+            let mut rng = rand::thread_rng();
+            let random_chunk = rng.gen_range(0..ByteNum(size).chunks().0);
+            let probe = chunk_probe(&conn, &hash, ChunkNum(random_chunk)).await?;
+            Ok(probe)
+        }
+        iroh_bytes::util::BlobFormat::HASHSEQ => {
+            todo!()
+        }
+        _ => {
+            Ok(false)
+        }
+    }
+}
+
 async fn handle_connecting(db: Db, connecting: quinn::Connecting) -> anyhow::Result<()> {
     let connection = connecting.await?;
     let (mut send, mut recv) = connection.accept_bi().await?;
@@ -264,7 +375,7 @@ async fn handle_announce(db: Db, announce: Announce) {
     let mut state = db.0.state.write().unwrap();
     let peer = announce.peer;
     for content in announce.content {
-        let entry = state.data.entry(content).or_default();
+        let entry = state.peer_info.entry(content).or_default();
         let peer_info = entry.entry(*peer.peer_id.as_bytes()).or_default();
         let now = Instant::now();
         peer_info.last_announced = Some(now);
@@ -278,7 +389,7 @@ async fn handle_announce(db: Db, announce: Announce) {
 
 async fn handle_query(db: Db, query: Query) -> anyhow::Result<QueryResponse> {
     let state = db.0.state.read().unwrap();
-    let entry = state.data.get(&query.content);
+    let entry = state.peer_info.get(&query.content);
     let options = &db.0.options;
     let mut peers = vec![];
     if let Some(entry) = entry {
