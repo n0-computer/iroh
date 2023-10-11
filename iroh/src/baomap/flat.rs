@@ -763,8 +763,8 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
-        TempTag::new(inner, Some(self.0.clone()))
+    fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
+        TempTag::new(tag, Some(self.0.clone()))
     }
 
     fn clear_live(&self) {
@@ -779,9 +779,10 @@ impl baomap::Store for Store {
 
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
-        let res = state.live.contains(hash);
-        tracing::debug!("is_live: {:?} {}", hash, res);
-        res
+        // a blob is live if it is either in the live set, or it is temp tagged
+        state.live.contains(hash)
+            || state.temp.contains_key(&HashAndFormat::raw(*hash))
+            || state.temp.contains_key(&HashAndFormat::hash_seq(*hash))
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
@@ -1022,7 +1023,7 @@ impl Store {
     fn delete_sync(&self, hash: Hash) -> io::Result<()> {
         let mut data = None;
         let mut outboard = None;
-        let mut external = None;
+        let mut paths = None;
         let mut partial_data = None;
         let mut partial_outboard = None;
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
@@ -1035,7 +1036,7 @@ impl Store {
                 outboard = Some(self.owned_outboard_path(&hash));
             }
             if !entry.external.is_empty() {
-                external = Some(self.0.options.paths_path(hash));
+                paths = Some(self.0.options.paths_path(hash));
             }
         }
         if let Some(partial) = state.partial.remove(&hash) {
@@ -1048,16 +1049,19 @@ impl Store {
         state.data.remove(&hash);
         drop(state);
         if let Some(data) = data {
+            tracing::debug!("deleting data {}", data.display());
             if let Err(cause) = std::fs::remove_file(data) {
                 tracing::warn!("failed to delete data file: {}", cause);
             }
         }
-        if let Some(external) = external {
+        if let Some(external) = paths {
+            tracing::debug!("deleting paths file {}", external.display());
             if let Err(cause) = std::fs::remove_file(external) {
-                tracing::warn!("failed to delete partial outboard file: {}", cause);
+                tracing::warn!("failed to delete paths file: {}", cause);
             }
         }
         if let Some(outboard) = outboard {
+            tracing::debug!("deleting outboard {}", outboard.display());
             if let Err(cause) = std::fs::remove_file(outboard) {
                 tracing::warn!("failed to delete outboard file: {}", cause);
             }
