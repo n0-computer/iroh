@@ -1517,6 +1517,12 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
+            DocSetHash(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_set_hash(req).await
+                })
+                .await
+            }
             DocGet(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.doc_get_many(req)

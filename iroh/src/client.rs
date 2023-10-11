@@ -31,11 +31,11 @@ use crate::rpc_protocol::{
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
     DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocLeaveRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
-    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, WrapOption,
+    DocLeaveRequest, DocListRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -554,6 +554,26 @@ where
             })
             .await??;
         Ok(res.entry.content_hash())
+    }
+
+    /// Set an entries on the doc via its key, hash, and size.
+    pub async fn set_hash(
+        &self,
+        author_id: AuthorId,
+        key: Vec<u8>,
+        hash: Hash,
+        size: u64,
+    ) -> Result<()> {
+        self.rpc
+            .rpc(DocSetHashRequest {
+                doc_id: self.id,
+                author_id,
+                key,
+                hash,
+                size,
+            })
+            .await??;
+        Ok(())
     }
 
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
