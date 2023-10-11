@@ -29,7 +29,6 @@ macro_rules! inc_by {
     };
 }
 
-
 /// Increment the given counter by 1 with labels.
 #[macro_export]
 macro_rules! inc_with_labels {
@@ -48,10 +47,10 @@ macro_rules! inc_by_with_labels {
 /// TODO
 pub fn send_event(event: Event) {
     tracing::error!("send_event(Event): {:?}", event);
-   let r = core::CORE.get().unwrap().event_bus().send(event);
-   if let Err(e) = r {
-       tracing::error!("send_event_err(Event): {:?}", e);
-   }
+    let r = core::CORE.get().unwrap().event_bus().send(event);
+    if let Err(e) = r {
+        tracing::error!("send_event_err(Event): {:?}", e);
+    }
 }
 
 /// TODO

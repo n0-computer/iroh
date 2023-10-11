@@ -6,12 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::config::{path_with_env, NodeConfig};
-
 use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::util::{path::IrohPaths, progress::ProgressWriter};
+use iroh::{util::{path::IrohPaths, progress::ProgressWriter}, config::{NodeConfig, path_with_env}};
 use iroh_net::{
     config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},

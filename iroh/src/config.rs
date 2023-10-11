@@ -8,10 +8,11 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use crate::util::path::IrohPaths;
+
 use super::node::GcPolicy;
+use anyhow::{anyhow, bail, Context, Result};
 use config::{Environment, File, Value};
-use iroh:: util::path::IrohPaths;
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
     derp::{DerpMap, DerpRegion},

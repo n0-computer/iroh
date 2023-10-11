@@ -12,7 +12,7 @@ use iroh::{
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
-    util::{fs::load_secret_key, path::IrohPaths},
+    util::{fs::load_secret_key, path::IrohPaths}, config::path_with_env,
 };
 use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{
@@ -23,7 +23,7 @@ use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
-use crate::{commands::add, config::path_with_env};
+use crate::{commands::add};
 
 use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 

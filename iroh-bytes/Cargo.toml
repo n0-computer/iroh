@@ -40,7 +40,7 @@ tokio = { version = "1", features = [] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"
-iroh-metrics = { version = "0.6.0-alpha.1", path = "../iroh-metrics" }
+iroh-metrics = { version = "0.7.0", path = "../iroh-metrics" }
 
 [dev-dependencies]
 http-body = "0.4.5"

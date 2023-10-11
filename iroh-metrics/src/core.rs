@@ -25,7 +25,10 @@ pub struct Core {
 pub struct Counter {
     /// The actual prometheus counter.
     #[cfg(feature = "metrics")]
-    pub counter: prometheus_client::metrics::family::Family::<Vec<(String, String)>, prometheus_client::metrics::counter::Counter>,
+    pub counter: prometheus_client::metrics::family::Family<
+        Vec<(String, String)>,
+        prometheus_client::metrics::counter::Counter,
+    >,
     /// What this counter measures.
     pub description: &'static str,
 }
@@ -51,13 +54,12 @@ impl Counter {
     }
 
     /// Increase the [`Counter`] by `u64`, returning the previous value.
-    pub fn inc_by(&self, v: u64) -> u64 {
+    pub fn inc_by(&self, v: u64, labels: Vec<(String, String)>) -> u64 {
         #[cfg(feature = "metrics")]
         {
-            self.counter.inc_by(v)
+            self.counter.get_or_create(&labels).inc_by(v)
         }
         #[cfg(not(feature = "metrics"))]
-	 pub fn inc_by(&self, _v: u64) -> u64 {
         0
     }
 
@@ -145,13 +147,13 @@ impl Core {
         let (event_bus_tx, mut event_bus_rx) = tokio::sync::mpsc::unbounded_channel();
 
         tracing::info!("Starting event bus");
-        let eb_handle = tokio::task::spawn_blocking(move ||{
-             tokio::task::spawn(async move {
-            while let Some(event) = event_bus_rx.recv().await {
-                tracing::error!("Event: {:?}", event);
-            }
-            tracing::error!("Event bus died");
-        });
+        let eb_handle = tokio::task::spawn_blocking(move || {
+            tokio::task::spawn(async move {
+                while let Some(event) = event_bus_rx.recv().await {
+                    tracing::error!("Event: {:?}", event);
+                }
+                tracing::error!("Event bus died");
+            });
         });
 
         CORE.set(Core {
