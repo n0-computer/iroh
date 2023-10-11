@@ -29,12 +29,13 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCreateRequest, DocDropRequest, DocGetManyRequest,
-    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocLeaveRequest, DocListRequest,
-    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocSubscribeRequest, DocTicket,
-    GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
+    DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
+    DocLeaveRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
+    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
+    ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -566,6 +567,25 @@ where
             .await?
             .read_to_bytes()
             .await
+    }
+
+    /// Delete entries that match the given `author` and key `prefix`.
+    ///
+    /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
+    /// entries whose key starts with or is equal to the given `prefix`.
+    ///
+    /// Returns the number of entries deleted.
+    pub async fn del(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+        let res = self
+            .rpc
+            .rpc(DocDelRequest {
+                doc_id: self.id,
+                author_id,
+                prefix,
+            })
+            .await??;
+        let DocDelResponse { removed } = res;
+        Ok(removed)
     }
 
     /// Get the latest entry for a key and author.

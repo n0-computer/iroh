@@ -866,7 +866,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             entry,
                             *msg.delivered_from.as_bytes(),
                             content_status,
-                        )?
+                        )?;
                     }
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content
