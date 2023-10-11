@@ -157,6 +157,14 @@ impl DownloadKind {
         }
     }
 
+    // /// Get the requested hash and format.
+    // fn hash_and_format(&self) -> HashAndFormat {
+    //     match self {
+    //         DownloadKind::Blob { hash } => HashAndFormat::raw(*hash),
+    //         DownloadKind::Collection { hash } => HashAndFormat::hash_seq(*hash),
+    //     }
+    // }
+
     /// Get the ranges this download is requesting.
     // NOTE: necessary to extend downloads to support ranges of blobs ranges of collections.
     #[allow(dead_code)]

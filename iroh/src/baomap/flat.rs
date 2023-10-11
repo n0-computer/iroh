@@ -151,7 +151,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 
-use super::{flatten_to_io, new_uuid, temp_name};
+use super::{flatten_to_io, new_uuid, temp_name, TempCounterMap};
 
 #[derive(Debug, Default)]
 struct State {
@@ -166,7 +166,7 @@ struct State {
     // in memory tracking of live set
     live: BTreeSet<Hash>,
     // temp tags
-    temp: BTreeMap<HashAndFormat, u64>,
+    temp: TempCounterMap,
 }
 
 #[derive(Debug, Default)]
@@ -648,8 +648,8 @@ impl ReadableStore for Store {
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
-        let items = inner.temp.keys().copied().collect::<Vec<_>>();
-        Box::new(items.into_iter())
+        let items = inner.temp.keys();
+        Box::new(items)
     }
 
     fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
@@ -780,9 +780,7 @@ impl baomap::Store for Store {
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
         // a blob is live if it is either in the live set, or it is temp tagged
-        state.live.contains(hash)
-            || state.temp.contains_key(&HashAndFormat::raw(*hash))
-            || state.temp.contains_key(&HashAndFormat::hash_seq(*hash))
+        state.live.contains(hash) || state.temp.contains(hash)
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
@@ -802,19 +800,13 @@ impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        // panic if we overflow an u64
-        *entry = entry.checked_add(1).unwrap();
+        state.temp.inc(inner);
     }
 
     fn on_drop(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        *entry = entry.saturating_sub(1);
-        if *entry == 0 {
-            state.temp.remove(inner);
-        }
+        state.temp.dec(inner)
     }
 }
 

@@ -1140,7 +1140,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
                             .import_file(
                                 source.path().to_owned(),
                                 import_mode,
-                                BlobFormat::RAW,
+                                BlobFormat::Raw,
                                 import_progress,
                             )
                             .await?;
@@ -1165,7 +1165,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             let (tag, _size) = self
                 .inner
                 .db
-                .import_file(root, import_mode, BlobFormat::RAW, import_progress)
+                .import_file(root, import_mode, BlobFormat::Raw, import_progress)
                 .await?;
             tag
         };
@@ -1296,7 +1296,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let (temp_tag, _len) = self
             .inner
             .db
-            .import_stream(stream, BlobFormat::RAW, import_progress)
+            .import_stream(stream, BlobFormat::Raw, import_progress)
             .await?;
         let hash_and_format = *temp_tag.inner();
         let HashAndFormat(hash, format) = hash_and_format;
@@ -1660,7 +1660,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash, BlobFormat::RAW).await.unwrap();
+        let ticket = node.ticket(hash, BlobFormat::Raw).await.unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }

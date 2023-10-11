@@ -191,9 +191,8 @@ pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideRe
     println!("Total: {}", HumanBytes(total_size));
     println!();
     match format {
-        BlobFormat::RAW => println!("Blob: {}", hash),
-        BlobFormat::HASHSEQ => println!("Collection: {}", hash),
-        _ => println!("Hash (unsupported format): {}", hash),
+        BlobFormat::Raw => println!("Blob: {}", hash),
+        BlobFormat::HashSeq => println!("Collection: {}", hash),
     }
 }
 

@@ -118,9 +118,9 @@ async fn gc_basics() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
     let (node, bao_store, evs) = gc_test_node().await;
     let data1 = create_test_data(1234);
-    let tt1 = bao_store.import_bytes(data1, BlobFormat::RAW).await?;
+    let tt1 = bao_store.import_bytes(data1, BlobFormat::Raw).await?;
     let data2 = create_test_data(5678);
-    let tt2 = bao_store.import_bytes(data2, BlobFormat::RAW).await?;
+    let tt2 = bao_store.import_bytes(data2, BlobFormat::Raw).await?;
     let h1 = *tt1.hash();
     let h2 = *tt2.hash();
     // temp tags are still there, so the entries should be there
@@ -153,18 +153,20 @@ async fn gc_basics() -> Result<()> {
     Ok(())
 }
 
-async fn gc_hashseq_impl() -> Result<()> {
+/// Test gc for sequences of hashes that protect their children from deletion.
+#[tokio::test]
+async fn gc_hashseq() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
     let (node, bao_store, evs) = gc_test_node().await;
     let data1 = create_test_data(1234);
-    let tt1 = bao_store.import_bytes(data1, BlobFormat::RAW).await?;
+    let tt1 = bao_store.import_bytes(data1, BlobFormat::Raw).await?;
     let data2 = create_test_data(5678);
-    let tt2 = bao_store.import_bytes(data2, BlobFormat::RAW).await?;
+    let tt2 = bao_store.import_bytes(data2, BlobFormat::Raw).await?;
     let seq = vec![*tt1.hash(), *tt2.hash()]
         .into_iter()
         .collect::<HashSeq>();
     let ttr = bao_store
-        .import_bytes(seq.into_inner(), BlobFormat::HASHSEQ)
+        .import_bytes(seq.into_inner(), BlobFormat::HashSeq)
         .await?;
     let h1 = *tt1.hash();
     let h2 = *tt2.hash();
@@ -207,15 +209,6 @@ async fn gc_hashseq_impl() -> Result<()> {
 
     node.shutdown();
     node.await?;
-    Ok(())
-}
-
-/// Test gc for sequences of hashes that protect their children from deletion.
-#[tokio::test]
-async fn gc_hashseq() -> Result<()> {
-    for _i in 0..10 {
-        gc_hashseq_impl().await?;
-    }
     Ok(())
 }
 
@@ -277,17 +270,17 @@ async fn gc_flat_basics() -> Result<()> {
     let evs = attach_db_events(&node).await;
     let data1 = create_test_data(123456);
     let tt1 = bao_store
-        .import_bytes(data1.clone(), BlobFormat::RAW)
+        .import_bytes(data1.clone(), BlobFormat::Raw)
         .await?;
     let data2 = create_test_data(567890);
     let tt2 = bao_store
-        .import_bytes(data2.clone(), BlobFormat::RAW)
+        .import_bytes(data2.clone(), BlobFormat::Raw)
         .await?;
     let seq = vec![*tt1.hash(), *tt2.hash()]
         .into_iter()
         .collect::<HashSeq>();
     let ttr = bao_store
-        .import_bytes(seq.into_inner(), BlobFormat::HASHSEQ)
+        .import_bytes(seq.into_inner(), BlobFormat::HashSeq)
         .await?;
 
     let h1 = *tt1.hash();

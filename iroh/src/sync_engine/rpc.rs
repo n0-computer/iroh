@@ -188,7 +188,7 @@ impl<S: Store> SyncEngine<S> {
         let author = self.get_author(&author_id)?;
         let len = value.len();
         let tag = bao_store
-            .import_bytes(value.into(), BlobFormat::RAW)
+            .import_bytes(value.into(), BlobFormat::Raw)
             .await?;
         replica
             .insert(&key, &author, *tag.hash(), len as u64)
