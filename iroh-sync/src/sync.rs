@@ -26,7 +26,7 @@ use iroh_metrics::{inc, inc_by};
 use parking_lot::RwLock;
 
 use ed25519_dalek::{Signature, SignatureError};
-use iroh_bytes::{util::RpcError, Hash};
+use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -951,26 +951,6 @@ impl Record {
         out.extend_from_slice(self.hash.as_ref());
         out.extend_from_slice(&self.timestamp.to_be_bytes())
     }
-}
-
-/// Progress updates for the streaming set entry by hash operation.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DocSetProgress {
-    /// Finished adding entry of the given `key` to the document
-    Done {
-        /// Id for this entry, unique for this import
-        id: u64,
-        /// The key of this entry
-        key: Vec<u8>,
-        /// size of the entry added
-        size: u64,
-    },
-    /// We have finished adding all entries to the document
-    AllDone,
-    /// We got an error and need to abort.
-    ///
-    /// This will be the last message in the stream.
-    Abort(RpcError),
 }
 
 #[cfg(test)]

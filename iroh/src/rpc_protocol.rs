@@ -22,7 +22,7 @@ use iroh_net::{
 use iroh_sync::{
     store::GetFilter,
     sync::{NamespaceId, SignedEntry},
-    AuthorId, DocSetProgress,
+    AuthorId,
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -694,46 +694,6 @@ impl RpcMsg<ProviderService> for DocSetHashRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetHashResponse {}
 
-/// Set entries to a doc, that have already been added to the store
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DocSetStreamRequest {
-    /// Id of the document
-    pub doc_id: NamespaceId,
-    /// Id of the author
-    pub author_id: AuthorId,
-}
-
-/// Set entries that have already been added to the blob store
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DocSetStreamUpdate {
-    /// Details on the entry to add
-    Entry {
-        /// Unique id
-        id: u64,
-        /// Key of the entry
-        key: Vec<u8>,
-        /// Hash of the entry content
-        hash: Hash,
-        /// Size of the entry data
-        size: u64,
-    },
-    /// Abort the request due to an error on the client side
-    Abort,
-}
-
-impl Msg<ProviderService> for DocSetStreamRequest {
-    type Pattern = BidiStreaming;
-}
-
-impl BidiStreamingMsg<ProviderService> for DocSetStreamRequest {
-    type Update = DocSetStreamUpdate;
-    type Response = DocSetStreamResponse;
-}
-
-/// Wrapper around [`iroh_sync::DocSetProgress`].
-#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct DocSetStreamResponse(pub DocSetProgress);
-
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyRequest {
@@ -901,8 +861,6 @@ pub enum ProviderRequest {
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
     DocSetHash(DocSetHashRequest),
-    DocSetStream(DocSetStreamRequest),
-    DocSetStreamUpdate(DocSetStreamUpdate),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
     DocDel(DocDelRequest),
@@ -946,7 +904,6 @@ pub enum ProviderResponse {
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
     DocSetHash(RpcResult<DocSetHashResponse>),
-    DocSetStream(DocSetStreamResponse),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
     DocDel(RpcResult<DocDelResponse>),

@@ -1,13 +1,12 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{FutureExt, Stream};
 use iroh_bytes::{
     baomap::Store as BaoStore,
-    util::{progress::FlumeProgressSender, progress::ProgressSender, BlobFormat, RpcError},
-    Hash,
+    util::{BlobFormat, RpcError},
 };
-use iroh_sync::{store::Store, sync::Namespace, DocSetProgress};
+use iroh_sync::{store::Store, sync::Namespace};
 use itertools::Itertools;
 use rand::rngs::OsRng;
 
@@ -229,39 +228,6 @@ impl<S: Store> SyncEngine<S> {
             .insert(key, &author, hash, size)
             .map_err(anyhow::Error::from)?;
         Ok(DocSetHashResponse {})
-    }
-
-    pub async fn doc_set_hash_streaming(
-        &self,
-        req: DocSetStreamRequest,
-        mut stream: impl Stream<Item = Result<(u64, Vec<u8>, Hash, u64), std::io::Error>>
-            + Send
-            + Unpin
-            + 'static,
-        progress: FlumeProgressSender<DocSetProgress>,
-    ) -> anyhow::Result<()> {
-        let DocSetStreamRequest { doc_id, author_id } = req;
-        let replica = self.get_replica(&doc_id)?;
-        let author = self.get_author(&author_id)?;
-        // iterate over stream and insert
-        while let Some(entry) = stream.next().await {
-            let (id, key, hash, len) = entry?;
-            if let Err(e) = replica
-                .insert(&key, &author, hash, len)
-                .map_err(anyhow::Error::from)
-            {
-                let err_str = e.to_string();
-                progress
-                    .send(DocSetProgress::Abort(RpcError::from(e)))
-                    .await?;
-                anyhow::bail!("error inserting hash into document: {err_str}")
-            }
-            progress
-                .send(DocSetProgress::Done { id, key, size: len })
-                .await?;
-        }
-        progress.send(DocSetProgress::AllDone).await?;
-        Ok(())
     }
 
     pub fn doc_get_many(

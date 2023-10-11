@@ -651,10 +651,9 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
     }
 }
 
-/// Takes the appropriate streams and sinks from [`BlobsClient::add_from_path`] and [`DocsClient::set_hash_streaming`]
-/// and coordinates adding blobs to a document via the hash of the blob.
-/// It also creates and powers the [`ImportProgressBar`] and returns
-/// a tuple of the number of entries added, and the total size of those entries.
+/// Takes the [`BlobsClient::add_from_path`] and coordinates adding blobs to a
+/// document via the hash of the blob.
+/// It also creates and powers the [`ImportProgressBar`].
 #[tracing::instrument(skip_all)]
 async fn import_coordinator(
     doc: Doc,
