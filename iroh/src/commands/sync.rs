@@ -388,10 +388,12 @@ impl DocCommands {
                 let root = canonicalize_path(&path)?.canonicalize()?;
                 let tag = tag_from_file_name(&root)?;
 
+                let root0 = root.clone();
                 println!("Preparing import...");
                 // get information about the directory or file we are trying to import
                 // and confirm with the user that they still want to import the file
-                let PathContent { size, files } = path_content_info(root.clone())?;
+                let PathContent { size, files } =
+                    tokio::task::spawn_blocking(|| path_content_info(root0)).await??;
                 let prompt = format!("Import {files} files totaling {}?", HumanBytes(size));
                 if !Confirm::new()
                     .with_prompt(prompt)

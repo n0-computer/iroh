@@ -17,9 +17,9 @@ use crate::{
         DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
         DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
         DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
-        DocSetHashResponse, DocSetRequest, DocSetResponse, DocSetStreamRequest, DocShareRequest,
-        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest,
-        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };

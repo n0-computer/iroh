@@ -31,11 +31,11 @@ use crate::rpc_protocol::{
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
     DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocLeaveRequest, DocListRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest,
-    DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
-    ShareMode, WrapOption,
+    DocLeaveRequest, DocListRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
