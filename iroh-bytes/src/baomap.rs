@@ -320,6 +320,9 @@ impl TempTag {
     /// make sure that temp tags that are created between a mark phase and a sweep
     /// phase are protected.
     pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
+        if let Some(liveness) = liveness.as_ref() {
+            liveness.on_clone(&inner);
+        }
         Self { inner, liveness }
     }
 
@@ -349,9 +352,6 @@ impl TempTag {
 
 impl Clone for TempTag {
     fn clone(&self) -> Self {
-        if let Some(liveness) = self.liveness.as_ref() {
-            liveness.on_clone(&self.inner);
-        }
         Self::new(self.inner, self.liveness.clone())
     }
 }

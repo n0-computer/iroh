@@ -103,8 +103,11 @@ async fn step(evs: &flume::Receiver<iroh_bytes::baomap::Event>) {
 }
 
 async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
-    let dir = std::fs::File::open(dir)?;
-    dir.sync_all().ok();
+    // sync the directory to make sure the metadata is written
+    // does not work on windows
+    if let Ok(dir) = std::fs::File::open(dir) {
+        dir.sync_all().ok();
+    }
     tokio::time::sleep(Duration::from_millis(50)).await;
     Ok(())
 }

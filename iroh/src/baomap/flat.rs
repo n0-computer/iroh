@@ -764,14 +764,6 @@ impl baomap::Store for Store {
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
-        let mut state = self.0.state.write().unwrap();
-        // add to live set immediately. This prevents this blob from being deleted
-        // if this happens between a mark and a sweep phase.
-        state.live.insert(tag.0);
-        // increase the ref count
-        let entry = state.temp.entry(tag).or_default();
-        // panic if we overflow an u64
-        *entry = entry.checked_add(1).unwrap();
         TempTag::new(tag, Some(self.0.clone()))
     }
 
@@ -787,9 +779,10 @@ impl baomap::Store for Store {
 
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
-        let res = state.live.contains(hash);
-        tracing::debug!("is_live: {:?} {}", hash, res);
-        res
+        // a blob is live if it is either in the live set, or it is temp tagged
+        state.live.contains(hash)
+            || state.temp.contains_key(&HashAndFormat::raw(*hash))
+            || state.temp.contains_key(&HashAndFormat::hash_seq(*hash))
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
