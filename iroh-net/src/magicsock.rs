@@ -1229,10 +1229,7 @@ impl Actor {
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
-        match self
-            .peer_map
-            .endpoint_for_ip_port(&SendAddr::Udp(meta.addr))
-        {
+        match self.peer_map.endpoint_for_ip_port(meta.addr) {
             None => {
                 warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
                 return false;
@@ -1298,7 +1295,6 @@ impl Actor {
                     derp_region: Some(region_id),
                     active: true,
                 });
-                self.peer_map.set_endpoint_for_ip_port(&ipp, id);
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
                 ep.quic_mapped_addr
             }
@@ -2137,13 +2133,17 @@ impl Actor {
         }
 
         let mut unknown_sender = false;
-        if self.peer_map.endpoint_for_node_key(&sender).is_none()
-            && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
-        {
+        if self.peer_map.endpoint_for_node_key(&sender).is_none() {
+            unknown_sender = match src {
+                SendAddr::Udp(addr) => self.peer_map.endpoint_for_ip_port_mut(addr).is_none(),
+                SendAddr::Derp(_) => true,
+            };
+        }
+
+        if unknown_sender {
             // Disco Ping from unseen endpoint. We will have to add the
             // endpoint later if the message is a ping
             info!("disco: unknown sender {:?} - {}", sender, src);
-            unknown_sender = true;
         }
 
         // We're now reasonably sure we're expecting communication from
@@ -2209,11 +2209,11 @@ impl Actor {
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
-                    let (_, insert) = ep
+                    let insert = ep
                         .handle_pong_conn(&self.inner.public_key(), &pong, di, src)
                         .await;
                     if let Some((src, key)) = insert {
-                        self.peer_map.set_node_key_for_ip_port(&src, &key);
+                        self.peer_map.set_node_key_for_ip_port(src, &key);
                     }
                 }
                 true
@@ -2268,48 +2268,37 @@ impl Actor {
                 .unwrap_or_default();
         di.last_ping_from.replace(src);
         di.last_ping_time.replace(Instant::now());
-        let is_derp = src.is_derp();
-
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
         // over DERP (in which case ip_dst is also a DERP address).
         // But if the ping was over UDP (ip_dst is not a DERP address), then dst_key
         // will be zero here, but that's fine: send_disco_message only requires
         // a dstKey if the dst ip:port is DERP.
 
-        if is_derp {
-            assert!(derp_node_src.is_some());
-        } else {
-            assert!(derp_node_src.is_none());
-        }
-
-        let (dst_key, insert) = match derp_node_src {
+        let dst_key = match derp_node_src {
             Some(dst_key) => {
-                // From Derp
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (dst_key, true)
-                } else {
-                    (dst_key, false)
+                if !src.is_derp() {
+                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
+                    return debug_assert!(false, "`derp_node_src` is some but `src` is not derp");
                 }
+                dst_key
             }
             None => {
-                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&di.node_key) {
-                    if ep.add_candidate_endpoint(src, dm.tx_id) {
-                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                        return;
-                    }
-                    (di.node_key, true)
-                } else {
-                    (di.node_key, false)
+                if src.is_derp() {
+                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
+                    return debug_assert!(false, "`derp_node_src` is none but `src` is derp");
                 }
+                di.node_key
             }
         };
 
-        if insert {
-            self.peer_map.set_node_key_for_ip_port(&src, &dst_key);
+        if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
+            if ep.add_candidate_endpoint(src, dm.tx_id) {
+                debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+                return;
+            }
+            if let SendAddr::Udp(addr) = src {
+                self.peer_map.set_node_key_for_ip_port(addr, &dst_key);
+            }
         }
 
         if !likely_heart_beat {
