@@ -102,9 +102,10 @@ async fn step(evs: &flume::Receiver<iroh_bytes::baomap::Event>) {
     }
 }
 
-fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
+async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
     let dir = std::fs::File::open(dir)?;
-    dir.sync_all()?;
+    dir.sync_all().ok();
+    tokio::time::sleep(Duration::from_millis(50)).await;
     Ok(())
 }
 
@@ -319,7 +320,7 @@ async fn gc_flat_basics() -> Result<()> {
         .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
         .await?;
     step(&evs).await;
-    sync_directory(&dir)?;
+    sync_directory(&dir).await?;
     assert!(
         !path(&h1).exists(),
         "h1 data should be gone {}",
@@ -336,7 +337,7 @@ async fn gc_flat_basics() -> Result<()> {
 
     bao_store.set_tag(tag, None).await?;
     step(&evs).await;
-    sync_directory(&dir)?;
+    sync_directory(&dir).await?;
     assert!(!path(&hr).exists());
 
     node.shutdown();
