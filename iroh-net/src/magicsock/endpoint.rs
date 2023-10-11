@@ -324,7 +324,7 @@ impl Endpoint {
         let mut msgs = Vec::new();
         let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_region) = derp_region {
-            // TODO(@divma):: this is cli_ping, never used
+            // TODO(@divma):: this is cli_ping, never used. Intentionally commented out
             // if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
             //     msgs.push(msg);
             // }
@@ -599,7 +599,7 @@ impl Endpoint {
         ep: SendAddr,
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
-        // cretes a new endpoint for adding
+        // creates a new endpoint for adding
         let new_endpoint = || EndpointState {
             last_got_ping: Some(Instant::now()),
             last_got_ping_tx_id: Some(for_rx_ping_tx_id),
