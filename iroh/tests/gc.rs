@@ -155,7 +155,7 @@ async fn gc_basics() -> Result<()> {
 
 /// Test gc for sequences of hashes that protect their children from deletion.
 #[tokio::test]
-async fn gc_hashseq() -> Result<()> {
+async fn gc_hashseq_impl() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
     let (node, bao_store, evs) = gc_test_node().await;
     let data1 = create_test_data(1234);
