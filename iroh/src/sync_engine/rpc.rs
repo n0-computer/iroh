@@ -226,7 +226,7 @@ impl<S: Store> SyncEngine<S> {
         let replica = self.get_replica(&doc_id)?;
         let author = self.get_author(&author_id)?;
         replica
-            .insert(&key, &author, hash, size)
+            .insert(key, &author, hash, size)
             .map_err(anyhow::Error::from)?;
         Ok(DocSetHashResponse {})
     }

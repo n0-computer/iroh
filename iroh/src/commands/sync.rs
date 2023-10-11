@@ -681,7 +681,7 @@ async fn import_coordinator(
     let _stats: Vec<u64> = blob_add_progress
         .filter_map(|item| async {
             let item = match item.context("Error adding files") {
-                Err(e) => return Some(Err(e.into())),
+                Err(e) => return Some(Err(e)),
                 Ok(item) => item,
             };
             match item {
@@ -770,6 +770,11 @@ async fn import_coordinator(
     Ok(())
 }
 
+/// Creates a document key from the path, removing the full canonicalized path, and adding
+/// whatever prefix the user requests.
+///
+/// Also, we append the null character `\0` to the end of each key. This helps prevent
+/// un-intended deletions when deleting by prefix.
 fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
     let suffix = PathBuf::from(path_str)
         .strip_prefix(root)?
@@ -779,6 +784,7 @@ fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<
         .to_vec();
     let mut key = prefix.into_bytes().to_vec();
     key.extend(suffix);
+    key.push(b'\0');
     Ok(key)
 }
 

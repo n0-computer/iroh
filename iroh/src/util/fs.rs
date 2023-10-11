@@ -182,6 +182,8 @@ pub struct PathContent {
 }
 
 /// Walks the directory to get the total size and number of files in directory or file
+///
+// TODO: possible combine with `scan_dir`
 pub fn path_content_info(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
     path_content_info0(path)
 }
@@ -192,8 +194,8 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
     let path = path.as_ref();
 
     if path.is_dir() {
-        for entry in read_dir(&path).context("read_dir err")? {
-            let path0 = entry.context("entry err")?.path();
+        for entry in read_dir(path)? {
+            let path0 = entry?.path();
 
             match path_content_info0(path0) {
                 Ok(path_content) => {
@@ -208,7 +210,7 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
             Ok(true) => {
                 size = path
                     .metadata()
-                    .context(format!("metadata error: {path:?}"))?
+                    .context(format!("Error reading metadata for {path:?}"))?
                     .len();
                 files = 1;
             }
@@ -225,6 +227,7 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
 
 #[cfg(test)]
 mod tests {
+    use crate::util::fs::{path_content_info, PathContent};
 
     #[test]
     fn test_canonicalize_path() {
@@ -233,9 +236,37 @@ mod tests {
 
     #[test]
     fn test_get_path_content() {
-        todo!();
-        // emtpy dir -> size = 0 files = 0
-        // dir 3 files -> size w/e files = 3
-        // dir 1 file dir 1 file dir 1 file -> size w/e files 3
+        let dir = testdir::testdir!();
+        let PathContent { size, files } = path_content_info(&dir).unwrap();
+        assert_eq!(0, size);
+        assert_eq!(0, files);
+        let foo = b"hello_world";
+        let bar = b"ipsum lorem";
+        let bat = b"happy birthday";
+        let expect_size = foo.len() + bar.len() + bat.len();
+        std::fs::write(dir.join("foo.txt"), foo).unwrap();
+        std::fs::write(dir.join("bar.txt"), bar).unwrap();
+        std::fs::write(dir.join("bat.txt"), bat).unwrap();
+        let PathContent { size, files } = path_content_info(&dir).unwrap();
+        assert_eq!(expect_size as u64, size);
+        assert_eq!(3, files);
+
+        // create nested empty dirs
+        std::fs::create_dir(dir.join("1")).unwrap();
+        std::fs::create_dir(dir.join("2")).unwrap();
+        let dir3 = dir.join("3");
+        std::fs::create_dir(&dir3).unwrap();
+
+        // create a nested dir w/ content
+        let dir4 = dir3.join("4");
+        std::fs::create_dir(&dir4).unwrap();
+        std::fs::write(dir4.join("foo.txt"), foo).unwrap();
+        std::fs::write(dir4.join("bar.txt"), bar).unwrap();
+        std::fs::write(dir4.join("bat.txt"), bat).unwrap();
+
+        let expect_size = expect_size * 2;
+        let PathContent { size, files } = path_content_info(&dir).unwrap();
+        assert_eq!(expect_size as u64, size);
+        assert_eq!(6, files);
     }
 }
