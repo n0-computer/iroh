@@ -307,6 +307,40 @@ async fn sync_subscribe_stop() -> Result<()> {
 }
 
 #[tokio::test]
+async fn doc_delete() -> Result<()> {
+    let rt = test_runtime();
+    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let store = iroh_sync::store::memory::Store::default();
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = Node::builder(db, store)
+        .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
+        .runtime(&rt)
+        .bind_addr(addr)
+        .spawn()
+        .await?;
+    let client = node.client();
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
+    let hash = doc
+        .set_bytes(author, b"foo".to_vec(), b"hi".to_vec())
+        .await?;
+    assert_latest(&doc, b"foo", b"hi").await;
+    let deleted = doc.del(author, b"foo".to_vec()).await?;
+    assert_eq!(deleted, 1);
+
+    let entry = doc.get_one(author, b"foo".to_vec()).await?;
+    assert!(entry.is_none());
+
+    // wait for gc
+    // TODO: allow to manually trigger gc
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let bytes = client.blobs.read_to_bytes(hash).await;
+    assert!(bytes.is_err());
+    node.shutdown();
+    Ok(())
+}
+
+#[tokio::test]
 async fn sync_drop_doc() -> Result<()> {
     setup_logging();
     let rt = test_runtime();

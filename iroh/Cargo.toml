@@ -84,7 +84,7 @@ anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
-iroh-test = { version = "0.6.0", path = "../iroh-test" }
+iroh-test = { path = "../iroh-test" }
 nix = "0.26.2"
 proptest = "1.2.0"
 regex = { version = "1.7.1", features = ["std"] }

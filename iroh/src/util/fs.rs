@@ -1,6 +1,7 @@
 //! Utilities for filesystem operations.
 use std::{
     borrow::Cow,
+    fs::read_dir,
     path::{Component, Path, PathBuf},
 };
 
@@ -171,11 +172,101 @@ pub async fn load_secret_key(key_path: PathBuf) -> anyhow::Result<SecretKey> {
     }
 }
 
+/// Information about the content on a path
+#[derive(Debug, Clone)]
+pub struct PathContent {
+    /// total size of all the files in the directory
+    pub size: u64,
+    /// total number of files in the directory
+    pub files: u64,
+}
+
+/// Walks the directory to get the total size and number of files in directory or file
+///
+// TODO: possible combine with `scan_dir`
+pub fn path_content_info(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
+    path_content_info0(path)
+}
+
+fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
+    let mut files = 0;
+    let mut size = 0;
+    let path = path.as_ref();
+
+    if path.is_dir() {
+        for entry in read_dir(path)? {
+            let path0 = entry?.path();
+
+            match path_content_info0(path0) {
+                Ok(path_content) => {
+                    size += path_content.size;
+                    files += path_content.files;
+                }
+                Err(e) => bail!(e),
+            }
+        }
+    } else {
+        match path.try_exists() {
+            Ok(true) => {
+                size = path
+                    .metadata()
+                    .context(format!("Error reading metadata for {path:?}"))?
+                    .len();
+                files = 1;
+            }
+            Ok(false) => {
+                tracing::warn!("Not including broking symlink at {path:?}");
+            }
+            Err(e) => {
+                bail!(e);
+            }
+        }
+    }
+    Ok(PathContent { size, files })
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::util::fs::{path_content_info, PathContent};
 
     #[test]
     fn test_canonicalize_path() {
         assert_eq!(super::canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    }
+
+    #[test]
+    fn test_get_path_content() {
+        let dir = testdir::testdir!();
+        let PathContent { size, files } = path_content_info(&dir).unwrap();
+        assert_eq!(0, size);
+        assert_eq!(0, files);
+        let foo = b"hello_world";
+        let bar = b"ipsum lorem";
+        let bat = b"happy birthday";
+        let expect_size = foo.len() + bar.len() + bat.len();
+        std::fs::write(dir.join("foo.txt"), foo).unwrap();
+        std::fs::write(dir.join("bar.txt"), bar).unwrap();
+        std::fs::write(dir.join("bat.txt"), bat).unwrap();
+        let PathContent { size, files } = path_content_info(&dir).unwrap();
+        assert_eq!(expect_size as u64, size);
+        assert_eq!(3, files);
+
+        // create nested empty dirs
+        std::fs::create_dir(dir.join("1")).unwrap();
+        std::fs::create_dir(dir.join("2")).unwrap();
+        let dir3 = dir.join("3");
+        std::fs::create_dir(&dir3).unwrap();
+
+        // create a nested dir w/ content
+        let dir4 = dir3.join("4");
+        std::fs::create_dir(&dir4).unwrap();
+        std::fs::write(dir4.join("foo.txt"), foo).unwrap();
+        std::fs::write(dir4.join("bar.txt"), bar).unwrap();
+        std::fs::write(dir4.join("bat.txt"), bat).unwrap();
+
+        let expect_size = expect_size * 2;
+        let PathContent { size, files } = path_content_info(&dir).unwrap();
+        assert_eq!(expect_size as u64, size);
+        assert_eq!(6, files);
     }
 }

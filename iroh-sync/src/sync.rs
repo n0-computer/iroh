@@ -7,9 +7,10 @@
 // This is going to change!
 
 use std::{
+    cmp::Ordering,
     fmt::Debug,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{self, AtomicBool},
         Arc,
     },
     time::{Duration, SystemTime},
@@ -28,10 +29,13 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::store;
 use crate::{
     ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
     store::PublicKeyStore,
+};
+use crate::{
+    ranger::{InsertOutcome, RangeValue},
+    store,
 };
 
 pub use crate::keys::*;
@@ -120,7 +124,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// This method is not public. Use [store::Store::close_replica] instead.
     pub(crate) fn close(&self) {
         self.unsubscribe();
-        self.inner.closed.store(true, Ordering::Release);
+        self.inner.closed.store(true, atomic::Ordering::Release);
     }
 
     /// Subscribe to insert events.
@@ -181,7 +185,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// manually, it must be closed via [`store::Store::close_replica`] or
     /// [`store::Store::remove_replica`]
     pub fn closed(&self) -> bool {
-        self.inner.closed.load(Ordering::Acquire)
+        self.inner.closed.load(atomic::Ordering::Acquire)
     }
 
     /// Insert a new record at the given key.
@@ -189,18 +193,40 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// The entry will by signed by the provided `author`.
     /// The `len` must be the byte length of the data identified by `hash`.
     ///
-    /// Returns an error either if the entry failed to validate or if a store operation failed.
+    /// Returns the number of entries removed as a consequence of this insertion,
+    /// or an error either if the entry failed to validate or if a store operation failed.
     pub fn insert(
         &self,
         key: impl AsRef<[u8]>,
         author: &Author,
         hash: Hash,
         len: u64,
-    ) -> Result<(), InsertError<S>> {
+    ) -> Result<usize, InsertError<S>> {
+        if len == 0 || hash == Hash::EMPTY {
+            return Err(InsertError::EntryIsEmpty);
+        }
         self.ensure_open()?;
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
+        let signed_entry = entry.sign(&self.inner.namespace, author);
+        self.insert_entry(signed_entry, InsertOrigin::Local)
+    }
+
+    /// Delete entries that match the given `author` and key `prefix`.
+    ///
+    /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
+    /// entries whose key starts with or is equal to the given `prefix`.
+    ///
+    /// Returns the number of entries deleted.
+    pub fn delete_prefix(
+        &self,
+        prefix: impl AsRef<[u8]>,
+        author: &Author,
+    ) -> Result<usize, InsertError<S>> {
+        self.ensure_open()?;
+        let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
+        let entry = Entry::new_empty(id);
         let signed_entry = entry.sign(&self.inner.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
@@ -210,14 +236,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// This will verify both the namespace and author signatures of the entry, emit an `on_insert`
     /// event, and insert the entry into the replica store.
     ///
-    /// Returns an error if the entry failed to validate or if a store operation failed.
+    /// Returns the number of entries removed as a consequence of this insertion,
+    /// or an error if the entry failed to validate or if a store operation failed.
     pub fn insert_remote_entry(
         &self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
-    ) -> Result<(), InsertError<S>> {
+    ) -> Result<usize, InsertError<S>> {
         self.ensure_open()?;
+        entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
             content_status,
@@ -226,7 +254,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Insert a signed entry into the database.
-    fn insert_entry(&self, entry: SignedEntry, origin: InsertOrigin) -> Result<(), InsertError<S>> {
+    ///
+    /// Returns the number of entries removed as a consequence of this insertion.
+    fn insert_entry(
+        &self,
+        entry: SignedEntry,
+        origin: InsertOrigin,
+    ) -> Result<usize, InsertError<S>> {
         let expected_namespace = self.namespace();
 
         #[cfg(feature = "metrics")]
@@ -241,7 +275,14 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             &entry,
             &origin,
         )?;
-        peer.put(entry.clone()).map_err(InsertError::Store)?;
+
+        let outcome = peer.put(entry.clone()).map_err(InsertError::Store)?;
+
+        let removed_count = match outcome {
+            InsertOutcome::Inserted { removed } => removed,
+            InsertOutcome::NotInserted => return Err(InsertError::NewerEntryExists),
+        };
+
         drop(peer);
 
         if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
@@ -262,7 +303,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             }
         }
 
-        Ok(())
+        Ok(removed_count)
     }
 
     /// Hashes the given data and inserts it.
@@ -379,14 +420,6 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
     if entry.timestamp() > now + MAX_TIMESTAMP_FUTURE_SHIFT {
         return Err(ValidationFailure::TooFarInTheFuture);
     }
-
-    // If an existing entry exists, make sure it's older than the new entry.
-    let existing = store.get(entry.id());
-    if let Ok(Some(existing)) = existing {
-        if existing.timestamp() >= entry.timestamp() {
-            return Err(ValidationFailure::OlderThanExisting);
-        }
-    }
     Ok(())
 }
 
@@ -399,6 +432,12 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Validation failure
     #[error("validation failure")]
     Validation(#[from] ValidationFailure),
+    /// A newer entry exists for either this entry's key or a prefix of the key.
+    #[error("A newer entry exists for either this entry's key or a prefix of the key.")]
+    NewerEntryExists,
+    /// Attempted to insert an empty entry.
+    #[error("Attempted to insert an empty entry")]
+    EntryIsEmpty,
     /// The replica is closed, no operations may be performed.
     #[error("replica is closed")]
     Closed,
@@ -413,12 +452,12 @@ pub enum ValidationFailure {
     /// Entry signature is invalid.
     #[error("Entry signature is invalid")]
     BadSignature,
-    /// Entry timestamp is older than existing entry for the same author and key.
-    #[error("Entry timestamp is older than existing entry for the same author and key.")]
-    OlderThanExisting,
     /// Entry timestamp is too far in the future.
     #[error("Entry timestamp is too far in the future.")]
     TooFarInTheFuture,
+    /// Entry has length 0 but not the empty hash, or the empty hash but not length 0.
+    #[error("Entry has length 0 but not the empty hash, or the empty hash but not length 0")]
+    InvalidEmptyEntry,
 }
 
 /// A signed entry.
@@ -435,14 +474,28 @@ impl From<SignedEntry> for Entry {
 }
 
 impl PartialOrd for SignedEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for SignedEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.entry.id.cmp(&other.entry.id)
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entry.cmp(&other.entry)
+    }
+}
+
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id
+            .cmp(&other.id)
+            .then_with(|| self.record.cmp(&other.record))
     }
 }
 
@@ -484,6 +537,11 @@ impl SignedEntry {
         &self.signature
     }
 
+    /// Validate that the entry has the empty hash if the length is 0, or a non-zero length.
+    pub fn validate_empty(&self) -> Result<(), ValidationFailure> {
+        self.entry().validate_empty()
+    }
+
     /// Get the [`Entry`].
     pub fn entry(&self) -> &Entry {
         &self.entry
@@ -517,9 +575,14 @@ impl SignedEntry {
 
 impl RangeEntry for SignedEntry {
     type Key = RecordIdentifier;
+    type Value = Record;
 
     fn key(&self) -> &Self::Key {
         &self.entry.id
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.entry.record
     }
 
     fn as_fingerprint(&self) -> crate::ranger::Fingerprint {
@@ -624,6 +687,24 @@ impl Entry {
         Entry { id, record }
     }
 
+    /// Create a new empty entry with the current timestamp.
+    pub fn new_empty(id: RecordIdentifier) -> Self {
+        Entry {
+            id,
+            record: Record::empty_current(),
+        }
+    }
+
+    /// Validate that the entry has the empty hash if the length is 0, or a non-zero length.
+    pub fn validate_empty(&self) -> Result<(), ValidationFailure> {
+        match (self.content_hash() == Hash::EMPTY, self.content_len() == 0) {
+            (true, true) => Ok(()),
+            (false, false) => Ok(()),
+            (true, false) => Err(ValidationFailure::InvalidEmptyEntry),
+            (false, true) => Err(ValidationFailure::InvalidEmptyEntry),
+        }
+    }
+
     /// Get the [`RecordIdentifier`] for this entry.
     pub fn id(&self) -> &RecordIdentifier {
         &self.id
@@ -692,7 +773,11 @@ impl Debug for RecordIdentifier {
     }
 }
 
-impl RangeKey for RecordIdentifier {}
+impl RangeKey for RecordIdentifier {
+    fn is_prefix_of(&self, other: &Self) -> bool {
+        self.as_bytes().starts_with(other.as_bytes())
+    }
+}
 
 fn system_time_now() -> u64 {
     SystemTime::now()
@@ -777,14 +862,52 @@ pub struct Record {
     timestamp: u64,
 }
 
+impl RangeValue for Record {}
+
+/// Ordering for entry values.
+///
+/// Compares first the timestamp, then the content hash.
+impl Ord for Record {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timestamp
+            .cmp(&other.timestamp)
+            .then_with(|| self.hash.cmp(&other.hash))
+    }
+}
+
+impl PartialOrd for Record {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Record {
     /// Create a new record.
     pub fn new(hash: Hash, len: u64, timestamp: u64) -> Self {
+        debug_assert!(
+            len != 0 || hash == Hash::EMPTY,
+            "if `len` is 0 then `hash` must be the hash of the empty byte range"
+        );
         Record {
             hash,
             len,
             timestamp,
         }
+    }
+
+    /// Create a tombstone record (empty content)
+    pub fn empty(timestamp: u64) -> Self {
+        Self::new(Hash::EMPTY, 0, timestamp)
+    }
+
+    /// Create a tombstone record with the timestamp set to now.
+    pub fn empty_current() -> Self {
+        Self::new_current(Hash::EMPTY, 0)
+    }
+
+    /// Return `true` if the entry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.hash == Hash::EMPTY
     }
 
     /// Create a new [`Record`] with the timestamp set to now.
@@ -832,8 +955,6 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
-
-    #[cfg(feature = "fs-store")]
     use std::collections::HashSet;
 
     use anyhow::Result;
@@ -1067,7 +1188,6 @@ mod tests {
         test_content_hashes_iterator(store)
     }
 
-    #[cfg(feature = "fs-store")]
     fn test_content_hashes_iterator<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let mut expected = HashSet::new();
@@ -1226,12 +1346,7 @@ mod tests {
         };
 
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
-        assert!(matches!(
-            res,
-            Err(InsertError::Validation(
-                ValidationFailure::OlderThanExisting
-            ))
-        ));
+        assert!(matches!(res, Err(InsertError::NewerEntryExists)));
         let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
         assert_eq!(res, entry);
 
@@ -1323,11 +1438,11 @@ mod tests {
         sync::<S>(&alice, &bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            bob_hash
+            Some(bob_hash)
         );
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            bob_hash
+            Some(bob_hash)
         );
 
         let alice_value_2 = b"alice2";
@@ -1337,11 +1452,11 @@ mod tests {
         sync::<S>(&alice, &bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            alice_hash_2
+            Some(alice_hash_2)
         );
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
-            alice_hash_2
+            Some(alice_hash_2)
         );
 
         Ok(())
@@ -1391,10 +1506,117 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_empty() -> Result<()> {
+        let store = store::memory::Store::default();
+        let mut rng = rand::thread_rng();
+        let alice = Author::new(&mut rng);
+        let myspace = Namespace::new(&mut rng);
+        let replica = store.new_replica(myspace.clone())?;
+        let hash = Hash::new(b"");
+        let res = replica.insert(b"foo", &alice, hash, 0);
+        assert!(matches!(res, Err(InsertError::EntryIsEmpty)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefix_delete_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_prefix_delete(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_prefix_delete_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_prefix_delete(store)?;
+        Ok(())
+    }
+
+    fn test_prefix_delete<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let alice = Author::new(&mut rng);
+        let myspace = Namespace::new(&mut rng);
+        let replica = store.new_replica(myspace.clone())?;
+        let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
+        let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
+
+        // sanity checks
+        assert_eq!(
+            get_content_hash(&store, myspace.id(), alice.id(), b"foobar")?,
+            Some(hash1)
+        );
+        assert_eq!(
+            get_content_hash(&store, myspace.id(), alice.id(), b"fooboo")?,
+            Some(hash2)
+        );
+
+        // delete
+        let deleted = replica.delete_prefix(b"foo", &alice)?;
+        assert_eq!(deleted, 2);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foo")?, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_replica_sync_delete_memory() -> Result<()> {
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+
+        test_replica_sync_delete(alice_store, bob_store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_sync_delete_fs() -> Result<()> {
+        let alice_dbfile = tempfile::NamedTempFile::new()?;
+        let alice_store = store::fs::Store::new(alice_dbfile.path())?;
+        let bob_dbfile = tempfile::NamedTempFile::new()?;
+        let bob_store = store::fs::Store::new(bob_dbfile.path())?;
+        test_replica_sync_delete(alice_store, bob_store)
+    }
+
+    fn test_replica_sync_delete<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+        let alice_set = ["foot"];
+        let bob_set = ["fool", "foo", "fog"];
+
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let myspace = Namespace::new(&mut rng);
+        let alice = alice_store.new_replica(myspace.clone())?;
+        for el in &alice_set {
+            alice.hash_and_insert(el, &author, el.as_bytes())?;
+        }
+
+        let bob = bob_store.new_replica(myspace.clone())?;
+        for el in &bob_set {
+            bob.hash_and_insert(el, &author, el.as_bytes())?;
+        }
+
+        sync::<S>(&alice, &bob)?;
+
+        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+
+        alice.delete_prefix("foo", &author)?;
+        bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
+        sync::<S>(&alice, &bob)?;
+        check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
+        check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
+
+        Ok(())
+    }
+
+    #[test]
     fn test_replica_remove_memory() -> Result<()> {
         let alice_store = store::memory::Store::default();
-        test_replica_remove(alice_store)?;
-        Ok(())
+        test_replica_remove(alice_store)
     }
 
     #[cfg(feature = "fs-store")]
@@ -1402,9 +1624,7 @@ mod tests {
     fn test_replica_remove_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
         let alice_store = store::fs::Store::new(alice_dbfile.path())?;
-        test_replica_remove(alice_store)?;
-
-        Ok(())
+        test_replica_remove(alice_store)
     }
 
     fn test_replica_remove<S: store::Store>(store: S) -> Result<()> {
@@ -1449,6 +1669,123 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_replica_delete_edge_cases_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_replica_delete_edge_cases(store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_delete_edge_cases_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_delete_edge_cases(store)
+    }
+
+    fn test_replica_delete_edge_cases<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        let edgecases = [0u8, 1u8, 255u8];
+        let prefixes = [0u8, 255u8];
+        let hash = Hash::new(b"foo");
+        let len = 3;
+        for prefix in prefixes {
+            let mut expected = vec![];
+            for suffix in edgecases {
+                let key = [prefix, suffix].to_vec();
+                expected.push(key.clone());
+                replica.insert(&key, &author, hash, len)?;
+            }
+            assert_keys(&store, namespace.id(), expected);
+            replica.delete_prefix([prefix], &author)?;
+            assert_keys(&store, namespace.id(), vec![]);
+        }
+
+        let key = vec![1u8, 0u8];
+        replica.insert(key, &author, hash, len)?;
+        let key = vec![1u8, 1u8];
+        replica.insert(key, &author, hash, len)?;
+        let key = vec![1u8, 2u8];
+        replica.insert(key, &author, hash, len)?;
+        let prefix = vec![1u8, 1u8];
+        replica.delete_prefix(prefix, &author)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+
+        let key = vec![0u8, 255u8];
+        replica.insert(key, &author, hash, len)?;
+        let key = vec![0u8, 0u8];
+        replica.insert(key, &author, hash, len)?;
+        let prefix = vec![0u8];
+        replica.delete_prefix(prefix, &author)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_replica_byte_keys_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+
+        test_replica_byte_keys(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_byte_keys_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_byte_keys(store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_byte_keys<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica = store.new_replica(namespace.clone())?;
+
+        let hash = Hash::new(b"foo");
+        let len = 3;
+
+        let key = vec![1u8, 0u8];
+        replica.insert(key, &author, hash, len)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8]]);
+        let key = vec![1u8, 2u8];
+        replica.insert(key, &author, hash, len)?;
+        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+
+        let key = vec![0u8, 255u8];
+        replica.insert(key, &author, hash, len)?;
+        assert_keys(
+            &store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8], vec![0u8, 255u8]],
+        );
+        Ok(())
+    }
+
+    fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
+        expected.sort();
+        assert_eq!(expected, get_keys_sorted(store, namespace));
+    }
+
+    fn get_keys_sorted<S: store::Store>(store: &S, namespace: NamespaceId) -> Vec<Vec<u8>> {
+        let mut res = store
+            .get_many(namespace, GetFilter::All)
+            .unwrap()
+            .map(|e| e.map(|e| e.key().to_vec()))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        res.sort();
+        res
+    }
+
     fn get_entry<S: store::Store>(
         store: &S,
         namespace: NamespaceId,
@@ -1466,11 +1803,10 @@ mod tests {
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
-    ) -> anyhow::Result<Hash> {
+    ) -> anyhow::Result<Option<Hash>> {
         let hash = store
             .get_one(namespace, author, key)?
-            .unwrap()
-            .content_hash();
+            .map(|e| e.content_hash());
         Ok(hash)
     }
 

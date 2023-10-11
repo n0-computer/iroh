@@ -649,6 +649,51 @@ pub struct DocSetResponse {
     pub entry: SignedEntry,
 }
 
+/// Delete entries in a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDelRequest {
+    /// The document id.
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Prefix to delete.
+    pub prefix: Vec<u8>,
+}
+
+impl RpcMsg<ProviderService> for DocDelRequest {
+    type Response = RpcResult<DocDelResponse>;
+}
+
+/// Response to [`DocDelRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDelResponse {
+    /// The number of entries that were removed.
+    pub removed: usize,
+}
+
+/// Set an entry in a document via its hash
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Key of this entry.
+    pub key: Vec<u8>,
+    /// Hash of this entry.
+    pub hash: Hash,
+    /// Size of this entry.
+    pub size: u64,
+}
+
+impl RpcMsg<ProviderService> for DocSetHashRequest {
+    type Response = RpcResult<DocSetHashResponse>;
+}
+
+/// Response to [`DocSetHashRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashResponse {}
+
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyRequest {
@@ -815,8 +860,10 @@ pub enum ProviderRequest {
     DocDrop(DocDropRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
+    DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
+    DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocLeave(DocLeaveRequest),
     DocShare(DocShareRequest),
@@ -856,8 +903,10 @@ pub enum ProviderResponse {
     DocDrop(RpcResult<DocDropResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
+    DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
+    DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocLeave(RpcResult<DocLeaveResponse>),

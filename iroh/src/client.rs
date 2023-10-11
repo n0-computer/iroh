@@ -29,12 +29,13 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCreateRequest, DocDropRequest, DocGetManyRequest,
-    DocGetOneRequest, DocImportRequest, DocInfoRequest, DocLeaveRequest, DocListRequest,
-    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocSubscribeRequest, DocTicket,
-    GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
+    DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
+    DocLeaveRequest, DocListRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -555,6 +556,26 @@ where
         Ok(res.entry.content_hash())
     }
 
+    /// Set an entries on the doc via its key, hash, and size.
+    pub async fn set_hash(
+        &self,
+        author_id: AuthorId,
+        key: Vec<u8>,
+        hash: Hash,
+        size: u64,
+    ) -> Result<()> {
+        self.rpc
+            .rpc(DocSetHashRequest {
+                doc_id: self.id,
+                author_id,
+                key,
+                hash,
+                size,
+            })
+            .await??;
+        Ok(())
+    }
+
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
     pub async fn read(&self, entry: &Entry) -> Result<BlobReader> {
         BlobReader::from_rpc(&self.rpc, entry.content_hash()).await
@@ -566,6 +587,25 @@ where
             .await?
             .read_to_bytes()
             .await
+    }
+
+    /// Delete entries that match the given `author` and key `prefix`.
+    ///
+    /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
+    /// entries whose key starts with or is equal to the given `prefix`.
+    ///
+    /// Returns the number of entries deleted.
+    pub async fn del(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+        let res = self
+            .rpc
+            .rpc(DocDelRequest {
+                doc_id: self.id,
+                author_id,
+                prefix,
+            })
+            .await??;
+        let DocDelResponse { removed } = res;
+        Ok(removed)
     }
 
     /// Get the latest entry for a key and author.

@@ -2278,11 +2278,17 @@ impl Actor {
 
         let dst_key = match derp_node_src {
             Some(dst_key) => {
-                assert!(src.is_derp());
+                if !src.is_derp() {
+                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
+                    return debug_assert!(false, "`derp_node_src` is some but `src` is not derp");
+                }
                 dst_key
             }
             None => {
-                assert!(!src.is_derp());
+                if src.is_derp() {
+                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
+                    return debug_assert!(false, "`derp_node_src` is none but `src` is derp");
+                }
                 di.node_key
             }
         };
