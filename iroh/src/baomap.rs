@@ -73,16 +73,16 @@ struct TempCounterMap(BTreeMap<Hash, TempCounters>);
 
 impl TempCounterMap {
     fn inc(&mut self, value: &HashAndFormat) {
-        let HashAndFormat(hash, format) = value;
+        let HashAndFormat { hash, format } = value;
         self.0.entry(*hash).or_default().inc(*format)
     }
 
     fn dec(&mut self, value: &HashAndFormat) {
-        let HashAndFormat(hash, format) = value;
-        let counters = self.0.get_mut(&hash).unwrap();
+        let HashAndFormat { hash, format } = value;
+        let counters = self.0.get_mut(hash).unwrap();
         counters.dec(*format);
         if counters.is_empty() {
-            self.0.remove(&hash);
+            self.0.remove(hash);
         }
     }
 
@@ -94,10 +94,10 @@ impl TempCounterMap {
         let mut res = Vec::new();
         for (k, v) in self.0.iter() {
             if v.raw > 0 {
-                res.push(HashAndFormat(*k, BlobFormat::Raw));
+                res.push(HashAndFormat::raw(*k));
             }
             if v.hash_seq > 0 {
-                res.push(HashAndFormat(*k, BlobFormat::HashSeq));
+                res.push(HashAndFormat::hash_seq(*k));
             }
         }
         res.into_iter()

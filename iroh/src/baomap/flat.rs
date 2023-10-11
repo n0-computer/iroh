@@ -919,7 +919,7 @@ impl Store {
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
         use baomap::Store;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = self.temp_tag(HashAndFormat(hash, format));
+        let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         let temp_outboard_path = if let Some(outboard) = outboard.as_ref() {
             let uuid = new_uuid();

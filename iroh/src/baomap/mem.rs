@@ -621,7 +621,7 @@ impl Store {
         };
         let hash = hash.into();
         use baomap::Store;
-        let tag = self.temp_tag(HashAndFormat(hash, format));
+        let tag = self.temp_tag(HashAndFormat { hash, format });
         self.0
             .state
             .write()

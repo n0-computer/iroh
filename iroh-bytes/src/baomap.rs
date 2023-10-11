@@ -333,12 +333,12 @@ impl TempTag {
 
     /// The hash of the pinned item
     pub fn hash(&self) -> &Hash {
-        &self.inner.0
+        &self.inner.hash
     }
 
     /// The format of the pinned item
     pub fn format(&self) -> BlobFormat {
-        self.inner.1
+        self.inner.format
     }
 
     /// Keep the item alive until the end of the process
@@ -398,7 +398,7 @@ async fn gc_mark_task<'a>(
         roots.insert(haf);
     }
     let mut live: BTreeSet<Hash> = BTreeSet::new();
-    for HashAndFormat(hash, format) in roots {
+    for HashAndFormat { hash, format } in roots {
         // we need to do this for all formats except raw
         if live.insert(hash) && !format.is_raw() {
             let Some(entry) = store.get(&hash) else {

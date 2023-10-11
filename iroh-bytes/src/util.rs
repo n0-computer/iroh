@@ -113,17 +113,28 @@ pub enum SetTagOption {
 
 /// A hash and format pair
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HashAndFormat(pub Hash, pub BlobFormat);
+pub struct HashAndFormat {
+    /// The hash
+    pub hash: Hash,
+    /// The format
+    pub format: BlobFormat,
+}
 
 impl HashAndFormat {
     /// Create a new hash and format pair, using the default (raw) format.
     pub fn raw(hash: Hash) -> Self {
-        Self(hash, BlobFormat::Raw)
+        Self {
+            hash,
+            format: BlobFormat::Raw,
+        }
     }
 
     /// Create a new hash and format pair, using the collection format.
     pub fn hash_seq(hash: Hash) -> Self {
-        Self(hash, BlobFormat::HashSeq)
+        Self {
+            hash,
+            format: BlobFormat::HashSeq,
+        }
     }
 }
 

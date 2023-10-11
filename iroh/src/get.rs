@@ -7,6 +7,7 @@ use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkNum};
 use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
 use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::util::{BlobFormat, HashAndFormat};
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     get::{
@@ -31,14 +32,13 @@ use crate::util::progress::ProgressSliceWriter2;
 pub async fn get<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
-    hash: Hash,
-    recursive: bool,
+    hash_and_format: &HashAndFormat,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
-    let res = if recursive {
-        get_collection(db, conn, &hash, sender).await
-    } else {
-        get_blob(db, conn, &hash, sender).await
+    let HashAndFormat { hash, format } = hash_and_format;
+    let res = match format {
+        BlobFormat::Raw => get_blob(db, conn, hash, sender).await,
+        BlobFormat::HashSeq => get_collection(db, conn, hash, sender).await,
     };
     if let Err(e) = res.as_ref() {
         tracing::error!("get failed: {}", e);
