@@ -183,6 +183,12 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also be set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
+        /// Author of the entry.
+        ///
+        /// Required unless the author is set through the IROH_AUTHOR environment variable.
+        /// Within the Iroh console, the active author can also be set with `author switch`.
+        #[clap(short, long)]
+        author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string)
         key: String,
         /// Path to export to
@@ -415,33 +421,47 @@ impl DocCommands {
                 import_coordinator(doc, author, root_prefix, prefix, stream, size, files).await?;
                 println!("Success! ({})", HumanDuration(start.elapsed()));
             }
-            Self::Export { doc, key, out } => {
+            Self::Export {
+                doc,
+                author,
+                key,
+                out,
+            } => {
                 let doc = get_doc(iroh, env, doc).await?;
+                let author = env.author(author)?;
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
-                let filter = GetFilter::Key(key);
                 let path: PathBuf = canonicalize_path(&out)?;
-
-                let mut stream = doc.get_many(filter).await?;
-                while let Some(entry) = stream.try_next().await? {
-                    match doc.read_to_bytes(&entry).await {
-                        Ok(content) => {
-                            if let Some(dir) = path.parent() {
-                                if let Err(err) = std::fs::create_dir_all(dir) {
-                                    println!(
-                                        "<unable to create directory for {}: {err}>",
-                                        path.display()
-                                    );
-                                }
-                            };
-                            if let Err(err) = std::fs::write(path.clone(), content) {
-                                println!("<unable to write to file {}: {err}>", path.display())
-                            } else {
-                                println!("wrote '{key_str}' to {}", path.display());
+                let entry = doc
+                    .get_one(author, key)
+                    .await?
+                    .ok_or_else(|| anyhow!("<could not find entry {key_str}>"))?;
+                match doc.read(&entry).await {
+                    Ok(mut content) => {
+                        if let Some(dir) = path.parent() {
+                            if let Err(err) = std::fs::create_dir_all(dir) {
+                                println!(
+                                    "<unable to create directory for {}: {err}>",
+                                    path.display()
+                                );
                             }
+                        };
+                        let pb = ProgressBar::new(content.size());
+                        pb.set_style(ProgressStyle::default_bar()
+                                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+                                .progress_chars("=>-"));
+                        let file = tokio::fs::File::create(path.clone()).await?;
+                        if let Err(err) =
+                            tokio::io::copy(&mut content, &mut pb.wrap_async_write(file)).await
+                        {
+                            pb.finish_and_clear();
+                            println!("<unable to write to file {}: {err}>", path.display())
+                        } else {
+                            pb.finish_and_clear();
+                            println!("wrote '{key_str}' to {}", path.display());
                         }
-                        Err(err) => println!("<failed to get content: {err}>"),
                     }
+                    Err(err) => println!("<failed to get content: {err}>"),
                 }
             }
             Self::Watch { doc } => {
@@ -771,9 +791,6 @@ async fn import_coordinator(
 
 /// Creates a document key from the path, removing the full canonicalized path, and adding
 /// whatever prefix the user requests.
-///
-/// Also, we append the null character `\0` to the end of each key. This helps prevent
-/// un-intended deletions when deleting by prefix.
 fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
     let suffix = PathBuf::from(path_str)
         .strip_prefix(root)?
@@ -783,7 +800,6 @@ fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<
         .to_vec();
     let mut key = prefix.into_bytes().to_vec();
     key.extend(suffix);
-    key.push(b'\0');
     Ok(key)
 }
 
