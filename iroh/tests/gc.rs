@@ -1,7 +1,7 @@
 #![cfg(feature = "mem-db")]
 use std::{
     io::{self, Cursor},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -45,6 +45,7 @@ fn create_test_data(n: usize) -> Bytes {
 async fn wrap_in_node<S>(
     bao_store: S,
     rt: iroh_bytes::util::runtime::Handle,
+    gc_period: Duration,
 ) -> Node<S, iroh_sync::store::memory::Store>
 where
     S: iroh_bytes::baomap::Store,
@@ -52,7 +53,7 @@ where
     let doc_store = iroh_sync::store::memory::Store::default();
     Node::builder(bao_store, doc_store)
         .runtime(&rt)
-        .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(50)))
+        .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
         .spawn()
         .await
         .unwrap()
@@ -83,7 +84,7 @@ async fn gc_test_node() -> (
 ) {
     let rt = test_runtime();
     let bao_store = baomap::mem::Store::new(rt.clone());
-    let node = wrap_in_node(bao_store.clone(), rt).await;
+    let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(50)).await;
     let db_recv = attach_db_events(&node).await;
     (node, bao_store, db_recv)
 }
@@ -99,6 +100,12 @@ async fn step(evs: &flume::Receiver<iroh_bytes::baomap::Event>) {
             break;
         }
     }
+}
+
+fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
+    let dir = std::fs::File::open(dir)?;
+    dir.sync_all()?;
+    Ok(())
 }
 
 /// Test the absolute basics of gc, temp tags and tags for blobs.
@@ -199,7 +206,6 @@ async fn gc_hashseq_impl() -> Result<()> {
     Ok(())
 }
 
-
 /// Test gc for sequences of hashes that protect their children from deletion.
 #[tokio::test]
 async fn gc_hashseq() -> Result<()> {
@@ -263,7 +269,7 @@ async fn gc_flat_basics() -> Result<()> {
     let outboard_path = outboard_path(dir.clone());
 
     let bao_store = baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
-    let node = wrap_in_node(bao_store.clone(), rt).await;
+    let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
     let evs = attach_db_events(&node).await;
     let data1 = create_test_data(123456);
     let tt1 = bao_store
@@ -308,18 +314,29 @@ async fn gc_flat_basics() -> Result<()> {
     assert!(path(&hr).exists());
     assert!(!outboard_path(&hr).exists());
 
+    tracing::info!("changing tag from hashseq to raw, this should orphan the children");
     bao_store
         .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
         .await?;
     step(&evs).await;
-    assert!(!path(&h1).exists());
-    assert!(!outboard_path(&h1).exists());
+    sync_directory(&dir)?;
+    assert!(
+        !path(&h1).exists(),
+        "h1 data should be gone {}",
+        path(&h1).display()
+    );
+    assert!(
+        !outboard_path(&h1).exists(),
+        "h1 outboard should be gone {}",
+        outboard_path(&h1).display()
+    );
     assert!(!path(&h2).exists());
     assert!(!outboard_path(&h2).exists());
     assert!(path(&hr).exists());
 
     bao_store.set_tag(tag, None).await?;
     step(&evs).await;
+    sync_directory(&dir)?;
     assert!(!path(&hr).exists());
 
     node.shutdown();
@@ -403,7 +420,7 @@ async fn gc_flat_partial() -> Result<()> {
     let count_partial_outboard = count_partial_outboard(dir.clone());
 
     let bao_store = baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
-    let node = wrap_in_node(bao_store.clone(), rt).await;
+    let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
     let evs = attach_db_events(&node).await;
 
     let data1: Bytes = create_test_data(123456);
