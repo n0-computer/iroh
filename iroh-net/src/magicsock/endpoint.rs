@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
@@ -145,9 +145,9 @@ impl Endpoint {
         let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
             let addr_info = self.best_addr.as_ref().expect("checked");
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
-        } else if let Some((region_id, relay_state)) = self.derp_region {
+        } else if let Some((region_id, relay_state)) = self.derp_region.as_ref() {
             let latency = relay_state.recent_pong().map(|pong| pong.latency);
-            (ConnectionType::Relay(region_id), latency)
+            (ConnectionType::Relay(*region_id), latency)
         } else {
             (ConnectionType::None, None)
         };
@@ -179,9 +179,10 @@ impl Endpoint {
             .map(|(region_id, _state)| *region_id)
     }
 
-    /// Adds a derp region for this endpoint
-    pub fn add_derp_region(&mut self, region: u16) {
-        self.derp_region = Some(region);
+    /// Sets the derp region for this endpoint
+    pub fn set_derp_region(&mut self, region: u16) {
+        info!(%region, peer=%self.public_key.fmt_short(), "derp region updated for peer");
+        self.derp_region = Some((region, EndpointState::default()));
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
@@ -323,9 +324,10 @@ impl Endpoint {
         let mut msgs = Vec::new();
         let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_region) = derp_region {
-            if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
-                msgs.push(msg);
-            }
+            // TODO(@divma):: this is cli_ping, never used
+            // if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
+            //     msgs.push(msg);
+            // }
         }
         if let Some(udp_addr) = udp_addr {
             if self.is_best_addr_valid(now) {
@@ -333,7 +335,7 @@ impl Endpoint {
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
                 // IPv6 address, both 1ms away, and it's random who replies first.
-                if let Some(msg) = self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::Cli) {
+                if let Some(msg) = self.start_ping(udp_addr.into(), DiscoPingPurpose::Cli) {
                     msgs.push(msg);
                 }
             } else {
@@ -366,8 +368,20 @@ impl Endpoint {
                 "disco: timeout waiting for pong {:?} from {:?} ({:?})",
                 txid, sp.to, self.public_key,
             );
-            if let Some(ep_state) = self.direct_addr_state.get_mut(&sp.to) {
-                ep_state.last_ping = None;
+            match sp.to {
+                SendAddr::Udp(addr) => {
+                    if let Some(ep_state) = self.direct_addr_state.get_mut(&addr.into()) {
+                        ep_state.last_ping = None;
+                    }
+                }
+                SendAddr::Derp(region) => {
+                    if let Some((home_derp, relay_state)) = self.derp_region.as_mut() {
+                        if *home_derp == region {
+                            // lost connectivity via relay
+                            relay_state.last_ping = None;
+                        }
+                    }
+                }
             }
 
             // If we fail to ping our current best addr, it is not that good anymore.
@@ -386,17 +400,18 @@ impl Endpoint {
         }
     }
 
-    fn start_ping(&mut self, ep: SendAddr, purpose: DiscoPingPurpose) -> Option<PingAction> {
+    // TODO(@divma): intentionally changed to prove we don't ping via relay.
+    fn start_ping(&mut self, ip_port: IpPort, purpose: DiscoPingPurpose) -> Option<PingAction> {
         if derp_only_mode() {
             // don't attempt any hole punching in derp only mode
             warn!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
-        info!("start ping to {}: {:?}", ep, purpose);
+        info!("start ping to {}: {:?}", ip_port, purpose);
         let tx_id = stun::TransactionId::default();
         Some(PingAction::SendPing {
             id: self.id,
-            dst: ep,
+            dst: SendAddr::Udp(ip_port.into()),
             dst_key: self.public_key,
             tx_id,
             purpose,
@@ -415,9 +430,24 @@ impl Endpoint {
 
         let now = Instant::now();
         if purpose != DiscoPingPurpose::Cli {
-            if let Some(st) = self.direct_addr_state.get_mut(&to) {
-                st.last_ping.replace(now);
-            } else {
+            let mut ep_found = false;
+            match to {
+                SendAddr::Udp(addr) => {
+                    if let Some(st) = self.direct_addr_state.get_mut(&addr.into()) {
+                        st.last_ping.replace(now);
+                        ep_found = true
+                    }
+                }
+                SendAddr::Derp(region) => {
+                    if let Some((home_derp, relay_state)) = self.derp_region.as_mut() {
+                        if *home_derp == region {
+                            relay_state.last_ping.replace(now);
+                            ep_found = true
+                        }
+                    }
+                }
+            }
+            if !ep_found {
                 // Shouldn't happen. But don't ping an endpoint that's not active for us.
                 warn!(
                     "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
@@ -526,12 +556,13 @@ impl Endpoint {
                 "Changing derp region for {:?} from {:?} to {:?}",
                 self.public_key, self.derp_region, n.derp_region
             );
-            self.derp_region = n.derp_region;
+            self.derp_region = n
+                .derp_region
+                .map(|region| (region, EndpointState::default()));
         }
 
-        for addr in n.direct_addresses.iter() {
-            let addr = SendAddr::Udp(*addr);
-            self.direct_addr_state.entry(addr).or_default();
+        for &addr in n.direct_addresses.iter() {
+            self.direct_addr_state.entry(addr.into()).or_default();
         }
 
         // Delete outdated endpoints
@@ -563,12 +594,20 @@ impl Endpoint {
     /// ping TransactionId, this function reports `true`, otherwise `false`.
     ///
     /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
-    pub fn add_candidate_endpoint(
+    pub fn endpoint_confirmed(
         &mut self,
         ep: SendAddr,
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
-        if let Some(st) = self.direct_addr_state.get_mut(&ep) {
+        // cretes a new endpoint for adding
+        let new_endpoint = || EndpointState {
+            last_got_ping: Some(Instant::now()),
+            last_got_ping_tx_id: Some(for_rx_ping_tx_id),
+            ..Default::default()
+        };
+
+        // updates the endpoint to acknowledge a received ping. Returns whether any update was made
+        let update_endpoint = |st: &mut EndpointState| {
             let duplicate_ping = Some(for_rx_ping_tx_id) == st.last_got_ping_tx_id;
             if !duplicate_ping {
                 st.last_got_ping_tx_id.replace(for_rx_ping_tx_id);
@@ -579,21 +618,37 @@ impl Endpoint {
             }
             st.last_got_ping.replace(Instant::now());
             return duplicate_ping;
-        }
+        };
 
-        // Newly discovered endpoint. Exciting!
-        info!(
-            "disco: adding {:?} as candidate endpoint for {:?}",
-            ep, self.public_key
-        );
-        self.direct_addr_state.insert(
-            ep,
-            EndpointState {
-                last_got_ping: Some(Instant::now()),
-                last_got_ping_tx_id: Some(for_rx_ping_tx_id),
-                ..Default::default()
+        match ep {
+            SendAddr::Udp(addr) => match self.direct_addr_state.entry(addr.into()) {
+                Entry::Occupied(mut occupied) => return update_endpoint(occupied.get_mut()),
+                Entry::Vacant(mut vacant) => {
+                    let addr = vacant.key();
+                    let peer = self.public_key.fmt_short();
+                    info!(%peer, %addr, "disco: new direct addr for peer");
+
+                    vacant.insert(new_endpoint());
+                }
             },
-        );
+            SendAddr::Derp(region) => {
+                if self.derp_region() != Some(region) {
+                    // either the peer changed regions or we didn't have a relay address for the
+                    // peer. In both cases, trust the new confirmed region
+                    let peer = self.public_key.fmt_short();
+                    info!(%peer, %region, "disco: new relay addr for peer");
+
+                    self.derp_region = Some((region, new_endpoint()));
+                    // ping txid didn't match and no new endpoint was added, return early since
+                    // endpoint cleanup is not necessary
+                    return false;
+                } else if let Some((_region, state)) = self.derp_region.as_mut() {
+                    return update_endpoint(state);
+                }
+            }
+        };
+
+        // if we landed here, a new endpoint was added
 
         // If for some reason this gets very large, do some cleanup.
         let size = self.direct_addr_state.len();
@@ -601,7 +656,7 @@ impl Endpoint {
             self.cleanup_endpoint_state();
             let size2 = self.direct_addr_state.len();
             info!(
-                "disco: addCandidateEndpoint pruned candidate set from {} to {} entries",
+                "disco: addConfirmedEndpoint pruned candidate set from {} to {} entries",
                 size, size2
             )
         }
@@ -613,7 +668,8 @@ impl Endpoint {
         self.direct_addr_state.retain(|ep, st| {
             if st.should_delete() {
                 if let Some(best_addr) = self.best_addr.take() {
-                    if *ep == best_addr.addr {
+                    let ep: SocketAddr = (*ep).into();
+                    if ep == best_addr.addr {
                         // no longer relying on a direct connection, remove conn count
                         inc!(MagicsockMetrics, num_direct_conns_removed);
                         if self.derp_region.is_some() {
@@ -671,7 +727,7 @@ impl Endpoint {
 
                 if let SendAddr::Udp(addr) = src {
                     let key = self.public_key;
-                    match self.direct_addr_state.get_mut(&sp.to) {
+                    match self.direct_addr_state.get_mut(&addr.into()) {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
                             // This is no longer an endpoint we care about.
@@ -784,7 +840,7 @@ impl Endpoint {
                 }
             }
             self.is_call_me_maybe_ep.insert(*ep, true);
-            let ep = SendAddr::Udp(*ep);
+            let ep = IpPort::from(*ep);
             if let Some(es) = self.direct_addr_state.get_mut(&ep) {
                 es.call_me_maybe_time.replace(now);
             } else {
@@ -842,7 +898,17 @@ impl Endpoint {
     }
 
     fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
-        self.direct_addr_state.get(addr).and_then(|ep| ep.last_ping)
+        match addr {
+            SendAddr::Udp(addr) => self
+                .direct_addr_state
+                .get(&(*addr).into())
+                .and_then(|ep| ep.last_ping),
+            SendAddr::Derp(region) => self
+                .derp_region
+                .as_ref()
+                .filter(|(home_region, _state)| home_region == region)
+                .and_then(|(_home_region, state)| state.last_ping),
+        }
     }
 
     /// Checks if this `Endpoint` is currently actively being used.
@@ -884,9 +950,7 @@ impl Endpoint {
                     "stayin alive ping for {}: {:?} {:?}",
                     udp_addr, elapsed, now
                 );
-                if let Some(msg) =
-                    self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::StayinAlive)
-                {
+                if let Some(msg) = self.start_ping(udp_addr.into(), DiscoPingPurpose::StayinAlive) {
                     return vec![msg];
                 }
             }
