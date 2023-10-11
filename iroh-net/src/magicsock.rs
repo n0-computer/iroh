@@ -1283,8 +1283,10 @@ impl Actor {
 
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key_mut(&dm.src) {
             Some(ep) => {
+                // NOTE: we don't update the derp region if there is already one but the new one is
+                // different
                 if ep.derp_region().is_none() {
-                    ep.add_derp_region(region_id);
+                    ep.set_derp_region(region_id);
                 }
                 ep.quic_mapped_addr
             }
@@ -2292,7 +2294,7 @@ impl Actor {
         };
 
         if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
-            if ep.add_candidate_endpoint(src, dm.tx_id) {
+            if ep.endpoint_confirmed(src, dm.tx_id) {
                 debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                 return;
             }
@@ -2456,13 +2458,6 @@ enum SendAddr {
 impl SendAddr {
     fn is_derp(&self) -> bool {
         matches!(self, Self::Derp(_))
-    }
-
-    fn as_udp(&self) -> Option<&SocketAddr> {
-        match self {
-            Self::Derp(_) => None,
-            Self::Udp(addr) => Some(addr),
-        }
     }
 
     fn derp_region(&self) -> Option<u16> {
