@@ -1,4 +1,4 @@
-# [v0.6.0](https://github.com/n0-computer/iroh/compare/v0.6.0...v0.7.0) (2023-10-11)
+# [v0.7.0](https://github.com/n0-computer/iroh/compare/v0.6.0...v0.7.0) (2023-10-11)
 
 ### Bug Fixes
 
