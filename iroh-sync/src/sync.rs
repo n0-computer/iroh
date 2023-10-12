@@ -775,7 +775,7 @@ impl Debug for RecordIdentifier {
 
 impl RangeKey for RecordIdentifier {
     fn is_prefix_of(&self, other: &Self) -> bool {
-        self.as_bytes().starts_with(other.as_bytes())
+        other.as_bytes().starts_with(self.as_bytes())
     }
 }
 

@@ -516,10 +516,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
 
     // TODO: Not horrible.
     type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry, Infallible>>;
-    fn get_with_parents(
-        &self,
-        id: &RecordIdentifier,
-    ) -> Result<Self::ParentIterator<'_>, Self::Error> {
+    fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
         let mut entries = vec![];
         let mut key = id.key().to_vec();
         while !key.is_empty() {
@@ -534,7 +531,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         Ok(entries.into_iter())
     }
 
-    fn get_prefix(
+    fn prefixed_by(
         &self,
         prefix: &RecordIdentifier,
     ) -> std::result::Result<Self::RangeIterator<'_>, Self::Error> {
