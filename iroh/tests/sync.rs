@@ -534,7 +534,7 @@ async fn sync_drop_doc() -> Result<()> {
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
         .await;
     assert!(res.is_err());
-    let res = client.docs.get(doc.id()).await?;
+    let res = client.docs.open(doc.id()).await?;
     assert!(res.is_none());
     let ev = sub.next().await;
     assert!(matches!(ev, Some(Ok(LiveEvent::Closed))));
