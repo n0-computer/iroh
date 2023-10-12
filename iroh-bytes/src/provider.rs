@@ -532,7 +532,7 @@ impl<E: EventSender> ResponseWriter<E> {
         let other_duration = total_duration
             .saturating_sub(send_duration)
             .saturating_sub(read_duration);
-        let avg_send_size = total_sent_bytes / send.stats.count;
+        let avg_send_size = total_sent_bytes.checked_div(send.stats.count).unwrap_or(0);
         info!(
             "sent {} bytes in {}s",
             total_sent_bytes,
