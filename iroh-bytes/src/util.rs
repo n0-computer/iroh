@@ -16,48 +16,33 @@ pub mod progress;
 pub mod runtime;
 
 /// A format identifier
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct BlobFormat(u64);
-
-impl BlobFormat {
-    /// Raw format
-    pub const RAW: Self = Self(0);
-
-    /// Hash sequence format
-    pub const HASHSEQ: Self = Self(1);
-
-    /// true if this is a raw blob
-    pub const fn is_raw(&self) -> bool {
-        self.0 == Self::RAW.0
-    }
-
-    /// true if this is sequence of hashes
-    pub const fn is_hash_seq(&self) -> bool {
-        self.0 == Self::HASHSEQ.0
-    }
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Debug)]
+pub enum BlobFormat {
+    /// Raw blob
+    #[default]
+    Raw,
+    /// A sequence of BLAKE3 hashes
+    HashSeq,
 }
 
 impl From<BlobFormat> for u64 {
     fn from(value: BlobFormat) -> Self {
-        value.0
-    }
-}
-
-impl fmt::Debug for BlobFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self == &Self::RAW {
-            f.write_str("Raw")
-        } else if self == &Self::HASHSEQ {
-            f.write_str("HashSeq")
-        } else {
-            f.debug_tuple("Other").field(&self.0).finish()
+        match value {
+            BlobFormat::Raw => 0,
+            BlobFormat::HashSeq => 1,
         }
     }
 }
 
-impl Default for BlobFormat {
-    fn default() -> Self {
-        Self::RAW
+impl BlobFormat {
+    /// Is raw format
+    pub const fn is_raw(&self) -> bool {
+        matches!(self, BlobFormat::Raw)
+    }
+
+    /// Is hash seq format
+    pub const fn is_hash_seq(&self) -> bool {
+        matches!(self, BlobFormat::HashSeq)
     }
 }
 
@@ -128,17 +113,28 @@ pub enum SetTagOption {
 
 /// A hash and format pair
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HashAndFormat(pub Hash, pub BlobFormat);
+pub struct HashAndFormat {
+    /// The hash
+    pub hash: Hash,
+    /// The format
+    pub format: BlobFormat,
+}
 
 impl HashAndFormat {
     /// Create a new hash and format pair, using the default (raw) format.
     pub fn raw(hash: Hash) -> Self {
-        Self(hash, BlobFormat::RAW)
+        Self {
+            hash,
+            format: BlobFormat::Raw,
+        }
     }
 
     /// Create a new hash and format pair, using the collection format.
     pub fn hash_seq(hash: Hash) -> Self {
-        Self(hash, BlobFormat::HASHSEQ)
+        Self {
+            hash,
+            format: BlobFormat::HashSeq,
+        }
     }
 }
 

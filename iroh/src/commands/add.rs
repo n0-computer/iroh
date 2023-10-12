@@ -159,7 +159,7 @@ pub async fn aggregate_add_response(
                 if let Some(mp) = mp.take() {
                     mp.all_done();
                 }
-                hash_and_format = Some(HashAndFormat(hash, format));
+                hash_and_format = Some(HashAndFormat { hash, format });
                 break;
             }
             AddProgress::Abort(e) => {
@@ -170,7 +170,7 @@ pub async fn aggregate_add_response(
             }
         }
     }
-    let HashAndFormat(hash, format) =
+    let HashAndFormat { hash, format } =
         hash_and_format.context("Missing hash for collection or blob")?;
     let entries = collections
         .into_iter()
@@ -191,9 +191,8 @@ pub fn print_add_response(hash: Hash, format: BlobFormat, entries: Vec<ProvideRe
     println!("Total: {}", HumanBytes(total_size));
     println!();
     match format {
-        BlobFormat::RAW => println!("Blob: {}", hash),
-        BlobFormat::HASHSEQ => println!("Collection: {}", hash),
-        _ => println!("Hash (unsupported format): {}", hash),
+        BlobFormat::Raw => println!("Blob: {}", hash),
+        BlobFormat::HashSeq => println!("Collection: {}", hash),
     }
 }
 

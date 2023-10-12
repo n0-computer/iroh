@@ -31,10 +31,12 @@ use std::{
     num::NonZeroUsize,
 };
 
+use bao_tree::ChunkRanges;
 use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use iroh_bytes::{
-    baomap::{range_collections::RangeSet2, Store},
+    baomap::{Store, TempTag},
     protocol::RangeSpecSeq,
+    util::HashAndFormat,
     Hash,
 };
 use iroh_net::{key::PublicKey, MagicEndpoint};
@@ -85,7 +87,7 @@ pub enum FailureAction {
 }
 
 /// Future of a get request.
-type GetFut = LocalBoxFuture<'static, Result<(), FailureAction>>;
+type GetFut = LocalBoxFuture<'static, Result<TempTag, FailureAction>>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
@@ -142,9 +144,9 @@ pub enum DownloadKind {
         /// Blob to be downloaded.
         hash: Hash,
     },
-    /// Download a collection entirely.
-    Collection {
-        /// Blob to be downloaded.
+    /// Download a sequence of hashes entirely.
+    HashSeq {
+        /// Hash sequence to be downloaded.
         hash: Hash,
     },
 }
@@ -153,7 +155,15 @@ impl DownloadKind {
     /// Get the requested hash.
     const fn hash(&self) -> &Hash {
         match self {
-            DownloadKind::Blob { hash } | DownloadKind::Collection { hash } => hash,
+            DownloadKind::Blob { hash } | DownloadKind::HashSeq { hash } => hash,
+        }
+    }
+
+    /// Get the requested hash and format.
+    fn hash_and_format(&self) -> HashAndFormat {
+        match self {
+            DownloadKind::Blob { hash } => HashAndFormat::raw(*hash),
+            DownloadKind::HashSeq { hash } => HashAndFormat::hash_seq(*hash),
         }
     }
 
@@ -162,15 +172,15 @@ impl DownloadKind {
     #[allow(dead_code)]
     fn ranges(&self) -> RangeSpecSeq {
         match self {
-            DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([RangeSet2::all()]),
-            DownloadKind::Collection { .. } => RangeSpecSeq::all(),
+            DownloadKind::Blob { .. } => RangeSpecSeq::from_ranges([ChunkRanges::all()]),
+            DownloadKind::HashSeq { .. } => RangeSpecSeq::all(),
         }
     }
 }
 
 // For readability. In the future we might care about some data reporting on a successful download
 // or kind of failure in the error case.
-type DownloadResult = anyhow::Result<()>;
+type DownloadResult = anyhow::Result<TempTag>;
 
 /// Handle to interact with a download request.
 #[derive(Debug)]
@@ -430,7 +440,7 @@ enum PeerState {
 }
 
 /// Type of future that performs a download request.
-type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<(), FailureAction>)>;
+type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<TempTag, FailureAction>)>;
 
 #[derive(Debug)]
 struct Service<G: Getter, D: Dialer> {
@@ -731,28 +741,28 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// Checks if this hash is needed.
     fn is_needed(&self, hash: Hash) -> bool {
         let as_blob = DownloadKind::Blob { hash };
-        let as_collection = DownloadKind::Collection { hash };
+        let as_hash_seq = DownloadKind::HashSeq { hash };
         self.current_requests.contains_key(&as_blob)
             || self.scheduled_requests.contains_key(&as_blob)
-            || self.current_requests.contains_key(&as_collection)
-            || self.scheduled_requests.contains_key(&as_collection)
+            || self.current_requests.contains_key(&as_hash_seq)
+            || self.scheduled_requests.contains_key(&as_hash_seq)
     }
 
     /// Check if this hash is currently being downloaded.
     fn is_current_request(&self, hash: Hash) -> bool {
         let as_blob = DownloadKind::Blob { hash };
-        let as_collection = DownloadKind::Collection { hash };
+        let as_hash_seq = DownloadKind::HashSeq { hash };
         self.current_requests.contains_key(&as_blob)
-            || self.current_requests.contains_key(&as_collection)
+            || self.current_requests.contains_key(&as_hash_seq)
     }
 
     /// Remove a hash from the scheduled queue.
     fn unschedule(&mut self, hash: Hash) -> Option<(DownloadKind, PendingRequestInfo)> {
         let as_blob = DownloadKind::Blob { hash };
-        let as_collection = DownloadKind::Collection { hash };
+        let as_hash_seq = DownloadKind::HashSeq { hash };
         let info = match self.scheduled_requests.remove(&as_blob) {
             Some(req) => Some(req),
-            None => self.scheduled_requests.remove(&as_collection),
+            None => self.scheduled_requests.remove(&as_hash_seq),
         };
         if let Some(info) = info {
             let kind = self.scheduled_request_queue.remove(&info.delay_key);
@@ -813,7 +823,11 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.start_download(kind, peer, conn, remaining_retries, intents);
     }
 
-    fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {
+    fn on_download_completed(
+        &mut self,
+        kind: DownloadKind,
+        result: Result<TempTag, FailureAction>,
+    ) {
         // first remove the request
         let info = self
             .current_requests
@@ -849,10 +863,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         let hash = *kind.hash();
 
         let peer_ready = match result {
-            Ok(()) => {
+            Ok(tt) => {
                 debug!(%peer, ?kind, "download completed");
                 for sender in intents.into_values() {
-                    let _ = sender.send(Ok(()));
+                    let _ = sender.send(Ok(tt.clone()));
                 }
                 true
             }

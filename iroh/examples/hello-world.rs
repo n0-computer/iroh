@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .spawn()
         .await?;
     // create a ticket
-    let ticket = node.ticket(hash, BlobFormat::RAW).await?;
+    let ticket = node.ticket(hash, BlobFormat::Raw).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.node_addr().peer_id);

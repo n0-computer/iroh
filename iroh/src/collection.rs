@@ -139,12 +139,12 @@ impl Collection {
     {
         let (links, meta) = self.into_parts();
         let meta_bytes = postcard::to_stdvec(&meta)?;
-        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::RAW).await?;
+        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::Raw).await?;
         let links_bytes = std::iter::once(*meta_tag.hash())
             .chain(links)
             .collect::<HashSeq>();
         let links_tag = db
-            .import_bytes(links_bytes.into(), BlobFormat::HASHSEQ)
+            .import_bytes(links_bytes.into(), BlobFormat::HashSeq)
             .await?;
         Ok(links_tag)
     }
