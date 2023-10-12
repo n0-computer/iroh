@@ -14,7 +14,7 @@ use tokio_stream::StreamExt;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let rt = runtime::Handle::from_current(1)?;
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     let node = Node::builder(db.clone(), store)
         .runtime(&rt)

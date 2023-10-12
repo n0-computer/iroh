@@ -44,7 +44,7 @@ pub trait RangeKey: Sized + Debug + Ord + PartialEq + Clone + 'static {
     fn is_prefix_of(&self, other: &Self) -> bool;
 
     /// Returns true if `other` is a prefix of `self`.
-    fn has_prefix(&self, other: &Self) -> bool {
+    fn is_prefixed_by(&self, other: &Self) -> bool {
         other.is_prefix_of(self)
     }
 }
@@ -257,10 +257,10 @@ pub trait Store<E: RangeEntry>: Sized {
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Returns all entries whose key starts with the given `prefix`.
-    fn get_prefix(&self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
+    fn prefixed_by(&self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Returns all entries that share a prefix with `key`, including the entry for `key` itself.
-    fn get_with_parents(&self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
+    fn prefixes_of(&self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
 
     /// Get all entries in the store
     fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error>;
@@ -380,15 +380,18 @@ where
                 None
             } else {
                 Some(
+                    // we get the range of the item form our store. from this set, we remove all
+                    // entries that whose key is contained in the peer's set and where our value is
+                    // lower than the peer entry's value.
                     self.store
                         .get_range(range.clone())?
-                        .filter_map(|existing| match existing {
-                            Ok(existing) => {
-                                if !values
-                                    .iter()
-                                    .any(|(entry, _)| existing.key() == entry.key())
-                                {
-                                    Some(Ok(existing))
+                        .filter_map(|our_entry| match our_entry {
+                            Ok(our_entry) => {
+                                if !values.iter().any(|(their_entry, _)| {
+                                    our_entry.key() == their_entry.key()
+                                        && their_entry.value() >= our_entry.value()
+                                }) {
+                                    Some(Ok(our_entry))
                                 } else {
                                     None
                                 }
@@ -581,15 +584,15 @@ where
     /// Returns `true` if the entry was inserted.
     /// Returns `false` if it was not inserted.
     pub fn put(&mut self, entry: E) -> Result<InsertOutcome, S::Error> {
-        let parents = self.store.get_with_parents(entry.key())?;
+        let prefix_entry = self.store.prefixes_of(entry.key())?;
         // First we check if our entry is strictly greater than all parent elements.
         // From the willow spec:
         // "Remove all entries whose timestamp is strictly less than the timestamp of any other entry [..]
         // whose path is a prefix of p." and then "remove all but those whose record has the greatest hash component".
         // This is the contract of the `Ord` impl for `E::Value`.
-        for e in parents {
-            let e = e?;
-            if entry.value() <= e.value() {
+        for prefix_entry in prefix_entry {
+            let prefix_entry = prefix_entry?;
+            if entry.value() <= prefix_entry.value() {
                 return Ok(InsertOutcome::NotInserted);
             }
         }
@@ -597,7 +600,7 @@ where
         // Now we remove all entries that have our key as a prefix and are older than our entry.
         let removed = self
             .store
-            .remove_prefix_filtered(entry.key(), |value| value < entry.value())?;
+            .remove_prefix_filtered(entry.key(), |value| entry.value() >= value)?;
 
         // Insert our new entry.
         self.store.put(entry)?;
@@ -678,17 +681,18 @@ mod tests {
 
     impl RangeKey for &'static str {
         fn is_prefix_of(&self, other: &Self) -> bool {
-            self.starts_with(other)
+            other.starts_with(self)
         }
     }
     impl RangeKey for String {
         fn is_prefix_of(&self, other: &Self) -> bool {
-            self.starts_with(other)
+            other.starts_with(self)
         }
     }
 
     impl RangeValue for &'static [u8] {}
     impl RangeValue for i32 {}
+    impl RangeValue for u8 {}
     impl RangeValue for () {}
 
     impl<K, V> Store<(K, V)> for SimpleStore<K, V>
@@ -764,7 +768,7 @@ mod tests {
         }
 
         // TODO: Not horrible.
-        fn get_with_parents(&self, key: &K) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        fn prefixes_of(&self, key: &K) -> Result<Self::ParentIterator<'_>, Self::Error> {
             let mut res = vec![];
             for (k, v) in self.data.iter() {
                 if k.is_prefix_of(key) {
@@ -774,7 +778,7 @@ mod tests {
             Ok(res.into_iter())
         }
 
-        fn get_prefix(&self, prefix: &K) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        fn prefixed_by(&self, prefix: &K) -> Result<Self::RangeIterator<'_>, Self::Error> {
             let iter = self.data.iter();
             Ok(SimpleRangeIterator {
                 iter,
@@ -860,7 +864,6 @@ mod tests {
         assert_eq!(res.bob_to_alice[0].parts.len(), 2);
         assert!(res.bob_to_alice[0].parts[0].is_range_fingerprint());
         assert!(res.bob_to_alice[0].parts[1].is_range_fingerprint());
-
         // Last response from Alice
         assert_eq!(res.alice_to_bob[1].parts.len(), 3);
         assert!(res.alice_to_bob[1].parts[0].is_range_fingerprint());
@@ -953,6 +956,16 @@ mod tests {
     fn test_prefixes_empty_bob() {
         let alice_set = [("/foo/bar", 1), ("/foo/baz", 1), ("/foo/cat", 1)];
         let bob_set = [];
+
+        let res = sync(&alice_set, &bob_set);
+        assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
+        assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
+    }
+
+    #[test]
+    fn test_equal_key_higher_value() {
+        let alice_set = [("foo", 2)];
+        let bob_set = [("foo", 1)];
 
         let res = sync(&alice_set, &bob_set);
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
@@ -1195,13 +1208,23 @@ mod tests {
         sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
     }
 
-    fn insert_if_larger<K: Ord, V: Ord>(map: &mut BTreeMap<K, V>, k: K, v: V) {
-        let insert = match map.get(&k) {
-            None => true,
-            Some(v2) => v > *v2,
-        };
+    fn insert_if_larger<K: RangeKey, V: RangeValue>(map: &mut BTreeMap<K, V>, key: K, value: V) {
+        let mut insert = true;
+        for (k, v) in map.iter() {
+            if k.is_prefix_of(&key) && v >= &value {
+                insert = false;
+            }
+        }
         if insert {
-            map.insert(k, v);
+            #[allow(clippy::needless_bool)]
+            map.retain(|k, v| {
+                if key.is_prefix_of(k) && value >= *v {
+                    false
+                } else {
+                    true
+                }
+            });
+            map.insert(key, value);
         }
     }
 
@@ -1217,37 +1240,58 @@ mod tests {
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
-        let mut expected_set = BTreeMap::new();
-
         let mut alice = Peer::<(K, V), SimpleStore<K, V>>::default();
-        for e in alice_set {
-            alice.put(e.clone()).unwrap();
-            insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
-        }
-
         let mut bob = Peer::<(K, V), SimpleStore<K, V>>::default();
-        for e in bob_set {
-            bob.put(e.clone()).unwrap();
-            insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
-        }
+
+        let expected_set = {
+            let mut expected_set = BTreeMap::new();
+            let mut alice_expected = BTreeMap::new();
+            for e in alice_set {
+                alice.put(e.clone()).unwrap();
+                insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
+                insert_if_larger(&mut alice_expected, e.0.clone(), e.1.clone());
+            }
+            let alice_expected = alice_expected.into_iter().collect::<Vec<_>>();
+            let alice_now: Vec<_> = alice.all().unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(
+                alice_expected, alice_now,
+                "alice initial set does not match"
+            );
+
+            let mut bob_expected = BTreeMap::new();
+            for e in bob_set {
+                bob.put(e.clone()).unwrap();
+                insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
+                insert_if_larger(&mut bob_expected, e.0.clone(), e.1.clone());
+            }
+            let bob_expected = bob_expected.into_iter().collect::<Vec<_>>();
+            let bob_now: Vec<_> = bob.all().unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(bob_expected, bob_now, "bob initial set does not match");
+
+            expected_set.into_iter().collect::<Vec<_>>()
+        };
 
         let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
 
-        res.print_messages();
-
         let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(
-            alice_now.into_iter().collect::<Vec<_>>(),
-            expected_set.clone().into_iter().collect::<Vec<_>>(),
-            "alice"
-        );
+        if alice_now != expected_set {
+            res.print_messages();
+            println!("alice_init: {alice_set:?}");
+            println!("bob_init:   {bob_set:?}");
+            println!("expected:   {expected_set:?}");
+            println!("alice_now:  {alice_now:?}");
+            panic!("alice_now does not match expected");
+        }
 
         let bob_now: Vec<_> = res.bob.all().unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(
-            bob_now.into_iter().collect::<Vec<_>>(),
-            expected_set.into_iter().collect::<Vec<_>>(),
-            "bob"
-        );
+        if bob_now != expected_set {
+            res.print_messages();
+            println!("alice_init: {alice_set:?}");
+            println!("bob_init:   {bob_set:?}");
+            println!("expected:   {expected_set:?}");
+            println!("bob_now:    {bob_now:?}");
+            panic!("bob_now does not match expected");
+        }
 
         // Check that values were never sent twice
         let mut alice_sent = BTreeMap::new();
@@ -1403,18 +1447,30 @@ mod tests {
         assert_eq!(excluded[3].0, "hog");
     }
 
-    type TestSet = BTreeMap<String, ()>;
+    type TestSetStringUnit = BTreeMap<String, ()>;
+    type TestSetStringU8 = BTreeMap<String, u8>;
 
     fn test_key() -> impl Strategy<Value = String> {
         "[a-z0-9]{0,5}"
     }
 
-    fn test_set() -> impl Strategy<Value = TestSet> {
+    fn test_set_string_unit() -> impl Strategy<Value = TestSetStringUnit> {
         prop::collection::btree_map(test_key(), Just(()), 0..10)
     }
 
-    fn test_vec() -> impl Strategy<Value = Vec<(String, ())>> {
-        test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    fn test_set_string_u8() -> impl Strategy<Value = TestSetStringU8> {
+        prop::collection::btree_map(test_key(), test_value_u8(), 0..10)
+    }
+
+    fn test_value_u8() -> impl Strategy<Value = u8> {
+        0u8..u8::MAX
+    }
+
+    fn test_vec_string_unit() -> impl Strategy<Value = Vec<(String, ())>> {
+        test_set_string_unit().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    }
+    fn test_vec_string_u8() -> impl Strategy<Value = Vec<(String, u8)>> {
+        test_set_string_u8().prop_map(|m| m.into_iter().collect::<Vec<_>>())
     }
 
     fn test_range() -> impl Strategy<Value = Range<String>> {
@@ -1422,7 +1478,7 @@ mod tests {
         (test_key(), test_key()).prop_map(|(x, y)| Range::new(x, y))
     }
 
-    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
+    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSetStringUnit {
         values
             .into_iter()
             .map(|v| v.as_ref().to_string())
@@ -1442,6 +1498,13 @@ mod tests {
     }
 
     #[test]
+    fn simple_store_sync_x() {
+        let alice = mk_test_vec(["1", "3"]);
+        let bob = mk_test_vec(["2"]);
+        let _res = sync(&alice, &bob);
+    }
+
+    #[test]
     fn simple_store_sync_2() {
         let alice = mk_test_vec(["1", "3"]);
         let bob = mk_test_vec(["0", "2", "3"]);
@@ -1457,8 +1520,16 @@ mod tests {
 
     #[proptest]
     fn simple_store_sync(
-        #[strategy(test_vec())] alice: Vec<(String, ())>,
-        #[strategy(test_vec())] bob: Vec<(String, ())>,
+        #[strategy(test_vec_string_unit())] alice: Vec<(String, ())>,
+        #[strategy(test_vec_string_unit())] bob: Vec<(String, ())>,
+    ) {
+        let _res = sync(&alice, &bob);
+    }
+
+    #[proptest]
+    fn simple_store_sync_u8(
+        #[strategy(test_vec_string_u8())] alice: Vec<(String, u8)>,
+        #[strategy(test_vec_string_u8())] bob: Vec<(String, u8)>,
     ) {
         let _res = sync(&alice, &bob);
     }
@@ -1495,7 +1566,7 @@ mod tests {
 
     #[proptest]
     fn simple_store_get_ranges(
-        #[strategy(test_set())] contents: BTreeMap<String, ()>,
+        #[strategy(test_set_string_unit())] contents: BTreeMap<String, ()>,
         #[strategy(test_range())] range: Range<String>,
     ) {
         let (expected, actual) = store_get_ranges_test::<SimpleStore<_, _>, _>(contents, range);

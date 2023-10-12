@@ -39,8 +39,8 @@ fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
     secret_key: SecretKey,
-) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
         .secret_key(secret_key)
@@ -53,8 +53,8 @@ fn spawn_node(
     rt: runtime::Handle,
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
-) -> impl Future<Output = anyhow::Result<Node<iroh::baomap::mem::Store, store::memory::Store>>> + 'static
-{
+) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store, store::memory::Store>>>
+       + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
         let node = test_node(rt, "127.0.0.1:0".parse()?, secret_key);
@@ -68,7 +68,7 @@ async fn spawn_nodes(
     rt: runtime::Handle,
     n: usize,
     mut rng: &mut (impl CryptoRng + Rng),
-) -> anyhow::Result<Vec<Node<iroh::baomap::mem::Store, store::memory::Store>>> {
+) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store, store::memory::Store>>> {
     let mut futs = vec![];
     for i in 0..n {
         futs.push(spawn_node(rt.clone(), i, &mut rng));
@@ -479,7 +479,7 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 #[tokio::test]
 async fn doc_delete() -> Result<()> {
     let rt = test_runtime();
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db, store)

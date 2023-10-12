@@ -130,6 +130,13 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
+use super::{
+    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    PartialMapEntry, ReadableStore, ValidateProgress,
+};
+use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
+use crate::util::{BlobFormat, HashAndFormat, LivenessTracker, Tag};
+use crate::{Hash, TempTag, IROH_BLOCK_SIZE};
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkRanges};
@@ -138,13 +145,6 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
-use iroh_bytes::baomap::{
-    self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
-    PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
-};
-use iroh_bytes::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -685,7 +685,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         path: PathBuf,
@@ -916,7 +916,7 @@ impl Store {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
         })?;
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-        use baomap::Store;
+        use super::Store;
         // from here on, everything related to the hash is protected by the temp tag
         let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
@@ -1195,7 +1195,7 @@ impl Store {
         complete_path: PathBuf,
         partial_path: PathBuf,
         meta_path: PathBuf,
-        rt: iroh_bytes::util::runtime::Handle,
+        rt: crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         tracing::debug!(
             "loading database from {} {}",
@@ -1465,7 +1465,7 @@ impl Store {
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
         meta_path: impl AsRef<Path>,
-        rt: &iroh_bytes::util::runtime::Handle,
+        rt: &crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
@@ -1480,7 +1480,7 @@ impl Store {
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
         meta_path: impl AsRef<Path>,
-        rt: &iroh_bytes::util::runtime::Handle,
+        rt: &crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();

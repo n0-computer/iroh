@@ -18,19 +18,20 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_bytes::baomap::{
+use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::provider::GetProgress;
+use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
+use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
+    BlobFormat, HashAndFormat, TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
@@ -64,7 +65,7 @@ use crate::rpc_protocol::{
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService,
+    ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -103,8 +104,12 @@ impl Default for GcPolicy {
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a blob store. Various store implementations are available
-/// in [`crate::baomap`]. Everything else is optional.
+/// You must supply a blob store and a document store.
+///
+/// Blob store implementations are available in [`iroh_bytes::store`].
+/// Document store implementations are available in [`iroh_sync::store`].
+///
+/// Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
@@ -520,7 +525,7 @@ where
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
             callbacks
-                .send(Event::Db(iroh_bytes::baomap::Event::GcStarted))
+                .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
             db.clear_live();
             let doc_hashes = match ds.content_hashes() {
@@ -579,7 +584,7 @@ where
                 }
             }
             callbacks
-                .send(Event::Db(iroh_bytes::baomap::Event::GcCompleted))
+                .send(Event::Db(iroh_bytes::store::Event::GcCompleted))
                 .await;
         }
     }
@@ -682,7 +687,7 @@ pub enum Event {
     /// Events from the iroh-bytes transfer protocol.
     ByteProvide(iroh_bytes::provider::Event),
     /// Events from database
-    Db(iroh_bytes::baomap::Event),
+    Db(iroh_bytes::store::Event),
 }
 
 impl<D: ReadableStore, S: DocStore> Node<D, S> {
@@ -1093,7 +1098,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             rpc_protocol::WrapOption,
         };
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, TempTag};
+        use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);
@@ -1664,7 +1669,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
+        let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
@@ -1681,10 +1686,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
-        use iroh_bytes::util::SetTagOption;
         use std::io::Cursor;
         let rt = runtime::Handle::from_current(1)?;
-        let db = crate::baomap::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1706,10 +1710,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
-        use iroh_bytes::util::SetTagOption;
-
         let rt = runtime::Handle::from_current(1)?;
-        let db = crate::baomap::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())

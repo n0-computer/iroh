@@ -648,10 +648,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     type ParentIterator<'a> = ParentIterator<'a>;
-    fn get_with_parents(
-        &self,
-        id: &RecordIdentifier,
-    ) -> Result<Self::ParentIterator<'_>, Self::Error> {
+    fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
         ParentIterator::create(
             &self.store.db,
             id.namespace(),
@@ -660,7 +657,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         )
     }
 
-    fn get_prefix(&self, prefix: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
+    fn prefixed_by(&self, prefix: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
         let start = prefix.as_byte_tuple();
         let end = prefix_range_end(&start);
         let iter = RangeIterator::with_range(

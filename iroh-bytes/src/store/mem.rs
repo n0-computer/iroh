@@ -15,6 +15,17 @@ use std::time::SystemTime;
 use super::flatten_to_io;
 use super::temp_name;
 use super::TempCounterMap;
+use crate::{
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+        PartialMapEntry, ReadableStore, ValidateProgress,
+    },
+    util::{
+        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        runtime, BlobFormat, HashAndFormat, LivenessTracker,
+    },
+    Hash, Tag, TempTag, IROH_BLOCK_SIZE,
+};
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
@@ -28,27 +39,7 @@ use derive_more::From;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::{Stream, StreamExt};
-use iroh_bytes::baomap;
-use iroh_bytes::baomap::EntryStatus;
-use iroh_bytes::baomap::ExportMode;
-use iroh_bytes::baomap::ImportMode;
-use iroh_bytes::baomap::ImportProgress;
-use iroh_bytes::baomap::LivenessTracker;
-use iroh_bytes::baomap::PartialMap;
-use iroh_bytes::baomap::PartialMapEntry;
-use iroh_bytes::baomap::TempTag;
-use iroh_bytes::baomap::ValidateProgress;
-use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
-use iroh_bytes::util::progress::IdGenerator;
-use iroh_bytes::util::progress::IgnoreProgressSender;
-use iroh_bytes::util::progress::ProgressSender;
-use iroh_bytes::util::runtime;
-use iroh_bytes::util::BlobFormat;
-use iroh_bytes::util::HashAndFormat;
-use iroh_bytes::util::Tag;
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::AsyncSliceReader;
-use iroh_io::AsyncSliceWriter;
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
 
 /// A mutable file like object that can be used for partial entries.
@@ -458,7 +449,7 @@ impl PartialMap for Store {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         path: std::path::PathBuf,
@@ -619,7 +610,7 @@ impl Store {
             data: outboard.into(),
         };
         let hash = hash.into();
-        use baomap::Store;
+        use super::Store;
         let tag = self.temp_tag(HashAndFormat { hash, format });
         self.0
             .state

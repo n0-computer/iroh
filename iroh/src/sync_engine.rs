@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures::future::{BoxFuture, FutureExt, Shared};
 use iroh_bytes::{
-    baomap::{EntryStatus, Store as BaoStore},
+    store::{EntryStatus, Store as BaoStore},
     util::runtime::Handle,
 };
 use iroh_gossip::net::Gossip;

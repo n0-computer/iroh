@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use futures::{FutureExt, Stream};
-use iroh_bytes::{baomap::Store as BaoStore, util::BlobFormat};
+use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
 use iroh_sync::{store::Store, sync::Namespace, Author};
 use tokio_stream::StreamExt;
 

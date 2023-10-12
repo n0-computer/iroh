@@ -16,8 +16,7 @@ use indicatif::{
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
-use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
+use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
 use iroh_net::PeerAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},

@@ -9,10 +9,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
     FutureExt,
 };
-use iroh_bytes::{
-    baomap::{self, EntryStatus},
-    Hash,
-};
+use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use iroh_sync::{
@@ -174,7 +171,7 @@ type SyncConnectFut = BoxFuture<
 type SyncAcceptFut = BoxFuture<'static, Result<SyncFinished, AcceptError>>;
 
 // Currently peers might double-sync in both directions.
-pub struct LiveActor<B: baomap::Store> {
+pub struct LiveActor<B: iroh_bytes::store::Store> {
     /// Receiver for actor messages.
     inbox: mpsc::Receiver<ToLiveActor>,
     sync: SyncHandle,
@@ -206,7 +203,7 @@ pub struct LiveActor<B: baomap::Store> {
     states: HashMap<NamespaceId, ReplicaState>,
 }
 
-impl<B: baomap::Store> LiveActor<B> {
+impl<B: iroh_bytes::store::Store> LiveActor<B> {
     /// Create the live actor.
     #[allow(clippy::too_many_arguments)]
     pub fn new(

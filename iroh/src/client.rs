@@ -13,10 +13,10 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
-use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
+use iroh_bytes::store::ValidateProgress;
 use iroh_bytes::Hash;
+use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
@@ -35,7 +35,7 @@ use crate::rpc_protocol::{
     DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
     ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 

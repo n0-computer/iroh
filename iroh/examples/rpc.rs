@@ -11,7 +11,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use clap::Parser;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
-use iroh_bytes::baomap::Store;
+use iroh_bytes::store::Store;
 use iroh_net::key::SecretKey;
 use quic_rpc::transport::quinn::QuinnServerEndpoint;
 use quic_rpc::ServiceEndpoint;
@@ -92,11 +92,11 @@ async fn main() -> anyhow::Result<()> {
     match args.path {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
-            let db = iroh::baomap::flat::Store::load(&path, &path, &path, &rt).await?;
+            let db = iroh_bytes::store::flat::Store::load(&path, &path, &path, &rt).await?;
             run(db).await
         }
         None => {
-            let db = iroh::baomap::mem::Store::new(rt);
+            let db = iroh_bytes::store::mem::Store::new(rt);
             run(db).await
         }
     }
