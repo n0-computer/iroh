@@ -16,10 +16,10 @@ use crate::{
         DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
         DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
         DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
-        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetRequest,
-        DocSetResponse, DocShareRequest, DocShareResponse, DocStartSyncRequest,
-        DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
-        ShareMode,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
+        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -212,6 +212,22 @@ impl<S: Store> SyncEngine<S> {
             .delete_prefix(prefix, &author)
             .map_err(anyhow::Error::from)?;
         Ok(DocDelResponse { removed })
+    }
+
+    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
+        let DocSetHashRequest {
+            doc_id,
+            author_id,
+            key,
+            hash,
+            size,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        replica
+            .insert(key, &author, hash, size)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocSetHashResponse {})
     }
 
     pub fn doc_get_many(

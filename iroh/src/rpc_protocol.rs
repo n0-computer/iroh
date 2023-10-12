@@ -671,6 +671,29 @@ pub struct DocDelResponse {
     pub removed: usize,
 }
 
+/// Set an entry in a document via its hash
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Key of this entry.
+    pub key: Vec<u8>,
+    /// Hash of this entry.
+    pub hash: Hash,
+    /// Size of this entry.
+    pub size: u64,
+}
+
+impl RpcMsg<ProviderService> for DocSetHashRequest {
+    type Response = RpcResult<DocSetHashResponse>;
+}
+
+/// Response to [`DocSetHashRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashResponse {}
+
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyRequest {
@@ -837,6 +860,7 @@ pub enum ProviderRequest {
     DocDrop(DocDropRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
+    DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
     DocDel(DocDelRequest),
@@ -879,6 +903,7 @@ pub enum ProviderResponse {
     DocDrop(RpcResult<DocDropResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
+    DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
     DocDel(RpcResult<DocDelResponse>),

@@ -1,3 +1,42 @@
+# [v0.7.0](https://github.com/n0-computer/iroh/compare/v0.6.0...v0.7.0) (2023-10-11)
+
+### Bug Fixes
+
+* **`iroh::downloader`:** remove hash from `providers` in two missed cases ([#1584](https://github.com/n0-computer/iroh/issues/1584)) ([068f0bd](https://github.com/n0-computer/iroh/commit/068f0bde4d8f2ba07f806a13830fa5cbeb9a558c))
+* actually allow to disable DERP ([#1560](https://github.com/n0-computer/iroh/issues/1560)) ([cf9abc0](https://github.com/n0-computer/iroh/commit/cf9abc02c8becbfc1754dfa02ac04bd990d0867a)), closes [#1558](https://github.com/n0-computer/iroh/issues/1558)
+* avoid blockage in endpoint handling ([#1569](https://github.com/n0-computer/iroh/issues/1569)) ([ccdf0c9](https://github.com/n0-computer/iroh/commit/ccdf0c962eea97bf0d63ccabe2620744c50f82f5)), closes [#1568](https://github.com/n0-computer/iroh/issues/1568)
+* **cli,console:** default to 'hash' mode for the keys command ([#1617](https://github.com/n0-computer/iroh/issues/1617)) ([c3571e1](https://github.com/n0-computer/iroh/commit/c3571e13e12118a85c9aa31f15e8027e9f1e8cf5))
+* **derper:** update config to auto generate keys ([#1599](https://github.com/n0-computer/iroh/issues/1599)) ([8fb46d4](https://github.com/n0-computer/iroh/commit/8fb46d49e1d7c6e3da47c56b206e26210dcd7f4a))
+* feature flags for iroh-io dependency ([#1588](https://github.com/n0-computer/iroh/issues/1588)) ([c1c7d15](https://github.com/n0-computer/iroh/commit/c1c7d15e4e52f15f1e34fccb6085aefbc9cc255d))
+* **iroh-net:** dialer bug ([#1533](https://github.com/n0-computer/iroh/issues/1533)) ([16939c8](https://github.com/n0-computer/iroh/commit/16939c86177820904c6b4b20ff685cc49f3d93cc))
+* **iroh-net:** Do not unwrap sending on response channel ([#1529](https://github.com/n0-computer/iroh/issues/1529)) ([974b66e](https://github.com/n0-computer/iroh/commit/974b66e3ea01156b4fc6e7fa4d08f638c5b9b2b2)), closes [#1528](https://github.com/n0-computer/iroh/issues/1528)
+* **iroh-net:** reverse ip-port mapping stores only direct addresses in the peermap ([#1606](https://github.com/n0-computer/iroh/issues/1606)) ([176d632](https://github.com/n0-computer/iroh/commit/176d6322d04c61e4023c33a9f014633ee6c39397)), closes [/datatracker.ietf.org/doc/html/rfc2460#section-6](https://github.com//datatracker.ietf.org/doc/html/rfc2460/issues/section-6) [/datatracker.ietf.org/doc/html/rfc2460#section-7](https://github.com//datatracker.ietf.org/doc/html/rfc2460/issues/section-7)
+* mark initially created endpoints inactive ([#1539](https://github.com/n0-computer/iroh/issues/1539)) ([9b61ab7](https://github.com/n0-computer/iroh/commit/9b61ab7737777878036ce24e07c55fdf405dba9d)), closes [#1538](https://github.com/n0-computer/iroh/issues/1538)
+* **metrics:** labels need to be lowercase underscore format ([#1574](https://github.com/n0-computer/iroh/issues/1574)) ([81c6f04](https://github.com/n0-computer/iroh/commit/81c6f04b85af7832e8e06d07a4555efb75dd7849))
+* **net:** avoid deadlock on stayin_alive calls ([#1537](https://github.com/n0-computer/iroh/issues/1537)) ([34fa30a](https://github.com/n0-computer/iroh/commit/34fa30a4f2b1ac278685712583e9e3a64209edd8))
+* **net:** stop deleting endpoints we want to keep ([#1567](https://github.com/n0-computer/iroh/issues/1567)) ([96cd106](https://github.com/n0-computer/iroh/commit/96cd1060a0a2bd0679e3e23da5d04068ce58d203))
+
+
+### Features
+
+* `doc import` & `doc export` commands ([#1563](https://github.com/n0-computer/iroh/issues/1563)) ([3c0195c](https://github.com/n0-computer/iroh/commit/3c0195c9e771cf0b7d24d413b606eaf997134a8a))
+* add blobs from byte streams ([#1550](https://github.com/n0-computer/iroh/issues/1550)) ([e138400](https://github.com/n0-computer/iroh/commit/e138400062624d268bbb315be6310d2ba2d9e639))
+* **iroh-sync:** store peers per doc ([#1564](https://github.com/n0-computer/iroh/issues/1564)) ([31f08bb](https://github.com/n0-computer/iroh/commit/31f08bb082b3a568634c6afc79ead077e069b167))
+* **iroh:** export path and config related tooling ([#1570](https://github.com/n0-computer/iroh/issues/1570)) ([c284793](https://github.com/n0-computer/iroh/commit/c284793ebc554ad87c3f388800da2b71452bb8e9))
+* **iroh:** improve displaying content in the repl ([#1577](https://github.com/n0-computer/iroh/issues/1577)) ([2fd31b7](https://github.com/n0-computer/iroh/commit/2fd31b776742bac080f421a05085a086d1f19ed9))
+* **iroh:** show content as hex when utf8 fails ([#1596](https://github.com/n0-computer/iroh/issues/1596)) ([872f3b1](https://github.com/n0-computer/iroh/commit/872f3b1fff7ebdb8844dbc5aaa8ab8d0c4e64ac5))
+* **iroh:** use reflink if possible ([#1581](https://github.com/n0-computer/iroh/issues/1581)) ([e2ee678](https://github.com/n0-computer/iroh/commit/e2ee6784a92d84fa6418b7becdd9f0f75e35e6cb))
+* leave and drop docs ([#1589](https://github.com/n0-computer/iroh/issues/1589)) ([d7a3dd3](https://github.com/n0-computer/iroh/commit/d7a3dd3f3c9cf99767cb9cacdc016d518c7f717d)), closes [#1497](https://github.com/n0-computer/iroh/issues/1497)
+* log me ([#1561](https://github.com/n0-computer/iroh/issues/1561)) ([7e79227](https://github.com/n0-computer/iroh/commit/7e79227e5ea4f71cca7a0ee70a6ac0714c09141c))
+* **sync:** Implement prefix deletion ([#1535](https://github.com/n0-computer/iroh/issues/1535)) ([e7fc8be](https://github.com/n0-computer/iroh/commit/e7fc8be00e167743e10d0902f1e502b4df23a68b)), closes [#1504](https://github.com/n0-computer/iroh/issues/1504)
+* Use `BlobFormat` and properly support adding raw blobs ([#1518](https://github.com/n0-computer/iroh/issues/1518)) ([f3ed0ba](https://github.com/n0-computer/iroh/commit/f3ed0ba9bd2bcd68cccb523b8364c3ad33e26d03)), closes [#1496](https://github.com/n0-computer/iroh/issues/1496)
+
+
+### Performance Improvements
+
+* **iroh-net:** simplify stun::is check ([#1580](https://github.com/n0-computer/iroh/issues/1580)) ([0b28d15](https://github.com/n0-computer/iroh/commit/0b28d15227c7b6967b48bab2eb115b7a70e7b519))
+
+
 # [v0.6.0](https://github.com/n0-computer/iroh/compare/v0.6.0-alpha.1...v0.6.0) (2023-09-25)
 
 v0.6.0 is a big step toward iroh 1.0. It introduces documents, the See our [docs pages](https://iroh.computer/docs) for a detailed look at the new iroh.
