@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use futures::StreamExt;
 use hyper::upgrade::{Parts, Upgraded};
 use hyper::{header::UPGRADE, Body, Request};
 use iroh_metrics::inc;
@@ -620,28 +621,49 @@ impl Client {
         reg: DerpRegion,
     ) -> Result<(TcpStream, Arc<DerpNode>), ClientError> {
         debug!("dial region: {:?}", reg);
+        let start = Instant::now();
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
             return Err(ClientError::NoNodeForTarget(target));
         }
-        let mut first_err: Option<ClientError> = None;
-        // TODO (ramfox): these dials should probably happen in parallel, and we should return the
-        // first one to respond.
-        for node in reg.nodes.iter() {
-            if node.stun_only {
-                if first_err.is_none() {
-                    first_err = Some(ClientError::StunOnlyNodesFound(target.clone()));
+        // usually 1 IPv4, 1 IPv6 and 2x http
+        const DIAL_PARALLELISM: usize = 4;
+
+        let this = self.clone();
+        let mut dials = futures::stream::iter(reg.nodes.clone().into_iter())
+            .map(|node| {
+                let this = this.clone();
+                let target = target.clone();
+                async move {
+                    if node.stun_only {
+                        return Err(ClientError::StunOnlyNodesFound(target));
+                    }
+                    let conn = this.dial_node(&node).await;
+                    match conn {
+                        Ok(conn) => Ok((conn, node)),
+                        Err(e) => Err(e),
+                    }
                 }
-                continue;
-            }
-            let conn = self.dial_node(node).await;
-            match conn {
-                Ok(conn) => return Ok((conn, node.clone())),
-                Err(e) => first_err = Some(e),
+            })
+            .buffer_unordered(DIAL_PARALLELISM);
+
+        let mut first_err = None;
+        while let Some(res) = dials.next().await {
+            match res {
+                Ok((conn, node)) => {
+                    // return on the first successfull one
+                    warn!("dialed region in {:?}", start.elapsed());
+                    return Ok((conn, node));
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
             }
         }
-        let err = first_err.unwrap();
-        Err(err)
+
+        Err(first_err.unwrap())
     }
 
     /// Returns a TCP connection to node n, racing IPv4 and IPv6
@@ -704,6 +726,7 @@ impl Client {
         node: &DerpNode,
         dst_primary: UseIp,
     ) -> Result<TcpStream, ClientError> {
+        trace!("dial start: {:?}", dst_primary);
         if matches!(dst_primary, UseIp::Ipv4(_)) && self.prefer_ipv6().await {
             tokio::time::sleep(Duration::from_millis(200)).await;
             // Start v4 dial
@@ -758,6 +781,7 @@ impl Client {
             .map_err(ClientError::DialIO)?;
         // TODO: ipv6 vs ipv4 specific connection
 
+        trace!("dial done: {:?}", dst_primary);
         Ok(tcp_stream)
     }
 
