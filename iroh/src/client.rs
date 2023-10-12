@@ -621,6 +621,27 @@ where
         Ok(res.entry.map(|entry| entry.into()))
     }
 
+    /// Get the latest entry for a key. If `None`, then an entry of the given key
+    /// could not be found.
+    pub async fn get_latest(&self, key: Vec<u8>) -> Result<Option<Entry>> {
+        let stream = self.get_many(GetFilter::Key(key)).await?;
+        let entry = stream
+            .try_fold(None, |acc: Option<Entry>, cur: Entry| async move {
+                match acc {
+                    None => Ok(Some(cur)),
+                    Some(prev) => {
+                        if cur.timestamp() > prev.timestamp() {
+                            Ok(Some(cur))
+                        } else {
+                            Ok(Some(prev))
+                        }
+                    }
+                }
+            })
+            .await?;
+        Ok(entry)
+    }
+
     /// Get entries.
     pub async fn get_many(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
         let stream = self

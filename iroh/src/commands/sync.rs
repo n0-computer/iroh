@@ -185,11 +185,13 @@ pub enum DocCommands {
         doc: Option<NamespaceId>,
         /// Author of the entry.
         ///
-        /// Required unless the author is set through the IROH_AUTHOR environment variable.
-        /// Within the Iroh console, the active author can also be set with `author switch`.
+        /// If an `author` is present, will export the latest entry for the given key with that
+        /// particular author
         #[clap(short, long)]
         author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string)
+        ///
+        /// When just the key is present, will export the latest entry for that key.
         key: String,
         /// Path to export to
         #[clap(short, long)]
@@ -430,14 +432,21 @@ impl DocCommands {
                 out,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let author = env.author(author)?;
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let entry = doc
-                    .get_one(author, key)
-                    .await?
-                    .ok_or_else(|| anyhow!("<could not find entry {key_str}>"))?;
+                let entry = match author {
+                    None => doc
+                        .get_latest(key)
+                        .await?
+                        .ok_or_else(|| anyhow!("<could not find entry {key_str}>"))?,
+                    Some(author) => doc.get_one(author, key).await?.ok_or_else(|| {
+                        anyhow!(
+                            "<could not find entry {key_str} for author {}>",
+                            fmt_short(author.as_bytes())
+                        )
+                    })?,
+                };
                 match doc.read(&entry).await {
                     Ok(mut content) => {
                         if let Some(dir) = path.parent() {
