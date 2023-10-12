@@ -175,7 +175,7 @@ pub enum DocCommands {
         #[clap(short, long)]
         in_place: bool,
     },
-    /// Export data from a document
+    /// Export the most recent data for a key from a document
     Export {
         /// Document to operate on.
         ///
@@ -183,12 +183,6 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also be set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
-        /// Author of the entry.
-        ///
-        /// If an `author` is present, will export the latest entry for the given key with that
-        /// particular author
-        #[clap(short, long)]
-        author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string)
         ///
         /// When just the key is present, will export the latest entry for that key.
@@ -425,27 +419,18 @@ impl DocCommands {
                 import_coordinator(doc, author, root_prefix, prefix, stream, size, files).await?;
                 println!("Success! ({})", HumanDuration(start.elapsed()));
             }
-            Self::Export {
-                doc,
-                author,
-                key,
-                out,
-            } => {
+            Self::Export { doc, key, out } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let entry = match author {
-                    None => doc
-                        .get_latest(key)
-                        .await?
-                        .ok_or_else(|| anyhow!("<could not find entry {key_str}>"))?,
-                    Some(author) => doc.get_one(author, key).await?.ok_or_else(|| {
-                        anyhow!(
-                            "<could not find entry {key_str} for author {}>",
-                            fmt_short(author.as_bytes())
-                        )
-                    })?,
+                let stream = doc.get_many(GetFilter::Key(key)).await?;
+                let entry = match get_latest(stream).await? {
+                    None => {
+                        println!("<unable to find entry for key {key_str}>");
+                        return Ok(());
+                    }
+                    Some(e) => e,
                 };
                 match doc.read(&entry).await {
                     Ok(mut content) => {
@@ -865,4 +850,24 @@ impl ImportProgressBar {
     fn all_done(self) {
         self.mp.clear().ok();
     }
+}
+
+/// Get the latest entry for a key. If `None`, then an entry of the given key
+/// could not be found.
+async fn get_latest(stream: impl Stream<Item = Result<Entry>>) -> Result<Option<Entry>> {
+    let entry = stream
+        .try_fold(None, |acc: Option<Entry>, cur: Entry| async move {
+            match acc {
+                None => Ok(Some(cur)),
+                Some(prev) => {
+                    if cur.timestamp() > prev.timestamp() {
+                        Ok(Some(cur))
+                    } else {
+                        Ok(Some(prev))
+                    }
+                }
+            }
+        })
+        .await?;
+    Ok(entry)
 }
