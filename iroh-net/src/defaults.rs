@@ -3,16 +3,16 @@
 use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
 /// Hostname of the default NA Derp.
-pub const NA_DERP_HOSTNAME: &str = "derp.iroh.network.";
+pub const NA_DERP_HOSTNAME: &str = "use1-1.derp.iroh.network.";
 /// IPv4 of the default NA Derp.
-pub const NA_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(35, 175, 99, 113);
+pub const NA_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(34, 207, 161, 128);
 /// NA region id
 pub const NA_REGION_ID: u16 = 1;
 
 /// Hostname of the default EU Derp.
-pub const EU_DERP_HOSTNAME: &str = "eu1.derp.iroh.network.";
+pub const EU_DERP_HOSTNAME: &str = "euw1-1.derp.iroh.network.";
 /// IPv4 of the default EU Derp.
-pub const EU_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(52, 30, 229, 248);
+pub const EU_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(34, 253, 75, 5);
 /// EU region id
 pub const EU_REGION_ID: u16 = 2;
 
