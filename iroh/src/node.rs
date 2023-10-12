@@ -31,6 +31,7 @@ use iroh_bytes::{
     provider::{AddProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
+    TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
@@ -1093,7 +1094,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             rpc_protocol::WrapOption,
         };
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, TempTag};
+        use iroh_bytes::baomap::ImportMode;
         use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);

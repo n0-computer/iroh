@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use bao_tree::blake3;
 use bytes::Bytes;
-use iroh_bytes::baomap::{MapEntry, TempTag};
+use iroh_bytes::baomap::MapEntry;
 use iroh_bytes::get::fsm::EndBlobNext;
 use iroh_bytes::get::Stats;
 use iroh_bytes::hashseq::HashSeq;
 use iroh_bytes::util::BlobFormat;
-use iroh_bytes::{baomap, Hash};
+use iroh_bytes::{baomap, Hash, TempTag};
 use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 

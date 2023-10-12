@@ -9,7 +9,7 @@ use serde::{
     ser::SerializeTuple,
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use std::{borrow::Borrow, fmt, result, str::FromStr, time::SystemTime};
+use std::{borrow::Borrow, fmt, result, str::FromStr, sync::Arc, time::SystemTime};
 use thiserror::Error;
 pub mod io;
 pub mod progress;
@@ -367,6 +367,86 @@ impl<'de> de::Visitor<'de> for HashVisitor {
 
 impl MaxSize for Hash {
     const POSTCARD_MAX_SIZE: usize = 32;
+}
+
+/// A trait for things that can track liveness of blobs and collections.
+///
+/// This trait works together with [TempTag] to keep track of the liveness of a
+/// blob or collection.
+///
+/// It is important to include the format in the liveness tracking, since
+/// protecting a collection means protecting the blob and all its children,
+/// whereas protecting a raw blob only protects the blob itself.
+pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
+    /// Called on clone
+    fn on_clone(&self, inner: &HashAndFormat);
+    /// Called on drop
+    fn on_drop(&self, inner: &HashAndFormat);
+}
+
+/// A hash and format pair that is protected from garbage collection.
+///
+/// If format is raw, this will protect just the blob
+/// If format is collection, this will protect the collection and all blobs in it
+#[derive(Debug)]
+pub struct TempTag {
+    /// The hash and format we are pinning
+    inner: HashAndFormat,
+    /// liveness tracker
+    liveness: Option<Arc<dyn LivenessTracker>>,
+}
+
+impl TempTag {
+    /// Create a new temp tag for the given hash and format
+    ///
+    /// This should only be used by store implementations.
+    ///
+    /// The caller is responsible for increasing the refcount on creation and to
+    /// make sure that temp tags that are created between a mark phase and a sweep
+    /// phase are protected.
+    pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
+        if let Some(liveness) = liveness.as_ref() {
+            liveness.on_clone(&inner);
+        }
+        Self { inner, liveness }
+    }
+
+    /// The hash of the pinned item
+    pub fn inner(&self) -> &HashAndFormat {
+        &self.inner
+    }
+
+    /// The hash of the pinned item
+    pub fn hash(&self) -> &Hash {
+        &self.inner.hash
+    }
+
+    /// The format of the pinned item
+    pub fn format(&self) -> BlobFormat {
+        self.inner.format
+    }
+
+    /// Keep the item alive until the end of the process
+    pub fn leak(mut self) {
+        // set the liveness tracker to None, so that the refcount is not decreased
+        // during drop. This means that the refcount will never reach 0 and the
+        // item will not be gced until the end of the process.
+        self.liveness = None;
+    }
+}
+
+impl Clone for TempTag {
+    fn clone(&self) -> Self {
+        Self::new(self.inner, self.liveness.clone())
+    }
+}
+
+impl Drop for TempTag {
+    fn drop(&mut self) {
+        if let Some(liveness) = self.liveness.as_ref() {
+            liveness.on_drop(&self.inner);
+        }
+    }
 }
 
 const CID_PREFIX: [u8; 4] = [

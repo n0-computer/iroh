@@ -210,10 +210,10 @@ mod flat {
     use testdir::testdir;
 
     use iroh_bytes::{
-        baomap::{PartialMap, PartialMapEntry, Store, TempTag},
+        baomap::{PartialMap, PartialMapEntry, Store},
         hashseq::HashSeq,
         util::{BlobFormat, HashAndFormat, Tag},
-        IROH_BLOCK_SIZE,
+        TempTag, IROH_BLOCK_SIZE,
     };
 
     fn path(root: PathBuf, suffix: &'static str) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {

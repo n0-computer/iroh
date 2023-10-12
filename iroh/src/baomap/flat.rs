@@ -139,12 +139,12 @@ use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
 use iroh_bytes::baomap::{
-    self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
-    PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
+    self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    PartialMapEntry, ReadableStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
+use iroh_bytes::util::{BlobFormat, HashAndFormat, LivenessTracker, Tag};
+use iroh_bytes::{Hash, TempTag, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
