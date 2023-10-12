@@ -154,9 +154,11 @@ pub struct RangeItem<E: RangeEntry> {
     pub range: Range<E::Key>,
     #[serde(bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>"))]
     pub values: Vec<(E, ContentStatus)>,
-    /// If false, requests to send local items in the range.
-    /// Otherwise not.
-    pub have_local: bool,
+    /// If true: The sender already receive entries for the range. The reply should not include
+    /// our entries for this range.
+    /// If false: The sender wants us to send our own entries for the range. The reply should
+    /// include our entries for this range.
+    pub no_reply: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -359,36 +361,37 @@ where
         for RangeItem {
             range,
             values,
-            have_local,
+            no_reply,
         } in items
         {
-            let diff: Option<Vec<_>> = if have_local {
+            // calculate the set of entries to send in our reply for this range
+            let reply_set: Option<Vec<_>> = if no_reply {
                 None
             } else {
                 Some(
-                    // we get the range of the item form our store. from this set, we remove all
-                    // entries that whose key is contained in the peer's set and where our value is
-                    // lower than the peer entry's value.
+                    // get the range of the peer's item form our store.
                     self.store
                         .get_range(range.clone())?
-                        .filter_map(|our_entry| match our_entry {
-                            Ok(our_entry) => {
-                                if !values.iter().any(|(their_entry, _)| {
-                                    our_entry.key() == their_entry.key()
-                                        && their_entry.value() >= our_entry.value()
-                                }) {
-                                    Some(Ok(our_entry))
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(err) => Some(Err(err)),
-                        })
-                        .map(|entry| {
-                            entry.map(|entry| {
-                                let content_status = content_status_cb(&self.store, &entry);
-                                (entry, content_status)
-                            })
+                        // now filter the set of entries to remove those entries for which an entry
+                        // with identical key and equal-or-higher value is in the peer's set.
+                        .filter_map(|res| {
+                            let entry = match res {
+                                Ok(entry) => entry,
+                                Err(err) => return Some(Err(err)),
+                            };
+
+                            // do not include our entry in the set to be transfered if the
+                            // the peer's set included an entry with identical key and higher
+                            // or equal value.
+                            if values.iter().any(|(theirs, _)| {
+                                theirs.key() == entry.key() && theirs.value() >= entry.value()
+                            }) {
+                                return None;
+                            };
+
+                            // otherwise, add to the transfer set (with our content status)
+                            let content_status = content_status_cb(&self.store, &entry);
+                            Some(Ok((entry, content_status)))
                         })
                         .collect::<Result<_, _>>()?,
                 )
@@ -401,12 +404,12 @@ where
                 }
             }
 
-            if let Some(diff) = diff {
-                if !diff.is_empty() {
+            if let Some(values) = reply_set {
+                if !values.is_empty() {
                     out.push(MessagePart::RangeItem(RangeItem {
                         range,
-                        values: diff,
-                        have_local: true,
+                        values,
+                        no_reply: true,
                     }));
                 }
             }
@@ -414,6 +417,7 @@ where
 
         // Process fingerprint messages
         for RangeFingerprint { range, fingerprint } in fingerprints {
+            // calculate our fingerprint for the range.
             let local_fingerprint = self.store.get_fingerprint(&range)?;
             // Case1 Match, nothing to do
             if local_fingerprint == fingerprint {
@@ -439,7 +443,7 @@ where
                 out.push(MessagePart::RangeItem(RangeItem {
                     range,
                     values,
-                    have_local: false,
+                    no_reply: false,
                 }));
             } else {
                 // Case3 Recurse
@@ -536,7 +540,7 @@ where
                         out.push(MessagePart::RangeItem(RangeItem {
                             range,
                             values,
-                            have_local: false,
+                            no_reply: false,
                         }));
                     }
                 }
@@ -1163,13 +1167,13 @@ mod tests {
                 MessagePart::RangeItem(RangeItem {
                     range,
                     values,
-                    have_local,
+                    no_reply,
                 }) => {
                     println!(
-                        "  RangeItem({:?} | {:?}) (local?: {})\n  {:?}",
+                        "  RangeItem({:?} | {:?}) (no_reply?: {})\n  {:?}",
                         range.x(),
                         range.y(),
-                        have_local,
+                        no_reply,
                         values,
                     );
                 }
