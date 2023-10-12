@@ -86,7 +86,7 @@ pub struct BlobAddPathResponse(pub AddProgress);
 pub struct BlobDownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
-    /// If the format is [`BlobFormat::HASHSEQ`], all children are downloaded and shared as
+    /// If the format is [`BlobFormat::HashSeq`], all children are downloaded and shared as
     /// well.
     pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.

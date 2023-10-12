@@ -132,13 +132,12 @@ use std::time::SystemTime;
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkRanges};
 use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
-use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
     self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
     PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
@@ -151,7 +150,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 
-use super::{flatten_to_io, new_uuid, temp_name};
+use super::{flatten_to_io, new_uuid, temp_name, TempCounterMap};
 
 #[derive(Debug, Default)]
 struct State {
@@ -166,7 +165,7 @@ struct State {
     // in memory tracking of live set
     live: BTreeSet<Hash>,
     // temp tags
-    temp: BTreeMap<HashAndFormat, u64>,
+    temp: TempCounterMap,
 }
 
 #[derive(Debug, Default)]
@@ -250,8 +249,8 @@ impl MapEntry<Store> for PartialEntry {
         self.size
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
@@ -450,8 +449,8 @@ impl MapEntry<Store> for Entry {
         }
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
@@ -648,8 +647,8 @@ impl ReadableStore for Store {
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
-        let items = inner.temp.keys().copied().collect::<Vec<_>>();
-        Box::new(items.into_iter())
+        let items = inner.temp.keys();
+        Box::new(items)
     }
 
     fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
@@ -780,9 +779,7 @@ impl baomap::Store for Store {
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
         // a blob is live if it is either in the live set, or it is temp tagged
-        state.live.contains(hash)
-            || state.temp.contains_key(&HashAndFormat::raw(*hash))
-            || state.temp.contains_key(&HashAndFormat::hash_seq(*hash))
+        state.live.contains(hash) || state.temp.contains(hash)
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
@@ -802,19 +799,13 @@ impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        // panic if we overflow an u64
-        *entry = entry.checked_add(1).unwrap();
+        state.temp.inc(inner);
     }
 
     fn on_drop(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        *entry = entry.saturating_sub(1);
-        if *entry == 0 {
-            state.temp.remove(inner);
-        }
+        state.temp.dec(inner)
     }
 }
 
@@ -927,7 +918,7 @@ impl Store {
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
         use baomap::Store;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = self.temp_tag(HashAndFormat(hash, format));
+        let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         let temp_outboard_path = if let Some(outboard) = outboard.as_ref() {
             let uuid = new_uuid();

@@ -9,12 +9,11 @@ use crate::{
     },
     Hash,
 };
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkRanges};
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
-use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
 
@@ -56,7 +55,7 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// It can also only ever be a best effort, since the underlying data may
     /// change at any time. E.g. somebody could flip a bit in the file, or download
     /// more chunks.
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>>;
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>>;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     /// A future that resolves to a reader that can be used to read the data
@@ -333,12 +332,12 @@ impl TempTag {
 
     /// The hash of the pinned item
     pub fn hash(&self) -> &Hash {
-        &self.inner.0
+        &self.inner.hash
     }
 
     /// The format of the pinned item
     pub fn format(&self) -> BlobFormat {
-        self.inner.1
+        self.inner.format
     }
 
     /// Keep the item alive until the end of the process
@@ -397,43 +396,38 @@ async fn gc_mark_task<'a>(
         info!("adding extra root {:?}", haf);
         roots.insert(haf);
     }
-    let mut current = roots.into_iter().collect::<Vec<_>>();
     let mut live: BTreeSet<Hash> = BTreeSet::new();
-    // process all current. Since we don't have nested collections, this will
-    // terminate after 1 iteration.
-    while !current.is_empty() {
-        for HashAndFormat(hash, format) in std::mem::take(&mut current) {
-            // we need to do this for all formats except raw
-            if live.insert(hash) && !format.is_raw() {
-                let Some(entry) = store.get(&hash) else {
-                    warn!("gc: {} not found", hash);
-                    continue;
+    for HashAndFormat { hash, format } in roots {
+        // we need to do this for all formats except raw
+        if live.insert(hash) && !format.is_raw() {
+            let Some(entry) = store.get(&hash) else {
+                warn!("gc: {} not found", hash);
+                continue;
+            };
+            if !entry.is_complete() {
+                warn!("gc: {} is partial", hash);
+                continue;
+            }
+            let Ok(reader) = entry.data_reader().await else {
+                warn!("gc: {} creating data reader failed", hash);
+                continue;
+            };
+            let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
+                warn!("gc: {} parse failed", hash);
+                continue;
+            };
+            info!("parsed collection {} {:?}", hash, count);
+            loop {
+                let item = match iter.next().await {
+                    Ok(Some(item)) => item,
+                    Ok(None) => break,
+                    Err(_err) => {
+                        warn!("gc: {} parse failed", hash);
+                        break;
+                    }
                 };
-                if !entry.is_complete() {
-                    warn!("gc: {} is partial", hash);
-                    continue;
-                }
-                let Ok(reader) = entry.data_reader().await else {
-                    warn!("gc: {} creating data reader failed", hash);
-                    continue;
-                };
-                let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
-                    warn!("gc: {} parse failed", hash);
-                    continue;
-                };
-                info!("parsed collection {} {:?}", hash, count);
-                loop {
-                    let item = match iter.next().await {
-                        Ok(Some(item)) => item,
-                        Ok(None) => break,
-                        Err(_err) => {
-                            warn!("gc: {} parse failed", hash);
-                            break;
-                        }
-                    };
-                    // if format != raw we would have to recurse here by adding this to current
-                    live.insert(item);
-                }
+                // if format != raw we would have to recurse here by adding this to current
+                live.insert(item);
             }
         }
     }

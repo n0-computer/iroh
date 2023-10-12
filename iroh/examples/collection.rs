@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     // create a ticket
     // tickets wrap all details needed to get a collection
-    let ticket = node.ticket(hash, BlobFormat::HASHSEQ).await?;
+    let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.node_addr().peer_id);

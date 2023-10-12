@@ -193,7 +193,7 @@ mod tests {
             hash,
             peer: PeerAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
-            format: BlobFormat::HASHSEQ,
+            format: BlobFormat::HashSeq,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");

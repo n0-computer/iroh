@@ -742,7 +742,6 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    // TODO: We should not assume `recursive: true` as we do currently. Take as argument instead.
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
@@ -866,7 +865,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
         let tags = db.tags();
-        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat(hash, format))| {
+        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat { hash, format })| {
             let db = db.clone();
             let local = local.clone();
             async move {
@@ -911,7 +910,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             self.inner
                 .db
                 .tags()
-                .map(|(name, HashAndFormat(hash, format))| {
+                .map(|(name, HashAndFormat { hash, format })| {
                     tracing::info!("{:?} {} {:?}", name, hash, format);
                     ListTagsResponse { name, hash, format }
                 }),
@@ -1014,7 +1013,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         debug!("share: {:?}", msg);
         let format = msg.format;
         let db = self.inner.db.clone();
-        let haf = HashAndFormat(hash, format);
+        let haf = HashAndFormat { hash, format };
         let temp_pin = db.temp_tag(haf);
         let conn = self
             .inner
@@ -1027,7 +1026,16 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let db = self.inner.db.clone();
         let db2 = db.clone();
         let download = local.spawn_pinned(move || async move {
-            crate::get::get(&db2, conn, hash, msg.format.is_hash_seq(), progress2).await
+            crate::get::get(
+                &db2,
+                conn,
+                &HashAndFormat {
+                    hash: msg.hash,
+                    format: msg.format,
+                },
+                progress2,
+            )
+            .await
         });
 
         let this = self.clone();
@@ -1140,7 +1148,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
                             .import_file(
                                 source.path().to_owned(),
                                 import_mode,
-                                BlobFormat::RAW,
+                                BlobFormat::Raw,
                                 import_progress,
                             )
                             .await?;
@@ -1165,13 +1173,13 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             let (tag, _size) = self
                 .inner
                 .db
-                .import_file(root, import_mode, BlobFormat::RAW, import_progress)
+                .import_file(root, import_mode, BlobFormat::Raw, import_progress)
                 .await?;
             tag
         };
 
         let hash_and_format = temp_tag.inner();
-        let HashAndFormat(hash, format) = *hash_and_format;
+        let HashAndFormat { hash, format } = *hash_and_format;
         let tag = match tag {
             SetTagOption::Named(tag) => {
                 self.inner
@@ -1296,10 +1304,10 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let (temp_tag, _len) = self
             .inner
             .db
-            .import_stream(stream, BlobFormat::RAW, import_progress)
+            .import_stream(stream, BlobFormat::Raw, import_progress)
             .await?;
         let hash_and_format = *temp_tag.inner();
-        let HashAndFormat(hash, format) = hash_and_format;
+        let HashAndFormat { hash, format } = hash_and_format;
         let tag = match msg.tag {
             SetTagOption::Named(tag) => {
                 self.inner
@@ -1666,12 +1674,11 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash, BlobFormat::RAW).await.unwrap();
+        let ticket = node.ticket(hash, BlobFormat::Raw).await.unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
 
-    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
         use iroh_bytes::util::SetTagOption;
@@ -1697,7 +1704,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         use iroh_bytes::util::SetTagOption;

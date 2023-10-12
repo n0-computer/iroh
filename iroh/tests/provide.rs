@@ -1,4 +1,3 @@
-#![cfg(feature = "mem-db")]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -21,10 +20,9 @@ use iroh_net::{
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_bytes::{
     baomap::{PartialMap, Store},
     get::{
@@ -149,7 +147,6 @@ fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Option
     }
 }
 
-#[cfg(feature = "mem-db")]
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
@@ -346,7 +343,6 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
 }
 
-#[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
     let rt = test_runtime();
@@ -557,7 +553,7 @@ async fn test_run_ticket() {
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let no_token_ticket = node.ticket(hash, BlobFormat::HASHSEQ).await.unwrap();
+    let no_token_ticket = node.ticket(hash, BlobFormat::HashSeq).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = no_token_ticket.as_get_options(
             SecretKey::generate(),
@@ -573,7 +569,7 @@ async fn test_run_ticket() {
     .expect("getting without token failed in an unexpected way");
 
     let ticket = node
-        .ticket(hash, BlobFormat::HASHSEQ)
+        .ticket(hash, BlobFormat::HashSeq)
         .await
         .unwrap()
         .with_token(token);
@@ -710,14 +706,14 @@ async fn test_collection_stat() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         // first 1024 bytes
-        let header = RangeSet2::from(..ChunkNum(1));
+        let header = ChunkRanges::from(..ChunkNum(1));
         // last chunk, whatever it is, to verify the size
-        let end = RangeSet2::from(ChunkNum(u64::MAX)..);
+        let end = ChunkRanges::from(ChunkNum(u64::MAX)..);
         // combine them
         let ranges = &header | &end;
         let request = GetRequest::new(
             hash,
-            RangeSpecSeq::from_ranges_infinite([RangeSet2::all(), ranges]),
+            RangeSpecSeq::from_ranges_infinite([ChunkRanges::all(), ranges]),
         );
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;

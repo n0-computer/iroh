@@ -24,11 +24,12 @@ impl Getter for TestingGetter {
 
     fn get(&mut self, kind: DownloadKind, peer: PublicKey) -> GetFut {
         let mut inner = self.0.write();
+        let tt = TempTag::new(kind.hash_and_format(), None);
         inner.request_history.push((kind, peer));
         let request_duration = inner.request_duration;
         async move {
             tokio::time::sleep(request_duration).await;
-            Ok(())
+            Ok(tt)
         }
         .boxed_local()
     }
