@@ -104,8 +104,12 @@ impl Default for GcPolicy {
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a blob store. Various store implementations are available
-/// in [`crate::baomap`]. Everything else is optional.
+/// You must supply a blob store and a document store.
+///
+/// Blob store implementations are available in [`iroh_bytes::store`].
+/// Document store implementations are available in [`iroh_sync::store`].
+///
+/// Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
