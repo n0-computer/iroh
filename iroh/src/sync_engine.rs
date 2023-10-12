@@ -25,7 +25,7 @@ pub mod rpc;
 use gossip::GossipActor;
 use live::{LiveActor, ToLiveActor};
 
-pub use self::live::{KeepCallback, LiveEvent, SyncEvent, LiveStatus, Origin, RemovalToken};
+pub use self::live::{KeepCallback, LiveEvent, LiveStatus, Origin, RemovalToken, SyncEvent};
 pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`toLiveActor`] messages.

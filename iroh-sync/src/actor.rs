@@ -394,9 +394,12 @@ impl SyncHandle {
     }
 }
 
+type ReplicaStates<S> =
+    HashMap<NamespaceId, (Replica<<S as store::Store>::Instance>, ReplicaState)>;
+
 struct Actor<S: store::Store> {
     store: S,
-    states: HashMap<NamespaceId, (Replica<S::Instance>, ReplicaState)>,
+    states: ReplicaStates<S>,
     event_tx: flume::Sender<Event>,
     action_rx: flume::Receiver<Action>,
     content_status_callback: Option<ContentStatusCallback>,
@@ -460,35 +463,30 @@ impl<S: store::Store> Actor<S> {
                 hash,
                 len,
                 reply,
-            } => {
-                let res = self.get(&namespace).and_then(|replica| {
-                    let author = self.get_author(&author)?;
-                    replica.insert(&key, &author, hash, len)?;
-                    Ok(())
-                });
-                send_reply(reply, res)
-            }
+            } => send_reply_with(reply, self, |this| {
+                let author = this.get_author(&author)?;
+                let replica = this.get_or_open(namespace)?;
+                replica.insert(&key, &author, hash, len)?;
+                Ok(())
+            }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
-                let res = self.get(&namespace).and_then(|replica| {
-                    let author = self.get_author(&author)?;
+                send_reply_with(reply, self, |this| {
+                    let author = this.get_author(&author)?;
+                    let replica = this.get_or_open(namespace)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
-                });
-                send_reply(reply, res)
+                })
             }
-
             ReplicaAction::InsertRemote {
                 entry,
                 from,
                 content_status,
                 reply,
-            } => {
-                let res = self.get_if_syncing(&namespace).and_then(|replica| {
-                    replica.insert_remote_entry(entry, from, content_status)?;
-                    Ok(())
-                });
-                send_reply(reply, res)
-            }
+            } => send_reply_with(reply, self, move |this| {
+                let replica = this.get_if_syncing(&namespace)?;
+                replica.insert_remote_entry(entry, from, content_status)?;
+                Ok(())
+            }),
 
             ReplicaAction::SyncInitialMessage { reply } => {
                 let res = self
@@ -533,18 +531,29 @@ impl<S: store::Store> Actor<S> {
                 send_reply(reply, res)
             }
             ReplicaAction::ExportSecretKey { reply } => {
-                let res = self.get(&namespace).map(|r| r.secret_key());
+                let res = self.get_or_open(namespace).map(|r| r.secret_key());
                 send_reply(reply, res)
             }
         }
     }
 
-    fn get(&self, namespace: &NamespaceId) -> Result<&Replica<S::Instance>> {
-        self.states
-            .get(namespace)
-            .map(|(replica, _state)| replica)
-            .context("replica not open")
+    fn get_or_open(&mut self, namespace: NamespaceId) -> Result<&Replica<S::Instance>> {
+        let (replica, _state) = get_or_open(
+            &self.store,
+            &mut self.states,
+            &self.content_status_callback,
+            namespace,
+        )?;
+        Ok(&*replica)
     }
+
+    // TODO: Do we limit operations to replicas opened before?
+    // fn get_if_open(&self, namespace: &NamespaceId) -> Result<&Replica<S::Instance>> {
+    //     self.states
+    //         .get(namespace)
+    //         .map(|(replica, _state)| replica)
+    //         .context("replica not open")
+    // }
 
     fn get_if_syncing(&self, namespace: &NamespaceId) -> Result<&Replica<S::Instance>> {
         self.states
@@ -561,23 +570,13 @@ impl<S: store::Store> Actor<S> {
     }
 
     fn update_state(&mut self, namespace: NamespaceId, change: StateUpdate) -> Result<()> {
-        let entry = self.states.entry(namespace);
-
         // open the replica, if it is not yet open.
-        let (replica, state) = match entry {
-            hash_map::Entry::Vacant(e) => {
-                let replica = self
-                    .store
-                    .open_replica(&namespace)?
-                    .context("replica not found")?;
-                if let Some(cb) = &self.content_status_callback {
-                    replica.set_content_status_callback(Arc::clone(cb));
-                }
-                e.insert((replica, ReplicaState::default()))
-            }
-            hash_map::Entry::Occupied(e) => e.into_mut(),
-        };
-
+        let (replica, state) = get_or_open(
+            &self.store,
+            &mut self.states,
+            &self.content_status_callback,
+            namespace,
+        )?;
         let next_state = state.with_update(change);
         trace!(namespace = %namespace.fmt_short(), ?change, ?next_state, "update state");
         match (state.watch, next_state.watch) {
@@ -591,6 +590,25 @@ impl<S: store::Store> Actor<S> {
         };
         *state = next_state;
         Ok(())
+    }
+}
+fn get_or_open<'a, 'b, S: store::Store>(
+    store: &'a S,
+    states: &'b mut ReplicaStates<S>,
+    content_status_callback: &Option<ContentStatusCallback>,
+    namespace: NamespaceId,
+) -> Result<&'b mut (Replica<S::Instance>, ReplicaState)> {
+    match states.entry(namespace) {
+        hash_map::Entry::Vacant(e) => {
+            let replica = store
+                .open_replica(&namespace)?
+                .context("replica not found")?;
+            if let Some(cb) = &content_status_callback {
+                replica.set_content_status_callback(Arc::clone(cb));
+            }
+            Ok(e.insert((replica, ReplicaState::default())))
+        }
+        hash_map::Entry::Occupied(e) => Ok(e.into_mut()),
     }
 }
 
@@ -611,6 +629,14 @@ fn iter_to_channel<T: Send + 'static>(
 
 fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<()> {
     sender.send(value).map_err(receiver_dropped)
+}
+
+fn send_reply_with<T, S: store::Store>(
+    sender: oneshot::Sender<Result<T>>,
+    this: &mut Actor<S>,
+    f: impl FnOnce(&mut Actor<S>) -> Result<T>,
+) -> Result<()> {
+    sender.send(f(this)).map_err(receiver_dropped)
 }
 
 fn receiver_dropped<T>(_err: T) -> anyhow::Error {
