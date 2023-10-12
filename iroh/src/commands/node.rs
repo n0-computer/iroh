@@ -8,13 +8,15 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use iroh::{
-    baomap::flat::{self, Store as BaoFsStore},
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
+use iroh_bytes::{
+    protocol::RequestToken, store::flat::Store as BaoFsStore, store::Store as BaoStore,
+    util::runtime,
+};
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
@@ -95,9 +97,10 @@ async fn start_daemon_node(
     let peer_data_path = path_with_env(IrohPaths::PeerData)?;
     tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let bao_store = flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
-        .await
-        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+    let bao_store =
+        iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
+            .await
+            .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let key = Some(path_with_env(IrohPaths::SecretKey)?);
     let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
     spawn_daemon_node(rt, bao_store, doc_store, key, peer_data_path, opts).await

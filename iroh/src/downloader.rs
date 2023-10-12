@@ -33,12 +33,7 @@ use std::{
 
 use bao_tree::ChunkRanges;
 use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use iroh_bytes::{
-    baomap::{Store, TempTag},
-    protocol::RangeSpecSeq,
-    util::HashAndFormat,
-    Hash,
-};
+use iroh_bytes::{protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat, TempTag};
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};

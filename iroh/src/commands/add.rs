@@ -10,12 +10,12 @@ use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{
     client::Iroh,
     dial::Ticket,
-    rpc_protocol::{ProviderService, WrapOption},
+    rpc_protocol::{ProviderService, SetTagOption, WrapOption},
 };
 use iroh_bytes::{
     protocol::RequestToken,
     provider::AddProgress,
-    util::{BlobFormat, HashAndFormat, SetTagOption, Tag},
+    util::{BlobFormat, HashAndFormat, Tag},
     Hash,
 };
 use quic_rpc::ServiceConnection;

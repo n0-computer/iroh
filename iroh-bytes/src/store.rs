@@ -1,9 +1,16 @@
-//! Various database implementations for storing blob data
+//! Implementations of blob stores
+use crate::{
+    util::{BlobFormat, HashAndFormat},
+    Hash,
+};
+pub mod mem;
+pub mod readonly_mem;
+
 #[cfg(feature = "flat-db")]
 pub mod flat;
-pub mod mem;
 
-pub mod readonly_mem;
+mod traits;
+pub use traits::*;
 
 fn flatten_to_io<T>(
     e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,
@@ -34,19 +41,19 @@ struct TempCounters {
 }
 
 impl TempCounters {
-    fn counter(&mut self, format: iroh_bytes::util::BlobFormat) -> &mut u64 {
+    fn counter(&mut self, format: BlobFormat) -> &mut u64 {
         match format {
-            iroh_bytes::util::BlobFormat::Raw => &mut self.raw,
-            iroh_bytes::util::BlobFormat::HashSeq => &mut self.hash_seq,
+            BlobFormat::Raw => &mut self.raw,
+            BlobFormat::HashSeq => &mut self.hash_seq,
         }
     }
 
-    fn inc(&mut self, format: iroh_bytes::util::BlobFormat) {
+    fn inc(&mut self, format: BlobFormat) {
         let counter = self.counter(format);
         *counter = counter.checked_add(1).unwrap();
     }
 
-    fn dec(&mut self, format: iroh_bytes::util::BlobFormat) {
+    fn dec(&mut self, format: BlobFormat) {
         let counter = self.counter(format);
         *counter = counter.saturating_sub(1);
     }
@@ -57,16 +64,16 @@ impl TempCounters {
 }
 
 #[derive(Debug, Clone, Default)]
-struct TempCounterMap(std::collections::BTreeMap<iroh_bytes::Hash, TempCounters>);
+struct TempCounterMap(std::collections::BTreeMap<Hash, TempCounters>);
 
 impl TempCounterMap {
-    fn inc(&mut self, value: &iroh_bytes::util::HashAndFormat) {
-        let iroh_bytes::util::HashAndFormat { hash, format } = value;
+    fn inc(&mut self, value: &HashAndFormat) {
+        let HashAndFormat { hash, format } = value;
         self.0.entry(*hash).or_default().inc(*format)
     }
 
-    fn dec(&mut self, value: &iroh_bytes::util::HashAndFormat) {
-        let iroh_bytes::util::HashAndFormat { hash, format } = value;
+    fn dec(&mut self, value: &HashAndFormat) {
+        let HashAndFormat { hash, format } = value;
         let counters = self.0.get_mut(hash).unwrap();
         counters.dec(*format);
         if counters.is_empty() {
@@ -74,18 +81,18 @@ impl TempCounterMap {
         }
     }
 
-    fn contains(&self, hash: &iroh_bytes::Hash) -> bool {
+    fn contains(&self, hash: &Hash) -> bool {
         self.0.contains_key(hash)
     }
 
-    fn keys(&self) -> impl Iterator<Item = iroh_bytes::util::HashAndFormat> {
+    fn keys(&self) -> impl Iterator<Item = HashAndFormat> {
         let mut res = Vec::new();
         for (k, v) in self.0.iter() {
             if v.raw > 0 {
-                res.push(iroh_bytes::util::HashAndFormat::raw(*k));
+                res.push(HashAndFormat::raw(*k));
             }
             if v.hash_seq > 0 {
-                res.push(iroh_bytes::util::HashAndFormat::hash_seq(*k));
+                res.push(HashAndFormat::hash_seq(*k));
             }
         }
         res.into_iter()

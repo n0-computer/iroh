@@ -16,15 +16,11 @@ use tokio::io::AsyncReadExt;
 
 use iroh::{
     client::quic::{Doc, Iroh},
-    rpc_protocol::{DocTicket, ShareMode, WrapOption},
+    rpc_protocol::{DocTicket, SetTagOption, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
     util::fs::{path_content_info, PathContent},
 };
-use iroh_bytes::{
-    provider::AddProgress,
-    util::{SetTagOption, Tag},
-    Hash,
-};
+use iroh_bytes::{provider::AddProgress, Hash, Tag};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 
 use crate::config::ConsoleEnv;

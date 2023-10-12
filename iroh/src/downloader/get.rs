@@ -4,19 +4,16 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::ChunkRanges;
 use futures::FutureExt;
-use iroh_bytes::baomap::TempTag;
-use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::util::{BlobFormat, HashAndFormat};
 use iroh_bytes::{
-    baomap::{MapEntry, PartialMapEntry, Store},
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
         Stats,
     },
+    hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    util::Hash,
-    IROH_BLOCK_SIZE,
+    store::{MapEntry, PartialMapEntry, Store},
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};

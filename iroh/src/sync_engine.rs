@@ -3,7 +3,7 @@
 //! [`iroh_sync::Replica`] is also called documents here.
 
 use anyhow::anyhow;
-use iroh_bytes::{baomap::Store as BaoStore, util::runtime::Handle};
+use iroh_bytes::{store::Store as BaoStore, util::runtime::Handle};
 use iroh_gossip::net::Gossip;
 use iroh_net::{MagicEndpoint, PeerAddr};
 use iroh_sync::{

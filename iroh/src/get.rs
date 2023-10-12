@@ -5,11 +5,9 @@ use std::io;
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
-use iroh_bytes::baomap::range_collections::range_set::RangeSetRange;
 use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::util::{BlobFormat, HashAndFormat};
+use iroh_bytes::store::range_collections::range_set::RangeSetRange;
 use iroh_bytes::{
-    baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
@@ -17,11 +15,12 @@ use iroh_bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq},
     provider::GetProgress,
+    store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     util::{
         progress::{IdGenerator, ProgressSender},
         Hash,
     },
-    IROH_BLOCK_SIZE,
+    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
