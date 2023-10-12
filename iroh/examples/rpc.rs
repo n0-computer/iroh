@@ -11,7 +11,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use clap::Parser;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
-use iroh_bytes::baomap::Store;
+use iroh_bytes::store::Store;
 use iroh_net::key::SecretKey;
 use quic_rpc::transport::quinn::QuinnServerEndpoint;
 use quic_rpc::ServiceEndpoint;

@@ -130,8 +130,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
-use crate::baomap::{
-    self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+use super::{
+    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
     PartialMapEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
@@ -685,7 +685,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         path: PathBuf,
@@ -916,7 +916,7 @@ impl Store {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
         })?;
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-        use baomap::Store;
+        use super::Store;
         // from here on, everything related to the hash is protected by the temp tag
         let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();

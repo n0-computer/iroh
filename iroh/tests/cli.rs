@@ -317,8 +317,8 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh_bytes::baomap::ReadableStore;
     use iroh_bytes::store::flat::Store;
+    use iroh_bytes::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,

@@ -30,7 +30,7 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::{baomap::ValidateProgress, provider::AddProgress, util::RpcResult};
+pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
 
 use crate::sync_engine::{LiveEvent, LiveStatus};
 

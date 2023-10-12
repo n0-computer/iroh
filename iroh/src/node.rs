@@ -18,12 +18,12 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_bytes::baomap::{
+use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::provider::GetProgress;
+use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
@@ -521,7 +521,7 @@ where
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
             callbacks
-                .send(Event::Db(iroh_bytes::baomap::Event::GcStarted))
+                .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
             db.clear_live();
             let doc_hashes = match ds.content_hashes() {
@@ -580,7 +580,7 @@ where
                 }
             }
             callbacks
-                .send(Event::Db(iroh_bytes::baomap::Event::GcCompleted))
+                .send(Event::Db(iroh_bytes::store::Event::GcCompleted))
                 .await;
         }
     }
@@ -683,7 +683,7 @@ pub enum Event {
     /// Events from the iroh-bytes transfer protocol.
     ByteProvide(iroh_bytes::provider::Event),
     /// Events from database
-    Db(iroh_bytes::baomap::Event),
+    Db(iroh_bytes::store::Event),
 }
 
 impl<D: ReadableStore, S: DocStore> Node<D, S> {
@@ -1094,7 +1094,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             rpc_protocol::WrapOption,
         };
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::ImportMode;
+        use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);

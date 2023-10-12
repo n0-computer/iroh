@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    baomap::{
-        self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
         PartialMapEntry, ReadableStore, ValidateProgress,
     },
     util::{
@@ -320,7 +320,7 @@ impl PartialMapEntry<Store> for PartialEntry {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         data: PathBuf,

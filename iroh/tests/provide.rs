@@ -24,7 +24,6 @@ use tokio::sync::mpsc;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_bytes::{
-    baomap::{PartialMap, Store},
     get::{
         fsm::ConnectedNext,
         fsm::{self, DecodeError},
@@ -32,6 +31,7 @@ use iroh_bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq, RequestToken},
     provider::{self, RequestAuthorizationHandler},
+    store::{PartialMap, Store},
     util::{runtime, BlobFormat},
     Hash,
 };

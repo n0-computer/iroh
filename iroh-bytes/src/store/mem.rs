@@ -16,8 +16,8 @@ use super::flatten_to_io;
 use super::temp_name;
 use super::TempCounterMap;
 use crate::{
-    baomap::{
-        self, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
         PartialMapEntry, ReadableStore, ValidateProgress,
     },
     util::{
@@ -449,7 +449,7 @@ impl PartialMap for Store {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         path: std::path::PathBuf,
@@ -610,7 +610,7 @@ impl Store {
             data: outboard.into(),
         };
         let hash = hash.into();
-        use baomap::Store;
+        use super::Store;
         let tag = self.temp_tag(HashAndFormat { hash, format });
         self.0
             .state

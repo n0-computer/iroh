@@ -14,7 +14,7 @@ use iroh::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 use iroh_bytes::{
-    baomap::Store as BaoStore, protocol::RequestToken, store::flat::Store as BaoFsStore,
+    protocol::RequestToken, store::flat::Store as BaoFsStore, store::Store as BaoStore,
     util::runtime,
 };
 use iroh_net::{

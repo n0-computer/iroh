@@ -5,7 +5,6 @@ use bao_tree::io::fsm::OutboardMut;
 use bao_tree::ChunkRanges;
 use futures::FutureExt;
 use iroh_bytes::{
-    baomap::{MapEntry, PartialMapEntry, Store},
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
@@ -13,6 +12,7 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
+    store::{MapEntry, PartialMapEntry, Store},
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]

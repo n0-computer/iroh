@@ -27,9 +27,8 @@ use iroh::{
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
-    baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
-    util::progress::IgnoreProgressSender,
-    util::BlobFormat,
+    store::{ImportMode, Map, MapEntry, Store as BaoStore},
+    util::{progress::IgnoreProgressSender, BlobFormat},
 };
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},

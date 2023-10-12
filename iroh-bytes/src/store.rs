@@ -9,6 +9,9 @@ pub mod readonly_mem;
 #[cfg(feature = "flat-db")]
 pub mod flat;
 
+mod traits;
+pub use traits::*;
+
 fn flatten_to_io<T>(
     e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,
 ) -> std::io::Result<T> {

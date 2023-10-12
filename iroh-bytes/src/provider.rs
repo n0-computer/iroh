@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
-use crate::baomap::*;
 use crate::hashseq::parse_hash_seq;
 use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
+use crate::store::*;
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
 

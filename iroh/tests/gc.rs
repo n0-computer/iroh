@@ -7,8 +7,8 @@ use iroh::node::Node;
 use rand::RngCore;
 
 use iroh_bytes::{
-    baomap::{EntryStatus, Map, Store},
     hashseq::HashSeq,
+    store::{EntryStatus, Map, Store},
     util::{runtime, BlobFormat, HashAndFormat, Tag},
 };
 
@@ -32,7 +32,7 @@ async fn wrap_in_node<S>(
     gc_period: Duration,
 ) -> Node<S, iroh_sync::store::memory::Store>
 where
-    S: iroh_bytes::baomap::Store,
+    S: iroh_bytes::store::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
     Node::builder(bao_store, doc_store)
@@ -43,9 +43,9 @@ where
         .unwrap()
 }
 
-async fn attach_db_events<D: iroh_bytes::baomap::Store, S: iroh_sync::store::Store>(
+async fn attach_db_events<D: iroh_bytes::store::Store, S: iroh_sync::store::Store>(
     node: &Node<D, S>,
-) -> flume::Receiver<iroh_bytes::baomap::Event> {
+) -> flume::Receiver<iroh_bytes::store::Event> {
     let (db_send, db_recv) = flume::unbounded();
     node.subscribe(move |ev| {
         let db_send = db_send.clone();
@@ -64,7 +64,7 @@ async fn attach_db_events<D: iroh_bytes::baomap::Store, S: iroh_sync::store::Sto
 async fn gc_test_node() -> (
     Node<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store>,
     iroh_bytes::store::mem::Store,
-    flume::Receiver<iroh_bytes::baomap::Event>,
+    flume::Receiver<iroh_bytes::store::Event>,
 ) {
     let rt = test_runtime();
     let bao_store = iroh_bytes::store::mem::Store::new(rt.clone());
@@ -73,14 +73,14 @@ async fn gc_test_node() -> (
     (node, bao_store, db_recv)
 }
 
-async fn step(evs: &flume::Receiver<iroh_bytes::baomap::Event>) {
+async fn step(evs: &flume::Receiver<iroh_bytes::store::Event>) {
     while let Ok(ev) = evs.recv_async().await {
-        if let iroh_bytes::baomap::Event::GcCompleted = ev {
+        if let iroh_bytes::store::Event::GcCompleted = ev {
             break;
         }
     }
     while let Ok(ev) = evs.recv_async().await {
-        if let iroh_bytes::baomap::Event::GcCompleted = ev {
+        if let iroh_bytes::store::Event::GcCompleted = ev {
             break;
         }
     }
@@ -209,8 +209,8 @@ mod flat {
     use testdir::testdir;
 
     use iroh_bytes::{
-        baomap::{PartialMap, PartialMapEntry, Store},
         hashseq::HashSeq,
+        store::{PartialMap, PartialMapEntry, Store},
         util::{BlobFormat, HashAndFormat, Tag},
         TempTag, IROH_BLOCK_SIZE,
     };
@@ -381,7 +381,7 @@ mod flat {
     ///
     /// During this time, the partial entry is protected by a temp tag.
     #[allow(dead_code)]
-    async fn simulate_download_protected<S: iroh_bytes::baomap::Store>(
+    async fn simulate_download_protected<S: iroh_bytes::store::Store>(
         bao_store: &S,
         data: Bytes,
     ) -> io::Result<TempTag> {
