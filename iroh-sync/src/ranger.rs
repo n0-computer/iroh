@@ -1197,8 +1197,9 @@ mod tests {
             }
         }
         if insert {
+            #[allow(clippy::needless_bool)]
             map.retain(|k, v| {
-                if key.is_prefix_of(&k) && value >= *v {
+                if key.is_prefix_of(k) && value >= *v {
                     false
                 } else {
                     true
