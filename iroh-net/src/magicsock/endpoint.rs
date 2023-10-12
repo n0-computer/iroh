@@ -772,7 +772,7 @@ impl Endpoint {
                             // waiting for the response. It was either set to None or changed to
                             // another region. This should either never happen or be extremely
                             // unlikely. Log and ignore for now
-                            warn!(stored=?other, received=?region, "disco: ignoring pong via derp for region differnt to last one stored");
+                            warn!(stored=?other, received=?region, "disco: ignoring pong via derp for region different to last one stored");
                         }
                     },
                 }
