@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ enum Action {
         reply: flume::Sender<Result<NamespaceId>>,
     },
     #[display("Replica({}, {})", namespace.fmt_short(), action)]
-    Replica {
+    Namespaced {
         namespace: NamespaceId,
         action: ReplicaAction,
     },
@@ -109,7 +109,7 @@ enum ReplicaAction {
         filter: GetFilter,
         reply: flume::Sender<Result<SignedEntry>>,
     },
-    Drop {
+    DropReplica {
         reply: oneshot::Sender<Result<()>>,
     },
     ExportSecretKey {
@@ -196,7 +196,7 @@ impl SyncHandle {
         me: String,
     ) -> (SyncHandle, EventReceiver) {
         const EVENT_CAP: usize = 1024;
-        const ACTION_CAP: usize = 128;
+        const ACTION_CAP: usize = 1024;
         let (event_tx, event_rx) = flume::bounded(EVENT_CAP);
         let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
         let mut actor = Actor {
@@ -347,9 +347,10 @@ impl SyncHandle {
 
     pub async fn drop_replica(&self, namespace: NamespaceId) -> Result<()> {
         let (reply, rx) = oneshot::channel();
-        let action = ReplicaAction::Drop { reply };
+        let action = ReplicaAction::DropReplica { reply };
         self.send_replica(namespace, action).await?;
-        rx.await?
+        let res = rx.await?;
+        res
     }
 
     pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<Namespace> {
@@ -385,11 +386,14 @@ impl SyncHandle {
     }
 
     async fn send(&self, action: Action) -> Result<()> {
-        self.tx.send_async(action).await?;
+        self.tx
+            .send_async(action)
+            .await
+            .context("sending to iroh_sync actor failed")?;
         Ok(())
     }
     async fn send_replica(&self, namespace: NamespaceId, action: ReplicaAction) -> Result<()> {
-        self.send(Action::Replica { namespace, action }).await?;
+        self.send(Action::Namespaced { namespace, action }).await?;
         Ok(())
     }
 }
@@ -413,8 +417,8 @@ impl<S: store::Store> Actor<S> {
             };
             trace!(%action, "tick");
             let is_shutdown = matches!(action, Action::Shutdown);
-            if let Err(err) = self.on_action(action) {
-                warn!("failed to send reply: {err}");
+            if let Err(_) = self.on_action(action) {
+                warn!("failed to send reply: receiver dropped");
             }
             if is_shutdown {
                 break;
@@ -424,7 +428,7 @@ impl<S: store::Store> Actor<S> {
         Ok(())
     }
 
-    fn on_action(&mut self, action: Action) -> Result<()> {
+    fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
         match action {
             Action::Shutdown => {
                 for (namespace, _) in self.states.drain() {
@@ -447,15 +451,19 @@ impl<S: store::Store> Actor<S> {
                     .map(|a| a.map(|a| a.map(|a| a.id()))),
             ),
             Action::ListReplicas { reply } => iter_to_channel(reply, self.store.list_namespaces()),
-            Action::Replica { namespace, action } => self.on_replica_action(namespace, action),
+            Action::Namespaced { namespace, action } => self.on_replica_action(namespace, action),
         }
     }
 
-    fn on_replica_action(&mut self, namespace: NamespaceId, action: ReplicaAction) -> Result<()> {
+    fn on_replica_action(
+        &mut self,
+        namespace: NamespaceId,
+        action: ReplicaAction,
+    ) -> Result<(), SendReplyError> {
         match action {
             ReplicaAction::UpdateState { change, reply } => {
-                self.update_state(namespace, change)?;
-                send_reply(reply, Ok(()))
+                let res = self.update_state(namespace, change);
+                send_reply(reply, res)
             }
             ReplicaAction::InsertLocal {
                 author,
@@ -489,23 +497,22 @@ impl<S: store::Store> Actor<S> {
             }),
 
             ReplicaAction::SyncInitialMessage { reply } => {
-                let res = self
-                    .get_if_syncing(&namespace)
-                    .and_then(|replica| replica.sync_initial_message());
-                send_reply(reply, res)
+                send_reply_with(reply, self, move |this| {
+                    let replica = this.get_if_syncing(&namespace)?;
+                    let res = replica.sync_initial_message()?;
+                    Ok(res)
+                })
             }
             ReplicaAction::SyncProcessMessage {
                 message,
                 from,
                 mut state,
                 reply,
-            } => {
-                let res = self.get_if_syncing(&namespace).and_then(|replica| {
-                    let res = replica.sync_process_message(message, from, &mut state)?;
-                    Ok((res, state))
-                });
-                send_reply(reply, res)
-            }
+            } => send_reply_with(reply, self, move |this| {
+                let replica = this.get_if_syncing(&namespace)?;
+                let res = replica.sync_process_message(message, from, &mut state)?;
+                Ok((res, state))
+            }),
             ReplicaAction::GetSyncPeers { reply } => {
                 let peers = match self.store.get_sync_peers(&namespace) {
                     Err(err) => Err(err),
@@ -525,7 +532,7 @@ impl<S: store::Store> Actor<S> {
             ReplicaAction::GetMany { filter, reply } => {
                 iter_to_channel(reply, self.store.get_many(namespace, filter))
             }
-            ReplicaAction::Drop { reply } => {
+            ReplicaAction::DropReplica { reply } => {
                 self.states.remove(&namespace);
                 let res = self.store.remove_replica(&namespace);
                 send_reply(reply, res)
@@ -592,12 +599,12 @@ impl<S: store::Store> Actor<S> {
         Ok(())
     }
 }
-fn get_or_open<'a, 'b, S: store::Store>(
-    store: &'a S,
-    states: &'b mut ReplicaStates<S>,
+fn get_or_open<'a, S: store::Store>(
+    store: &S,
+    states: &'a mut ReplicaStates<S>,
     content_status_callback: &Option<ContentStatusCallback>,
     namespace: NamespaceId,
-) -> Result<&'b mut (Replica<S::Instance>, ReplicaState)> {
+) -> Result<&'a mut (Replica<S::Instance>, ReplicaState)> {
     match states.entry(namespace) {
         hash_map::Entry::Vacant(e) => {
             let replica = store
@@ -615,30 +622,33 @@ fn get_or_open<'a, 'b, S: store::Store>(
 fn iter_to_channel<T: Send + 'static>(
     channel: flume::Sender<Result<T>>,
     iter: Result<impl Iterator<Item = Result<T>>>,
-) -> Result<()> {
+) -> Result<(), SendReplyError> {
     match iter {
-        Err(err) => channel.send(Err(err)).map_err(receiver_dropped)?,
+        Err(err) => channel.send(Err(err)).map_err(send_reply_error)?,
         Ok(iter) => {
             for item in iter {
-                channel.send(item).map_err(receiver_dropped)?;
+                channel.send(item).map_err(send_reply_error)?;
             }
         }
     }
     Ok(())
 }
 
-fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<()> {
-    sender.send(value).map_err(receiver_dropped)
+#[derive(Debug)]
+struct SendReplyError;
+
+fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyError> {
+    sender.send(value).map_err(send_reply_error)
 }
 
 fn send_reply_with<T, S: store::Store>(
     sender: oneshot::Sender<Result<T>>,
     this: &mut Actor<S>,
     f: impl FnOnce(&mut Actor<S>) -> Result<T>,
-) -> Result<()> {
-    sender.send(f(this)).map_err(receiver_dropped)
+) -> Result<(), SendReplyError> {
+    sender.send(f(this)).map_err(send_reply_error)
 }
 
-fn receiver_dropped<T>(_err: T) -> anyhow::Error {
-    anyhow!("receiver dropped")
+fn send_reply_error<T>(_err: T) -> SendReplyError {
+    SendReplyError
 }

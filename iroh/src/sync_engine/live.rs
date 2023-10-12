@@ -63,7 +63,7 @@ pub struct LiveStatus {
 pub enum ToLiveActor {
     Status {
         namespace: NamespaceId,
-        s: sync::oneshot::Sender<Option<LiveStatus>>,
+        reply: sync::oneshot::Sender<Option<LiveStatus>>,
     },
     StartSync {
         namespace: NamespaceId,
@@ -74,11 +74,15 @@ pub enum ToLiveActor {
     JoinPeers {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
+        #[debug("onsehot::Sender")]
+        reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     Leave {
         namespace: NamespaceId,
         /// If true removes all active client subscriptions.
         force_remove: bool,
+        #[debug("onsehot::Sender")]
+        reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     Shutdown,
     Subscribe {
@@ -86,12 +90,12 @@ pub enum ToLiveActor {
         #[debug("cb")]
         cb: OnLiveEventCallback,
         #[debug("oneshot::Sender")]
-        s: sync::oneshot::Sender<Result<RemovalToken>>,
+        reply: sync::oneshot::Sender<Result<RemovalToken>>,
     },
     Unsubscribe {
         namespace: NamespaceId,
         token: RemovalToken,
-        s: sync::oneshot::Sender<bool>,
+        reply: sync::oneshot::Sender<bool>,
     },
     HandleConnection {
         conn: quinn::Connecting,
@@ -331,29 +335,38 @@ impl<B: baomap::Store> LiveActor<B> {
             ToLiveActor::Leave {
                 namespace,
                 force_remove,
+                reply,
             } => {
-                self.leave(namespace, force_remove).await?;
+                let res = self.leave(namespace, force_remove).await;
+                reply.send(res).ok();
             }
-            ToLiveActor::JoinPeers { namespace, peers } => {
-                self.join_peers(namespace, peers)
-                    .await
-                    .context("join peers")?;
+            ToLiveActor::JoinPeers {
+                namespace,
+                peers,
+                reply,
+            } => {
+                let res = self.join_peers(namespace, peers).await;
+                reply.send(res).ok();
             }
-            ToLiveActor::Subscribe { namespace, cb, s } => {
+            ToLiveActor::Subscribe {
+                namespace,
+                cb,
+                reply,
+            } => {
                 let result = self.subscribe(namespace, cb).await;
-                s.send(result).ok();
+                reply.send(result).ok();
             }
             ToLiveActor::Unsubscribe {
                 namespace,
                 token,
-                s,
+                reply,
             } => {
                 let result = self.unsubscribe(namespace, token).await;
-                s.send(result).ok();
+                reply.send(result).ok();
             }
-            ToLiveActor::Status { namespace, s } => {
+            ToLiveActor::Status { namespace, reply } => {
                 let result = self.status(namespace).await;
-                s.send(result).ok();
+                reply.send(result).ok();
             }
             ToLiveActor::HandleConnection { conn } => {
                 self.handle_connection(conn).await;
@@ -511,10 +524,14 @@ impl<B: baomap::Store> LiveActor<B> {
         if state.sync && !next_state.sync {
             self.gossip_actor_tx
                 .send(ToGossipActor::Leave { namespace })
-                .await?;
+                .await
+                .context("gossip actor failure")?;
         }
         // update state of the iroh sync handle
-        self.sync.update_state(namespace, change).await?;
+        self.sync
+            .update_state(namespace, change)
+            .await
+            .context("iroh_sync actor failure")?;
         self.states.insert(namespace, next_state);
         Ok(())
     }

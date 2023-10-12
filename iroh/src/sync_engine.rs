@@ -28,10 +28,10 @@ use live::{LiveActor, ToLiveActor};
 pub use self::live::{KeepCallback, LiveEvent, LiveStatus, Origin, RemovalToken, SyncEvent};
 pub use iroh_sync::net::SYNC_ALPN;
 
-/// Capacity of the channel for the [`toLiveActor`] messages.
+/// Capacity of the channel for the [`ToLiveActor`] messages.
 const ACTOR_CHANNEL_CAP: usize = 64;
 
-/// The SyncEngine contains the [`LiveSync`] handle, and keeps a copy of the store and endpoint.
+/// The SyncEngine contains the [`LiveActor`] handle, and keeps a copy of the store and endpoint.
 ///
 /// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
 /// implementations in [rpc].
@@ -40,8 +40,8 @@ pub struct SyncEngine<S: Store> {
     pub(crate) rt: Handle,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
-    live_actor_tx: mpsc::Sender<ToLiveActor>,
-    actors_task_fut: Shared<BoxFuture<'static, ()>>,
+    to_live_actor: mpsc::Sender<ToLiveActor>,
+    tasks_fut: Shared<BoxFuture<'static, ()>>,
 
     // TODO:
     // After the latest refactoring we don't need the store here anymore because all interactions
@@ -54,12 +54,8 @@ pub struct SyncEngine<S: Store> {
 impl<S: Store> SyncEngine<S> {
     /// Start the sync engine.
     ///
-    /// This will spawn a background task for the [`LiveSync`]. When documents are added to the
-    /// engine with [`Self::start_sync`], then new entries inserted locally will be sent to peers
-    /// through iroh-gossip.
-    ///
-    /// The engine will also subscribe to replica events to download content for new
-    /// entries from peers.
+    /// This will spawn background tasks for the [`LiveActor`] and [`GossipActor`],
+    /// and a background thread for the [`SyncHandle`].
     pub fn spawn<B: BaoStore>(
         rt: Handle,
         endpoint: MagicEndpoint,
@@ -68,8 +64,8 @@ impl<S: Store> SyncEngine<S> {
         bao_store: B,
         downloader: Downloader,
     ) -> Self {
-        let (live_actor_tx, live_actor_rx) = mpsc::channel(ACTOR_CHANNEL_CAP);
-        let (gossip_actor_tx, gossip_actor_rx) = mpsc::channel(ACTOR_CHANNEL_CAP);
+        let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
+        let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.peer_id().fmt_short();
 
         let content_status_cb = {
@@ -86,18 +82,18 @@ impl<S: Store> SyncEngine<S> {
             gossip.clone(),
             bao_store,
             downloader.clone(),
-            live_actor_rx,
+            to_live_actor_recv,
             live_actor_tx.clone(),
-            gossip_actor_tx,
+            to_gossip_actor,
         );
         let mut gossip_actor = GossipActor::new(
-            gossip_actor_rx,
+            to_gossip_actor_recv,
             sync.clone(),
             gossip,
             downloader,
             live_actor_tx.clone(),
         );
-        let actor_task = rt.main().spawn(
+        let live_actor_task = rt.main().spawn(
             async move {
                 if let Err(err) = actor.run().await {
                     error!("sync actor failed: {err:?}");
@@ -105,7 +101,7 @@ impl<S: Store> SyncEngine<S> {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let gossip_recv_task = rt.main().spawn(
+        let gossip_actor_task = rt.main().spawn(
             async move {
                 if let Err(err) = gossip_actor.run().await {
                     error!("gossip recv actor failed: {err:?}");
@@ -113,12 +109,12 @@ impl<S: Store> SyncEngine<S> {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let actors_task_fut = async move {
-            if let Err(err) = actor_task.await {
+        let tasks_fut = async move {
+            if let Err(err) = live_actor_task.await {
                 error!("Error while joining actor task: {err:?}");
             }
-            gossip_recv_task.abort();
-            if let Err(err) = gossip_recv_task.await {
+            gossip_actor_task.abort();
+            if let Err(err) = gossip_actor_task.await {
                 if !err.is_cancelled() {
                     error!("Error while joining gossip recv task task: {err:?}");
                 }
@@ -131,8 +127,8 @@ impl<S: Store> SyncEngine<S> {
             rt,
             endpoint,
             sync,
-            live_actor_tx,
-            actors_task_fut,
+            to_live_actor: live_actor_tx,
+            tasks_fut,
             _store: replica_store,
         }
     }
@@ -143,7 +139,7 @@ impl<S: Store> SyncEngine<S> {
     /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
     pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
-        self.live_actor_tx
+        self.to_live_actor
             .send(ToLiveActor::StartSync {
                 namespace,
                 peers,
@@ -156,9 +152,15 @@ impl<S: Store> SyncEngine<S> {
 
     /// Join and sync with a set of peers for a document that is already syncing.
     pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
-        self.live_actor_tx
-            .send(ToLiveActor::JoinPeers { namespace, peers })
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
+            .send(ToLiveActor::JoinPeers {
+                namespace,
+                peers,
+                reply,
+            })
             .await?;
+        reply_rx.await??;
         Ok(())
     }
 
@@ -166,12 +168,15 @@ impl<S: Store> SyncEngine<S> {
     ///
     /// This will leave the gossip swarm for this document.
     pub async fn leave(&self, namespace: NamespaceId, force_remove: bool) -> Result<()> {
-        self.live_actor_tx
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
             .send(ToLiveActor::Leave {
                 namespace,
                 force_remove,
+                reply,
             })
             .await?;
+        reply_rx.await??;
         Ok(())
     }
 
@@ -180,46 +185,46 @@ impl<S: Store> SyncEngine<S> {
     where
         F: Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static,
     {
-        let (s, r) = oneshot::channel();
-        self.live_actor_tx
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
             .send(ToLiveActor::Subscribe {
                 namespace,
                 cb: Box::new(cb),
-                s,
+                reply,
             })
             .await?;
-        let token = r.await??;
+        let token = reply_rx.await??;
         Ok(token)
     }
 
     /// Unsubscribes `token` to events on this `namespace`.
     /// Returns `true` if a callback was found
     pub async fn unsubscribe(&self, namespace: NamespaceId, token: RemovalToken) -> Result<bool> {
-        let (s, r) = oneshot::channel();
-        self.live_actor_tx
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
             .send(ToLiveActor::Unsubscribe {
                 namespace,
                 token,
-                s,
+                reply,
             })
             .await?;
-        let token = r.await?;
+        let token = reply_rx.await?;
         Ok(token)
     }
 
     /// Get status for a document
     pub async fn status(&self, namespace: NamespaceId) -> Result<Option<LiveStatus>> {
-        let (s, r) = oneshot::channel();
-        self.live_actor_tx
-            .send(ToLiveActor::Status { namespace, s })
+        let (reply, reply_rx) = oneshot::channel();
+        self.to_live_actor
+            .send(ToLiveActor::Status { namespace, reply })
             .await?;
-        let status = r.await?;
+        let status = reply_rx.await?;
         Ok(status)
     }
 
     /// Handle an incoming iroh-sync connection.
     pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
-        self.live_actor_tx
+        self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })
             .await?;
         Ok(())
@@ -227,8 +232,8 @@ impl<S: Store> SyncEngine<S> {
 
     /// Shutdown the sync engine.
     pub async fn shutdown(&self) -> Result<()> {
-        self.live_actor_tx.send(ToLiveActor::Shutdown).await?;
-        self.actors_task_fut.clone().await;
+        self.to_live_actor.send(ToLiveActor::Shutdown).await?;
+        self.tasks_fut.clone().await;
         Ok(())
     }
 }
