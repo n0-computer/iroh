@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bytes::Bytes;
 use futures::FutureExt;
-use iroh::{baomap, node::Node};
+use iroh::node::Node;
 use rand::RngCore;
 
 use iroh_bytes::{
@@ -62,12 +62,12 @@ async fn attach_db_events<D: iroh_bytes::baomap::Store, S: iroh_sync::store::Sto
 }
 
 async fn gc_test_node() -> (
-    Node<baomap::mem::Store, iroh_sync::store::memory::Store>,
-    baomap::mem::Store,
+    Node<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store>,
+    iroh_bytes::store::mem::Store,
     flume::Receiver<iroh_bytes::baomap::Event>,
 ) {
     let rt = test_runtime();
-    let bao_store = baomap::mem::Store::new(rt.clone());
+    let bao_store = iroh_bytes::store::mem::Store::new(rt.clone());
     let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(50)).await;
     let db_recv = attach_db_events(&node).await;
     (node, bao_store, db_recv)
@@ -205,7 +205,6 @@ mod flat {
         ChunkRanges,
     };
     use bytes::Bytes;
-    use iroh::baomap;
     use iroh_io::AsyncSliceWriter;
     use testdir::testdir;
 
@@ -282,7 +281,8 @@ mod flat {
         let outboard_path = outboard_path(dir.clone());
 
         let bao_store =
-            baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
+            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
+                .await?;
         let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(123456);
@@ -439,7 +439,8 @@ mod flat {
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
         let bao_store =
-            baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
+            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
+                .await?;
         let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
 

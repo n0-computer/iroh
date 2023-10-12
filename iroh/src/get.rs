@@ -7,7 +7,6 @@ use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
 use iroh_bytes::baomap::range_collections::range_set::RangeSetRange;
 use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::util::{BlobFormat, HashAndFormat};
 use iroh_bytes::{
     baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     get::{
@@ -21,7 +20,7 @@ use iroh_bytes::{
         progress::{IdGenerator, ProgressSender},
         Hash,
     },
-    IROH_BLOCK_SIZE,
+    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
 use tracing::trace;

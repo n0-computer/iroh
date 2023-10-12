@@ -25,13 +25,13 @@ use iroh_bytes::baomap::{
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
+use iroh_bytes::util::{RpcResult, SetTagOption};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
-    TempTag,
+    BlobFormat, HashAndFormat, TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
@@ -1665,7 +1665,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
+        let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
@@ -1685,7 +1685,7 @@ mod tests {
         use iroh_bytes::util::SetTagOption;
         use std::io::Cursor;
         let rt = runtime::Handle::from_current(1)?;
-        let db = crate::baomap::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1710,7 +1710,7 @@ mod tests {
         use iroh_bytes::util::SetTagOption;
 
         let rt = runtime::Handle::from_current(1)?;
-        let db = crate::baomap::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())

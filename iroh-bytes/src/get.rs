@@ -14,7 +14,7 @@ use std::error::Error;
 use std::fmt::{self, Debug};
 use std::time::{Duration, Instant};
 
-use crate::util::Hash;
+use crate::Hash;
 use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::ChunkNum;

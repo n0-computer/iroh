@@ -30,8 +30,8 @@ fn test_runtime() -> runtime::Handle {
 fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
-) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store).runtime(&rt).bind_addr(addr)
 }
@@ -39,7 +39,7 @@ fn test_node(
 async fn spawn_node(
     rt: runtime::Handle,
     i: usize,
-) -> anyhow::Result<Node<iroh::baomap::mem::Store, store::memory::Store>> {
+) -> anyhow::Result<Node<iroh_bytes::store::mem::Store, store::memory::Store>> {
     let node = test_node(rt, "127.0.0.1:0".parse()?);
     let node = node.spawn().await?;
     info!("spawned node {i} {:?}", node.peer_id());
@@ -49,7 +49,7 @@ async fn spawn_node(
 async fn spawn_nodes(
     rt: runtime::Handle,
     n: usize,
-) -> anyhow::Result<Vec<Node<iroh::baomap::mem::Store, store::memory::Store>>> {
+) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store, store::memory::Store>>> {
     futures::future::join_all((0..n).map(|i| spawn_node(rt.clone(), i)))
         .await
         .into_iter()
@@ -307,7 +307,7 @@ async fn sync_subscribe_stop() -> Result<()> {
 #[tokio::test]
 async fn doc_delete() -> Result<()> {
     let rt = test_runtime();
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db, store)

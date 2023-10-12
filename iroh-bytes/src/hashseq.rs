@@ -1,5 +1,5 @@
 //! traits related to collections of blobs
-use crate::util::Hash;
+use crate::Hash;
 use bytes::Bytes;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use std::{fmt::Debug, io};

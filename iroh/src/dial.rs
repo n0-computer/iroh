@@ -8,8 +8,7 @@ use std::str::FromStr;
 
 use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
-use iroh_bytes::util::BlobFormat;
-use iroh_bytes::Hash;
+use iroh_bytes::{BlobFormat, Hash};
 use iroh_net::derp::{DerpMap, DerpMode};
 use iroh_net::key::SecretKey;
 use iroh_net::PeerAddr;

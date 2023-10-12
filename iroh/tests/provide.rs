@@ -152,7 +152,7 @@ async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
     let addr = "127.0.0.1:0".parse().unwrap();
 
-    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let mut db = iroh_bytes::store::readonly_mem::Store::default();
     let expect_hash = db.insert(content.as_slice());
     let expect_name = "hello_world".to_string();
     let collection = Collection::new(
@@ -224,7 +224,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, lookup) = iroh::baomap::readonly_mem::Store::new(file_opts.clone());
+    let (mut mdb, lookup) = iroh_bytes::store::readonly_mem::Store::new(file_opts.clone());
     let mut blobs = Vec::new();
     let mut total_blobs_size = 0u64;
 
@@ -348,7 +348,7 @@ async fn test_server_close() {
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     let _guard = iroh_test::logging::setup();
-    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let mut db = iroh_bytes::store::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::new(
         vec![Blob {
@@ -409,8 +409,8 @@ async fn test_server_close() {
 /// returns the database and the root hash of the collection
 fn create_test_db(
     entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-) -> (iroh::baomap::readonly_mem::Store, Hash) {
-    let (mut db, hashes) = iroh::baomap::readonly_mem::Store::new(entries);
+) -> (iroh_bytes::store::readonly_mem::Store, Hash) {
+    let (mut db, hashes) = iroh_bytes::store::readonly_mem::Store::new(entries);
     let collection = Collection::new(
         hashes
             .into_iter()
@@ -459,7 +459,7 @@ async fn test_not_found() {
     let _ = iroh_test::logging::setup();
     let rt = test_runtime();
 
-    let db = iroh::baomap::readonly_mem::Store::default();
+    let db = iroh_bytes::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
     let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
     let node = match test_node(db, addr).runtime(&rt).spawn().await {
@@ -501,7 +501,7 @@ async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
     let rt = test_runtime();
 
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
@@ -666,7 +666,7 @@ async fn test_size_request_blob() {
     let rt = test_runtime();
     let expected = make_test_data(1024 * 64 + 1234);
     let last_chunk = last_chunk(&expected);
-    let (db, hashes) = iroh::baomap::readonly_mem::Store::new([("test", &expected)]);
+    let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();

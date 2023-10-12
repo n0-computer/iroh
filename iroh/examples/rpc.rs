@@ -92,11 +92,11 @@ async fn main() -> anyhow::Result<()> {
     match args.path {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
-            let db = iroh::baomap::flat::Store::load(&path, &path, &path, &rt).await?;
+            let db = iroh_bytes::store::flat::Store::load(&path, &path, &path, &rt).await?;
             run(db).await
         }
         None => {
-            let db = iroh::baomap::mem::Store::new(rt);
+            let db = iroh_bytes::store::mem::Store::new(rt);
             run(db).await
         }
     }

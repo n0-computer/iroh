@@ -13,9 +13,7 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    util::Hash,
-    util::{BlobFormat, HashAndFormat},
-    TempTag, IROH_BLOCK_SIZE,
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};

@@ -149,7 +149,7 @@ fn make_partial(
     dir: impl AsRef<Path>,
     op: impl Fn(Hash, u64) -> MakePartialResult,
 ) -> io::Result<()> {
-    use iroh::baomap::flat::FileName;
+    use iroh_bytes::store::flat::FileName;
     let dir = dir.as_ref();
     let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
     for entry in std::fs::read_dir(dir)? {
@@ -159,15 +159,15 @@ fn make_partial(
         }
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Ok(name) = iroh::baomap::flat::FileName::from_str(name) else {
+        let Ok(name) = iroh_bytes::store::flat::FileName::from_str(name) else {
             continue;
         };
         match name {
-            iroh::baomap::flat::FileName::Data(hash) => {
+            iroh_bytes::store::flat::FileName::Data(hash) => {
                 let data = files.entry(hash).or_default();
                 data.0 = Some(entry.metadata()?.len());
             }
-            iroh::baomap::flat::FileName::Outboard(hash) => {
+            iroh_bytes::store::flat::FileName::Outboard(hash) => {
                 let data = files.entry(hash).or_default();
                 data.1 = true;
             }
@@ -317,8 +317,8 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh::baomap::flat::Store;
     use iroh_bytes::baomap::ReadableStore;
+    use iroh_bytes::store::flat::Store;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,

@@ -34,19 +34,19 @@ struct TempCounters {
 }
 
 impl TempCounters {
-    fn counter(&mut self, format: iroh_bytes::util::BlobFormat) -> &mut u64 {
+    fn counter(&mut self, format: iroh_bytes::BlobFormat) -> &mut u64 {
         match format {
-            iroh_bytes::util::BlobFormat::Raw => &mut self.raw,
-            iroh_bytes::util::BlobFormat::HashSeq => &mut self.hash_seq,
+            iroh_bytes::BlobFormat::Raw => &mut self.raw,
+            iroh_bytes::BlobFormat::HashSeq => &mut self.hash_seq,
         }
     }
 
-    fn inc(&mut self, format: iroh_bytes::util::BlobFormat) {
+    fn inc(&mut self, format: iroh_bytes::BlobFormat) {
         let counter = self.counter(format);
         *counter = counter.checked_add(1).unwrap();
     }
 
-    fn dec(&mut self, format: iroh_bytes::util::BlobFormat) {
+    fn dec(&mut self, format: iroh_bytes::BlobFormat) {
         let counter = self.counter(format);
         *counter = counter.saturating_sub(1);
     }
@@ -60,13 +60,13 @@ impl TempCounters {
 struct TempCounterMap(std::collections::BTreeMap<iroh_bytes::Hash, TempCounters>);
 
 impl TempCounterMap {
-    fn inc(&mut self, value: &iroh_bytes::util::HashAndFormat) {
-        let iroh_bytes::util::HashAndFormat { hash, format } = value;
+    fn inc(&mut self, value: &iroh_bytes::HashAndFormat) {
+        let iroh_bytes::HashAndFormat { hash, format } = value;
         self.0.entry(*hash).or_default().inc(*format)
     }
 
-    fn dec(&mut self, value: &iroh_bytes::util::HashAndFormat) {
-        let iroh_bytes::util::HashAndFormat { hash, format } = value;
+    fn dec(&mut self, value: &iroh_bytes::HashAndFormat) {
+        let iroh_bytes::HashAndFormat { hash, format } = value;
         let counters = self.0.get_mut(hash).unwrap();
         counters.dec(*format);
         if counters.is_empty() {
@@ -78,14 +78,14 @@ impl TempCounterMap {
         self.0.contains_key(hash)
     }
 
-    fn keys(&self) -> impl Iterator<Item = iroh_bytes::util::HashAndFormat> {
+    fn keys(&self) -> impl Iterator<Item = iroh_bytes::HashAndFormat> {
         let mut res = Vec::new();
         for (k, v) in self.0.iter() {
             if v.raw > 0 {
-                res.push(iroh_bytes::util::HashAndFormat::raw(*k));
+                res.push(iroh_bytes::HashAndFormat::raw(*k));
             }
             if v.hash_seq > 0 {
-                res.push(iroh_bytes::util::HashAndFormat::hash_seq(*k));
+                res.push(iroh_bytes::HashAndFormat::hash_seq(*k));
             }
         }
         res.into_iter()

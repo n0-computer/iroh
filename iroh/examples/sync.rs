@@ -228,7 +228,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // create a bao store for the iroh-bytes blobs
     let blob_path = storage_path.join("blobs");
     std::fs::create_dir_all(&blob_path)?;
-    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
+    let db = iroh_bytes::store::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
     // create the live syncer
     let downloader = Downloader::new(db.clone(), endpoint.clone(), rt.clone()).await;
@@ -348,7 +348,7 @@ struct ReplState {
     store: store::fs::Store,
     author: Author,
     doc: Doc,
-    db: iroh::baomap::flat::Store,
+    db: iroh_bytes::store::flat::Store,
     ticket: Ticket,
     log_filter: LogLevelReload,
     current_watch: Arc<tokio::sync::Mutex<Option<String>>>,
@@ -1003,13 +1003,16 @@ mod iroh_bytes_handlers {
 
     #[derive(Debug, Clone)]
     pub struct IrohBytesHandlers {
-        db: iroh::baomap::flat::Store,
+        db: iroh_bytes::store::flat::Store,
         rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
-        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: iroh::baomap::flat::Store) -> Self {
+        pub fn new(
+            rt: iroh_bytes::util::runtime::Handle,
+            db: iroh_bytes::store::flat::Store,
+        ) -> Self {
             Self {
                 db,
                 rt,
