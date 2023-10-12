@@ -589,7 +589,7 @@ where
         // This is the contract of the `Ord` impl for `E::Value`.
         for e in parents {
             let e = e?;
-            if !(entry.value() > e.value()) {
+            if entry.value() <= e.value() {
                 return Ok(InsertOutcome::NotInserted);
             }
         }

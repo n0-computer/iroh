@@ -375,11 +375,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                         from: from_peer,
                         content_status,
                     };
-                    if validate_entry(now, store, my_namespace, entry, &origin).is_ok() {
-                        true
-                    } else {
-                        false
-                    }
+                    validate_entry(now, store, my_namespace, entry, &origin).is_ok()
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |_store, entry, content_status| {
