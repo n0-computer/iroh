@@ -1188,7 +1188,10 @@ impl PeerMap {
 
     /// Get the [`EndpointInfo`]s for each endpoint
     pub(super) fn endpoint_infos(&self) -> Vec<EndpointInfo> {
-        self.endpoints().map(|(_, ep)| ep.info()).collect()
+        let now = Instant::now();
+        self.endpoints()
+            .filter_map(|(_, ep)| ep.is_active(&now).then(|| ep.info()))
+            .collect()
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
