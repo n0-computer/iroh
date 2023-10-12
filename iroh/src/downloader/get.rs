@@ -226,9 +226,6 @@ pub async fn get<D: Store>(
         BlobFormat::Raw => get_blob(db, conn, &hash).await,
         BlobFormat::HashSeq => get_hash_seq(db, conn, &hash).await,
     };
-    if let Err(e) = stats.as_ref() {
-        tracing::error!("get failed: {e:?}");
-    }
     Ok((stats?, tt))
 }
 

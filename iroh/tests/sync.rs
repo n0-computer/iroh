@@ -1,25 +1,33 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use anyhow::{anyhow, bail, Result};
-use futures::{Stream, StreamExt, TryStreamExt};
+use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use iroh::{
     client::mem::Doc,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
     sync_engine::{LiveEvent, SyncEvent},
 };
-use iroh_net::key::PublicKey;
+use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
+use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::util::runtime;
+use iroh_bytes::{util::runtime, Hash};
+use iroh_net::derp::DerpMode;
 use iroh_sync::{
     store::{self, GetFilter},
-    ContentStatus, NamespaceId,
+    AuthorId, ContentStatus, Entry, NamespaceId,
 };
 
-const LIMIT: Duration = Duration::from_secs(15);
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -30,38 +38,55 @@ fn test_runtime() -> runtime::Handle {
 fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
+    secret_key: SecretKey,
 ) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
     let db = iroh::baomap::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
-    Node::builder(db, store).runtime(&rt).bind_addr(addr)
+    Node::builder(db, store)
+        .secret_key(secret_key)
+        .derp_mode(DerpMode::Disabled)
+        .runtime(&rt)
+        .bind_addr(addr)
 }
 
-async fn spawn_node(
+fn spawn_node(
     rt: runtime::Handle,
     i: usize,
-) -> anyhow::Result<Node<iroh::baomap::mem::Store, store::memory::Store>> {
-    let node = test_node(rt, "127.0.0.1:0".parse()?);
-    let node = node.spawn().await?;
-    info!("spawned node {i} {:?}", node.peer_id());
-    Ok(node)
+    rng: &mut (impl CryptoRng + Rng),
+) -> impl Future<Output = anyhow::Result<Node<iroh::baomap::mem::Store, store::memory::Store>>> + 'static
+{
+    let secret_key = SecretKey::generate_with_rng(rng);
+    async move {
+        let node = test_node(rt, "127.0.0.1:0".parse()?, secret_key);
+        let node = node.spawn().await?;
+        info!(?i, me = %node.peer_id().fmt_short(), "node spawned");
+        Ok(node)
+    }
 }
 
 async fn spawn_nodes(
     rt: runtime::Handle,
     n: usize,
+    mut rng: &mut (impl CryptoRng + Rng),
 ) -> anyhow::Result<Vec<Node<iroh::baomap::mem::Store, store::memory::Store>>> {
-    futures::future::join_all((0..n).map(|i| spawn_node(rt.clone(), i)))
-        .await
-        .into_iter()
-        .collect()
+    let mut futs = vec![];
+    for i in 0..n {
+        futs.push(spawn_node(rt.clone(), i, &mut rng));
+    }
+    futures::future::join_all(futs).await.into_iter().collect()
+}
+
+pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
+    rand_chacha::ChaCha12Rng::from_seed(*Hash::new(seed).as_bytes())
 }
 
 /// This tests the simplest scenario: A node connects to another node, and performs sync.
 #[tokio::test]
 async fn sync_simple() -> Result<()> {
     setup_logging();
+    let mut rng = test_rng(b"sync_simple");
     let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 2).await?;
+    let nodes = spawn_nodes(rt, 2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // create doc on node0
@@ -82,25 +107,29 @@ async fn sync_simple() -> Result<()> {
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
     let mut events1 = doc1.subscribe().await?;
     info!("node1: assert 4 events");
-    assert_each_unordered(
-        collect_some(&mut events1, 4, LIMIT).await?,
+    assert_next_unordered(
+        &mut events1,
+        TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
             Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
-    );
+    )
+    .await;
     assert_latest(&doc1, b"k1", b"v1").await;
 
     info!("node0: assert 2 events");
-    assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+    assert_next_unordered(
+        &mut events0,
+        TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
             Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
         ],
-    );
+    )
+    .await;
 
     for node in nodes {
         node.shutdown();
@@ -111,9 +140,10 @@ async fn sync_simple() -> Result<()> {
 /// Test subscribing to replica events (without sync)
 #[tokio::test]
 async fn sync_subscribe_no_sync() -> Result<()> {
+    let mut rng = test_rng(b"sync_subscribe");
     setup_logging();
     let rt = test_runtime();
-    let node = spawn_node(rt, 0).await?;
+    let node = spawn_node(rt, 0, &mut rng).await?;
     let client = node.client();
     let doc = client.docs.create().await?;
     let mut sub = doc.subscribe().await?;
@@ -128,12 +158,101 @@ async fn sync_subscribe_no_sync() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn sync_gossip_bulk() -> Result<()> {
+    let n_entries: usize = std::env::var("N_ENTRIES")
+        .map(|x| x.parse().expect("N_ENTRIES must be a number"))
+        .unwrap_or(1000);
+    let mut rng = test_rng(b"sync_gossip_bulk");
+    setup_logging();
+
+    let rt = test_runtime();
+    let nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    let _peer0 = nodes[0].peer_id();
+    let author0 = clients[0].authors.create().await?;
+    let doc0 = clients[0].docs.create().await?;
+    let mut ticket = doc0.share(ShareMode::Write).await?;
+    // unset peers to not yet start sync
+    let peers = ticket.peers.clone();
+    ticket.peers = vec![];
+    let doc1 = clients[1].docs.import(ticket).await?;
+    let mut events = doc1.subscribe().await?;
+
+    // create entries for initial sync.
+    let now = Instant::now();
+    let value = b"foo";
+    for i in 0..n_entries {
+        let key = format!("init/{i}");
+        doc0.set_bytes(author0, key.as_bytes().to_vec(), value.to_vec())
+            .await?;
+    }
+    let elapsed = now.elapsed();
+    info!(
+        "insert took {elapsed:?} for {n_entries} ({:?} per entry)",
+        elapsed / n_entries as u32
+    );
+
+    let now = Instant::now();
+    let mut count = 0;
+    doc0.start_sync(vec![]).await?;
+    doc1.start_sync(peers).await?;
+    while let Some(event) = events.next().await {
+        let event = event?;
+        if matches!(event, LiveEvent::InsertRemote { .. }) {
+            count += 1;
+        }
+        if count == n_entries {
+            break;
+        }
+    }
+    let elapsed = now.elapsed();
+    info!(
+        "initial sync took {elapsed:?} for {n_entries} ({:?} per entry)",
+        elapsed / n_entries as u32
+    );
+
+    // publish another 1000 entries
+    let mut count = 0;
+    let value = b"foo";
+    let now = Instant::now();
+    for i in 0..n_entries {
+        let key = format!("gossip/{i}");
+        doc0.set_bytes(author0, key.as_bytes().to_vec(), value.to_vec())
+            .await?;
+    }
+    let elapsed = now.elapsed();
+    info!(
+        "insert took {elapsed:?} for {n_entries} ({:?} per entry)",
+        elapsed / n_entries as u32
+    );
+
+    while let Some(event) = events.next().await {
+        let event = event?;
+        if matches!(event, LiveEvent::InsertRemote { .. }) {
+            count += 1;
+        }
+        if count == n_entries {
+            break;
+        }
+    }
+    let elapsed = now.elapsed();
+    info!(
+        "gossip recv took {elapsed:?} for {n_entries} ({:?} per entry)",
+        elapsed / n_entries as u32
+    );
+
+    Ok(())
+}
+
 /// This tests basic sync and gossip with 3 peers.
 #[tokio::test]
 async fn sync_full_basic() -> Result<()> {
+    let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
     let rt = test_runtime();
-    let mut nodes = spawn_nodes(rt.clone(), 2).await?;
+    let mut nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
     let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // peer0: create doc and ticket
@@ -165,24 +284,28 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer1: wait for 4 events (for sync and join with peer0)");
     let mut events1 = doc1.subscribe().await?;
-    assert_each_unordered(
-        collect_some(&mut events1, 4, LIMIT).await?,
+    assert_next_unordered(
+        &mut events1,
+        TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
             Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
-    );
+    )
+    .await;
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer1)");
-    assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+    assert_next_unordered(
+        &mut events0,
+        TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
             Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
         ],
-    );
+    )
+    .await;
 
     info!("peer1: insert entry");
     let key1 = b"k2";
@@ -200,15 +323,16 @@ async fn sync_full_basic() -> Result<()> {
 
     // peer0: assert events for entry received via gossip
     info!("peer0: wait for 2 events (gossip'ed entry from peer1)");
-    assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+    assert_next_unordered(
+        &mut events0,
+        TIMEOUT,
         vec![
             Box::new(
                 move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == peer1),
             ),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
         ],
-    );
+    ).await;
     assert_latest(&doc0, key1, value1).await;
 
     // Note: If we could check gossip messages directly here (we can't easily), we would notice
@@ -217,16 +341,17 @@ async fn sync_full_basic() -> Result<()> {
     // our gossip implementation does not allow us to filter message receivers this way.
 
     info!("peer2: spawn");
-    nodes.push(spawn_node(rt.clone(), nodes.len()).await?);
+    nodes.push(spawn_node(rt.clone(), nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client());
     let doc2 = clients[2].docs.import(ticket).await?;
     let peer2 = nodes[2].peer_id();
     let mut events2 = doc2.subscribe().await?;
 
     info!("peer2: wait for 8 events (from sync with peers)");
-    let actual = collect_some(&mut events2, 8, LIMIT).await?;
-    assert_each_unordered(
-        actual,
+    assert_next_unordered_with_optionals(
+        &mut events2,
+        TIMEOUT,
+        // required events
         vec![
             // 2 NeighborUp events
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
@@ -245,27 +370,40 @@ async fn sync_full_basic() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
         ],
-    );
+        // optional events
+        // it may happen that we run sync two times against our two peers:
+        // if the first sync (as a result of us joining the peer manually through the ticket) completes
+        // before the peer shows up as a neighbor, we run sync again for the NeighborUp event.
+        vec![
+            // 2 SyncFinished events
+            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+        ]
+    ).await;
     assert_latest(&doc2, b"k1", b"v1").await;
     assert_latest(&doc2, b"k2", b"v2").await;
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer2)");
-    assert_each_unordered(
-        collect_some(&mut events0, 2, LIMIT).await?,
+    assert_next_unordered(
+        &mut events0,
+        TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
         ],
-    );
+    )
+    .await;
 
     info!("peer1: wait for 2 events (join & accept sync finished from peer2)");
-    assert_each_unordered(
-        collect_some(&mut events1, 2, LIMIT).await?,
+    assert_next_unordered(
+        &mut events1,
+        TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
         ],
-    );
+    )
+    .await;
 
     info!("shutdown");
     for node in nodes {
@@ -277,9 +415,10 @@ async fn sync_full_basic() -> Result<()> {
 
 #[tokio::test]
 async fn sync_subscribe_stop() -> Result<()> {
+    let mut rng = test_rng(b"sync_subscribe_stop");
     setup_logging();
     let rt = test_runtime();
-    let node = spawn_node(rt, 0).await?;
+    let node = spawn_node(rt, 0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -287,7 +426,7 @@ async fn sync_subscribe_stop() -> Result<()> {
     doc.start_sync(vec![]).await?;
 
     let status = doc.status().await?;
-    assert!(status.active);
+    assert!(status.state.sync);
     assert_eq!(status.subscriptions, 0);
 
     let sub = doc.subscribe().await?;
@@ -302,6 +441,39 @@ async fn sync_subscribe_stop() -> Result<()> {
     node.shutdown();
 
     Ok(())
+}
+
+#[derive(Debug, Ord, Eq, PartialEq, PartialOrd, Clone)]
+struct ExpectedEntry {
+    author: AuthorId,
+    key: String,
+    value: String,
+}
+
+impl PartialEq<Entry> for ExpectedEntry {
+    fn eq(&self, other: &Entry) -> bool {
+        self.key.as_bytes() == other.key()
+            && Hash::new(&self.value) == other.content_hash()
+            && self.author == other.author()
+    }
+}
+impl PartialEq<(Entry, Bytes)> for ExpectedEntry {
+    fn eq(&self, (entry, content): &(Entry, Bytes)) -> bool {
+        self.key.as_bytes() == entry.key()
+            && Hash::new(&self.value) == entry.content_hash()
+            && self.author == entry.author()
+            && self.value.as_bytes() == content.as_ref()
+    }
+}
+impl PartialEq<ExpectedEntry> for Entry {
+    fn eq(&self, other: &ExpectedEntry) -> bool {
+        other.eq(self)
+    }
+}
+impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
+    fn eq(&self, other: &ExpectedEntry) -> bool {
+        other.eq(self)
+    }
 }
 
 #[tokio::test]
@@ -340,9 +512,10 @@ async fn doc_delete() -> Result<()> {
 
 #[tokio::test]
 async fn sync_drop_doc() -> Result<()> {
+    let mut rng = test_rng(b"sync_drop_doc");
     setup_logging();
     let rt = test_runtime();
-    let node = spawn_node(rt, 0).await?;
+    let node = spawn_node(rt, 0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -406,67 +579,95 @@ async fn next<T: std::fmt::Debug>(mut stream: impl Stream<Item = Result<T>> + Un
     event
 }
 
-/// Collect the next n elements of a [`TryStream`]
-///
-/// If `timeout` is exceeded before n elements are collected an error is returned.
-async fn collect_some<T: std::fmt::Debug>(
-    mut stream: impl Stream<Item = Result<T>> + Unpin,
-    n: usize,
-    timeout: Duration,
-) -> Result<Vec<T>> {
-    let mut res = Vec::with_capacity(n);
-    let sleep = tokio::time::sleep(timeout);
-    tokio::pin!(sleep);
-    while res.len() < n {
-        tokio::select! {
-            () = &mut sleep => {
-                bail!("Failed to collect {n} elements in {timeout:?} (collected only {})", res.len());
-            },
-            event = stream.try_next() => {
-                let event = event?;
-                match event {
-                    None => bail!("stream ended after {} items, but expected {n}", res.len()),
-                    Some(event) => res.push(event),
-                }
-            }
+#[allow(clippy::type_complexity)]
+fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool>>) -> bool {
+    for i in 0..matchers.len() {
+        if matchers[i](item) {
+            let _ = matchers.remove(i);
+            return true;
         }
     }
-    Ok(res)
+    false
 }
 
-/// Assert that each item in the iterator is matched by one of the functions in `fns`.
+/// Receive `matchers.len()` elements from a stream and assert that each element matches one of the
+/// functions in `matchers`.
 ///
-/// The iterator must yield exactly as many elements as are in the function list.
-/// Order is not imporant. Once a function matched an item, it is removed from the function list.
+/// Order of the matchers is not relevant.
+///
+/// Returns all received events.
 #[allow(clippy::type_complexity)]
-fn assert_each_unordered<T: std::fmt::Debug>(
-    items: impl IntoIterator<Item = T>,
-    mut fns: Vec<Box<dyn Fn(&T) -> bool>>,
-) {
-    let len = fns.len();
-    let iter = items.into_iter();
-    for item in iter {
-        if fns.is_empty() {
-            panic!("iterator is longer than expected length of {len}");
-        }
-        let mut ok = false;
-        for i in 0..fns.len() {
-            if fns[i](&item) {
-                ok = true;
-                let _ = fns.remove(i);
+async fn assert_next_unordered<T: std::fmt::Debug + Clone>(
+    stream: impl Stream<Item = Result<T>> + Unpin,
+    timeout: Duration,
+    matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+) -> Vec<T> {
+    assert_next_unordered_with_optionals(stream, timeout, matchers, vec![]).await
+}
+
+/// Receive between `min` and `max` elements from the stream and assert that each element matches
+/// either one of the matchers in `required_matchers` or in `optional_matchers`.
+///
+/// Order of the matchers is not relevant.
+///
+/// Will return an error if:
+/// * Any element fails to match one of the required or optional matchers
+/// * More than `max` elements were received, but not all required matchers were used yet
+/// * The timeout completes before all required matchers were used
+///
+/// Returns all received events.
+#[allow(clippy::type_complexity)]
+async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
+    mut stream: impl Stream<Item = Result<T>> + Unpin,
+    timeout: Duration,
+    mut required_matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+    mut optional_matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+) -> Vec<T> {
+    let max = required_matchers.len() + optional_matchers.len();
+    let required = required_matchers.len();
+    // we have to use a mutex because rustc is not intelligent enough to realize
+    // that the mutable borrow terminates when the future completes
+    let events = Arc::new(parking_lot::Mutex::new(vec![]));
+    let fut = async {
+        while let Some(event) = stream.next().await {
+            let event = event.context("failed to read from stream")?;
+            let len = {
+                let mut events = events.lock();
+                events.push(event.clone());
+                events.len()
+            };
+            if !apply_matchers(&event, &mut required_matchers)
+                && !apply_matchers(&event, &mut optional_matchers)
+            {
+                bail!("Event didn't match any matcher: {event:?}");
+            }
+            if required_matchers.is_empty() || len == max {
                 break;
             }
         }
-        if !ok {
-            panic!("no rule matched item {item:?}");
+        if !required_matchers.is_empty() {
+            bail!(
+                "Matched only {} of {required} required matchers",
+                required - required_matchers.len()
+            );
         }
-    }
-    if !fns.is_empty() {
-        panic!(
-            "expected {len} elements but stream stopped after {}",
-            len - fns.len()
+        Ok(())
+    };
+    tokio::pin!(fut);
+    let res = tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| anyhow!("Timeout reached ({timeout:?})"))
+        .and_then(|res| res);
+    let events = events.lock().clone();
+    if let Err(err) = &res {
+        println!("Received events: {events:#?}");
+        println!(
+            "Received {} events, expected between {required} and {max}",
+            events.len()
         );
+        panic!("Failed to receive or match all events: {err:?}");
     }
+    events
 }
 
 /// Asserts that the event is a [`LiveEvent::SyncFinished`] and that the contained [`SyncEvent`]

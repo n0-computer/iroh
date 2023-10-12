@@ -631,11 +631,11 @@ pub struct DocSetRequest {
     /// Author of this entry.
     pub author_id: AuthorId,
     /// Key of this entry.
-    pub key: Vec<u8>,
+    pub key: Bytes,
     /// Value of this entry.
     // TODO: Allow to provide the hash directly
     // TODO: Add a way to provide content as stream
-    pub value: Vec<u8>,
+    pub value: Bytes,
 }
 
 impl RpcMsg<ProviderService> for DocSetRequest {
@@ -657,7 +657,7 @@ pub struct DocDelRequest {
     /// Author of this entry.
     pub author_id: AuthorId,
     /// Prefix to delete.
-    pub prefix: Vec<u8>,
+    pub prefix: Bytes,
 }
 
 impl RpcMsg<ProviderService> for DocDelRequest {
@@ -679,7 +679,7 @@ pub struct DocSetHashRequest {
     /// Author of this entry.
     pub author_id: AuthorId,
     /// Key of this entry.
-    pub key: Vec<u8>,
+    pub key: Bytes,
     /// Hash of this entry.
     pub hash: Hash,
     /// Size of this entry.
@@ -724,7 +724,7 @@ pub struct DocGetOneRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// Key
-    pub key: Vec<u8>,
+    pub key: Bytes,
     /// Author
     pub author: AuthorId,
 }

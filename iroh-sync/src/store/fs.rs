@@ -53,14 +53,13 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
 // Value:
 //    (u64, [u8; 32], [u8; 32], u64, [u8; 32])
 //  # (timestamp, signature_namespace, signature_author, len, hash)
+const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 type DbResult<T> = Result<T, StorageError>;
-
-const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
 /// last time a peer was useful in a document.
@@ -83,7 +82,7 @@ impl Store {
         // Setup all tables
         let write_tx = db.begin_write()?;
         {
-            let _table = write_tx.open_table(RECORDS_TABLE)?;
+            let _ = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
@@ -549,6 +548,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let write_tx = self.store.db.begin_write()?;
         {
+            // insert into record table
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
             let key = (
                 &e.id().namespace().to_bytes(),

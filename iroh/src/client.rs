@@ -168,7 +168,7 @@ where
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
-    pub async fn get(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+    pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
         if let Err(_err) = self.rpc.rpc(DocInfoRequest { doc_id: id }).await? {
             return Ok(None);
         }
@@ -541,16 +541,16 @@ where
     pub async fn set_bytes(
         &self,
         author_id: AuthorId,
-        key: Vec<u8>,
-        value: Vec<u8>,
+        key: impl Into<Bytes>,
+        value: impl Into<Bytes>,
     ) -> Result<Hash> {
         let res = self
             .rpc
             .rpc(DocSetRequest {
                 doc_id: self.id,
                 author_id,
-                key,
-                value,
+                key: key.into(),
+                value: value.into(),
             })
             .await??;
         Ok(res.entry.content_hash())
@@ -560,7 +560,7 @@ where
     pub async fn set_hash(
         &self,
         author_id: AuthorId,
-        key: Vec<u8>,
+        key: impl Into<Bytes>,
         hash: Hash,
         size: u64,
     ) -> Result<()> {
@@ -568,7 +568,7 @@ where
             .rpc(DocSetHashRequest {
                 doc_id: self.id,
                 author_id,
-                key,
+                key: key.into(),
                 hash,
                 size,
             })
@@ -595,13 +595,13 @@ where
     /// entries whose key starts with or is equal to the given `prefix`.
     ///
     /// Returns the number of entries deleted.
-    pub async fn del(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+    pub async fn del(&self, author_id: AuthorId, prefix: impl Into<Bytes>) -> Result<usize> {
         let res = self
             .rpc
             .rpc(DocDelRequest {
                 doc_id: self.id,
                 author_id,
-                prefix,
+                prefix: prefix.into(),
             })
             .await??;
         let DocDelResponse { removed } = res;
@@ -609,12 +609,12 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_one(&self, author: AuthorId, key: Vec<u8>) -> Result<Option<Entry>> {
+    pub async fn get_one(&self, author: AuthorId, key: impl Into<Bytes>) -> Result<Option<Entry>> {
         let res = self
             .rpc
             .rpc(DocGetOneRequest {
                 author,
-                key,
+                key: key.into(),
                 doc_id: self.id,
             })
             .await??;

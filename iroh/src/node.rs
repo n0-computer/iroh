@@ -1475,7 +1475,7 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
             }
             AuthorCreate(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.author_create(req)
+                    handler.inner.sync.author_create(req).await
                 })
                 .await
             }
@@ -1496,7 +1496,7 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
             }
             DocCreate(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_create(req)
+                    handler.inner.sync.doc_create(req).await
                 })
                 .await
             }

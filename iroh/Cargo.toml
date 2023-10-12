@@ -81,11 +81,13 @@ example-sync = ["cli"]
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
+console-subscriber = "0.1.10"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh-test = { path = "../iroh-test" }
 nix = "0.26.2"
 proptest = "1.2.0"
+rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }

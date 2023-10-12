@@ -212,6 +212,14 @@ impl<E: RangeEntry> Message<E> {
     pub fn parts(&self) -> &[MessagePart<E>] {
         &self.parts
     }
+
+    pub fn values(&self) -> impl Iterator<Item = &(E, ContentStatus)> {
+        self.parts().iter().filter_map(|p| p.values()).flatten()
+    }
+
+    pub fn value_count(&self) -> usize {
+        self.values().count()
+    }
 }
 
 pub trait Store<E: RangeEntry>: Sized {
@@ -327,17 +335,23 @@ where
     /// It must return true if the entry is valid and should be stored, and false otherwise
     /// (which means the entry will be dropped and not stored).
     ///
+    /// `on_insert_cb` is called for each entry that was actually inserted into the store (so not
+    /// for entries which validated, but are not inserted because they are older than one of their
+    /// prefixes).
+    ///
     /// `content_status_cb` is called for each outgoing entry about to be sent to the remote.
     /// It must return a [`ContentStatus`], which will be sent to the remote with the entry.
-    pub fn process_message<F, F2>(
+    pub fn process_message<F, F2, F3>(
         &mut self,
         message: Message<E>,
         validate_cb: F,
-        content_status_cb: F2,
+        on_insert_cb: F2,
+        content_status_cb: F3,
     ) -> Result<Option<Message<E>>, S::Error>
     where
         F: Fn(&S, &E, ContentStatus) -> bool,
-        F2: Fn(&S, &E) -> ContentStatus,
+        F2: Fn(&S, E, ContentStatus),
+        F3: Fn(&S, &E) -> ContentStatus,
     {
         let mut out = Vec::new();
 
@@ -394,7 +408,11 @@ where
             // Store incoming values
             for (entry, content_status) in values {
                 if validate_cb(&self.store, &entry, content_status) {
-                    self.put(entry)?;
+                    // TODO: Get rid of the clone?
+                    let outcome = self.put(entry.clone())?;
+                    if let InsertOutcome::Inserted { .. } = outcome {
+                        on_insert_cb(&self.store, entry, content_status);
+                    }
                 }
             }
 
@@ -571,7 +589,7 @@ where
         // This is the contract of the `Ord` impl for `E::Value`.
         for e in parents {
             let e = e?;
-            if entry.value() < e.value() {
+            if !(entry.value() > e.value()) {
                 return Ok(InsertOutcome::NotInserted);
             }
         }
@@ -600,6 +618,7 @@ where
 }
 
 /// The outcome of a [`Store::put`] operation.
+#[derive(Debug)]
 pub enum InsertOutcome {
     /// The entry was not inserted because a newer entry for its key or a
     /// prefix of its key exists.
@@ -1289,12 +1308,22 @@ mod tests {
             alice_to_bob.push(msg.clone());
 
             if let Some(msg) = bob
-                .process_message(msg, &bob_validate_cb, |_, _| ContentStatus::Complete)
+                .process_message(
+                    msg,
+                    &bob_validate_cb,
+                    |_, _, _| (),
+                    |_, _| ContentStatus::Complete,
+                )
                 .unwrap()
             {
                 bob_to_alice.push(msg.clone());
                 next_to_bob = alice
-                    .process_message(msg, &alice_validate_cb, |_, _| ContentStatus::Complete)
+                    .process_message(
+                        msg,
+                        &alice_validate_cb,
+                        |_, _, _| (),
+                        |_, _| ContentStatus::Complete,
+                    )
                     .unwrap();
             }
         }

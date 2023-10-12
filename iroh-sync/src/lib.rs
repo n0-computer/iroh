@@ -29,6 +29,7 @@
 //! [paper]: https://arxiv.org/abs/2212.13567
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
+pub mod actor;
 mod keys;
 #[cfg(feature = "metrics")]
 pub mod metrics;

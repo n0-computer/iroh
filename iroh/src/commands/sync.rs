@@ -560,7 +560,7 @@ impl DocCommands {
 
 async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
     iroh.docs
-        .get(env.doc(id)?)
+        .open(env.doc(id)?)
         .await?
         .context("Document not found")
 }

@@ -53,6 +53,19 @@ pub type PeerIdBytes = [u8; 32];
 /// Value is 10 minutes.
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
+/// Callback that may be set on a replica to determine the availability status for a content hash.
+pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>;
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub enum Event {
+    Insert {
+        namespace: NamespaceId,
+        origin: InsertOrigin,
+        entry: SignedEntry,
+    },
+}
+
 /// Whether an entry was inserted locally or by a remote peer.
 #[derive(Debug, Clone)]
 pub enum InsertOrigin {
@@ -78,6 +91,15 @@ pub enum ContentStatus {
     Missing,
 }
 
+/// Outcome of a sync operation.
+#[derive(Debug, Clone, Default)]
+pub struct SyncOutcome {
+    /// Number of entries we received.
+    pub num_recv: usize,
+    /// Number of entries we sent.
+    pub num_sent: usize,
+}
+
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
@@ -88,20 +110,10 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
     peer: RwLock<Peer<SignedEntry, S>>,
-    #[allow(clippy::type_complexity)]
-    on_insert_sender: RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>,
-
-    #[allow(clippy::type_complexity)]
+    on_insert_sender: RwLock<Option<flume::Sender<Event>>>,
     #[debug("ContentStatusCallback")]
-    content_status_cb: RwLock<Option<Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>>>,
-
+    content_status_cb: RwLock<Option<ContentStatusCallback>>,
     closed: AtomicBool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ReplicaData {
-    entries: Vec<SignedEntry>,
-    namespace: Namespace,
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
@@ -123,33 +135,32 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// This method is not public. Use [store::Store::close_replica] instead.
     pub(crate) fn close(&self) {
-        self.unsubscribe();
+        self.unset_event_sender();
         self.inner.closed.store(true, atomic::Ordering::Release);
     }
 
-    /// Subscribe to insert events.
+    /// Subscribe to replica events.
     ///
     /// Only one subscription can be active at a time. If a previous subscription was created, this
-    /// will return `None`.
+    /// will return `false`. To set a new subscription, first clear the existing subscription with
+    /// [`Self::unset_event_sender`].
     ///
-    /// When subscribing to a replica, you must ensure that the returned [`flume::Receiver`] is
+    /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
-    // TODO: Allow to clear a previous subscription?
-    pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
+    pub fn set_event_sender(&self, sender: flume::Sender<Event>) -> bool {
         let mut on_insert_sender = self.inner.on_insert_sender.write();
         match &*on_insert_sender {
-            Some(_sender) => None,
+            Some(_sender) => false,
             None => {
-                let (s, r) = flume::bounded(16); // TODO: should this be configurable?
-                *on_insert_sender = Some(s);
-                Some(r)
+                *on_insert_sender = Some(sender);
+                true
             }
         }
     }
 
     /// Remove the subscription.
-    pub fn unsubscribe(&self) -> bool {
+    pub fn unset_event_sender(&self) -> bool {
         self.inner.on_insert_sender.write().take().is_some()
     }
 
@@ -157,10 +168,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// Only one callback can be active at a time. If a previous callback was registered, this
     /// will return `false`.
-    pub fn set_content_status_callback(
-        &self,
-        cb: Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>,
-    ) -> bool {
+    pub fn set_content_status_callback(&self, cb: ContentStatusCallback) -> bool {
         let mut content_status_cb = self.inner.content_status_cb.write();
         match &*content_status_cb {
             Some(_cb) => false,
@@ -286,7 +294,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         drop(peer);
 
         if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
-            sender.send((origin.clone(), entry)).ok();
+            let event = Event::Insert {
+                namespace: self.namespace(),
+                origin: origin.clone(),
+                entry,
+            };
+            sender.send(event).ok();
         }
 
         #[cfg(feature = "metrics")]
@@ -329,9 +342,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(
-        &self,
-    ) -> Result<crate::ranger::Message<SignedEntry>, anyhow::Error> {
+    pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
         self.ensure_open()?;
         self.inner.peer.read().initial_message().map_err(Into::into)
     }
@@ -343,30 +354,48 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         &self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
+        state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
         self.ensure_open()?;
-        let expected_namespace = self.namespace();
+        let my_namespace = self.namespace();
         let now = system_time_now();
+
+        // update state with incoming data.
+        state.num_recv += message.value_count();
+
         let reply = self
             .inner
             .peer
             .write()
             .process_message(
                 message,
+                // validate callback: validate incoming entries, and send to on_insert channel
                 |store, entry, content_status| {
                     let origin = InsertOrigin::Sync {
                         from: from_peer,
                         content_status,
                     };
-                    if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
-                        if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
-                            sender.send((origin, entry.clone())).ok();
-                        }
+                    if validate_entry(now, store, my_namespace, entry, &origin).is_ok() {
                         true
                     } else {
                         false
                     }
                 },
+                // on_insert callback: is called when an entry was actually inserted in the store
+                |_store, entry, content_status| {
+                    if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
+                        let event = Event::Insert {
+                            namespace: my_namespace,
+                            origin: InsertOrigin::Sync {
+                                from: from_peer,
+                                content_status,
+                            },
+                            entry: entry.clone(),
+                        };
+                        sender.send(event).ok();
+                    }
+                },
+                // content_status callback: get content status for outgoing entries
                 |_store, entry| {
                     if let Some(cb) = self.inner.content_status_cb.read().as_ref() {
                         cb(entry.content_hash())
@@ -377,6 +406,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             )
             .map_err(Into::into)?;
 
+        // update state with outgoing data.
+        if let Some(ref reply) = reply {
+            state.num_sent += reply.value_count();
+        }
+
         Ok(reply)
     }
 
@@ -386,9 +420,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Get the byte represenation of the [`Namespace`] key for this replica.
-    // TODO: Why return [u8; 32] and not `Namespace` here?
-    pub fn secret_key(&self) -> [u8; 32] {
-        self.inner.namespace.to_bytes()
+    pub fn secret_key(&self) -> Namespace {
+        self.inner.namespace.clone()
     }
 }
 
@@ -1770,6 +1803,74 @@ mod tests {
         Ok(())
     }
 
+    /// This tests that no events are emitted for entries received during sync which are obsolete
+    /// (too old) by the time they are actually inserted in the store.
+    #[test]
+    fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let store1 = store::memory::Store::default();
+        let store2 = store::memory::Store::default();
+        let peer1 = [1u8; 32];
+        let peer2 = [2u8; 32];
+        let mut state1 = SyncOutcome::default();
+        let mut state2 = SyncOutcome::default();
+
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let replica1 = store1.new_replica(namespace.clone())?;
+        let replica2 = store2.new_replica(namespace.clone())?;
+
+        let (events1_sender, events1) = flume::bounded(32);
+        let (events2_sender, events2) = flume::bounded(32);
+
+        replica1.set_event_sender(events1_sender);
+        replica2.set_event_sender(events2_sender);
+
+        replica1.hash_and_insert(b"foo", &author, b"init")?;
+
+        let from1 = replica1.sync_initial_message()?;
+        let from2 = replica2
+            .sync_process_message(from1, peer1, &mut state2)
+            .unwrap()
+            .unwrap();
+        let from1 = replica1
+            .sync_process_message(from2, peer2, &mut state1)
+            .unwrap()
+            .unwrap();
+        // now we will receive the entry from rpelica1. we will insert a newer entry now, while the
+        // sync is already running. this means the entry from replica1 will be rejected. we make
+        // sure that no InsertRemote event is emitted for this entry.
+        replica2.hash_and_insert(b"foo", &author, b"update")?;
+        let from2 = replica2
+            .sync_process_message(from1, peer1, &mut state2)
+            .unwrap();
+        assert!(from2.is_none());
+        let events1 = events1.drain().collect::<Vec<_>>();
+        let events2 = events2.drain().collect::<Vec<_>>();
+        assert_eq!(events1.len(), 1);
+        assert_eq!(events2.len(), 1);
+        assert!(matches!(
+            events1[0],
+            Event::Insert {
+                origin: InsertOrigin::Local,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events2[0],
+            Event::Insert {
+                origin: InsertOrigin::Local,
+                ..
+            }
+        ));
+        assert_eq!(state1.num_sent, 1);
+        assert_eq!(state1.num_recv, 0);
+        assert_eq!(state2.num_sent, 0);
+        assert_eq!(state2.num_recv, 1);
+
+        Ok(())
+    }
+
     fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));
@@ -1816,6 +1917,8 @@ mod tests {
     ) -> Result<()> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
+        let mut alice_state = SyncOutcome::default();
+        let mut bob_state = SyncOutcome::default();
         // Sync alice - bob
         let mut next_to_bob = Some(alice.sync_initial_message()?);
         let mut rounds = 0;
@@ -1823,8 +1926,8 @@ mod tests {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg, alice_peer_id)? {
-                next_to_bob = alice.sync_process_message(msg, bob_peer_id)?
+            if let Some(msg) = bob.sync_process_message(msg, alice_peer_id, &mut bob_state)? {
+                next_to_bob = alice.sync_process_message(msg, bob_peer_id, &mut alice_state)?
             }
         }
         Ok(())
