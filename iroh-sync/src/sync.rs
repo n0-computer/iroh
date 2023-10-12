@@ -1424,7 +1424,12 @@ mod tests {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync::<S>(&alice, &bob)?;
+        let (alice_out, bob_out) = sync::<S>(&alice, &bob)?;
+
+        assert_eq!(alice_out.num_sent, 2);
+        assert_eq!(bob_out.num_recv, 2);
+        assert_eq!(alice_out.num_recv, 6);
+        assert_eq!(bob_out.num_sent, 6);
 
         check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
@@ -1914,7 +1919,7 @@ mod tests {
     fn sync<S: store::Store>(
         alice: &Replica<S::Instance>,
         bob: &Replica<S::Instance>,
-    ) -> Result<()> {
+    ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
         let mut alice_state = SyncOutcome::default();
@@ -1930,7 +1935,9 @@ mod tests {
                 next_to_bob = alice.sync_process_message(msg, bob_peer_id, &mut alice_state)?
             }
         }
-        Ok(())
+        assert_eq!(alice_state.num_sent, bob_state.num_recv);
+        assert_eq!(alice_state.num_recv, bob_state.num_sent);
+        Ok((alice_state, bob_state))
     }
 
     fn check_entries<S: store::Store>(
