@@ -5,7 +5,7 @@ use bao_tree::ChunkRanges;
 use futures::StreamExt;
 use iroh::{
     collection::Collection,
-    rpc_protocol::{BlobDownloadRequest, DownloadLocation},
+    rpc_protocol::{BlobDownloadRequest, DownloadLocation, SetTagOption},
     util::progress::ProgressSliceWriter,
 };
 use iroh_bytes::{
@@ -20,7 +20,7 @@ use iroh_bytes::{
     provider::GetProgress,
     util::{
         progress::{FlumeProgressSender, IdGenerator, ProgressSender},
-        BlobFormat, SetTagOption,
+        BlobFormat,
     },
 };
 use iroh_io::ConcatenateSliceWriter;

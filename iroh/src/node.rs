@@ -25,7 +25,7 @@ use iroh_bytes::baomap::{
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{RpcResult, SetTagOption};
+use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, RequestAuthorizationHandler},
@@ -65,7 +65,7 @@ use crate::rpc_protocol::{
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService,
+    ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -1682,7 +1682,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
-        use iroh_bytes::util::SetTagOption;
         use std::io::Cursor;
         let rt = runtime::Handle::from_current(1)?;
         let db = iroh_bytes::store::mem::Store::new(rt);
@@ -1707,8 +1706,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
-        use iroh_bytes::util::SetTagOption;
-
         let rt = runtime::Handle::from_current(1)?;
         let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();

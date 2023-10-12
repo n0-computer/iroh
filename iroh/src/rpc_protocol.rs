@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
+use iroh_bytes::util::{BlobFormat, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -36,6 +36,15 @@ use crate::sync_engine::{LiveEvent, LiveStatus};
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
+
+/// Option for commands that allow setting a tag
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SetTagOption {
+    /// A tag will be automatically generated
+    Auto,
+    /// The tag is explicitly named
+    Named(Tag),
+}
 
 /// A request to the node to provide the data at the given path
 ///
