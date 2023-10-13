@@ -138,7 +138,11 @@ pub enum Commands {
     ///
     /// Tests the latencies of the default DERP regions and nodes. To test custom regions or nodes,
     /// adjust the [`Config`].
-    DerpRegions,
+    DerpRegions {
+        /// How often to execute.
+        #[clap(long, default_value_t = 5)]
+        count: usize,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -658,7 +662,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
+async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
@@ -681,8 +685,8 @@ async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
     let mut success = Vec::new();
     let mut fail = Vec::new();
 
-    for i in 0..5 {
-        println!("-- round {i}");
+    for i in 0..count {
+        println!("Round {}/{count}", i + 1);
         let derp_regions = config.derp_regions.clone();
         for region in derp_regions.into_iter() {
             let mut region_details = RegionDetails {
@@ -885,9 +889,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             port_map_probe(config).await
         }
-        Commands::DerpRegions => {
+        Commands::DerpRegions { count } => {
             let config = NodeConfig::from_env(None)?;
-            derp_regions(config).await
+            derp_regions(count, config).await
         }
     }
 }
