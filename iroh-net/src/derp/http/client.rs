@@ -814,7 +814,7 @@ impl Client {
     /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<Duration, ClientError> {
         let ping = rand::thread_rng().gen::<[u8; 8]>();
-        debug!("ping: {}", hex::encode(&ping));
+        debug!("ping: {}", hex::encode(ping));
         let (client, _) = self.connect().await?;
 
         let start = Instant::now();
@@ -890,7 +890,7 @@ impl Client {
                     }
 
                     if let ReceivedMessage::Pong(ping) = msg {
-                        debug!("got pong: {}", hex::encode(&ping));
+                        trace!("got pong: {}", hex::encode(ping));
                         if let Some(chan) = self.unregister_ping(ping).await {
                             if chan.send(()).is_err() {
                                 warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
