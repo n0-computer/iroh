@@ -13,10 +13,10 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
-use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::provider::AddProgress;
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
+use iroh_bytes::store::ValidateProgress;
 use iroh_bytes::Hash;
+use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
 use quic_rpc::{RpcClient, ServiceConnection};
@@ -29,12 +29,13 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCreateRequest, DocGetManyRequest, DocGetOneRequest,
-    DocImportRequest, DocInfoRequest, DocListRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocStopSyncRequest, DocSubscribeRequest, DocTicket, GetProgress,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
+    DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
+    DocLeaveRequest, DocListRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, ShareMode, WrapOption,
+    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
@@ -138,6 +139,16 @@ where
             rpc: self.rpc.clone(),
         };
         Ok(doc)
+    }
+
+    /// Delete a document from the local node.
+    ///
+    /// This is a destructive operation. Both the document secret key and all entries in the
+    /// document will be permanently deleted from the node's storage. Content blobs will be deleted
+    /// through garbage collection unless they are referenced from another document or tag.
+    pub async fn drop_doc(&self, doc_id: NamespaceId) -> Result<()> {
+        self.rpc.rpc(DocDropRequest { doc_id }).await??;
+        Ok(())
     }
 
     /// Import a document from a ticket and join all peers in the ticket.
@@ -545,6 +556,26 @@ where
         Ok(res.entry.content_hash())
     }
 
+    /// Set an entries on the doc via its key, hash, and size.
+    pub async fn set_hash(
+        &self,
+        author_id: AuthorId,
+        key: Vec<u8>,
+        hash: Hash,
+        size: u64,
+    ) -> Result<()> {
+        self.rpc
+            .rpc(DocSetHashRequest {
+                doc_id: self.id,
+                author_id,
+                key,
+                hash,
+                size,
+            })
+            .await??;
+        Ok(())
+    }
+
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
     pub async fn read(&self, entry: &Entry) -> Result<BlobReader> {
         BlobReader::from_rpc(&self.rpc, entry.content_hash()).await
@@ -556,6 +587,25 @@ where
             .await?
             .read_to_bytes()
             .await
+    }
+
+    /// Delete entries that match the given `author` and key `prefix`.
+    ///
+    /// This inserts an empty entry with the key set to `prefix`, effectively clearing all other
+    /// entries whose key starts with or is equal to the given `prefix`.
+    ///
+    /// Returns the number of entries deleted.
+    pub async fn del(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+        let res = self
+            .rpc
+            .rpc(DocDelRequest {
+                doc_id: self.id,
+                author_id,
+                prefix,
+            })
+            .await??;
+        let DocDelResponse { removed } = res;
+        Ok(removed)
     }
 
     /// Get the latest entry for a key and author.
@@ -608,11 +658,8 @@ where
     }
 
     /// Stop the live sync for this document.
-    pub async fn stop_sync(&self) -> Result<()> {
-        let _res = self
-            .rpc
-            .rpc(DocStopSyncRequest { doc_id: self.id })
-            .await??;
+    pub async fn leave(&self) -> Result<()> {
+        let _res = self.rpc.rpc(DocLeaveRequest { doc_id: self.id }).await??;
         Ok(())
     }
 

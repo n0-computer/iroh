@@ -1,5 +1,3 @@
-#![cfg(feature = "mem-db")]
-
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, bail, Result};
@@ -32,8 +30,8 @@ fn test_runtime() -> runtime::Handle {
 fn test_node(
     rt: runtime::Handle,
     addr: SocketAddr,
-) -> Builder<iroh::baomap::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store).runtime(&rt).bind_addr(addr)
 }
@@ -41,7 +39,7 @@ fn test_node(
 async fn spawn_node(
     rt: runtime::Handle,
     i: usize,
-) -> anyhow::Result<Node<iroh::baomap::mem::Store, store::memory::Store>> {
+) -> anyhow::Result<Node<iroh_bytes::store::mem::Store, store::memory::Store>> {
     let node = test_node(rt, "127.0.0.1:0".parse()?);
     let node = node.spawn().await?;
     info!("spawned node {i} {:?}", node.peer_id());
@@ -51,7 +49,7 @@ async fn spawn_node(
 async fn spawn_nodes(
     rt: runtime::Handle,
     n: usize,
-) -> anyhow::Result<Vec<Node<iroh::baomap::mem::Store, store::memory::Store>>> {
+) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store, store::memory::Store>>> {
     futures::future::join_all((0..n).map(|i| spawn_node(rt.clone(), i)))
         .await
         .into_iter()
@@ -302,6 +300,73 @@ async fn sync_subscribe_stop() -> Result<()> {
     assert_eq!(status.subscriptions, 0);
 
     node.shutdown();
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn doc_delete() -> Result<()> {
+    let rt = test_runtime();
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let store = iroh_sync::store::memory::Store::default();
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = Node::builder(db, store)
+        .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
+        .runtime(&rt)
+        .bind_addr(addr)
+        .spawn()
+        .await?;
+    let client = node.client();
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
+    let hash = doc
+        .set_bytes(author, b"foo".to_vec(), b"hi".to_vec())
+        .await?;
+    assert_latest(&doc, b"foo", b"hi").await;
+    let deleted = doc.del(author, b"foo".to_vec()).await?;
+    assert_eq!(deleted, 1);
+
+    let entry = doc.get_one(author, b"foo".to_vec()).await?;
+    assert!(entry.is_none());
+
+    // wait for gc
+    // TODO: allow to manually trigger gc
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let bytes = client.blobs.read_to_bytes(hash).await;
+    assert!(bytes.is_err());
+    node.shutdown();
+    Ok(())
+}
+
+#[tokio::test]
+async fn sync_drop_doc() -> Result<()> {
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt, 0).await?;
+    let client = node.client();
+
+    let doc = client.docs.create().await?;
+    let author = client.authors.create().await?;
+
+    let mut sub = doc.subscribe().await?;
+    doc.set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
+        .await?;
+    let ev = sub.next().await;
+    assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
+
+    client.docs.drop_doc(doc.id()).await?;
+    let res = doc.get_one(author, b"foo".to_vec()).await;
+    assert!(res.is_err());
+    let res = doc
+        .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
+        .await;
+    assert!(res.is_err());
+    let res = client.docs.get(doc.id()).await?;
+    assert!(res.is_none());
+    let ev = sub.next().await;
+    assert!(matches!(ev, Some(Ok(LiveEvent::Closed))));
+    let ev = sub.next().await;
+    assert!(ev.is_none());
 
     Ok(())
 }

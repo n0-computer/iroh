@@ -3,7 +3,7 @@
 //! [`iroh_sync::Replica`] is also called documents here.
 
 use anyhow::anyhow;
-use iroh_bytes::{baomap::Store as BaoStore, util::runtime::Handle};
+use iroh_bytes::{store::Store as BaoStore, util::runtime::Handle};
 use iroh_gossip::net::Gossip;
 use iroh_net::{MagicEndpoint, PeerAddr};
 use iroh_sync::{
@@ -73,20 +73,17 @@ impl<S: Store> SyncEngine<S> {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
     ) -> anyhow::Result<()> {
-        self.live.start_sync(namespace, peers).await?;
-        Ok(())
+        self.live.start_sync(namespace, peers).await
     }
 
     /// Stop syncing a document.
-    pub async fn stop_sync(&self, namespace: NamespaceId) -> anyhow::Result<()> {
-        self.live.stop_sync(namespace).await?;
-        Ok(())
+    pub async fn leave(&self, namespace: NamespaceId, force_close: bool) -> anyhow::Result<()> {
+        self.live.leave(namespace, force_close).await
     }
 
     /// Shutdown the sync engine.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        self.live.shutdown().await?;
-        Ok(())
+        self.live.shutdown().await
     }
 
     /// Get a [`Replica`] from the store, returning an error if the replica does not exist.

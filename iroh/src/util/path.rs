@@ -9,13 +9,13 @@ pub enum IrohPaths {
     /// Path to the node's secret key for the [`iroh_net::key::PublicKey`].
     #[strum(serialize = "keypair")]
     SecretKey,
-    /// Path to the node's [flat-file store](crate::baomap::flat) for complete blobs.
+    /// Path to the node's [flat-file store](iroh_bytes::store::flat) for complete blobs.
     #[strum(serialize = "blobs.v0")]
     BaoFlatStoreComplete,
-    /// Path to the node's [flat-file store](crate::baomap::flat) for partial blobs.
+    /// Path to the node's [flat-file store](iroh_bytes::store::flat) for partial blobs.
     #[strum(serialize = "blobs-partial.v0")]
     BaoFlatStorePartial,
-    /// Path to the node's [flat-file store](crate::baomap::flat) for metadata such as the tags table.
+    /// Path to the node's [flat-file store](iroh_bytes::store::flat) for metadata such as the tags table.
     #[strum(serialize = "blobs-meta.v0")]
     BaoFlatStoreMeta,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)

@@ -515,10 +515,7 @@ impl Inner {
 
             if is_quic {
                 // remap addr
-                match self
-                    .peer_map
-                    .get_quic_mapped_addr_for_ip_port(&SendAddr::Udp(meta.addr))
-                {
+                match self.peer_map.get_quic_mapped_addr_for_ip_port(meta.addr) {
                     None => {
                         warn!(peer=?meta.addr, len = meta.len, ?count, "no peer state found, skipping");
                     }
@@ -621,7 +618,14 @@ impl Inner {
         }
 
         let unknown_sender = self.peer_map.read(|pm| {
-            pm.endpoint_for_node_key(&sender).is_none() && pm.endpoint_for_ip_port(&src).is_none()
+            if pm.endpoint_for_node_key(&sender).is_none() {
+                match src {
+                    SendAddr::Udp(addr) => pm.endpoint_for_ip_port(addr).is_none(),
+                    SendAddr::Derp(_) => true,
+                }
+            } else {
+                false
+            }
         });
         if unknown_sender {
             // Disco Ping from unseen endpoint. We will have to add the
@@ -701,9 +705,9 @@ impl Inner {
                 inc!(MagicsockMetrics, recv_disco_pong);
                 self.peer_map.write(|pm| {
                     if let Some(ep) = pm.endpoint_for_node_key_mut(&sender).as_mut() {
-                        let (_, insert) = ep.handle_pong_conn(&self.public_key(), &pong, src);
+                        let insert = ep.handle_pong_conn(&self.public_key(), &pong, src);
                         if let Some((src, key)) = insert {
-                            pm.set_node_key_for_ip_port(&src, &key);
+                            pm.set_node_key_for_ip_port(src, &key);
                         }
                     }
                 });
@@ -765,7 +769,6 @@ impl Inner {
             di.last_ping_time.replace(Instant::now());
             (di.node_key, likely_heart_beat)
         };
-        let is_derp = src.is_derp();
 
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
         // over DERP (in which case ip_dst is also a DERP address).
@@ -773,25 +776,34 @@ impl Inner {
         // will be zero here, but that's fine: send_disco_message only requires
         // a dstKey if the dst ip:port is DERP.
 
-        if is_derp {
-            assert!(derp_node_src.is_some());
-        } else {
-            assert!(derp_node_src.is_none());
-        }
-
-        let dst_key = derp_node_src.unwrap_or(node_key);
-        let is_duplicate = self.peer_map.write(|pm| {
-            let dst_key = derp_node_src.unwrap_or(node_key);
-            let ep = pm.endpoint_for_node_key_mut(&dst_key);
-            let Some(ep) = ep else {
-                return false;
-            };
-            if ep.add_candidate_endpoint(src, dm.tx_id) {
-                return true;
+        let dst_key = match derp_node_src {
+            Some(dst_key) => {
+                if !src.is_derp() {
+                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
+                    return debug_assert!(false, "`derp_node_src` is some but `src` is not derp");
+                }
+                dst_key
             }
-            pm.set_node_key_for_ip_port(&src, &dst_key);
+            None => {
+                if src.is_derp() {
+                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
+                    return debug_assert!(false, "`derp_node_src` is none but `src` is derp");
+                }
+                node_key
+            }
+        };
+        let is_duplicate = self.peer_map.write(|pm| {
+            if let Some(ep) = pm.endpoint_for_node_key_mut(&dst_key) {
+                if ep.endpoint_confirmed(src, dm.tx_id) {
+                    return true;
+                }
+                if let SendAddr::Udp(addr) = src {
+                    pm.set_node_key_for_ip_port(addr, &dst_key);
+                }
+            }
             false
         });
+
         if is_duplicate {
             debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
             return;
@@ -1669,12 +1681,6 @@ impl Actor {
         false
     }
 
-    /// This modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
-    /// to those that the QUIC layer should see.  E.g. the remote address will be set to the
-    /// [`QuicMappedAddr`] instead of the actual remote.
-    ///
-    /// Returns `true` if the message should be processed.
-
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
         if let Some(v6) = v6 {
@@ -1705,15 +1711,15 @@ impl Actor {
         let ipp = SendAddr::Derp(region_id);
 
         let ep_quic_mapped_addr = self.inner.peer_map.write(|pm| {
-            let ep_quic_mapped_addr = match pm.endpoint_for_node_key_mut(&dm.src).as_mut() {
-                Some(ep) => {
-                    if ep.derp_region().is_none() {
-                        ep.add_derp_region(region_id);
-                    }
-                    Some(ep.quic_mapped_addr)
+            let ep_quic_mapped_addr = pm.endpoint_for_node_key_mut(&dm.src).as_mut().map(|ep| {
+                // NOTE: we don't update the derp region if there is already one but the new one is
+                // different
+                if ep.derp_region().is_none() {
+                    ep.set_derp_region(region_id);
                 }
-                None => None,
-            };
+                ep.quic_mapped_addr
+            });
+
             match ep_quic_mapped_addr {
                 Some(addr) => addr,
                 None => {
@@ -1723,10 +1729,8 @@ impl Actor {
                         derp_region: Some(region_id),
                         active: true,
                     });
-                    pm.set_endpoint_for_ip_port(&ipp, id);
-                    let mut ep = pm.by_id_mut(&id);
-                    let ep_inner = ep.as_mut().expect("inserted");
-                    ep_inner.quic_mapped_addr
+                    let ep = pm.by_id_mut(&id).expect("inserted");
+                    ep.quic_mapped_addr
                 }
             }
         });
@@ -2541,13 +2545,6 @@ enum SendAddr {
 impl SendAddr {
     fn is_derp(&self) -> bool {
         matches!(self, Self::Derp(_))
-    }
-
-    fn as_udp(&self) -> Option<&SocketAddr> {
-        match self {
-            Self::Derp(_) => None,
-            Self::Udp(addr) => Some(addr),
-        }
     }
 
     fn derp_region(&self) -> Option<u16> {

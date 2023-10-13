@@ -132,11 +132,10 @@
 //! create a [`RangeSpecSeq`] like this:
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let hash: iroh_bytes::Hash = [0; 32].into();
-//! let spec = RangeSpecSeq::from_ranges([RangeSet2::from(..ChunkNum(10))]);
+//! let spec = RangeSpecSeq::from_ranges([ChunkRanges::from(..ChunkNum(10))]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
 //!
@@ -148,16 +147,16 @@
 //! of a large file, we would create a [`RangeSpecSeq`] like this:
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let hash: iroh_bytes::Hash = [0; 32].into();
-//! let ranges = &RangeSet2::from(..ChunkNum(10)) | &RangeSet2::from(ChunkNum(100)..ChunkNum(110));
+//! let ranges = &ChunkRanges::from(..ChunkNum(10)) | &ChunkRanges::from(ChunkNum(100)..ChunkNum(110));
 //! let spec = RangeSpecSeq::from_ranges([ranges]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
 //!
-//! To specify chunk ranges, we use the [`RangeSet`] type from the
+//! To specify chunk ranges, we use the [`ChunkRanges`] type alias.
+//! This is actually the [`RangeSet`] type from the
 //! [range_collections](https://crates.io/crates/range_collections) crate. This
 //! type supports efficient boolean operations on sets of non-overlapping ranges.
 //!
@@ -179,17 +178,16 @@
 //!
 //! One thing to note is that we might not yet know how many blobs are in the
 //! collection. Therefore, it is not possible to download an entire collection
-//! by just specifying [`RangeSet2::all()`] for all children.
+//! by just specifying [`ChunkRanges::all()`] for all children.
 //!
 //! Instead, [`RangeSpecSeq`] allows defining infinite sequences of range sets.
 //! The [`RangeSpecSeq::all()`] method returns a [`RangeSpecSeq`] that, when iterated
-//! over, will yield [`RangeSet2::all()`] forever.
+//! over, will yield [`ChunkRanges::all()`] forever.
 //!
 //! So specifying a collection would work like this:
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::all();
@@ -214,15 +212,14 @@
 //! We would create a [`GetRequest`] like this:
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([
-//!   RangeSet2::empty(), // we don't need the collection itself
-//!   RangeSet2::empty(), // we don't need the first child either
-//!   RangeSet2::from(ChunkNum(1000000)..), // we need the second child from chunk 1000000 onwards
-//!   RangeSet2::all(), // we need the third child completely
+//!   ChunkRanges::empty(), // we don't need the collection itself
+//!   ChunkRanges::empty(), // we don't need the first child either
+//!   ChunkRanges::from(ChunkNum(1000000)..), // we need the second child from chunk 1000000 onwards
+//!   ChunkRanges::all(), // we need the third child completely
 //! ]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -237,13 +234,12 @@
 //! an infinite sequence.
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges_infinite([
-//!   RangeSet2::all(), // the collection itself
-//!   RangeSet2::from(..ChunkNum(1)), // the first chunk of each child
+//!   ChunkRanges::all(), // the collection itself
+//!   ChunkRanges::from(..ChunkNum(1)), // the first chunk of each child
 //! ]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -254,14 +250,13 @@
 //! the following would download the second child of a collection:
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let hash: iroh_bytes::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([
-//!   RangeSet2::empty(), // we don't need the collection itself
-//!   RangeSet2::empty(), // we don't need the first child either
-//!   RangeSet2::all(), // we need the second child completely
+//!   ChunkRanges::empty(), // we don't need the collection itself
+//!   ChunkRanges::empty(), // we don't need the first child either
+//!   ChunkRanges::all(), // we need the second child completely
 //! ]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -270,8 +265,7 @@
 //! look up the hash of the child and request it directly.
 //!
 //! ```rust
-//! # use range_collections::range_set::RangeSet2;
-//! # use bao_tree::ChunkNum;
+//! # use bao_tree::{ChunkNum, ChunkRanges};
 //! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 //! # let child_hash: iroh_bytes::Hash = [0; 32].into();
 //! let request = GetRequest::single(child_hash);
@@ -280,7 +274,7 @@
 //! ### Why RangeSpec and RangeSpecSeq?
 //!
 //! You might wonder why we have [`RangeSpec`] and [`RangeSpecSeq`], when a simple
-//! sequence of [`RangeSet2`] might also do.
+//! sequence of [`ChunkRanges`] might also do.
 //!
 //! The [`RangeSpec`] and [`RangeSpecSeq`] types exist to provide an efficient
 //! representation of the request on the wire. In the [`RangeSpec`] type,
@@ -292,7 +286,7 @@
 //! Likewise, the [`RangeSpecSeq`] type is a sequence of [`RangeSpec`]s that
 //! does run length encoding to remove repeating elements. It also allows infinite
 //! sequences of [`RangeSpec`]s to be encoded, unlike a simple sequence of
-//! [`RangeSet2`]s.
+//! [`ChunkRanges`]s.
 //!
 //! [`RangeSpecSeq`] should be efficient even in case of very fragmented availability
 //! of chunks, like a download from multiple providers that was frequently interrupted.
@@ -351,21 +345,18 @@
 //! In case nodes are permanently exchanging data, it is probably valuable to
 //! keep a connection open and reuse it for multiple requests.
 use std::fmt::{self, Display};
-use std::io;
 use std::str::FromStr;
 
-use anyhow::{bail, ensure, Context, Result};
-use bao_tree::ChunkNum;
-use bytes::{Bytes, BytesMut};
+use anyhow::{ensure, Result};
+use bao_tree::{ChunkNum, ChunkRanges};
+use bytes::Bytes;
 use derive_more::From;
 use quinn::VarInt;
-use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
 pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
 
-use crate::util::Hash;
+use crate::Hash;
 
 /// Maximum message size is limited to 100MiB for now.
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -432,8 +423,6 @@ impl Display for RequestToken {
 pub enum Request {
     /// A get request for a blob or collection
     Get(GetRequest),
-    /// A get request that allows the receiver to create a collection
-    CustomGet(CustomGetRequest),
 }
 
 impl Request {
@@ -441,7 +430,6 @@ impl Request {
     pub fn token(&self) -> Option<&RequestToken> {
         match self {
             Request::Get(get) => get.token(),
-            Request::CustomGet(get) => get.token.as_ref(),
         }
     }
 
@@ -449,21 +437,9 @@ impl Request {
     pub fn with_token(mut self, value: Option<RequestToken>) -> Self {
         match &mut self {
             Request::Get(get) => get.token = value,
-            Request::CustomGet(get) => get.token = value,
         }
         self
     }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-/// A get request that allows the receiver to create a collection
-/// Custom request handlers will receive this struct destructured into
-/// handler arguments
-pub struct CustomGetRequest {
-    /// The optional request token
-    pub token: Option<RequestToken>,
-    /// The opaque request data
-    pub data: Bytes,
 }
 
 /// A request
@@ -503,7 +479,7 @@ impl GetRequest {
         Self {
             hash,
             token: None,
-            ranges: RangeSpecSeq::from_ranges([RangeSet2::all()]),
+            ranges: RangeSpecSeq::from_ranges([ChunkRanges::all()]),
         }
     }
 
@@ -514,7 +490,7 @@ impl GetRequest {
         Self {
             hash,
             token: None,
-            ranges: RangeSpecSeq::from_ranges([RangeSet2::from(ChunkNum(u64::MAX)..)]),
+            ranges: RangeSpecSeq::from_ranges([ChunkRanges::from(ChunkNum(u64::MAX)..)]),
         }
     }
 
@@ -526,8 +502,8 @@ impl GetRequest {
             hash,
             token: None,
             ranges: RangeSpecSeq::from_ranges_infinite([
-                RangeSet2::all(),
-                RangeSet2::from(ChunkNum(u64::MAX)..),
+                ChunkRanges::all(),
+                ChunkRanges::from(ChunkNum(u64::MAX)..),
             ]),
         }
     }
@@ -541,64 +517,6 @@ impl GetRequest {
     pub fn token(&self) -> Option<&RequestToken> {
         self.token.as_ref()
     }
-}
-
-/// Write the given data to the provider sink, with a unsigned varint length prefix.
-pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
-    ensure!(
-        data.len() < MAX_MESSAGE_SIZE,
-        "sending message is too large"
-    );
-
-    // send length prefix
-    let data_len = data.len() as u64;
-    writer.write_u64_le(data_len).await?;
-
-    // write message
-    writer.write_all(data).await?;
-    Ok(())
-}
-
-/// Reads a length prefixed message.
-///
-/// # Returns
-///
-/// The message as raw bytes.  If the end of the stream is reached and there is no partial
-/// message, returns `None`.
-pub async fn read_lp(
-    mut reader: impl AsyncRead + Unpin,
-    buffer: &mut BytesMut,
-) -> Result<Option<Bytes>> {
-    let size = match reader.read_u64_le().await {
-        Ok(size) => size,
-        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-
-    let reader = reader.take(size);
-    read_fixed_size(reader, buffer, size).await
-}
-
-pub(crate) async fn read_fixed_size(
-    reader: impl AsyncRead + Unpin,
-    buffer: &mut BytesMut,
-    size: u64,
-) -> Result<Option<Bytes>> {
-    if size > MAX_MESSAGE_SIZE as u64 {
-        bail!("Incoming message exceeds MAX_MESSAGE_SIZE");
-    }
-
-    let mut reader = reader.take(size);
-    let size = usize::try_from(size).context("frame larger than usize")?;
-
-    buffer.reserve(size);
-    loop {
-        let r = reader.read_buf(buffer).await?;
-        if r == 0 {
-            break;
-        }
-    }
-    Ok(Some(buffer.split_to(size).freeze()))
 }
 
 /// Reasons to close connections or stop streams.
@@ -668,7 +586,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use super::{CustomGetRequest, GetRequest, Request, RequestToken};
+    use super::{GetRequest, Request, RequestToken};
 
     #[test]
     fn request_wire_format() {
@@ -702,32 +620,6 @@ mod tests {
                     54 4f 4b 45 4e # token content
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
-            ",
-            ),
-            (
-                Request::from(CustomGetRequest {
-                    token: None,
-                    data: Bytes::from(&b"hello"[..]),
-                }),
-                r"
-                    01 # enum variant for CustomGetRequest
-                    00 # no token
-                    05 # value length 5
-                    68 65 6c 6c 6f # value content 'hello'
-            ",
-            ),
-            (
-                Request::from(CustomGetRequest {
-                    token: Some(token),
-                    data: Bytes::from(&b"hello"[..]),
-                }),
-                r"
-                    01 # enum variant for CustomGetRequest
-                    01 # a token
-                    05 # length 5
-                    54 4f 4b 45 4e # token content
-                    05 # value length 5
-                    68 65 6c 6c 6f # value content 'hello'
             ",
             ),
         ];

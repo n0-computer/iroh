@@ -5,7 +5,7 @@ use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use iroh::client::quic::Iroh;
-use iroh_bytes::{baomap::ValidateProgress, Hash};
+use iroh_bytes::{store::ValidateProgress, Hash};
 
 pub async fn run(iroh: &Iroh, repair: bool) -> Result<()> {
     let mut state = ValidateProgressState::new();

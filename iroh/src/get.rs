@@ -4,11 +4,10 @@ use std::io;
 
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
-use bao_tree::{ByteNum, ChunkNum};
-use iroh_bytes::baomap::range_collections::{range_set::RangeSetRange, RangeSet2};
+use bao_tree::{ByteNum, ChunkRanges};
+use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::store::range_collections::range_set::RangeSetRange;
 use iroh_bytes::{
-    baomap::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
-    collection::CollectionParser,
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
@@ -16,11 +15,12 @@ use iroh_bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq},
     provider::GetProgress,
+    store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     util::{
         progress::{IdGenerator, ProgressSender},
         Hash,
     },
-    IROH_BLOCK_SIZE,
+    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
@@ -28,18 +28,16 @@ use tracing::trace;
 use crate::util::progress::ProgressSliceWriter2;
 
 /// Get a blob or collection
-pub async fn get<D: BaoStore, C: CollectionParser>(
+pub async fn get<D: BaoStore>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
-    hash: Hash,
-    recursive: bool,
+    hash_and_format: &HashAndFormat,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
-    let res = if recursive {
-        get_collection(db, collection_parser, conn, &hash, sender).await
-    } else {
-        get_blob(db, conn, &hash, sender).await
+    let HashAndFormat { hash, format } = hash_and_format;
+    let res = match format {
+        BlobFormat::Raw => get_blob(db, conn, hash, sender).await,
+        BlobFormat::HashSeq => get_hash_seq(db, conn, hash, sender).await,
     };
     if let Err(e) = res.as_ref() {
         tracing::error!("get failed: {}", e);
@@ -63,10 +61,10 @@ pub async fn get_blob<D: BaoStore>(
         let required_ranges = get_missing_ranges_blob::<D>(&entry)
             .await
             .ok()
-            .unwrap_or_else(RangeSet2::all);
+            .unwrap_or_else(ChunkRanges::all);
         let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
         // full request
-        let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -80,10 +78,7 @@ pub async fn get_blob<D: BaoStore>(
         get_blob_inner_partial(db, header, entry, progress).await?
     } else {
         // full request
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::single(*hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::single(*hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -107,16 +102,16 @@ pub async fn get_blob<D: BaoStore>(
 
 pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
     entry: &D::PartialEntry,
-) -> anyhow::Result<RangeSet2<ChunkNum>> {
+) -> anyhow::Result<ChunkRanges> {
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
     let data_size = data_reader.len().await?;
-    let valid_from_data = RangeSet2::from(..ByteNum(data_size).full_chunks());
+    let valid_from_data = ChunkRanges::from(..ByteNum(data_size).full_chunks());
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
     let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
-    let valid: RangeSet2<ChunkNum> = valid_from_data.intersection(&valid_from_outboard);
+    let valid: ChunkRanges = valid_from_data.intersection(&valid_from_outboard);
     let total_valid: u64 = valid
         .iter()
         .map(|x| match x {
@@ -127,7 +122,7 @@ pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
     log!("valid_from_data: {:?}", valid_from_data);
     log!("valid_from_outboard: {:?}", valid_from_data);
     log!("total_valid: {}", total_valid);
-    let invalid = RangeSet2::all().difference(&valid);
+    let invalid = ChunkRanges::all().difference(&valid);
     Ok(invalid)
 }
 
@@ -248,19 +243,19 @@ async fn get_blob_inner_partial<D: BaoStore>(
     Ok(end)
 }
 
-/// Given a collection of hashes, figure out what is missing
-pub(crate) async fn get_missing_ranges_collection<D: BaoStore>(
+/// Given a sequence of hashes, figure out what is missing
+pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
     db: &D,
-    collection: &Vec<Hash>,
+    hash_seq: &Vec<Hash>,
 ) -> io::Result<Vec<BlobInfo<D>>> {
-    let items = collection.iter().map(|hash| async move {
+    let items = hash_seq.iter().map(|hash| async move {
         io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
             // first look for partial
             trace!("got partial data for {}", hash,);
             let missing_chunks = get_missing_ranges_blob::<D>(&entry)
                 .await
                 .ok()
-                .unwrap_or_else(RangeSet2::all);
+                .unwrap_or_else(ChunkRanges::all);
             BlobInfo::Partial {
                 entry,
                 missing_chunks,
@@ -272,7 +267,7 @@ pub(crate) async fn get_missing_ranges_collection<D: BaoStore>(
             BlobInfo::Missing
         })
     });
-    let mut res = Vec::with_capacity(collection.len());
+    let mut res = Vec::with_capacity(hash_seq.len());
     // todo: parallelize maybe?
     for item in items {
         res.push(item.await?);
@@ -280,10 +275,9 @@ pub(crate) async fn get_missing_ranges_collection<D: BaoStore>(
     Ok(res)
 }
 
-/// Get a collection
-pub async fn get_collection<D: BaoStore, C: CollectionParser>(
+/// Get a sequence of hashes
+pub async fn get_hash_seq<D: BaoStore>(
     db: &D,
-    collection_parser: &C,
     conn: quinn::Connection,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
@@ -293,29 +287,29 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(reader).await?;
+        let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
-                num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
+                num_blobs: Some(count),
+                total_blobs_size: None,
             })
             .await?;
         let mut children: Vec<Hash> = vec![];
         while let Some(hash) = collection.next().await? {
             children.push(hash);
         }
-        let missing_info = get_missing_ranges_collection(db, &children).await?;
+        let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
         if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
             log!("nothing to do");
             return Ok(Stats::default());
         }
-        let missing_iter = std::iter::once(RangeSet2::empty())
+        let missing_iter = std::iter::once(ChunkRanges::empty())
             .chain(missing_info.iter().map(|x| x.missing_chunks()))
             .collect::<Vec<_>>();
         log!("requesting chunks {:?}", missing_iter);
         let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-        let request = get::fsm::start(conn, request.into());
+        let request = get::fsm::start(conn, request);
         // create a new bidi stream
         let connected = request.next().await?;
         log!("connected");
@@ -355,10 +349,7 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
     } else {
         tracing::info!("don't have collection - doing full download");
         // don't have the collection, so probably got nothing
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::all(*root_hash)),
-        );
+        let request = get::fsm::start(conn, GetRequest::all(*root_hash));
         // create a new bidi stream
         let connected = request.next().await?;
         // next step. we have requested a single hash, so this must be StartRoot
@@ -372,12 +363,12 @@ pub async fn get_collection<D: BaoStore, C: CollectionParser>(
         // read the collection fully for now
         let entry = db.get(root_hash).context("just downloaded")?;
         let reader = entry.data_reader().await?;
-        let (mut collection, stats) = collection_parser.parse(reader).await?;
+        let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
             .send(GetProgress::FoundCollection {
                 hash: *root_hash,
-                num_blobs: stats.num_blobs,
-                total_blobs_size: stats.total_blob_size,
+                num_blobs: Some(count),
+                total_blobs_size: None,
             })
             .await?;
         let mut children = vec![];
@@ -414,18 +405,18 @@ pub(crate) enum BlobInfo<D: BaoStore> {
     // we have the blob partially
     Partial {
         entry: D::PartialEntry,
-        missing_chunks: RangeSet2<ChunkNum>,
+        missing_chunks: ChunkRanges,
     },
     // we don't have the blob at all
     Missing,
 }
 
 impl<D: BaoStore> BlobInfo<D> {
-    pub fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
+    pub fn missing_chunks(&self) -> ChunkRanges {
         match self {
-            BlobInfo::Complete => RangeSet2::empty(),
+            BlobInfo::Complete => ChunkRanges::empty(),
             BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
-            BlobInfo::Missing => RangeSet2::all(),
+            BlobInfo::Missing => ChunkRanges::all(),
         }
     }
 }

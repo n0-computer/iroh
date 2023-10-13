@@ -14,10 +14,12 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Author, Namespace, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes, Record,
 };
 
 use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
+
+type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
@@ -27,6 +29,8 @@ pub struct Store {
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
     pubkeys: MemPublicKeyStore,
+    /// Cache of peers that have been used for sync.
+    peers_per_doc: SyncPeersCache,
 }
 
 type Rid = (AuthorId, Vec<u8>);
@@ -40,6 +44,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
@@ -48,7 +53,7 @@ impl super::Store for Store {
 
     fn close_replica(&self, namespace_id: &NamespaceId) {
         if let Some(replica) = self.replicas.read().get(namespace_id) {
-            replica.unsubscribe();
+            replica.close();
         }
     }
 
@@ -95,6 +100,13 @@ impl super::Store for Store {
         Ok(replica)
     }
 
+    fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
+        self.close_replica(namespace);
+        self.replicas.write().remove(namespace);
+        self.replica_records.write().remove(namespace);
+        Ok(())
+    }
+
     fn get_many(
         &self,
         namespace: NamespaceId,
@@ -122,8 +134,11 @@ impl super::Store for Store {
         let value = inner
             .get(&namespace)
             .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
-
-        Ok(value.cloned())
+        Ok(match value {
+            None => None,
+            Some(value) if value.is_empty() => None,
+            Some(value) => Some(value.clone()),
+        })
     }
 
     /// Get all content hashes of all replicas in the store.
@@ -134,6 +149,26 @@ impl super::Store for Store {
             namespace_i: 0,
             record_i: 0,
         })
+    }
+
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
+        let mut per_doc_cache = self.peers_per_doc.write();
+        per_doc_cache
+            .entry(namespace)
+            .or_insert_with(|| lru::LruCache::new(super::PEERS_PER_DOC_CACHE_SIZE))
+            .put(peer, ());
+        Ok(())
+    }
+
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
+        let per_doc_cache = self.peers_per_doc.read();
+        let cache = match per_doc_cache.get(namespace) {
+            Some(cache) => cache,
+            None => return Ok(None),
+        };
+
+        let peers: Vec<PeerIdBytes> = cache.iter().map(|(peer_id, _empty_val)| *peer_id).collect();
+        Ok(Some(peers.into_iter()))
     }
 }
 
@@ -292,32 +327,38 @@ impl<'a> Iterator for RangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let records = self.records.get(&self.filter.namespace())?;
-        let entry = match self.filter {
-            GetFilter::All { .. } => records.iter().nth(self.index)?,
-            GetFilter::Key { ref key, .. } => records
-                .iter()
-                .filter(|((_, k), _)| k == key)
-                .nth(self.index)?,
-            GetFilter::Prefix { ref prefix, .. } => records
-                .iter()
-                .filter(|((_, k), _)| k.starts_with(prefix))
-                .nth(self.index)?,
-            GetFilter::Author { ref author, .. } => records
-                .iter()
-                .filter(|((a, _), _)| a == author)
-                .nth(self.index)?,
-            GetFilter::AuthorAndPrefix {
-                ref prefix,
-                ref author,
-                ..
-            } => records
-                .iter()
-                .filter(|((a, k), _)| a == author && k.starts_with(prefix))
-                .nth(self.index)?,
-        };
-        self.index += 1;
-        Some(Ok(entry.1.clone()))
+        loop {
+            let records = self.records.get(&self.filter.namespace())?;
+            let entry = match self.filter {
+                GetFilter::All { .. } => records.iter().nth(self.index)?,
+                GetFilter::Key { ref key, .. } => records
+                    .iter()
+                    .filter(|((_, k), _)| k == key)
+                    .nth(self.index)?,
+                GetFilter::Prefix { ref prefix, .. } => records
+                    .iter()
+                    .filter(|((_, k), _)| k.starts_with(prefix))
+                    .nth(self.index)?,
+                GetFilter::Author { ref author, .. } => records
+                    .iter()
+                    .filter(|((a, _), _)| a == author)
+                    .nth(self.index)?,
+                GetFilter::AuthorAndPrefix {
+                    ref prefix,
+                    ref author,
+                    ..
+                } => records
+                    .iter()
+                    .filter(|((a, k), _)| a == author && k.starts_with(prefix))
+                    .nth(self.index)?,
+            };
+            self.index += 1;
+            if entry.1.is_empty() {
+                continue;
+            } else {
+                return Some(Ok(entry.1.clone()));
+            }
+        }
     }
 }
 
@@ -454,7 +495,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     ) -> Result<Self::RangeIterator<'_>, Self::Error> {
         Ok(InstanceRangeIterator {
             iter: self.records_iter(),
-            range: Some(range),
+            filter: InstanceRangeFilter::Range(range),
         })
     }
 
@@ -469,7 +510,51 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
         Ok(InstanceRangeIterator {
             iter: self.records_iter(),
-            range: None,
+            filter: InstanceRangeFilter::None,
+        })
+    }
+
+    // TODO: Not horrible.
+    type ParentIterator<'a> = std::vec::IntoIter<Result<SignedEntry, Infallible>>;
+    fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        let mut entries = vec![];
+        let mut key = id.key().to_vec();
+        while !key.is_empty() {
+            let id = RecordIdentifier::new(id.namespace(), id.author(), &key);
+            match self.get(&id) {
+                Ok(Some(entry)) => entries.push(Ok(entry)),
+                Ok(None) => {}
+                Err(err) => entries.push(Err(err)),
+            }
+            key.pop();
+        }
+        Ok(entries.into_iter())
+    }
+
+    fn prefixed_by(
+        &self,
+        prefix: &RecordIdentifier,
+    ) -> std::result::Result<Self::RangeIterator<'_>, Self::Error> {
+        Ok(InstanceRangeIterator {
+            iter: self.records_iter(),
+            filter: InstanceRangeFilter::Prefix(prefix.author(), prefix.key().to_vec()),
+        })
+    }
+
+    fn remove_prefix_filtered(
+        &mut self,
+        prefix: &RecordIdentifier,
+        predicate: impl Fn(&Record) -> bool,
+    ) -> Result<usize, Self::Error> {
+        self.with_records_mut(|records| {
+            let Some(records) = records else {
+                return Ok(0);
+            };
+            let old_len = records.len();
+            records.retain(|(a, k), v| {
+                !(a == &prefix.author() && k.starts_with(prefix.key()) && predicate(v.entry()))
+            });
+            Ok(old_len - records.len())
         })
     }
 }
@@ -478,12 +563,24 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
 #[derive(Debug)]
 pub struct InstanceRangeIterator<'a> {
     iter: RecordsIter<'a>,
-    range: Option<Range<RecordIdentifier>>,
+    filter: InstanceRangeFilter,
 }
 
-impl InstanceRangeIterator<'_> {
+/// Filter for an [`InstanceRangeIterator`]
+#[derive(Debug)]
+enum InstanceRangeFilter {
+    None,
+    Range(Range<RecordIdentifier>),
+    Prefix(AuthorId, Vec<u8>),
+}
+
+impl InstanceRangeFilter {
     fn matches(&self, x: &RecordIdentifier) -> bool {
-        self.range.as_ref().map(|r| r.contains(x)).unwrap_or(true)
+        match self {
+            Self::None => true,
+            Self::Range(range) => range.contains(x),
+            Self::Prefix(author, prefix) => x.author() == *author && x.key().starts_with(prefix),
+        }
     }
 }
 
@@ -494,7 +591,7 @@ impl Iterator for InstanceRangeIterator<'_> {
         let mut next = self.iter.next()?;
         loop {
             let (record_id, v) = next;
-            if self.matches(&record_id) {
+            if self.filter.matches(&record_id) {
                 return Some(Ok(v));
             }
 

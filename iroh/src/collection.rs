@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use bao_tree::blake3;
 use bytes::Bytes;
-use iroh_bytes::baomap::{MapEntry, TempTag};
-use iroh_bytes::collection::LinkSeq;
 use iroh_bytes::get::fsm::EndBlobNext;
 use iroh_bytes::get::Stats;
+use iroh_bytes::hashseq::HashSeq;
+use iroh_bytes::store::MapEntry;
 use iroh_bytes::util::BlobFormat;
-use iroh_bytes::{baomap, Hash};
+use iroh_bytes::{Hash, TempTag};
 use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +46,7 @@ impl Collection {
         let meta_bytes_hash = blake3::hash(&meta_bytes).into();
         let links = std::iter::once(meta_bytes_hash)
             .chain(self.links())
-            .collect::<LinkSeq>();
+            .collect::<HashSeq>();
         let links_bytes = links.into_inner();
         [meta_bytes.into(), links_bytes].into_iter()
     }
@@ -57,11 +57,11 @@ impl Collection {
     /// the links array, and the collection.
     pub async fn read_fsm(
         fsm_at_start_root: iroh_bytes::get::fsm::AtStartRoot,
-    ) -> anyhow::Result<(iroh_bytes::get::fsm::EndBlobNext, LinkSeq, Collection)> {
+    ) -> anyhow::Result<(iroh_bytes::get::fsm::EndBlobNext, HashSeq, Collection)> {
         let (next, links) = {
             let curr = fsm_at_start_root.next();
             let (curr, data) = curr.concatenate_into_vec().await?;
-            let links = LinkSeq::new(data.into()).context("links could not be parsed")?;
+            let links = HashSeq::new(data.into()).context("links could not be parsed")?;
             (curr.next(), links)
         };
         let EndBlobNext::MoreChildren(at_meta) = next else {
@@ -113,12 +113,12 @@ impl Collection {
     /// It does not require that all child blobs are stored in the store.
     pub async fn load<D>(db: &D, root: &Hash) -> anyhow::Result<Self>
     where
-        D: baomap::Map,
+        D: iroh_bytes::store::Map,
     {
         let links_entry = db.get(root).context("links not found")?;
         anyhow::ensure!(links_entry.is_complete(), "links not complete");
         let links_bytes = links_entry.data_reader().await?.read_to_end().await?;
-        let mut links = LinkSeq::try_from(links_bytes)?;
+        let mut links = HashSeq::try_from(links_bytes)?;
         let meta_hash = links.pop_front().context("meta hash not found")?;
         let meta_entry = db.get(&meta_hash).context("meta not found")?;
         anyhow::ensure!(links_entry.is_complete(), "links not complete");
@@ -135,16 +135,16 @@ impl Collection {
     /// as a TempTag.
     pub async fn store<D>(self, db: &D) -> anyhow::Result<TempTag>
     where
-        D: baomap::Store,
+        D: iroh_bytes::store::Store,
     {
         let (links, meta) = self.into_parts();
         let meta_bytes = postcard::to_stdvec(&meta)?;
-        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::RAW).await?;
+        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::Raw).await?;
         let links_bytes = std::iter::once(*meta_tag.hash())
             .chain(links)
-            .collect::<LinkSeq>();
+            .collect::<HashSeq>();
         let links_tag = db
-            .import_bytes(links_bytes.into_inner(), BlobFormat::COLLECTION)
+            .import_bytes(links_bytes.into(), BlobFormat::HashSeq)
             .await?;
         Ok(links_tag)
     }

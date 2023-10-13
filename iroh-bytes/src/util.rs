@@ -9,55 +9,40 @@ use serde::{
     ser::SerializeTuple,
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use std::{borrow::Borrow, fmt, result, str::FromStr, time::SystemTime};
+use std::{borrow::Borrow, fmt, result, str::FromStr, sync::Arc, time::SystemTime};
 use thiserror::Error;
 pub mod io;
 pub mod progress;
 pub mod runtime;
 
 /// A format identifier
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct BlobFormat(u64);
-
-impl BlobFormat {
-    /// Raw format
-    pub const RAW: Self = Self(0);
-
-    /// Collection format
-    pub const COLLECTION: Self = Self(1);
-
-    /// true if this is a raw blob
-    pub const fn is_raw(&self) -> bool {
-        self.0 == Self::RAW.0
-    }
-
-    /// true if this is an iroh collection
-    pub const fn is_collection(&self) -> bool {
-        self.0 == Self::COLLECTION.0
-    }
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Debug)]
+pub enum BlobFormat {
+    /// Raw blob
+    #[default]
+    Raw,
+    /// A sequence of BLAKE3 hashes
+    HashSeq,
 }
 
 impl From<BlobFormat> for u64 {
     fn from(value: BlobFormat) -> Self {
-        value.0
-    }
-}
-
-impl fmt::Debug for BlobFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self == &Self::RAW {
-            f.write_str("Raw")
-        } else if self == &Self::COLLECTION {
-            f.write_str("Collection")
-        } else {
-            f.debug_tuple("Other").field(&self.0).finish()
+        match value {
+            BlobFormat::Raw => 0,
+            BlobFormat::HashSeq => 1,
         }
     }
 }
 
-impl Default for BlobFormat {
-    fn default() -> Self {
-        Self::RAW
+impl BlobFormat {
+    /// Is raw format
+    pub const fn is_raw(&self) -> bool {
+        matches!(self, BlobFormat::Raw)
+    }
+
+    /// Is hash seq format
+    pub const fn is_hash_seq(&self) -> bool {
+        matches!(self, BlobFormat::HashSeq)
     }
 }
 
@@ -74,6 +59,12 @@ impl Borrow<[u8]> for Tag {
 impl From<String> for Tag {
     fn from(value: String) -> Self {
         Self(Bytes::from(value))
+    }
+}
+
+impl From<&str> for Tag {
+    fn from(value: &str) -> Self {
+        Self(Bytes::from(value.to_owned()))
     }
 }
 
@@ -111,20 +102,34 @@ impl Tag {
     }
 }
 
-/// Option for commands that allow setting a tag
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum SetTagOption {
-    /// A tag will be automatically generated
-    Auto,
-    /// The tag is explicitly named
-    Named(Tag),
-}
-
 /// A hash and format pair
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HashAndFormat(pub Hash, pub BlobFormat);
+pub struct HashAndFormat {
+    /// The hash
+    pub hash: Hash,
+    /// The format
+    pub format: BlobFormat,
+}
 
-/// Hash type used throught.
+impl HashAndFormat {
+    /// Create a new hash and format pair, using the default (raw) format.
+    pub fn raw(hash: Hash) -> Self {
+        Self {
+            hash,
+            format: BlobFormat::Raw,
+        }
+    }
+
+    /// Create a new hash and format pair, using the collection format.
+    pub fn hash_seq(hash: Hash) -> Self {
+        Self {
+            hash,
+            format: BlobFormat::HashSeq,
+        }
+    }
+}
+
+/// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);
 
@@ -143,6 +148,12 @@ impl<T: fmt::Display> fmt::Debug for DD<T> {
 }
 
 impl Hash {
+    /// The hash for the empty byte range (`b""`).
+    pub const EMPTY: Hash = Hash::from_bytes([
+        175, 19, 73, 185, 245, 249, 161, 166, 160, 64, 77, 234, 54, 220, 201, 73, 155, 203, 37,
+        201, 173, 193, 18, 183, 204, 154, 147, 202, 228, 31, 50, 98,
+    ]);
+
     /// Calculate the hash of the provide bytes.
     pub fn new(buf: impl AsRef<[u8]>) -> Self {
         let val = blake3::hash(buf.as_ref());
@@ -152,6 +163,11 @@ impl Hash {
     /// Bytes of the hash.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    /// Create a `Hash` from its raw bytes representation.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(blake3::Hash::from_bytes(bytes))
     }
 
     /// Get the cid as bytes.
@@ -256,6 +272,14 @@ impl FromStr for Hash {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let sb = s.as_bytes();
+        if sb.len() == 64 {
+            // this is most likely a hex encoded cid
+            // try to decode it as hex
+            let mut bytes = [0u8; 32];
+            if hex::decode_to_slice(sb, &mut bytes).is_ok() {
+                return Ok(Self::from(bytes));
+            }
+        }
         if sb.len() == 59 && sb[0] == b'b' {
             // this is a base32 encoded cid, we can decode it directly
             let mut t = [0u8; 58];
@@ -336,6 +360,86 @@ impl MaxSize for Hash {
     const POSTCARD_MAX_SIZE: usize = 32;
 }
 
+/// A trait for things that can track liveness of blobs and collections.
+///
+/// This trait works together with [TempTag] to keep track of the liveness of a
+/// blob or collection.
+///
+/// It is important to include the format in the liveness tracking, since
+/// protecting a collection means protecting the blob and all its children,
+/// whereas protecting a raw blob only protects the blob itself.
+pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
+    /// Called on clone
+    fn on_clone(&self, inner: &HashAndFormat);
+    /// Called on drop
+    fn on_drop(&self, inner: &HashAndFormat);
+}
+
+/// A hash and format pair that is protected from garbage collection.
+///
+/// If format is raw, this will protect just the blob
+/// If format is collection, this will protect the collection and all blobs in it
+#[derive(Debug)]
+pub struct TempTag {
+    /// The hash and format we are pinning
+    inner: HashAndFormat,
+    /// liveness tracker
+    liveness: Option<Arc<dyn LivenessTracker>>,
+}
+
+impl TempTag {
+    /// Create a new temp tag for the given hash and format
+    ///
+    /// This should only be used by store implementations.
+    ///
+    /// The caller is responsible for increasing the refcount on creation and to
+    /// make sure that temp tags that are created between a mark phase and a sweep
+    /// phase are protected.
+    pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
+        if let Some(liveness) = liveness.as_ref() {
+            liveness.on_clone(&inner);
+        }
+        Self { inner, liveness }
+    }
+
+    /// The hash of the pinned item
+    pub fn inner(&self) -> &HashAndFormat {
+        &self.inner
+    }
+
+    /// The hash of the pinned item
+    pub fn hash(&self) -> &Hash {
+        &self.inner.hash
+    }
+
+    /// The format of the pinned item
+    pub fn format(&self) -> BlobFormat {
+        self.inner.format
+    }
+
+    /// Keep the item alive until the end of the process
+    pub fn leak(mut self) {
+        // set the liveness tracker to None, so that the refcount is not decreased
+        // during drop. This means that the refcount will never reach 0 and the
+        // item will not be gced until the end of the process.
+        self.liveness = None;
+    }
+}
+
+impl Clone for TempTag {
+    fn clone(&self) -> Self {
+        Self::new(self.inner, self.liveness.clone())
+    }
+}
+
+impl Drop for TempTag {
+    fn drop(&mut self) {
+        if let Some(liveness) = self.liveness.as_ref() {
+            liveness.on_drop(&self.inner);
+        }
+    }
+}
+
 const CID_PREFIX: [u8; 4] = [
     0x01, // version
     0x55, // raw codec
@@ -394,12 +498,32 @@ mod tests {
     use serde_test::{assert_tokens, Token};
 
     #[test]
+    fn test_display_parse_roundtrip() {
+        for i in 0..100 {
+            let hash: Hash = blake3::hash(&[i]).into();
+            let text = hash.to_string();
+            let hash1 = text.parse::<Hash>().unwrap();
+            assert_eq!(hash, hash1);
+
+            let text = hash.to_hex();
+            let hash1 = Hash::from_str(&text).unwrap();
+            assert_eq!(hash, hash1);
+        }
+    }
+
+    #[test]
     fn test_hash() {
         let data = b"hello world";
         let hash = Hash::new(data);
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_empty_hash() {
+        let hash = Hash::new(b"");
+        assert_eq!(hash, Hash::EMPTY);
     }
 
     #[test]

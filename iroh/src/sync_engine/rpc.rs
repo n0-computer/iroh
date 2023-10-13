@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use futures::{FutureExt, Stream};
 use iroh_bytes::{
-    baomap::Store as BaoStore,
+    store::Store as BaoStore,
     util::{BlobFormat, RpcError},
 };
 use iroh_sync::{store::Store, sync::Namespace};
@@ -13,11 +13,12 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocGetManyRequest, DocGetManyResponse,
-        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest,
-        DocInfoResponse, DocListRequest, DocListResponse, DocSetRequest, DocSetResponse,
-        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-        DocStopSyncRequest, DocStopSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
+        DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
+        DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
+        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
         DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
@@ -61,6 +62,14 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocCreateResponse {
             id: doc.namespace(),
         })
+    }
+
+    pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
+        let DocDropRequest { doc_id } = req;
+        let _replica = self.get_replica(&doc_id)?;
+        self.leave(doc_id, true).await?;
+        self.store.remove_replica(&doc_id)?;
+        Ok(DocDropResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
@@ -111,10 +120,10 @@ impl<S: Store> SyncEngine<S> {
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
         let (s, r) = flume::bounded(64);
+        let s2 = s.clone();
         let res = self
             .live
             .subscribe(req.doc_id, {
-                let s = s.clone();
                 move |event| {
                     let s = s.clone();
                     async move {
@@ -130,7 +139,7 @@ impl<S: Store> SyncEngine<S> {
             .await;
         match res {
             Err(err) => {
-                s.send_async(Err(err.into())).await.ok();
+                s2.send_async(Err(err.into())).await.ok();
             }
             Ok(_token) => {}
         };
@@ -157,10 +166,11 @@ impl<S: Store> SyncEngine<S> {
         Ok(DocStartSyncResponse {})
     }
 
-    pub async fn doc_stop_sync(&self, req: DocStopSyncRequest) -> RpcResult<DocStopSyncResponse> {
-        let DocStopSyncRequest { doc_id } = req;
-        self.stop_sync(doc_id).await?;
-        Ok(DocStopSyncResponse {})
+    pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
+        let DocLeaveRequest { doc_id } = req;
+        let _replica = self.get_replica(&doc_id)?;
+        self.leave(doc_id, false).await?;
+        Ok(DocLeaveResponse {})
     }
 
     pub async fn doc_set<B: BaoStore>(
@@ -178,7 +188,7 @@ impl<S: Store> SyncEngine<S> {
         let author = self.get_author(&author_id)?;
         let len = value.len();
         let tag = bao_store
-            .import_bytes(value.into(), BlobFormat::RAW)
+            .import_bytes(value.into(), BlobFormat::Raw)
             .await?;
         replica
             .insert(&key, &author, *tag.hash(), len as u64)
@@ -188,6 +198,36 @@ impl<S: Store> SyncEngine<S> {
             .get_one(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
+    }
+
+    pub async fn doc_del(&self, req: DocDelRequest) -> RpcResult<DocDelResponse> {
+        let DocDelRequest {
+            doc_id,
+            author_id,
+            prefix,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        let removed = replica
+            .delete_prefix(prefix, &author)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocDelResponse { removed })
+    }
+
+    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
+        let DocSetHashRequest {
+            doc_id,
+            author_id,
+            key,
+            hash,
+            size,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        replica
+            .insert(key, &author, hash, size)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocSetHashResponse {})
     }
 
     pub fn doc_get_many(

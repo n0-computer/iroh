@@ -8,8 +8,7 @@ use std::str::FromStr;
 
 use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
-use iroh_bytes::util::BlobFormat;
-use iroh_bytes::Hash;
+use iroh_bytes::{BlobFormat, Hash};
 use iroh_net::derp::{DerpMap, DerpMode};
 use iroh_net::key::SecretKey;
 use iroh_net::PeerAddr;
@@ -127,7 +126,7 @@ impl Ticket {
 
     /// True if the ticket is for a collection and should retrieve all blobs in it.
     pub fn recursive(&self) -> bool {
-        self.format.is_collection()
+        self.format.is_hash_seq()
     }
 
     /// Get the contents of the ticket, consuming it.
@@ -193,7 +192,7 @@ mod tests {
             hash,
             peer: PeerAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
-            format: BlobFormat::COLLECTION,
+            format: BlobFormat::HashSeq,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");

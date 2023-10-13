@@ -16,8 +16,7 @@ use indicatif::{
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
-use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
+use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
 use iroh_net::PeerAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},
@@ -44,7 +43,7 @@ pub mod repl;
 pub mod sync;
 pub mod validate;
 
-/// Iroh is a tool for syncing bytes.
+/// iroh is a tool for syncing bytes
 /// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
@@ -53,7 +52,7 @@ pub struct Cli {
     pub command: Commands,
 
     #[clap(flatten)]
-    #[clap(next_help_heading = "Options for console, doc, author, blob, node")]
+    #[clap(next_help_heading = "Options for console, doc, author, blob, node, tag")]
     pub rpc_args: RpcArgs,
 
     #[clap(flatten)]
@@ -123,7 +122,10 @@ impl Cli {
 
 #[derive(Parser, Debug, Clone)]
 pub enum Commands {
-    /// Start the Iroh console
+    /// Open the iroh console
+    ///
+    /// The console is a REPL for interacting with a running iroh node.
+    /// For more info on available commands, see https://iroh.computer/docs/api
     Console,
     #[clap(flatten)]
     Full(#[clap(subcommand)] FullCommands),
@@ -134,10 +136,16 @@ pub enum Commands {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum FullCommands {
-    /// Start a Iroh node
+    /// Start an iroh node
     ///
-    /// If PATH is a folder all files in that folder will be served.  If no PATH is
-    /// specified reads from STDIN.
+    /// A node is a long-running process that serves data and connects to other nodes.
+    /// The console, doc, author, blob, node, and tag commands require a running node.
+    ///
+    /// start optionally takes a PATH argument, which can be a file or a folder to serve on startup.
+    /// If PATH is a folder all files in that folder will be served. If no PATH is specified start
+    /// reads from STDIN.
+    /// Data can be added after startup with commands like `iroh blob add`
+    /// or by adding content to documents.
     Start {
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
@@ -157,7 +165,9 @@ pub enum FullCommands {
     },
     /// Fetch data from a provider
     ///
-    /// Starts a temporary Iroh node and fetches the content identified by HASH.
+    /// Fetches the content identified by HASH.
+    /// `iroh start` does not need to be running to use `iroh get`. Get starts a temporary iroh
+    /// node to fetch the data, and shuts it down when done.
     Get {
         /// The hash to retrieve, as a Blake3 CID
         #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
@@ -251,8 +261,8 @@ impl FullCommands {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     let format = match collection {
-                        true => BlobFormat::COLLECTION,
-                        false => BlobFormat::RAW,
+                        true => BlobFormat::HashSeq,
+                        false => BlobFormat::Raw,
                     };
                     self::get::GetInteractive {
                         rt: rt.clone(),
@@ -287,27 +297,43 @@ impl FullCommands {
 #[allow(clippy::large_enum_variant)]
 pub enum RpcCommands {
     /// Manage documents
+    ///
+    /// Documents are mutable, syncable key-value stores.
+    /// For more on docs see https://iroh.computer/docs/layers/documents
     Doc {
         #[clap(subcommand)]
         command: DocCommands,
     },
 
     /// Manage document authors
+    ///
+    /// Authors are keypairs that identify writers to documents.
     Author {
         #[clap(subcommand)]
         command: AuthorCommands,
     },
     /// Manage blobs
+    ///
+    /// Blobs are immutable, opaque chunks of arbirary-sized data.
+    /// For more on blobs see https://iroh.computer/docs/layers/blobs
     Blob {
         #[clap(subcommand)]
         command: BlobCommands,
     },
-    /// Manage a running Iroh node
+    /// Manage a running iroh node
     Node {
         #[clap(subcommand)]
         command: NodeCommands,
     },
-    /// Manage a running Iroh node
+    /// Manage tags
+    ///
+    /// Tags are local, human-readable names for things iroh should keep.
+    /// Anything added with explicit commands like `iroh get` or `doc join`
+    /// will be tagged & kept until the tag is removed. If no tag is given
+    /// while running an explicit command, iroh will automatically generate
+    /// a tag.
+    ///
+    /// Any data iroh fetches without a tag will be periodically deleted.
     Tag {
         #[clap(subcommand)]
         command: TagCommands,
@@ -558,8 +584,8 @@ impl BlobCommands {
                     ticket.into_parts()
                 } else {
                     let format = match recursive {
-                        Some(false) | None => BlobFormat::RAW,
-                        Some(true) => BlobFormat::COLLECTION,
+                        Some(false) | None => BlobFormat::Raw,
+                        Some(true) => BlobFormat::HashSeq,
                     };
                     (
                         PeerAddr::from_parts(peer.unwrap(), derp_region, addr),

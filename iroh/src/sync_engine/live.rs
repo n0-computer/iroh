@@ -12,11 +12,7 @@ use futures::{
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt, TryFutureExt,
 };
-use iroh_bytes::{
-    baomap::{self, EntryStatus},
-    util::runtime::Handle,
-    Hash,
-};
+use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -79,20 +75,24 @@ enum ToActor<S: store::Store> {
     StartSync {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
+        #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     JoinPeers {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
     },
-    StopSync {
+    Leave {
         namespace: NamespaceId,
+        /// If true removes all active client subscriptions.
+        force_remove: bool,
     },
     Shutdown,
     Subscribe {
         namespace: NamespaceId,
         #[debug("cb")]
         cb: OnLiveEventCallback,
+        #[debug("oneshot::Sender")]
         s: sync::oneshot::Sender<Result<RemovalToken>>,
     },
     Unsubscribe {
@@ -106,6 +106,7 @@ enum ToActor<S: store::Store> {
     AcceptSyncRequest {
         namespace: NamespaceId,
         peer: PublicKey,
+        #[debug("oneshot::Sender")]
         reply: sync::oneshot::Sender<AcceptOutcome<S>>,
     },
 }
@@ -152,6 +153,8 @@ pub enum LiveEvent {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    /// The document was closed. No further events will be emitted.
+    Closed,
 }
 
 fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
@@ -174,7 +177,7 @@ impl<S: store::Store> LiveSync<S> {
     ///
     /// This spawn a background actor to handle gossip events and forward operations over broadcast
     /// messages.
-    pub fn spawn<B: baomap::Store>(
+    pub fn spawn<B: iroh_bytes::store::Store>(
         rt: Handle,
         endpoint: MagicEndpoint,
         replica_store: S,
@@ -241,9 +244,12 @@ impl<S: store::Store> LiveSync<S> {
     /// Stop the live sync for a document.
     ///
     /// This will leave the gossip swarm for this document.
-    pub async fn stop_sync(&self, namespace: NamespaceId) -> Result<()> {
+    pub async fn leave(&self, namespace: NamespaceId, force_remove: bool) -> Result<()> {
         self.to_actor_tx
-            .send(ToActor::<S>::StopSync { namespace })
+            .send(ToActor::<S>::Leave {
+                namespace,
+                force_remove,
+            })
             .await?;
         Ok(())
     }
@@ -300,7 +306,7 @@ impl<S: store::Store> LiveSync<S> {
 }
 
 // Currently peers might double-sync in both directions.
-struct Actor<S: store::Store, B: baomap::Store> {
+struct Actor<S: store::Store, B: iroh_bytes::store::Store> {
     endpoint: MagicEndpoint,
     gossip: Gossip,
     bao_store: B,
@@ -350,7 +356,7 @@ struct Actor<S: store::Store, B: baomap::Store> {
 #[derive(Debug, Clone, Copy)]
 pub struct RemovalToken(u64);
 
-impl<S: store::Store, B: baomap::Store> Actor<S, B> {
+impl<S: store::Store, B: iroh_bytes::store::Store> Actor<S, B> {
     pub fn new(
         endpoint: MagicEndpoint,
         gossip: Gossip,
@@ -400,8 +406,8 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             let res = self.start_sync(namespace, peers).await;
                             reply.send(res).ok();
                         },
-                        Some(ToActor::StopSync { namespace }) => {
-                            self.stop_sync(namespace).await?;
+                        Some(ToActor::Leave { namespace, force_remove }) => {
+                            self.leave(namespace, force_remove).await?;
                         }
                         Some(ToActor::JoinPeers { namespace, peers }) => {
                             self.join_peers(namespace, peers).await?;
@@ -532,11 +538,12 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for namespace in self.open_replicas.drain() {
-            self.syncing_replicas.remove(&namespace);
-            self.gossip.quit(namespace.into()).await?;
-            self.event_subscriptions.remove(&namespace);
-            self.replica_store.close_replica(&namespace);
+        // we have to clone the list of replicas here to reuse the Self::leave code.
+        let namespaces = self.open_replicas.iter().cloned().collect::<Vec<_>>();
+        for namespace in namespaces {
+            if let Err(err) = self.leave(namespace, true).await {
+                warn!(?namespace, "Error while closing: {err:?}");
+            }
         }
         Ok(())
     }
@@ -564,9 +571,33 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         })
     }
 
-    async fn start_sync(&mut self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<PeerAddr>) -> Result<()> {
         self.ensure_open(namespace)?;
         self.syncing_replicas.insert(namespace);
+        // add the peers stored for this document
+        match self.replica_store.get_sync_peers(&namespace) {
+            Ok(None) => {
+                // no peers for this document
+            }
+            Ok(Some(known_useful_peers)) => {
+                let as_peer_addr = known_useful_peers.filter_map(|peer_id_bytes| {
+                    // peers are stored as bytes, don't fail the operation if they can't be
+                    // decoded: simply ignore the peer
+                    match PublicKey::from_bytes(&peer_id_bytes) {
+                        Ok(public_key) => Some(PeerAddr::new(public_key)),
+                        Err(_signing_error) => {
+                            warn!("potential db corruption: peers per doc can't be decoded");
+                            None
+                        }
+                    }
+                });
+                peers.extend(as_peer_addr);
+            }
+            Err(e) => {
+                // try to continue if peers per doc can't be read since they are not vital for sync
+                warn!(%e, "db error reading peers per document")
+            }
+        }
         self.join_peers(namespace, peers).await?;
         Ok(())
     }
@@ -641,12 +672,18 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
         false
     }
 
-    async fn stop_sync(&mut self, namespace: NamespaceId) -> anyhow::Result<()> {
+    async fn leave(&mut self, namespace: NamespaceId, force_remove: bool) -> anyhow::Result<()> {
         if self.syncing_replicas.remove(&namespace) {
             self.gossip.quit(namespace.into()).await?;
             self.sync_state.retain(|(n, _peer), _value| *n != namespace);
-            self.maybe_close_replica(namespace);
         }
+        if force_remove {
+            let subs = self.event_subscriptions.remove(&namespace);
+            if let Some(mut subs) = subs {
+                notify_all(&mut subs, LiveEvent::Closed).await;
+            }
+        }
+        self.maybe_close_replica(namespace);
         Ok(())
     }
 
@@ -773,7 +810,16 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
             }
         }
         let state = match result {
-            Ok(_) => SyncState::Finished,
+            Ok(_) => {
+                // register the peer as useful for the document
+                if let Err(e) = self
+                    .replica_store
+                    .register_useful_peer(namespace, *peer.as_bytes())
+                {
+                    debug!(%e, "failed to register peer for document")
+                }
+                SyncState::Finished
+            }
             Err(_) => SyncState::Failed,
         };
         self.set_sync_state(namespace, peer, state);
@@ -816,7 +862,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             entry,
                             *msg.delivered_from.as_bytes(),
                             content_status,
-                        )?
+                        )?;
                     }
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content

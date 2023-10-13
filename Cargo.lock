@@ -40,6 +40,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c99f64d1e06488f620f932677e24bc6e2897582980441ae90a671415bd7ec2f"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -53,6 +64,12 @@ name = "aliasable"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
+
+[[package]]
+name = "allocator-api2"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "android-tzdata"
@@ -1059,6 +1076,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dialoguer"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
+dependencies = [
+ "console",
+ "shell-words",
+ "thiserror",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1627,7 +1655,7 @@ version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
 ]
 
 [[package]]
@@ -1635,6 +1663,10 @@ name = "hashbrown"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
+dependencies = [
+ "ahash 0.8.3",
+ "allocator-api2",
+]
 
 [[package]]
 name = "hdrhistogram"
@@ -1962,7 +1994,7 @@ checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
 
 [[package]]
 name = "iroh"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -1974,6 +2006,7 @@ dependencies = [
  "console",
  "data-encoding",
  "derive_more",
+ "dialoguer",
  "dirs-next",
  "duct",
  "ed25519-dalek",
@@ -2003,7 +2036,6 @@ dependencies = [
  "quinn",
  "rand",
  "range-collections",
- "reflink-copy",
  "regex",
  "rustyline",
  "serde",
@@ -2038,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bytes"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2061,6 +2093,7 @@ dependencies = [
  "quinn",
  "rand",
  "range-collections",
+ "reflink-copy",
  "self_cell",
  "serde",
  "serde-error",
@@ -2076,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2120,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "erased_set",
  "hyper",
@@ -2134,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2217,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-sync"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2233,6 +2266,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
+ "lru",
  "once_cell",
  "ouroboros",
  "parking_lot",
@@ -2256,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -2356,6 +2390,15 @@ name = "log"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
+
+[[package]]
+name = "lru"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4a83fb7698b3643a0e34f9ae6f2e8f0178c0fd42f8b59d493aa271ff3a5bf21"
+dependencies = [
+ "hashbrown 0.14.0",
+]
 
 [[package]]
 name = "lru-cache"

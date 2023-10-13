@@ -11,14 +11,46 @@ use serde::{Deserialize, Serialize};
 use crate::ContentStatus;
 
 /// Store entries that can be fingerprinted and put into ranges.
-pub trait RangeEntry: Debug + Clone + PartialOrd {
-    /// The key for this entry, to be used in ranges.
-    type Key: RangeKey + PartialEq + Clone + Default + Debug;
+pub trait RangeEntry: Debug + Clone {
+    /// The key type for this entry.
+    ///
+    /// This type must implement [`Ord`] to define the range ordering used in the set
+    /// reconciliation algorithm.
+    ///
+    /// See [`RangeKey`] for details.
+    type Key: RangeKey;
+
+    /// The value type for this entry. See
+    ///
+    /// The type must implement [`Ord`] to define the time ordering of entries used in the prefix
+    /// deletion algorithm.
+    ///
+    /// See [`RangeValue`] for details.
+    type Value: RangeValue;
+
     /// Get the key for this entry.
     fn key(&self) -> &Self::Key;
+
+    /// Get the value for this entry.
+    fn value(&self) -> &Self::Value;
+
     /// Get the fingerprint for this entry.
     fn as_fingerprint(&self) -> Fingerprint;
 }
+
+/// A trait constraining types that are valid entry keys.
+pub trait RangeKey: Sized + Debug + Ord + PartialEq + Clone + 'static {
+    /// Returns `true` if `self` is a prefix of `other`.
+    fn is_prefix_of(&self, other: &Self) -> bool;
+
+    /// Returns true if `other` is a prefix of `self`.
+    fn is_prefixed_by(&self, other: &Self) -> bool {
+        other.is_prefix_of(self)
+    }
+}
+
+/// A trait constraining types that are valid entry values.
+pub trait RangeValue: Sized + Debug + Ord + PartialEq + Clone + 'static {}
 
 /// Stores a range.
 ///
@@ -71,13 +103,6 @@ impl<K> From<(K, K)> for Range<K> {
         Range { x, y }
     }
 }
-
-pub trait RangeKey: Sized + Ord + Debug {}
-
-impl RangeKey for &str {}
-impl RangeKey for &[u8] {}
-impl RangeKey for Vec<u8> {}
-impl RangeKey for String {}
 
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fingerprint(pub [u8; 32]);
@@ -192,35 +217,65 @@ impl<E: RangeEntry> Message<E> {
 pub trait Store<E: RangeEntry>: Sized {
     type Error: Debug + Send + Sync + Into<anyhow::Error>;
 
+    type RangeIterator<'a>: Iterator<Item = Result<E, Self::Error>>
+    where
+        Self: 'a,
+        E: 'a;
+
+    type ParentIterator<'a>: Iterator<Item = Result<E, Self::Error>>
+    where
+        Self: 'a,
+        E: 'a;
+
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<E::Key, Self::Error>;
+
+    /// Get a single entry.
     fn get(&self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+
+    /// Get the number of entries in the store.
     fn len(&self) -> Result<usize, Self::Error>;
+
+    /// Returns `true` if the vector contains no elements.
     fn is_empty(&self) -> Result<bool, Self::Error>;
+
     /// Calculate the fingerprint of the given range.
     fn get_fingerprint(&self, range: &Range<E::Key>) -> Result<Fingerprint, Self::Error>;
 
     /// Insert the given key value pair.
     fn put(&mut self, entry: E) -> Result<(), Self::Error>;
 
-    type RangeIterator<'a>: Iterator<Item = Result<E, Self::Error>>
-    where
-        Self: 'a,
-        E: 'a;
-
-    /// Returns all items in the given range
+    /// Returns all entries in the given range
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
+
+    /// Returns all entries whose key starts with the given `prefix`.
+    fn prefixed_by(&self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
+
+    /// Returns all entries that share a prefix with `key`, including the entry for `key` itself.
+    fn prefixes_of(&self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
 
     /// Get all entries in the store
     fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Remove an entry from the store.
     fn remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+
+    /// Remove all entries whose key start with a prefix and for which the `predicate` callback
+    /// returns true.
+    ///
+    /// Returns the number of elements removed.
+    // TODO: We might want to return an iterator with the removed elements instead to emit as
+    // events to the application potentially.
+    fn remove_prefix_filtered(
+        &mut self,
+        prefix: &E::Key,
+        predicate: impl Fn(&E::Value) -> bool,
+    ) -> Result<usize, Self::Error>;
 }
 
 #[derive(Debug)]
 pub struct Peer<E: RangeEntry, S: Store<E>> {
-    store: S,
+    pub(crate) store: S,
     /// Up to how many values to send immediately, before sending only a fingerprint.
     max_set_size: usize,
     /// `k` in the protocol, how many splits to generate. at least 2
@@ -311,15 +366,18 @@ where
                 None
             } else {
                 Some(
+                    // we get the range of the item form our store. from this set, we remove all
+                    // entries that whose key is contained in the peer's set and where our value is
+                    // lower than the peer entry's value.
                     self.store
                         .get_range(range.clone())?
-                        .filter_map(|existing| match existing {
-                            Ok(existing) => {
-                                if !values
-                                    .iter()
-                                    .any(|(entry, _)| existing.key() == entry.key())
-                                {
-                                    Some(Ok(existing))
+                        .filter_map(|our_entry| match our_entry {
+                            Ok(our_entry) => {
+                                if !values.iter().any(|(their_entry, _)| {
+                                    our_entry.key() == their_entry.key()
+                                        && their_entry.value() >= our_entry.value()
+                                }) {
+                                    Some(Ok(our_entry))
                                 } else {
                                     None
                                 }
@@ -339,7 +397,7 @@ where
             // Store incoming values
             for (entry, content_status) in values {
                 if validate_cb(&self.store, &entry, content_status) {
-                    self.store.put(entry)?;
+                    self.put(entry)?;
                 }
             }
 
@@ -495,8 +553,40 @@ where
     }
 
     /// Insert a key value pair.
-    pub fn put(&mut self, entry: E) -> Result<(), S::Error> {
-        self.store.put(entry)
+    ///
+    /// Entries are inserted if they compare strictly greater than all entries in the set of
+    /// entries which have the same key as `entry` or have a key which is a prefix of `entry`.
+    ///
+    /// Additionally, entries that have a key which is a prefix of the entry's key and whose
+    /// timestamp is not strictly greater than that of the new entry are deleted
+    ///
+    /// Note: The deleted entries are simply dropped right now. We might want to make this return
+    /// an iterator, to potentially log or expose the deleted entries.
+    ///
+    /// Returns `true` if the entry was inserted.
+    /// Returns `false` if it was not inserted.
+    pub fn put(&mut self, entry: E) -> Result<InsertOutcome, S::Error> {
+        let prefix_entry = self.store.prefixes_of(entry.key())?;
+        // First we check if our entry is strictly greater than all parent elements.
+        // From the willow spec:
+        // "Remove all entries whose timestamp is strictly less than the timestamp of any other entry [..]
+        // whose path is a prefix of p." and then "remove all but those whose record has the greatest hash component".
+        // This is the contract of the `Ord` impl for `E::Value`.
+        for prefix_entry in prefix_entry {
+            let prefix_entry = prefix_entry?;
+            if entry.value() <= prefix_entry.value() {
+                return Ok(InsertOutcome::NotInserted);
+            }
+        }
+
+        // Now we remove all entries that have our key as a prefix and are older than our entry.
+        let removed = self
+            .store
+            .remove_prefix_filtered(entry.key(), |value| entry.value() >= value)?;
+
+        // Insert our new entry.
+        self.store.put(entry)?;
+        Ok(InsertOutcome::Inserted { removed })
     }
 
     /// List all existing key value pairs.
@@ -506,19 +596,23 @@ where
         self.store.all()
     }
 
-    // /// Get the entry for the given key.
-    // pub fn get(&self, k: &K) -> Result<Option<V>, S::Error> {
-    //     self.store.get(k)
-    // }
-    // /// Remove the given key.
-    // pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
-    //     self.store.remove(k)
-    // }
-
     /// Returns a refernce to the underlying store.
     pub(crate) fn store(&self) -> &S {
         &self.store
     }
+}
+
+/// The outcome of a [`Store::put`] operation.
+pub enum InsertOutcome {
+    /// The entry was not inserted because a newer entry for its key or a
+    /// prefix of its key exists.
+    NotInserted,
+    /// The entry was inserted.
+    Inserted {
+        /// Number of entries that were removed as a consequence of this insert operation.
+        /// The removed entries had a key that starts with the new entry's key and a lower value.
+        removed: usize,
+    },
 }
 
 #[cfg(test)]
@@ -544,13 +638,18 @@ mod tests {
 
     impl<K, V> RangeEntry for (K, V)
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        K: RangeKey,
+        V: RangeValue,
     {
         type Key = K;
+        type Value = V;
 
         fn key(&self) -> &Self::Key {
             &self.0
+        }
+
+        fn value(&self) -> &Self::Value {
+            &self.1
         }
 
         fn as_fingerprint(&self) -> Fingerprint {
@@ -561,12 +660,29 @@ mod tests {
         }
     }
 
+    impl RangeKey for &'static str {
+        fn is_prefix_of(&self, other: &Self) -> bool {
+            other.starts_with(self)
+        }
+    }
+    impl RangeKey for String {
+        fn is_prefix_of(&self, other: &Self) -> bool {
+            other.starts_with(self)
+        }
+    }
+
+    impl RangeValue for &'static [u8] {}
+    impl RangeValue for i32 {}
+    impl RangeValue for u8 {}
+    impl RangeValue for () {}
+
     impl<K, V> Store<(K, V)> for SimpleStore<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        K: RangeKey + Default,
+        V: RangeValue,
     {
         type Error = Infallible;
+        type ParentIterator<'a> = std::vec::IntoIter<Result<(K, V), Infallible>>;
 
         fn get_first(&self) -> Result<K, Self::Error> {
             if let Some((k, _)) = self.data.first_key_value() {
@@ -615,7 +731,7 @@ mod tests {
 
             Ok(SimpleRangeIterator {
                 iter,
-                range: Some(range),
+                filter: SimpleFilter::Range(range),
             })
         }
 
@@ -626,20 +742,61 @@ mod tests {
 
         fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
             let iter = self.data.iter();
+            Ok(SimpleRangeIterator {
+                iter,
+                filter: SimpleFilter::None,
+            })
+        }
 
-            Ok(SimpleRangeIterator { iter, range: None })
+        // TODO: Not horrible.
+        fn prefixes_of(&self, key: &K) -> Result<Self::ParentIterator<'_>, Self::Error> {
+            let mut res = vec![];
+            for (k, v) in self.data.iter() {
+                if k.is_prefix_of(key) {
+                    res.push(Ok((k.clone(), v.clone())));
+                }
+            }
+            Ok(res.into_iter())
+        }
+
+        fn prefixed_by(&self, prefix: &K) -> Result<Self::RangeIterator<'_>, Self::Error> {
+            let iter = self.data.iter();
+            Ok(SimpleRangeIterator {
+                iter,
+                filter: SimpleFilter::Prefix(prefix.clone()),
+            })
+        }
+
+        fn remove_prefix_filtered(
+            &mut self,
+            prefix: &K,
+            predicate: impl Fn(&V) -> bool,
+        ) -> Result<usize, Self::Error> {
+            let old_len = self.data.len();
+            self.data.retain(|k, v| {
+                let remove = prefix.is_prefix_of(k) && predicate(v);
+                !remove
+            });
+            Ok(old_len - self.data.len())
         }
     }
 
     #[derive(Debug)]
     pub struct SimpleRangeIterator<'a, K, V> {
         iter: std::collections::btree_map::Iter<'a, K, V>,
-        range: Option<Range<K>>,
+        filter: SimpleFilter<K>,
+    }
+
+    #[derive(Debug)]
+    enum SimpleFilter<K> {
+        None,
+        Range(Range<K>),
+        Prefix(K),
     }
 
     impl<'a, K, V> Iterator for SimpleRangeIterator<'a, K, V>
     where
-        K: Clone + Ord,
+        K: RangeKey + Default,
         V: Clone,
     {
         type Item = Result<(K, V), Infallible>;
@@ -647,9 +804,10 @@ mod tests {
         fn next(&mut self) -> Option<Self::Item> {
             let mut next = self.iter.next()?;
 
-            let filter = |x: &K| match &self.range {
-                None => true,
-                Some(ref range) => range.contains(x),
+            let filter = |x: &K| match &self.filter {
+                SimpleFilter::None => true,
+                SimpleFilter::Range(range) => range.contains(x),
+                SimpleFilter::Prefix(prefix) => prefix.is_prefix_of(x),
             };
 
             loop {
@@ -687,7 +845,6 @@ mod tests {
         assert_eq!(res.bob_to_alice[0].parts.len(), 2);
         assert!(res.bob_to_alice[0].parts[0].is_range_fingerprint());
         assert!(res.bob_to_alice[0].parts[1].is_range_fingerprint());
-
         // Last response from Alice
         assert_eq!(res.alice_to_bob[1].parts.len(), 3);
         assert!(res.alice_to_bob[1].parts[0].is_range_fingerprint());
@@ -787,14 +944,29 @@ mod tests {
     }
 
     #[test]
+    fn test_equal_key_higher_value() {
+        let alice_set = [("foo", 2)];
+        let bob_set = [("foo", 1)];
+
+        let res = sync(&alice_set, &bob_set);
+        assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
+        assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
+    }
+
+    #[test]
     fn test_multikey() {
+        /// Uses the blanket impl of [`RangeKey]` for `T: AsRef<[u8]>` in this module.
         #[derive(Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
         struct Multikey {
             author: [u8; 4],
             key: Vec<u8>,
         }
 
-        impl RangeKey for Multikey {}
+        impl RangeKey for Multikey {
+            fn is_prefix_of(&self, other: &Self) -> bool {
+                self.author == other.author && self.key.starts_with(&other.key)
+            }
+        }
 
         impl Debug for Multikey {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -909,8 +1081,8 @@ mod tests {
 
     struct SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        K: RangeKey + Default,
+        V: RangeValue,
     {
         alice: Peer<(K, V), SimpleStore<K, V>>,
         bob: Peer<(K, V), SimpleStore<K, V>>,
@@ -920,8 +1092,8 @@ mod tests {
 
     impl<K, V> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd + PartialEq,
+        K: RangeKey + Default,
+        V: RangeValue,
     {
         fn print_messages(&self) {
             let len = std::cmp::max(self.alice_to_bob.len(), self.bob_to_alice.len());
@@ -1009,12 +1181,32 @@ mod tests {
 
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        K: RangeKey + Default,
+        V: RangeValue,
     {
         let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
+    }
+
+    fn insert_if_larger<K: RangeKey, V: RangeValue>(map: &mut BTreeMap<K, V>, key: K, value: V) {
+        let mut insert = true;
+        for (k, v) in map.iter() {
+            if k.is_prefix_of(&key) && v >= &value {
+                insert = false;
+            }
+        }
+        if insert {
+            #[allow(clippy::needless_bool)]
+            map.retain(|k, v| {
+                if key.is_prefix_of(k) && value >= *v {
+                    false
+                } else {
+                    true
+                }
+            });
+            map.insert(key, value);
+        }
     }
 
     fn sync_with_validate_cb_and_assert<K, V, F1, F2>(
@@ -1024,45 +1216,63 @@ mod tests {
         bob_validate_cb: F2,
     ) -> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        K: RangeKey + Default,
+        V: RangeValue,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
-        let mut expected_set_alice = BTreeMap::new();
-        let mut expected_set_bob = BTreeMap::new();
-
         let mut alice = Peer::<(K, V), SimpleStore<K, V>>::default();
-        for e in alice_set {
-            alice.put(e.clone()).unwrap();
-            expected_set_bob.insert(e.key().clone(), e.1.clone());
-            expected_set_alice.insert(e.key().clone(), e.1.clone());
-        }
-
         let mut bob = Peer::<(K, V), SimpleStore<K, V>>::default();
-        for e in bob_set {
-            bob.put(e.clone()).unwrap();
-            expected_set_bob.insert(e.key().clone(), e.1.clone());
-            expected_set_alice.insert(e.key().clone(), e.1.clone());
-        }
+
+        let expected_set = {
+            let mut expected_set = BTreeMap::new();
+            let mut alice_expected = BTreeMap::new();
+            for e in alice_set {
+                alice.put(e.clone()).unwrap();
+                insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
+                insert_if_larger(&mut alice_expected, e.0.clone(), e.1.clone());
+            }
+            let alice_expected = alice_expected.into_iter().collect::<Vec<_>>();
+            let alice_now: Vec<_> = alice.all().unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(
+                alice_expected, alice_now,
+                "alice initial set does not match"
+            );
+
+            let mut bob_expected = BTreeMap::new();
+            for e in bob_set {
+                bob.put(e.clone()).unwrap();
+                insert_if_larger(&mut expected_set, e.0.clone(), e.1.clone());
+                insert_if_larger(&mut bob_expected, e.0.clone(), e.1.clone());
+            }
+            let bob_expected = bob_expected.into_iter().collect::<Vec<_>>();
+            let bob_now: Vec<_> = bob.all().unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(bob_expected, bob_now, "bob initial set does not match");
+
+            expected_set.into_iter().collect::<Vec<_>>()
+        };
 
         let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
 
-        res.print_messages();
-
         let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(
-            alice_now.into_iter().collect::<Vec<_>>(),
-            expected_set_alice.into_iter().collect::<Vec<_>>(),
-            "alice"
-        );
+        if alice_now != expected_set {
+            res.print_messages();
+            println!("alice_init: {alice_set:?}");
+            println!("bob_init:   {bob_set:?}");
+            println!("expected:   {expected_set:?}");
+            println!("alice_now:  {alice_now:?}");
+            panic!("alice_now does not match expected");
+        }
 
         let bob_now: Vec<_> = res.bob.all().unwrap().collect::<Result<_, _>>().unwrap();
-        assert_eq!(
-            bob_now.into_iter().collect::<Vec<_>>(),
-            expected_set_bob.into_iter().collect::<Vec<_>>(),
-            "bob"
-        );
+        if bob_now != expected_set {
+            res.print_messages();
+            println!("alice_init: {alice_set:?}");
+            println!("bob_init:   {bob_set:?}");
+            println!("expected:   {expected_set:?}");
+            println!("bob_now:    {bob_now:?}");
+            panic!("bob_now does not match expected");
+        }
 
         // Check that values were never sent twice
         let mut alice_sent = BTreeMap::new();
@@ -1106,8 +1316,8 @@ mod tests {
         max_rounds: usize,
     ) -> SyncResult<K, V>
     where
-        K: RangeKey + PartialEq + Clone + Default + Debug,
-        V: Debug + Clone + PartialOrd,
+        K: RangeKey + Default,
+        V: RangeValue,
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
@@ -1208,18 +1418,30 @@ mod tests {
         assert_eq!(excluded[3].0, "hog");
     }
 
-    type TestSet = BTreeMap<String, ()>;
+    type TestSetStringUnit = BTreeMap<String, ()>;
+    type TestSetStringU8 = BTreeMap<String, u8>;
 
     fn test_key() -> impl Strategy<Value = String> {
         "[a-z0-9]{0,5}"
     }
 
-    fn test_set() -> impl Strategy<Value = TestSet> {
+    fn test_set_string_unit() -> impl Strategy<Value = TestSetStringUnit> {
         prop::collection::btree_map(test_key(), Just(()), 0..10)
     }
 
-    fn test_vec() -> impl Strategy<Value = Vec<(String, ())>> {
-        test_set().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    fn test_set_string_u8() -> impl Strategy<Value = TestSetStringU8> {
+        prop::collection::btree_map(test_key(), test_value_u8(), 0..10)
+    }
+
+    fn test_value_u8() -> impl Strategy<Value = u8> {
+        0u8..u8::MAX
+    }
+
+    fn test_vec_string_unit() -> impl Strategy<Value = Vec<(String, ())>> {
+        test_set_string_unit().prop_map(|m| m.into_iter().collect::<Vec<_>>())
+    }
+    fn test_vec_string_u8() -> impl Strategy<Value = Vec<(String, u8)>> {
+        test_set_string_u8().prop_map(|m| m.into_iter().collect::<Vec<_>>())
     }
 
     fn test_range() -> impl Strategy<Value = Range<String>> {
@@ -1227,7 +1449,7 @@ mod tests {
         (test_key(), test_key()).prop_map(|(x, y)| Range::new(x, y))
     }
 
-    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSet {
+    fn mk_test_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> TestSetStringUnit {
         values
             .into_iter()
             .map(|v| v.as_ref().to_string())
@@ -1247,6 +1469,13 @@ mod tests {
     }
 
     #[test]
+    fn simple_store_sync_x() {
+        let alice = mk_test_vec(["1", "3"]);
+        let bob = mk_test_vec(["2"]);
+        let _res = sync(&alice, &bob);
+    }
+
+    #[test]
     fn simple_store_sync_2() {
         let alice = mk_test_vec(["1", "3"]);
         let bob = mk_test_vec(["0", "2", "3"]);
@@ -1262,8 +1491,16 @@ mod tests {
 
     #[proptest]
     fn simple_store_sync(
-        #[strategy(test_vec())] alice: Vec<(String, ())>,
-        #[strategy(test_vec())] bob: Vec<(String, ())>,
+        #[strategy(test_vec_string_unit())] alice: Vec<(String, ())>,
+        #[strategy(test_vec_string_unit())] bob: Vec<(String, ())>,
+    ) {
+        let _res = sync(&alice, &bob);
+    }
+
+    #[proptest]
+    fn simple_store_sync_u8(
+        #[strategy(test_vec_string_u8())] alice: Vec<(String, u8)>,
+        #[strategy(test_vec_string_u8())] bob: Vec<(String, u8)>,
     ) {
         let _res = sync(&alice, &bob);
     }
@@ -1300,7 +1537,7 @@ mod tests {
 
     #[proptest]
     fn simple_store_get_ranges(
-        #[strategy(test_set())] contents: BTreeMap<String, ()>,
+        #[strategy(test_set_string_unit())] contents: BTreeMap<String, ()>,
         #[strategy(test_range())] range: Range<String>,
     ) {
         let (expected, actual) = store_get_ranges_test::<SimpleStore<_, _>, _>(contents, range);

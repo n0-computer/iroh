@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
-use bytes::Bytes;
 use futures::future::BoxFuture;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
@@ -15,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
-use crate::baomap::*;
-use crate::collection::CollectionParser;
-use crate::protocol::{write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken};
+use crate::hashseq::parse_hash_seq;
+use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
+use crate::store::*;
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
 
@@ -60,25 +59,16 @@ pub enum Event {
         /// The size of the custom get request.
         len: usize,
     },
-    /// A collection has been found and is being transferred.
-    TransferCollectionStarted {
+    /// A sequence of hashes has been found and is being transferred.
+    TransferHashSeqStarted {
         /// An unique connection id.
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
-        /// The number of blobs in the collection.
-        num_blobs: Option<u64>,
+        /// The number of blobs in the sequence.
+        num_blobs: u64,
     },
-    /// A collection request was completed and the data was sent to the client.
-    TransferCollectionCompleted {
-        /// An unique connection id.
-        connection_id: u64,
-        /// An identifier uniquely identifying this transfer request.
-        request_id: u64,
-        /// statistics about the transfer
-        stats: Box<TransferStats>,
-    },
-    /// A blob in a collection was transferred.
+    /// A blob in a sequence was transferred.
     TransferBlobCompleted {
         /// An unique connection id.
         connection_id: u64,
@@ -86,10 +76,19 @@ pub enum Event {
         request_id: u64,
         /// The hash of the blob
         hash: Hash,
-        /// The index of the blob in the collection.
+        /// The index of the blob in the sequence.
         index: u64,
         /// The size of the blob transferred.
         size: u64,
+    },
+    /// A request was completed and the data was sent to the client.
+    TransferCompleted {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+        /// statistics about the transfer
+        stats: Box<TransferStats>,
     },
     /// A request was aborted because the client disconnected.
     TransferAborted {
@@ -238,17 +237,6 @@ pub trait RequestAuthorizationHandler: Send + Sync + Debug + 'static {
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
-/// A custom get request handler that allows the user to make up a get request
-/// on the fly.
-pub trait CustomGetHandler: Send + Sync + Debug + 'static {
-    /// Handle the custom request, given an opaque data blob from the requester.
-    fn handle(
-        &self,
-        token: Option<RequestToken>,
-        request: Bytes,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
-}
-
 /// Read the request from the getter.
 ///
 /// Will fail if there is an error while reading, if the reader
@@ -275,7 +263,7 @@ pub async fn read_request(mut reader: quinn::RecvStream) -> Result<Request> {
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
+pub async fn transfer_collection<D: Map, E: EventSender>(
     request: GetRequest,
     // Store from which to fetch blobs.
     db: &D,
@@ -284,7 +272,6 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     // the collection to transfer
     mut outboard: D::Outboard,
     mut data: D::DataReader,
-    collection_parser: C,
     stats: &mut TransferStats,
 ) -> Result<SentStatus> {
     let hash = request.hash;
@@ -293,16 +280,16 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     let just_root = matches!(request.ranges.as_single(), Some((0, _)));
     let mut c = if !just_root {
         // use the collection parser to parse the collection
-        let (c, stats) = collection_parser.parse(&mut data).await?;
+        let (stream, num_blobs) = parse_hash_seq(&mut data).await?;
         writer
             .events
-            .send(Event::TransferCollectionStarted {
+            .send(Event::TransferHashSeqStarted {
                 connection_id: writer.connection_id(),
                 request_id: writer.request_id(),
-                num_blobs: stats.num_blobs,
+                num_blobs,
             })
             .await;
-        Some(c)
+        Some(stream)
     } else {
         None
     };
@@ -312,7 +299,7 @@ pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
         // create a tracking writer so we can get some stats for writing
         let mut tw = writer.tracking_writer();
         if offset == 0 {
-            debug!("writing ranges '{:?}' of collection {}", ranges, hash);
+            debug!("writing ranges '{:?}' of sequence {}", ranges, hash);
             // wrap the data reader in a tracking reader so we can get some stats for reading
             let mut tracking_reader = TrackingSliceReader::new(&mut data);
             // send the root
@@ -375,12 +362,10 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 }
 
 /// Handle a single connection.
-pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
+pub async fn handle_connection<D: Map, E: EventSender>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
-    collection_parser: C,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     rt: crate::util::runtime::Handle,
 ) {
@@ -407,20 +392,10 @@ pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
             };
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
-            let custom_get_handler = custom_get_handler.clone();
             let authorization_handler = authorization_handler.clone();
-            let collection_parser = collection_parser.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
-                    if let Err(err) = handle_stream(
-                        db,
-                        reader,
-                        writer,
-                        custom_get_handler,
-                        authorization_handler,
-                        collection_parser,
-                    )
-                    .await
+                    if let Err(err) = handle_stream(db, reader, writer, authorization_handler).await
                     {
                         warn!("error: {err:#?}",);
                     }
@@ -433,13 +408,11 @@ pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
     .await
 }
 
-async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
+async fn handle_stream<D: Map, E: EventSender>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
-    collection_parser: C,
 ) -> Result<()> {
     // 1. Decode the request.
     debug!("reading request");
@@ -462,44 +435,14 @@ async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     }
 
     match request {
-        Request::Get(request) => handle_get(db, request, collection_parser, writer).await,
-        Request::CustomGet(request) => {
-            handle_custom_get(db, request, writer, custom_get_handler, collection_parser).await
-        }
+        Request::Get(request) => handle_get(db, request, writer).await,
     }
-}
-async fn handle_custom_get<E: EventSender, D: Map, C: CollectionParser>(
-    db: D,
-    request: CustomGetRequest,
-    mut writer: ResponseWriter<E>,
-    custom_get_handler: Arc<dyn CustomGetHandler>,
-    collection_parser: C,
-) -> Result<()> {
-    writer
-        .events
-        .send(Event::CustomGetRequestReceived {
-            len: request.data.len(),
-            connection_id: writer.connection_id(),
-            request_id: writer.request_id(),
-            token: request.token.clone(),
-        })
-        .await;
-    // try to make a GetRequest from the custom bytes
-    let request = custom_get_handler
-        .handle(request.token, request.data)
-        .await?;
-    // write it to the requester as the first thing
-    let data = postcard::to_stdvec(&request)?;
-    write_lp(&mut writer.inner, &data).await?;
-    // from now on just handle it like a normal get request
-    handle_get(db, request, collection_parser, writer).await
 }
 
 /// Handle a single standard get request.
-pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
+pub async fn handle_get<D: Map, E: EventSender>(
     db: D,
     request: GetRequest,
-    collection_parser: C,
     mut writer: ResponseWriter<E>,
 ) -> Result<()> {
     let hash = request.hash;
@@ -527,7 +470,6 @@ pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
                 &mut writer,
                 entry.outboard().await?,
                 entry.data_reader().await?,
-                collection_parser,
                 &mut stats,
             )
             .await;
@@ -590,7 +532,7 @@ impl<E: EventSender> ResponseWriter<E> {
         let other_duration = total_duration
             .saturating_sub(send_duration)
             .saturating_sub(read_duration);
-        let avg_send_size = total_sent_bytes / send.stats.count;
+        let avg_send_size = total_sent_bytes.checked_div(send.stats.count).unwrap_or(0);
         info!(
             "sent {} bytes in {}s",
             total_sent_bytes,
@@ -613,7 +555,7 @@ impl<E: EventSender> ResponseWriter<E> {
         info!("trasnfer completed for {}", hash);
         Self::print_stats(&stats);
         self.events
-            .send(Event::TransferCollectionCompleted {
+            .send(Event::TransferCompleted {
                 connection_id: self.connection_id(),
                 request_id: self.request_id(),
                 stats,

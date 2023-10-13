@@ -5,9 +5,7 @@ pub use iroh_bytes as bytes;
 pub use iroh_net as net;
 pub use iroh_sync as sync;
 
-pub mod baomap;
 pub mod client;
-#[cfg(feature = "iroh-collection")]
 pub mod collection;
 pub mod dial;
 pub mod downloader;

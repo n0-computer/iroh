@@ -1,5 +1,7 @@
 //! Storage trait and implementation for iroh-sync documents
 
+use std::num::NonZeroUsize;
+
 use anyhow::Result;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
@@ -8,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ranger,
     sync::{Author, Namespace, Replica, SignedEntry},
-    AuthorId, NamespaceId,
+    AuthorId, NamespaceId, PeerIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
@@ -16,6 +18,12 @@ pub mod fs;
 pub mod memory;
 mod pubkeys;
 pub use pubkeys::*;
+
+/// Number of [`PeerIdBytes`] objects to cache per document.
+pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
+    Some(val) => val,
+    None => panic!("this is clearly non zero"),
+};
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
@@ -42,6 +50,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     where
         Self: 'a;
 
+    /// Iterator over peers in the store for a document, returned from [`Self::get_sync_peers`].
+    type PeersIter<'a>: Iterator<Item = PeerIdBytes>
+    where
+        Self: 'a;
+
     /// Create a new replica for `namespace` and persist in this store.
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
@@ -52,8 +65,6 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
-    //
-    // TODO: Add close_replica
     fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
 
     /// Close a replica.
@@ -61,6 +72,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// This removes the event subscription from the replica, if active, and removes the replica
     /// instance from the store's cache.
     fn close_replica(&self, namespace: &NamespaceId);
+
+    /// Remove a replica.
+    ///
+    /// Completely removes a replica and deletes both the namespace private key and all document
+    /// entries.
+    fn remove_replica(&self, namespace: &NamespaceId) -> Result<()>;
 
     /// Create a new author key and persist it in the store.
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
@@ -93,6 +110,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get all content hashes of all replicas in the store.
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
+
+    /// Register a peer that has been useful to sync a document.
+    fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes) -> Result<()>;
+
+    /// Get peers to use for syncing a document.
+    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
 }
 
 /// Filter a get query onto a namespace

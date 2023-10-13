@@ -1,27 +1,27 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
+use bao_tree::ChunkRanges;
 use futures::StreamExt;
 use iroh::{
     collection::Collection,
-    rpc_protocol::{BlobDownloadRequest, DownloadLocation},
+    rpc_protocol::{BlobDownloadRequest, DownloadLocation, SetTagOption},
     util::progress::ProgressSliceWriter,
-};
-use iroh_bytes::{
-    baomap::range_collections::RangeSet2,
-    provider::GetProgress,
-    util::{
-        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
-        BlobFormat, SetTagOption,
-    },
 };
 use iroh_bytes::{
     get::{
         self,
         fsm::{self, ConnectedNext, EndBlobNext},
     },
-    protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
+    protocol::{GetRequest, RangeSpecSeq, RequestToken},
     Hash,
+};
+use iroh_bytes::{
+    provider::GetProgress,
+    util::{
+        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+        BlobFormat,
+    },
 };
 use iroh_io::ConcatenateSliceWriter;
 use iroh_net::derp::DerpMode;
@@ -39,10 +39,8 @@ pub struct GetInteractive {
 }
 
 impl GetInteractive {
-    fn new_request(&self, query: RangeSpecSeq) -> Request {
-        GetRequest::new(self.hash, query)
-            .with_token(self.token.clone())
-            .into()
+    fn new_request(&self, query: RangeSpecSeq) -> GetRequest {
+        GetRequest::new(self.hash, query).with_token(self.token.clone())
     }
 
     /// Get into a file or directory
@@ -66,8 +64,8 @@ impl GetInteractive {
             }
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
-        let db: iroh::baomap::flat::Store =
-            iroh::baomap::flat::Store::load(&temp_dir, &temp_dir, &temp_dir, &self.rt).await?;
+        let db =
+            iroh_bytes::store::flat::Store::load(&temp_dir, &temp_dir, &temp_dir, &self.rt).await?;
         // TODO: we don't need sync here, maybe disable completely?
         let doc_store = iroh_sync::store::memory::Store::default();
         // spin up temp node and ask it to download the data for us
@@ -121,7 +119,7 @@ impl GetInteractive {
             tokio::task::spawn(show_download_progress(hash, receiver.into_stream().map(Ok)));
         let query = if self.format.is_raw() {
             // just get the entire first item
-            RangeSpecSeq::from_ranges([RangeSet2::all()])
+            RangeSpecSeq::from_ranges([ChunkRanges::all()])
         } else {
             // get everything (collection and children)
             RangeSpecSeq::all()

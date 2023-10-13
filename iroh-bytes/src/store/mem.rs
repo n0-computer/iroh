@@ -14,41 +14,32 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::TempCounterMap;
+use crate::{
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+        PartialMapEntry, ReadableStore, ValidateProgress,
+    },
+    util::{
+        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        runtime, BlobFormat, HashAndFormat, LivenessTracker,
+    },
+    Hash, Tag, TempTag, IROH_BLOCK_SIZE,
+};
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::outboard_size;
 use bao_tree::BaoTree;
 use bao_tree::ByteNum;
-use bao_tree::ChunkNum;
+use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use bytes::BytesMut;
 use derive_more::From;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::{Stream, StreamExt};
-use iroh_bytes::baomap;
-use iroh_bytes::baomap::range_collections::RangeSet2;
-use iroh_bytes::baomap::EntryStatus;
-use iroh_bytes::baomap::ExportMode;
-use iroh_bytes::baomap::ImportMode;
-use iroh_bytes::baomap::ImportProgress;
-use iroh_bytes::baomap::LivenessTracker;
-use iroh_bytes::baomap::PartialMap;
-use iroh_bytes::baomap::PartialMapEntry;
-use iroh_bytes::baomap::TempTag;
-use iroh_bytes::baomap::ValidateProgress;
-use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
-use iroh_bytes::util::progress::IdGenerator;
-use iroh_bytes::util::progress::IgnoreProgressSender;
-use iroh_bytes::util::progress::ProgressSender;
-use iroh_bytes::util::runtime;
-use iroh_bytes::util::BlobFormat;
-use iroh_bytes::util::HashAndFormat;
-use iroh_bytes::util::Tag;
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::AsyncSliceReader;
-use iroh_io::AsyncSliceWriter;
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
 
 /// A mutable file like object that can be used for partial entries.
@@ -206,7 +197,7 @@ struct State {
     complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
     tags: BTreeMap<Tag, HashAndFormat>,
-    temp: BTreeMap<HashAndFormat, u64>,
+    temp: TempCounterMap,
     live: BTreeSet<Hash>,
 }
 
@@ -224,8 +215,8 @@ impl MapEntry<Store> for Entry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn size(&self) -> u64 {
@@ -258,8 +249,8 @@ impl MapEntry<Store> for PartialEntry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn size(&self) -> u64 {
@@ -360,16 +351,8 @@ impl ReadableStore for Store {
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
-        let tags = self
-            .0
-            .state
-            .read()
-            .unwrap()
-            .temp
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        Box::new(tags.into_iter())
+        let tags = self.0.state.read().unwrap().temp.keys();
+        Box::new(tags)
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -466,7 +449,7 @@ impl PartialMap for Store {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         path: std::path::PathBuf,
@@ -571,7 +554,8 @@ impl baomap::Store for Store {
 
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
-        state.live.contains(hash)
+        // a blob is live if it is either in the live set, or it is temp tagged
+        state.live.contains(hash) || state.temp.contains(hash)
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
@@ -586,19 +570,13 @@ impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        // panic if we overflow an u64
-        *entry = entry.checked_add(1).unwrap();
+        state.temp.inc(inner);
     }
 
     fn on_drop(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        *entry = entry.saturating_sub(1);
-        if *entry == 0 {
-            state.temp.remove(inner);
-        }
+        state.temp.dec(inner);
     }
 }
 
@@ -632,8 +610,8 @@ impl Store {
             data: outboard.into(),
         };
         let hash = hash.into();
-        use baomap::Store;
-        let tag = self.temp_tag(HashAndFormat(hash, format));
+        use super::Store;
+        let tag = self.temp_tag(HashAndFormat { hash, format });
         self.0
             .state
             .write()

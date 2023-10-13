@@ -1,4 +1,4 @@
-//! Specifications for ranges selection in blobs and collections.
+//! Specifications for ranges selection in blobs and sequences of blobs.
 //!
 //! The [`RangeSpec`] allows specifying which BAO chunks inside a single blob should be
 //! selected.
@@ -7,8 +7,7 @@
 //! collection.
 use std::fmt;
 
-use bao_tree::ChunkNum;
-use range_collections::{RangeSet2, RangeSetRef};
+use bao_tree::{ChunkNum, ChunkRanges, ChunkRangesRef};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
@@ -26,8 +25,8 @@ use smallvec::{smallvec, SmallVec};
 ///   - `[10, 10+1) = [10, 11)` is selected.
 ///   - `[11, inf)` is deselected.
 ///
-///   Such a [`RangeSpec`] can be converted to a [`RangeSet2`] using containing just the
-///   selected ranges: `RangeSet{2..7, 10..11}` using [`RangeSpec::to_chunk_ranges`].
+///   Such a [`RangeSpec`] can be converted to a [`ChunkRanges`] using containing just the
+///   selected ranges: `ChunkRanges{2..7, 10..11}` using [`RangeSpec::to_chunk_ranges`].
 ///
 /// - An empty range selects no spans, encoded as `[]`. This means nothing of the blob is
 ///   selected.
@@ -45,7 +44,7 @@ pub struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
     /// Creates a new [`RangeSpec`] from a range set.
-    pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
+    pub fn new(ranges: impl AsRef<ChunkRangesRef>) -> Self {
         let ranges = ranges.as_ref().boundaries();
         let mut res = SmallVec::new();
         if let Some((start, rest)) = ranges.split_first() {
@@ -79,28 +78,23 @@ impl RangeSpec {
         self.0.len() == 1 && self.0[0] == 0
     }
 
-    /// Creates a [`RangeSet2`] from this [`RangeSpec`].
-    ///
-    /// The [`RangeSet2`] is the same as a [`RangeSet`] but is used because it can store up
-    /// to two 2 span boundaries without allocating.
-    ///
-    /// [`RangeSet`]: range_collections::RangeSet
-    pub fn to_chunk_ranges(&self) -> RangeSet2<ChunkNum> {
+    /// Creates a [`ChunkRanges`] from this [`RangeSpec`].
+    pub fn to_chunk_ranges(&self) -> ChunkRanges {
         // this is zero allocation for single ranges
         // todo: optimize this in range collections
-        let mut ranges = RangeSet2::empty();
+        let mut ranges = ChunkRanges::empty();
         let mut current = ChunkNum(0);
         let mut on = false;
         for &width in self.0.iter() {
             let next = current + width;
             if on {
-                ranges |= RangeSet2::from(current..next);
+                ranges |= ChunkRanges::from(current..next);
             }
             current = next;
             on = !on;
         }
         if on {
-            ranges |= RangeSet2::from(current..);
+            ranges |= ChunkRanges::from(current..);
         }
         ranges
     }
@@ -191,9 +185,7 @@ impl RangeSpecSeq {
     }
 
     /// Convenience function to create a [`RangeSpecSeq`] from a finite sequence of range sets.
-    pub fn from_ranges(
-        ranges: impl IntoIterator<Item = impl AsRef<RangeSetRef<ChunkNum>>>,
-    ) -> Self {
+    pub fn from_ranges(ranges: impl IntoIterator<Item = impl AsRef<ChunkRangesRef>>) -> Self {
         Self::new(
             ranges
                 .into_iter()
@@ -207,7 +199,7 @@ impl RangeSpecSeq {
     /// Compared to [`RangeSpecSeq::from_ranges`], this will not add an empty range spec at the end, so the final
     /// range spec will repeat forever.
     pub fn from_ranges_infinite(
-        ranges: impl IntoIterator<Item = impl AsRef<RangeSetRef<ChunkNum>>>,
+        ranges: impl IntoIterator<Item = impl AsRef<ChunkRangesRef>>,
     ) -> Self {
         Self::new(ranges.into_iter().map(RangeSpec::new))
     }
@@ -362,21 +354,20 @@ mod tests {
     use bao_tree::ChunkNum;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
     use proptest::prelude::*;
-    use range_collections::RangeSet2;
 
-    fn ranges(value_range: Range<u64>) -> impl Strategy<Value = RangeSet2<ChunkNum>> {
+    fn ranges(value_range: Range<u64>) -> impl Strategy<Value = ChunkRanges> {
         prop::collection::vec((value_range.clone(), value_range), 0..16).prop_map(|v| {
-            let mut res = RangeSet2::empty();
+            let mut res = ChunkRanges::empty();
             for (a, b) in v {
                 let start = a.min(b);
                 let end = a.max(b);
-                res |= RangeSet2::from(ChunkNum(start)..ChunkNum(end));
+                res |= ChunkRanges::from(ChunkNum(start)..ChunkNum(end));
             }
             res
         })
     }
 
-    fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
+    fn range_spec_seq_roundtrip_impl(ranges: &[ChunkRanges]) -> Vec<ChunkRanges> {
         let spec = RangeSpecSeq::from_ranges(ranges.iter().cloned());
         spec.iter()
             .map(|x| x.to_chunk_ranges())
@@ -384,9 +375,7 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    fn range_spec_seq_bytes_roundtrip_impl(
-        ranges: &[RangeSet2<ChunkNum>],
-    ) -> Vec<RangeSet2<ChunkNum>> {
+    fn range_spec_seq_bytes_roundtrip_impl(ranges: &[ChunkRanges]) -> Vec<ChunkRanges> {
         let spec = RangeSpecSeq::from_ranges(ranges.iter().cloned());
         let bytes = postcard::to_allocvec(&spec).unwrap();
         let spec2: RangeSpecSeq = postcard::from_bytes(&bytes).unwrap();
@@ -397,9 +386,9 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    fn mk_case(case: Vec<Range<u64>>) -> Vec<RangeSet2<ChunkNum>> {
+    fn mk_case(case: Vec<Range<u64>>) -> Vec<ChunkRanges> {
         case.iter()
-            .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
+            .map(|x| ChunkRanges::from(ChunkNum(x.start)..ChunkNum(x.end)))
             .collect::<Vec<_>>()
     }
 
@@ -416,21 +405,21 @@ mod tests {
                 ",
             ),
             (
-                RangeSpec::new(RangeSet2::from(ChunkNum(64)..)),
+                RangeSpec::new(ChunkRanges::from(ChunkNum(64)..)),
                 r"
                     01 # length prefix - 1 element
                     40 # span width - 64. everything starting from 64 is included
                 ",
             ),
             (
-                RangeSpec::new(RangeSet2::from(ChunkNum(10000)..)),
+                RangeSpec::new(ChunkRanges::from(ChunkNum(10000)..)),
                 r"
                     01 # length prefix - 1 element
                     904E # span width - 10000, 904E in postcard varint encoding. everything starting from 10000 is included
                 ",
             ),
             (
-                RangeSpec::new(RangeSet2::from(..ChunkNum(64))),
+                RangeSpec::new(ChunkRanges::from(..ChunkNum(64))),
                 r"
                     02 # length prefix - 2 elements
                     00 # span width - 0. everything stating from 0 is included
@@ -439,8 +428,8 @@ mod tests {
             ),
             (
                 RangeSpec::new(
-                    &RangeSet2::from(ChunkNum(1)..ChunkNum(3))
-                        | &RangeSet2::from(ChunkNum(9)..ChunkNum(13)),
+                    &ChunkRanges::from(ChunkNum(1)..ChunkNum(3))
+                        | &ChunkRanges::from(ChunkNum(9)..ChunkNum(13)),
                 ),
                 r"
                     04 # length prefix - 4 elements
@@ -472,8 +461,8 @@ mod tests {
             ),
             (
                 RangeSpecSeq::from_ranges([
-                    RangeSet2::from(ChunkNum(1)..ChunkNum(3)),
-                    RangeSet2::from(ChunkNum(7)..ChunkNum(13)),
+                    ChunkRanges::from(ChunkNum(1)..ChunkNum(3)),
+                    ChunkRanges::from(ChunkNum(7)..ChunkNum(13)),
                 ]),
                 r"
                     03 # 3 tuples in total
@@ -490,11 +479,11 @@ mod tests {
             ),
             (
                 RangeSpecSeq::from_ranges_infinite([
-                    RangeSet2::empty(),
-                    RangeSet2::empty(),
-                    RangeSet2::empty(),
-                    RangeSet2::from(ChunkNum(7)..),
-                    RangeSet2::all(),
+                    ChunkRanges::empty(),
+                    ChunkRanges::empty(),
+                    ChunkRanges::empty(),
+                    ChunkRanges::from(ChunkNum(7)..),
+                    ChunkRanges::all(),
                 ]),
                 r"
                     02 # 2 tuples in total
@@ -503,7 +492,7 @@ mod tests {
                     01 07 # range 7..
                     # second tuple
                     01 # span 1 until next (1 element is 7..)
-                    01 00 # RangeSet2::all() forever from now
+                    01 00 # ChunkRanges::all() forever from now
                 ",
             ),
         ];
@@ -513,7 +502,7 @@ mod tests {
         }
     }
 
-    /// Test that the roundtrip from [`Vec<RangeSet2>`] via [`RangeSpec`] to [`RangeSpecSeq`]  and back works.
+    /// Test that the roundtrip from [`Vec<ChunkRanges>`] via [`RangeSpec`] to [`RangeSpecSeq`]  and back works.
     #[test]
     fn range_spec_seq_roundtrip_cases() {
         for case in [
@@ -528,7 +517,7 @@ mod tests {
         }
     }
 
-    /// Test that the creation of a [`RangeSpecSeq`] from a sequence of [`RangeSet2`]s canonicalizes the result.
+    /// Test that the creation of a [`RangeSpecSeq`] from a sequence of [`ChunkRanges`]s canonicalizes the result.
     #[test]
     fn range_spec_seq_canonical() {
         for (case, expected_count) in [

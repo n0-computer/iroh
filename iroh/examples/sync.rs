@@ -25,12 +25,11 @@ use iroh::{
     downloader::Downloader,
     sync_engine::{LiveEvent, SyncEngine, SYNC_ALPN},
 };
+use iroh_bytes::util::runtime;
 use iroh_bytes::{
-    baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
-    util::progress::IgnoreProgressSender,
-    util::BlobFormat,
+    store::{ImportMode, Map, MapEntry, Store as BaoStore},
+    util::{progress::IgnoreProgressSender, BlobFormat},
 };
-use iroh_bytes::{collection::LinkSeqCollectionParser, util::runtime};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
@@ -228,13 +227,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // create a bao store for the iroh-bytes blobs
     let blob_path = storage_path.join("blobs");
     std::fs::create_dir_all(&blob_path)?;
-    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
-
-    let collection_parser = LinkSeqCollectionParser;
+    let db = iroh_bytes::store::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
     // create the live syncer
-    let downloader =
-        Downloader::new(db.clone(), collection_parser, endpoint.clone(), rt.clone()).await;
+    let downloader = Downloader::new(db.clone(), endpoint.clone(), rt.clone()).await;
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
@@ -351,7 +347,7 @@ struct ReplState {
     store: store::fs::Store,
     author: Author,
     doc: Doc,
-    db: iroh::baomap::flat::Store,
+    db: iroh_bytes::store::flat::Store,
     ticket: Ticket,
     log_filter: LogLevelReload,
     current_watch: Arc<tokio::sync::Mutex<Option<String>>>,
@@ -363,7 +359,7 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let tag = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                let tag = self.db.import_bytes(value.into(), BlobFormat::Raw).await?;
                 self.doc
                     .insert(key, &self.author, *tag.hash(), len as u64)?;
             }
@@ -460,7 +456,7 @@ impl ReplState {
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
                                     let tag =
-                                        db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                                        db.import_bytes(value.into(), BlobFormat::Raw).await?;
                                     doc.insert(key, &author, *tag.hash(), len as u64)?;
                                 }
                                 Ok(count)
@@ -520,7 +516,7 @@ impl ReplState {
                     .import_file(
                         file_path.clone(),
                         ImportMode::Copy,
-                        BlobFormat::RAW,
+                        BlobFormat::Raw,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
@@ -556,7 +552,7 @@ impl ReplState {
                             .import_file(
                                 file.path().into(),
                                 ImportMode::Copy,
-                                BlobFormat::RAW,
+                                BlobFormat::Raw,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;
@@ -998,29 +994,28 @@ async fn copy(
 mod iroh_bytes_handlers {
     use std::sync::Arc;
 
-    use bytes::Bytes;
     use futures::{future::BoxFuture, FutureExt};
     use iroh_bytes::{
-        collection::LinkSeqCollectionParser,
-        protocol::{GetRequest, RequestToken},
-        provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
+        protocol::RequestToken,
+        provider::{EventSender, RequestAuthorizationHandler},
     };
 
     #[derive(Debug, Clone)]
     pub struct IrohBytesHandlers {
-        db: iroh::baomap::flat::Store,
+        db: iroh_bytes::store::flat::Store,
         rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
-        get_handler: Arc<NoopCustomGetHandler>,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
-        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: iroh::baomap::flat::Store) -> Self {
+        pub fn new(
+            rt: iroh_bytes::util::runtime::Handle,
+            db: iroh_bytes::store::flat::Store,
+        ) -> Self {
             Self {
                 db,
                 rt,
                 event_sender: NoopEventSender,
-                get_handler: Arc::new(NoopCustomGetHandler),
                 auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             }
         }
@@ -1029,8 +1024,6 @@ mod iroh_bytes_handlers {
                 conn,
                 self.db.clone(),
                 self.event_sender.clone(),
-                LinkSeqCollectionParser,
-                self.get_handler.clone(),
                 self.auth_handler.clone(),
                 self.rt.clone(),
             )
@@ -1044,17 +1037,6 @@ mod iroh_bytes_handlers {
     impl EventSender for NoopEventSender {
         fn send(&self, _event: iroh_bytes::provider::Event) -> BoxFuture<()> {
             async {}.boxed()
-        }
-    }
-    #[derive(Debug)]
-    struct NoopCustomGetHandler;
-    impl CustomGetHandler for NoopCustomGetHandler {
-        fn handle(
-            &self,
-            _token: Option<RequestToken>,
-            _request: Bytes,
-        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
         }
     }
     #[derive(Debug)]
