@@ -557,7 +557,7 @@ impl Client {
             ));
         }
 
-        warn!("tls handshake done: {:?}", start.elapsed());
+        trace!("tls handshake done: {:?}", start.elapsed());
         let start = Instant::now();
 
         debug!("starting upgrade");
@@ -569,7 +569,7 @@ impl Client {
             }
         };
 
-        warn!("derp upgrade done: {:?}", start.elapsed());
+        trace!("derp upgrade done: {:?}", start.elapsed());
         let start = Instant::now();
 
         debug!("connection upgraded");
@@ -586,7 +586,7 @@ impl Client {
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        warn!("derp handshake: {:?}", start.elapsed());
+        trace!("derp handshake: {:?}", start.elapsed());
         let start = Instant::now();
         if *self.inner.is_preferred.lock().await && derp_client.note_preferred(true).await.is_err()
         {
@@ -594,7 +594,7 @@ impl Client {
             return Err(ClientError::Send);
         }
 
-        warn!("connect_0 done: {:?}", start.elapsed());
+        trace!("connect_0 done: {:?}", start.elapsed());
         Ok(derp_client)
     }
 
@@ -676,7 +676,7 @@ impl Client {
             match res {
                 Ok((conn, node)) => {
                     // return on the first successfull one
-                    warn!("dialed region in {:?}", start.elapsed());
+                    trace!("dialed region in {:?}", start.elapsed());
                     return Ok((conn, node));
                 }
                 Err(e) => {
