@@ -1145,12 +1145,13 @@ impl PeerMap {
             .map(|ep| ep.quic_mapped_addr)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_send_addrs_for_quic_mapped_addr(
         &self,
         addr: &QuicMappedAddr,
     ) -> Option<(PublicKey, Option<SocketAddr>, Option<u16>, Vec<PingAction>)> {
         let mut inner = self.inner.lock();
-        let ep = inner.endpoint_for_quic_mapped_addr_mut(&addr)?;
+        let ep = inner.endpoint_for_quic_mapped_addr_mut(addr)?;
         let public_key = *ep.public_key();
         let (udp_addr, derp_region, msgs) = ep.get_send_addrs();
         Some((public_key, udp_addr, derp_region, msgs))

@@ -478,7 +478,7 @@ impl Inner {
 
         let mut num_quic_msgs = 0;
 
-        for (meta, buf) in metas.into_iter().zip(bufs.iter_mut()).take(msgs) {
+        for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             let mut start = 0;
             let mut is_quic = true;
             let count = meta.len / meta.stride;
@@ -491,15 +491,15 @@ impl Inner {
                 }
                 let packet = &buf[start..end];
                 let mut packet_is_quic = true;
-                if stun::is(&packet) {
+                if stun::is(packet) {
                     trace!("UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
                     self.net_checker.receive_stun_packet(packet2, meta.addr);
                     packet_is_quic = false;
-                } else if let Some((sender, sealed_box)) = disco::source_and_box(&packet) {
+                } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
                     trace!("UDP recv: disco packet: {:?}", meta);
-                    self.handle_disco_message(sender, &sealed_box, SendAddr::Udp(meta.addr), None);
+                    self.handle_disco_message(sender, sealed_box, SendAddr::Udp(meta.addr), None);
                     packet_is_quic = false;
                 }
 
@@ -858,7 +858,7 @@ impl Inner {
         }
 
         while let Some(msg) = msgs.pop() {
-            if let Poll::Pending = self.poll_handle_ping_action(cx, &msg)? {
+            if self.poll_handle_ping_action(cx, &msg)?.is_pending() {
                 msgs.push(msg);
                 return Poll::Pending;
             }
