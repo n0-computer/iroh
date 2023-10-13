@@ -675,20 +675,7 @@ async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
             })
             .build(secret_key)?;
 
-        let c = client.clone();
-        let t = tokio::task::spawn(async move {
-            loop {
-                match c.recv_detail().await {
-                    Ok(msg) => {
-                        tracing::debug!("derp: {:?}", msg);
-                    }
-                    Err(err) => {
-                        tracing::warn!("derp: {:?}", err);
-                    }
-                }
-            }
-        });
-        clients.insert(region.region_id, (client, t));
+        clients.insert(region.region_id, client);
     }
 
     let mut success = Vec::new();
@@ -706,42 +693,58 @@ async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
                 hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
             };
 
-            let (client, _) = clients.get(&region.region_id).as_ref().unwrap();
-            let client = client.clone();
+            let client = clients.get(&region.region_id).cloned().unwrap();
 
             let start = std::time::Instant::now();
+            assert!(!client.is_connected().await);
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
+                    tracing::warn!("connect timeout");
                     region_details.error = Some(e.to_string());
                 }
                 Ok(Err(e)) => {
+                    tracing::warn!("connect error");
                     region_details.error = Some(e.to_string());
                 }
                 Ok(_) => {
+                    assert!(client.is_connected().await);
                     region_details.connect = Some(start.elapsed());
+
+                    let c = client.clone();
+                    let t = tokio::task::spawn(async move {
+                        loop {
+                            match c.recv_detail().await {
+                                Ok(msg) => {
+                                    tracing::debug!("derp: {:?}", msg);
+                                }
+                                Err(err) => {
+                                    tracing::warn!("derp: {:?}", err);
+                                }
+                            }
+                        }
+                    });
+
                     match client.ping().await {
                         Ok(latency) => {
                             region_details.latency = Some(latency);
                         }
                         Err(e) => {
+                            tracing::warn!("ping error: {:?}", e);
                             region_details.error = Some(e.to_string());
                         }
                     }
+                    t.abort();
                 }
             }
             // disconnect, to be able to measure reconnects
             client.close_for_reconnect().await;
+            assert!(!client.is_connected().await);
             if region_details.error.is_none() {
                 success.push(region_details);
             } else {
                 fail.push(region_details);
             }
         }
-    }
-
-    // cleanup recv tasks
-    for (_, t) in clients.into_values() {
-        t.abort();
     }
 
     // success.sort_by_key(|d| d.latency);

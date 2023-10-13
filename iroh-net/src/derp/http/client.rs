@@ -595,8 +595,6 @@ impl Client {
         }
 
         warn!("connect_0 done: {:?}", start.elapsed());
-
-        debug!("built");
         Ok(derp_client)
     }
 
@@ -934,6 +932,7 @@ impl Client {
     /// Close the underlying derp connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
     pub async fn close_for_reconnect(&self) {
+        debug!("close for reconnect");
         let mut client = self.inner.derp_client.lock().await;
         if let Some(client) = client.take() {
             client.close().await
@@ -944,6 +943,14 @@ impl Client {
     pub async fn close(self) {
         self.inner.is_closed.store(true, Ordering::Relaxed);
         self.close_for_reconnect().await;
+    }
+
+    /// Returns `true` if the underyling derp connection is established.
+    pub async fn is_connected(&self) -> bool {
+        if self.inner.is_closed.load(Ordering::Relaxed) {
+            return false;
+        }
+        self.inner.derp_client.lock().await.is_some()
     }
 
     /// Send a request to subscribe as a "watcher" on the server.
