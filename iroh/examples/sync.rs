@@ -27,9 +27,8 @@ use iroh::{
 };
 use iroh_bytes::util::runtime;
 use iroh_bytes::{
-    baomap::{ImportMode, Map, MapEntry, Store as BaoStore},
-    util::progress::IgnoreProgressSender,
-    util::BlobFormat,
+    store::{ImportMode, Map, MapEntry, Store as BaoStore},
+    util::{progress::IgnoreProgressSender, BlobFormat},
 };
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
@@ -228,7 +227,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // create a bao store for the iroh-bytes blobs
     let blob_path = storage_path.join("blobs");
     std::fs::create_dir_all(&blob_path)?;
-    let db = iroh::baomap::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
+    let db = iroh_bytes::store::flat::Store::load(&blob_path, &blob_path, &blob_path, &rt).await?;
 
     // create the live syncer
     let downloader = Downloader::new(db.clone(), endpoint.clone(), rt.clone()).await;
@@ -348,7 +347,7 @@ struct ReplState {
     store: store::fs::Store,
     author: Author,
     doc: Doc,
-    db: iroh::baomap::flat::Store,
+    db: iroh_bytes::store::flat::Store,
     ticket: Ticket,
     log_filter: LogLevelReload,
     current_watch: Arc<tokio::sync::Mutex<Option<String>>>,
@@ -360,7 +359,7 @@ impl ReplState {
             Cmd::Set { key, value } => {
                 let value = value.into_bytes();
                 let len = value.len();
-                let tag = self.db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                let tag = self.db.import_bytes(value.into(), BlobFormat::Raw).await?;
                 self.doc
                     .insert(key, &self.author, *tag.hash(), len as u64)?;
             }
@@ -457,7 +456,7 @@ impl ReplState {
                                     let len = value.len();
                                     let key = format!("{}/{}/{}", prefix, t, i);
                                     let tag =
-                                        db.import_bytes(value.into(), BlobFormat::RAW).await?;
+                                        db.import_bytes(value.into(), BlobFormat::Raw).await?;
                                     doc.insert(key, &author, *tag.hash(), len as u64)?;
                                 }
                                 Ok(count)
@@ -517,7 +516,7 @@ impl ReplState {
                     .import_file(
                         file_path.clone(),
                         ImportMode::Copy,
-                        BlobFormat::RAW,
+                        BlobFormat::Raw,
                         IgnoreProgressSender::default(),
                     )
                     .await?;
@@ -553,7 +552,7 @@ impl ReplState {
                             .import_file(
                                 file.path().into(),
                                 ImportMode::Copy,
-                                BlobFormat::RAW,
+                                BlobFormat::Raw,
                                 IgnoreProgressSender::default(),
                             )
                             .await?;
@@ -1003,13 +1002,16 @@ mod iroh_bytes_handlers {
 
     #[derive(Debug, Clone)]
     pub struct IrohBytesHandlers {
-        db: iroh::baomap::flat::Store,
+        db: iroh_bytes::store::flat::Store,
         rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
-        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: iroh::baomap::flat::Store) -> Self {
+        pub fn new(
+            rt: iroh_bytes::util::runtime::Handle,
+            db: iroh_bytes::store::flat::Store,
+        ) -> Self {
             Self {
                 db,
                 rt,

@@ -18,19 +18,20 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_bytes::baomap::{
+use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::provider::GetProgress;
+use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::provider::GetProgress;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::{BlobFormat, HashAndFormat, RpcResult, SetTagOption};
+use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
+    BlobFormat, HashAndFormat, TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
@@ -64,7 +65,7 @@ use crate::rpc_protocol::{
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService,
+    ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 
@@ -103,8 +104,12 @@ impl Default for GcPolicy {
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a blob store. Various store implementations are available
-/// in [`crate::baomap`]. Everything else is optional.
+/// You must supply a blob store and a document store.
+///
+/// Blob store implementations are available in [`iroh_bytes::store`].
+/// Document store implementations are available in [`iroh_sync::store`].
+///
+/// Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
@@ -520,7 +525,7 @@ where
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
             callbacks
-                .send(Event::Db(iroh_bytes::baomap::Event::GcStarted))
+                .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
             db.clear_live();
             let doc_hashes = match ds.content_hashes() {
@@ -579,7 +584,7 @@ where
                 }
             }
             callbacks
-                .send(Event::Db(iroh_bytes::baomap::Event::GcCompleted))
+                .send(Event::Db(iroh_bytes::store::Event::GcCompleted))
                 .await;
         }
     }
@@ -682,7 +687,7 @@ pub enum Event {
     /// Events from the iroh-bytes transfer protocol.
     ByteProvide(iroh_bytes::provider::Event),
     /// Events from database
-    Db(iroh_bytes::baomap::Event),
+    Db(iroh_bytes::store::Event),
 }
 
 impl<D: ReadableStore, S: DocStore> Node<D, S> {
@@ -742,7 +747,6 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    // TODO: We should not assume `recursive: true` as we do currently. Take as argument instead.
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
@@ -866,7 +870,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
         let tags = db.tags();
-        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat(hash, format))| {
+        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat { hash, format })| {
             let db = db.clone();
             let local = local.clone();
             async move {
@@ -911,7 +915,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             self.inner
                 .db
                 .tags()
-                .map(|(name, HashAndFormat(hash, format))| {
+                .map(|(name, HashAndFormat { hash, format })| {
                     tracing::info!("{:?} {} {:?}", name, hash, format);
                     ListTagsResponse { name, hash, format }
                 }),
@@ -1014,7 +1018,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         debug!("share: {:?}", msg);
         let format = msg.format;
         let db = self.inner.db.clone();
-        let haf = HashAndFormat(hash, format);
+        let haf = HashAndFormat { hash, format };
         let temp_pin = db.temp_tag(haf);
         let conn = self
             .inner
@@ -1027,7 +1031,16 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let db = self.inner.db.clone();
         let db2 = db.clone();
         let download = local.spawn_pinned(move || async move {
-            crate::get::get(&db2, conn, hash, msg.format.is_hash_seq(), progress2).await
+            crate::get::get(
+                &db2,
+                conn,
+                &HashAndFormat {
+                    hash: msg.hash,
+                    format: msg.format,
+                },
+                progress2,
+            )
+            .await
         });
 
         let this = self.clone();
@@ -1085,7 +1098,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             rpc_protocol::WrapOption,
         };
         use futures::TryStreamExt;
-        use iroh_bytes::baomap::{ImportMode, TempTag};
+        use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);
@@ -1140,7 +1153,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
                             .import_file(
                                 source.path().to_owned(),
                                 import_mode,
-                                BlobFormat::RAW,
+                                BlobFormat::Raw,
                                 import_progress,
                             )
                             .await?;
@@ -1165,13 +1178,13 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
             let (tag, _size) = self
                 .inner
                 .db
-                .import_file(root, import_mode, BlobFormat::RAW, import_progress)
+                .import_file(root, import_mode, BlobFormat::Raw, import_progress)
                 .await?;
             tag
         };
 
         let hash_and_format = temp_tag.inner();
-        let HashAndFormat(hash, format) = *hash_and_format;
+        let HashAndFormat { hash, format } = *hash_and_format;
         let tag = match tag {
             SetTagOption::Named(tag) => {
                 self.inner
@@ -1296,10 +1309,10 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         let (temp_tag, _len) = self
             .inner
             .db
-            .import_stream(stream, BlobFormat::RAW, import_progress)
+            .import_stream(stream, BlobFormat::Raw, import_progress)
             .await?;
         let hash_and_format = *temp_tag.inner();
-        let HashAndFormat(hash, format) = hash_and_format;
+        let HashAndFormat { hash, format } = hash_and_format;
         let tag = match msg.tag {
             SetTagOption::Named(tag) => {
                 self.inner
@@ -1511,6 +1524,18 @@ fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderServi
                 })
                 .await
             }
+            DocDel(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_del(req).await
+                })
+                .await
+            }
+            DocSetHash(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_set_hash(req).await
+                })
+                .await
+            }
             DocGet(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.doc_get_many(req)
@@ -1644,7 +1669,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
+        let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
@@ -1654,18 +1679,16 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash, BlobFormat::RAW).await.unwrap();
+        let ticket = node.ticket(hash, BlobFormat::Raw).await.unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
 
-    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
-        use iroh_bytes::util::SetTagOption;
         use std::io::Cursor;
         let rt = runtime::Handle::from_current(1)?;
-        let db = crate::baomap::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1685,13 +1708,10 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
-        use iroh_bytes::util::SetTagOption;
-
         let rt = runtime::Handle::from_current(1)?;
-        let db = crate::baomap::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())

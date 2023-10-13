@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use futures::{FutureExt, Stream};
 use iroh_bytes::{
-    baomap::Store as BaoStore,
+    store::Store as BaoStore,
     util::{BlobFormat, RpcError},
 };
 use iroh_sync::{store::Store, sync::Namespace};
@@ -13,12 +13,13 @@ use rand::rngs::OsRng;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDropRequest, DocDropResponse, DocGetManyRequest,
-        DocGetManyResponse, DocGetOneRequest, DocGetOneResponse, DocImportRequest,
-        DocImportResponse, DocInfoRequest, DocInfoResponse, DocLeaveRequest, DocLeaveResponse,
-        DocListRequest, DocListResponse, DocSetRequest, DocSetResponse, DocShareRequest,
-        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest,
-        DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
+        DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
+        DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
+        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
+        DocTicket, RpcResult, ShareMode,
     },
     sync_engine::{KeepCallback, LiveStatus, SyncEngine},
 };
@@ -187,7 +188,7 @@ impl<S: Store> SyncEngine<S> {
         let author = self.get_author(&author_id)?;
         let len = value.len();
         let tag = bao_store
-            .import_bytes(value.into(), BlobFormat::RAW)
+            .import_bytes(value.into(), BlobFormat::Raw)
             .await?;
         replica
             .insert(&key, &author, *tag.hash(), len as u64)
@@ -197,6 +198,36 @@ impl<S: Store> SyncEngine<S> {
             .get_one(replica.namespace(), author.id(), &key)?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
+    }
+
+    pub async fn doc_del(&self, req: DocDelRequest) -> RpcResult<DocDelResponse> {
+        let DocDelRequest {
+            doc_id,
+            author_id,
+            prefix,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        let removed = replica
+            .delete_prefix(prefix, &author)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocDelResponse { removed })
+    }
+
+    pub async fn doc_set_hash(&self, req: DocSetHashRequest) -> RpcResult<DocSetHashResponse> {
+        let DocSetHashRequest {
+            doc_id,
+            author_id,
+            key,
+            hash,
+            size,
+        } = req;
+        let replica = self.get_replica(&doc_id)?;
+        let author = self.get_author(&author_id)?;
+        replica
+            .insert(key, &author, hash, size)
+            .map_err(anyhow::Error::from)?;
+        Ok(DocSetHashResponse {})
     }
 
     pub fn doc_get_many(

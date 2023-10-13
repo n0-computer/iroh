@@ -1,4 +1,3 @@
-#![cfg(feature = "mem-db")]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -21,12 +20,10 @@ use iroh_net::{
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_bytes::{
-    baomap::{PartialMap, Store},
     get::{
         fsm::ConnectedNext,
         fsm::{self, DecodeError},
@@ -34,6 +31,7 @@ use iroh_bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq, RequestToken},
     provider::{self, RequestAuthorizationHandler},
+    store::{PartialMap, Store},
     util::{runtime, BlobFormat},
     Hash,
 };
@@ -149,13 +147,12 @@ fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Option
     }
 }
 
-#[cfg(feature = "mem-db")]
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
     let addr = "127.0.0.1:0".parse().unwrap();
 
-    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let mut db = iroh_bytes::store::readonly_mem::Store::default();
     let expect_hash = db.insert(content.as_slice());
     let expect_name = "hello_world".to_string();
     let collection = Collection::new(
@@ -227,7 +224,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, lookup) = iroh::baomap::readonly_mem::Store::new(file_opts.clone());
+    let (mut mdb, lookup) = iroh_bytes::store::readonly_mem::Store::new(file_opts.clone());
     let mut blobs = Vec::new();
     let mut total_blobs_size = 0u64;
 
@@ -346,13 +343,12 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
 }
 
-#[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     let _guard = iroh_test::logging::setup();
-    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let mut db = iroh_bytes::store::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::new(
         vec![Blob {
@@ -413,8 +409,8 @@ async fn test_server_close() {
 /// returns the database and the root hash of the collection
 fn create_test_db(
     entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-) -> (iroh::baomap::readonly_mem::Store, Hash) {
-    let (mut db, hashes) = iroh::baomap::readonly_mem::Store::new(entries);
+) -> (iroh_bytes::store::readonly_mem::Store, Hash) {
+    let (mut db, hashes) = iroh_bytes::store::readonly_mem::Store::new(entries);
     let collection = Collection::new(
         hashes
             .into_iter()
@@ -463,7 +459,7 @@ async fn test_not_found() {
     let _ = iroh_test::logging::setup();
     let rt = test_runtime();
 
-    let db = iroh::baomap::readonly_mem::Store::default();
+    let db = iroh_bytes::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
     let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
     let node = match test_node(db, addr).runtime(&rt).spawn().await {
@@ -505,7 +501,7 @@ async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
     let rt = test_runtime();
 
-    let db = iroh::baomap::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new(rt.clone());
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
@@ -557,7 +553,7 @@ async fn test_run_ticket() {
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let no_token_ticket = node.ticket(hash, BlobFormat::HASHSEQ).await.unwrap();
+    let no_token_ticket = node.ticket(hash, BlobFormat::HashSeq).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = no_token_ticket.as_get_options(
             SecretKey::generate(),
@@ -573,7 +569,7 @@ async fn test_run_ticket() {
     .expect("getting without token failed in an unexpected way");
 
     let ticket = node
-        .ticket(hash, BlobFormat::HASHSEQ)
+        .ticket(hash, BlobFormat::HashSeq)
         .await
         .unwrap()
         .with_token(token);
@@ -670,7 +666,7 @@ async fn test_size_request_blob() {
     let rt = test_runtime();
     let expected = make_test_data(1024 * 64 + 1234);
     let last_chunk = last_chunk(&expected);
-    let (db, hashes) = iroh::baomap::readonly_mem::Store::new([("test", &expected)]);
+    let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
@@ -710,14 +706,14 @@ async fn test_collection_stat() {
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         // first 1024 bytes
-        let header = RangeSet2::from(..ChunkNum(1));
+        let header = ChunkRanges::from(..ChunkNum(1));
         // last chunk, whatever it is, to verify the size
-        let end = RangeSet2::from(ChunkNum(u64::MAX)..);
+        let end = ChunkRanges::from(ChunkNum(u64::MAX)..);
         // combine them
         let ranges = &header | &end;
         let request = GetRequest::new(
             hash,
-            RangeSpecSeq::from_ranges_infinite([RangeSet2::all(), ranges]),
+            RangeSpecSeq::from_ranges_infinite([ChunkRanges::all(), ranges]),
         );
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;

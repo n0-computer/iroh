@@ -6,7 +6,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example hello-world
 use iroh::bytes::util::runtime;
-use iroh_bytes::util::BlobFormat;
+use iroh_bytes::BlobFormat;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -22,7 +22,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new, empty in memory database
-    let mut db = iroh::baomap::readonly_mem::Store::default();
+    let mut db = iroh_bytes::store::readonly_mem::Store::default();
     // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .spawn()
         .await?;
     // create a ticket
-    let ticket = node.ticket(hash, BlobFormat::RAW).await?;
+    let ticket = node.ticket(hash, BlobFormat::Raw).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.node_addr().peer_id);

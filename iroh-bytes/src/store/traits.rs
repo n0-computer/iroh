@@ -1,5 +1,5 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, io, path::PathBuf};
 
 use crate::{
     hashseq::parse_hash_seq,
@@ -7,14 +7,13 @@ use crate::{
         progress::{IdGenerator, ProgressSender},
         BlobFormat, HashAndFormat, RpcError, Tag,
     },
-    Hash,
+    Hash, TempTag,
 };
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkRanges};
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_io::AsyncSliceReader;
-use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
 
@@ -56,7 +55,7 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// It can also only ever be a best effort, since the underlying data may
     /// change at any time. E.g. somebody could flip a bit in the file, or download
     /// more chunks.
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>>;
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>>;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     /// A future that resolves to a reader that can be used to read the data
@@ -284,85 +283,6 @@ pub trait Store: ReadableStore + PartialMap {
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>>;
 }
 
-/// A trait for things that can track liveness of blobs and collections.
-///
-/// This trait works together with [TempTag] to keep track of the liveness of a
-/// blob or collection.
-///
-/// It is important to include the format in the liveness tracking, since
-/// protecting a collection means protecting the blob and all its children,
-/// whereas protecting a raw blob only protects the blob itself.
-pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
-    /// Called on clone
-    fn on_clone(&self, inner: &HashAndFormat);
-    /// Called on drop
-    fn on_drop(&self, inner: &HashAndFormat);
-}
-
-/// A hash and format pair that is protected from garbage collection.
-///
-/// If format is raw, this will protect just the blob
-/// If format is collection, this will protect the collection and all blobs in it
-#[derive(Debug)]
-pub struct TempTag {
-    /// The hash and format we are pinning
-    inner: HashAndFormat,
-    /// liveness tracker
-    liveness: Option<Arc<dyn LivenessTracker>>,
-}
-
-impl TempTag {
-    /// Create a new temp tag for the given hash and format
-    ///
-    /// This should only be used by store implementations.
-    pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
-        if let Some(liveness) = liveness.as_ref() {
-            liveness.on_clone(&inner);
-        }
-        Self { inner, liveness }
-    }
-
-    /// The hash of the pinned item
-    pub fn inner(&self) -> &HashAndFormat {
-        &self.inner
-    }
-
-    /// The hash of the pinned item
-    pub fn hash(&self) -> &Hash {
-        &self.inner.0
-    }
-
-    /// The format of the pinned item
-    pub fn format(&self) -> BlobFormat {
-        self.inner.1
-    }
-
-    /// Keep the item alive until the end of the process
-    pub fn leak(mut self) {
-        // set the liveness tracker to None, so that the refcount is not decreased
-        // during drop. This means that the refcount will never reach 0 and the
-        // item will not be gced until the end of the process.
-        self.liveness = None;
-    }
-}
-
-impl Clone for TempTag {
-    fn clone(&self) -> Self {
-        if let Some(liveness) = self.liveness.as_ref() {
-            liveness.on_clone(&self.inner);
-        }
-        Self::new(self.inner, self.liveness.clone())
-    }
-}
-
-impl Drop for TempTag {
-    fn drop(&mut self) {
-        if let Some(liveness) = self.liveness.as_ref() {
-            liveness.on_drop(&self.inner);
-        }
-    }
-}
-
 /// Implementation of the gc method.
 async fn gc_mark_task<'a>(
     store: &'a impl Store,
@@ -396,43 +316,38 @@ async fn gc_mark_task<'a>(
         info!("adding extra root {:?}", haf);
         roots.insert(haf);
     }
-    let mut current = roots.into_iter().collect::<Vec<_>>();
     let mut live: BTreeSet<Hash> = BTreeSet::new();
-    // process all current. Since we don't have nested collections, this will
-    // terminate after 1 iteration.
-    while !current.is_empty() {
-        for HashAndFormat(hash, format) in std::mem::take(&mut current) {
-            // we need to do this for all formats except raw
-            if live.insert(hash) && !format.is_raw() {
-                let Some(entry) = store.get(&hash) else {
-                    warn!("gc: {} not found", hash);
-                    continue;
+    for HashAndFormat { hash, format } in roots {
+        // we need to do this for all formats except raw
+        if live.insert(hash) && !format.is_raw() {
+            let Some(entry) = store.get(&hash) else {
+                warn!("gc: {} not found", hash);
+                continue;
+            };
+            if !entry.is_complete() {
+                warn!("gc: {} is partial", hash);
+                continue;
+            }
+            let Ok(reader) = entry.data_reader().await else {
+                warn!("gc: {} creating data reader failed", hash);
+                continue;
+            };
+            let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
+                warn!("gc: {} parse failed", hash);
+                continue;
+            };
+            info!("parsed collection {} {:?}", hash, count);
+            loop {
+                let item = match iter.next().await {
+                    Ok(Some(item)) => item,
+                    Ok(None) => break,
+                    Err(_err) => {
+                        warn!("gc: {} parse failed", hash);
+                        break;
+                    }
                 };
-                if !entry.is_complete() {
-                    warn!("gc: {} is partial", hash);
-                    continue;
-                }
-                let Ok(reader) = entry.data_reader().await else {
-                    warn!("gc: {} creating data reader failed", hash);
-                    continue;
-                };
-                let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
-                    warn!("gc: {} parse failed", hash);
-                    continue;
-                };
-                info!("parsed collection {} {:?}", hash, count);
-                loop {
-                    let item = match iter.next().await {
-                        Ok(Some(item)) => item,
-                        Ok(None) => break,
-                        Err(_err) => {
-                            warn!("gc: {} parse failed", hash);
-                            break;
-                        }
-                    };
-                    // if format != raw we would have to recurse here by adding this to current
-                    live.insert(item);
-                }
+                // if format != raw we would have to recurse here by adding this to current
+                live.insert(item);
             }
         }
     }

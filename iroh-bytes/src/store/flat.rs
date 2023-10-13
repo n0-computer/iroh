@@ -130,28 +130,27 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
+use super::{
+    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    PartialMapEntry, ReadableStore, ValidateProgress,
+};
+use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
+use crate::util::{BlobFormat, HashAndFormat, LivenessTracker, Tag};
+use crate::{Hash, TempTag, IROH_BLOCK_SIZE};
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
-use bao_tree::{blake3, ChunkNum};
+use bao_tree::{blake3, ChunkRanges};
 use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
-use iroh_bytes::baomap::range_collections::RangeSet2;
-use iroh_bytes::baomap::{
-    self, EntryStatus, ExportMode, ImportMode, ImportProgress, LivenessTracker, Map, MapEntry,
-    PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
-};
-use iroh_bytes::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use iroh_bytes::util::{BlobFormat, HashAndFormat, Tag};
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 
-use super::{flatten_to_io, new_uuid, temp_name};
+use super::{flatten_to_io, new_uuid, temp_name, TempCounterMap};
 
 #[derive(Debug, Default)]
 struct State {
@@ -166,7 +165,7 @@ struct State {
     // in memory tracking of live set
     live: BTreeSet<Hash>,
     // temp tags
-    temp: BTreeMap<HashAndFormat, u64>,
+    temp: TempCounterMap,
 }
 
 #[derive(Debug, Default)]
@@ -250,8 +249,8 @@ impl MapEntry<Store> for PartialEntry {
         self.size
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
@@ -450,8 +449,8 @@ impl MapEntry<Store> for Entry {
         }
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
@@ -648,8 +647,8 @@ impl ReadableStore for Store {
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
-        let items = inner.temp.keys().copied().collect::<Vec<_>>();
-        Box::new(items.into_iter())
+        let items = inner.temp.keys();
+        Box::new(items)
     }
 
     fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
@@ -686,7 +685,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         path: PathBuf,
@@ -763,8 +762,8 @@ impl baomap::Store for Store {
             .boxed()
     }
 
-    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
-        TempTag::new(inner, Some(self.0.clone()))
+    fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
+        TempTag::new(tag, Some(self.0.clone()))
     }
 
     fn clear_live(&self) {
@@ -779,9 +778,8 @@ impl baomap::Store for Store {
 
     fn is_live(&self, hash: &Hash) -> bool {
         let state = self.0.state.read().unwrap();
-        let res = state.live.contains(hash);
-        tracing::debug!("is_live: {:?} {}", hash, res);
-        res
+        // a blob is live if it is either in the live set, or it is temp tagged
+        state.live.contains(hash) || state.temp.contains(hash)
     }
 
     fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
@@ -801,19 +799,13 @@ impl LivenessTracker for Inner {
     fn on_clone(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tagging: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        // panic if we overflow an u64
-        *entry = entry.checked_add(1).unwrap();
+        state.temp.inc(inner);
     }
 
     fn on_drop(&self, inner: &HashAndFormat) {
         tracing::trace!("temp tag drop: {:?}", inner);
         let mut state = self.state.write().unwrap();
-        let entry = state.temp.entry(*inner).or_default();
-        *entry = entry.saturating_sub(1);
-        if *entry == 0 {
-            state.temp.remove(inner);
-        }
+        state.temp.dec(inner)
     }
 }
 
@@ -924,9 +916,9 @@ impl Store {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
         })?;
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-        use baomap::Store;
+        use super::Store;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = self.temp_tag(HashAndFormat(hash, format));
+        let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         let temp_outboard_path = if let Some(outboard) = outboard.as_ref() {
             let uuid = new_uuid();
@@ -1022,7 +1014,7 @@ impl Store {
     fn delete_sync(&self, hash: Hash) -> io::Result<()> {
         let mut data = None;
         let mut outboard = None;
-        let mut external = None;
+        let mut paths = None;
         let mut partial_data = None;
         let mut partial_outboard = None;
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
@@ -1035,7 +1027,7 @@ impl Store {
                 outboard = Some(self.owned_outboard_path(&hash));
             }
             if !entry.external.is_empty() {
-                external = Some(self.0.options.paths_path(hash));
+                paths = Some(self.0.options.paths_path(hash));
             }
         }
         if let Some(partial) = state.partial.remove(&hash) {
@@ -1048,16 +1040,19 @@ impl Store {
         state.data.remove(&hash);
         drop(state);
         if let Some(data) = data {
+            tracing::debug!("deleting data {}", data.display());
             if let Err(cause) = std::fs::remove_file(data) {
                 tracing::warn!("failed to delete data file: {}", cause);
             }
         }
-        if let Some(external) = external {
+        if let Some(external) = paths {
+            tracing::debug!("deleting paths file {}", external.display());
             if let Err(cause) = std::fs::remove_file(external) {
-                tracing::warn!("failed to delete partial outboard file: {}", cause);
+                tracing::warn!("failed to delete paths file: {}", cause);
             }
         }
         if let Some(outboard) = outboard {
+            tracing::debug!("deleting outboard {}", outboard.display());
             if let Err(cause) = std::fs::remove_file(outboard) {
                 tracing::warn!("failed to delete outboard file: {}", cause);
             }
@@ -1200,7 +1195,7 @@ impl Store {
         complete_path: PathBuf,
         partial_path: PathBuf,
         meta_path: PathBuf,
-        rt: iroh_bytes::util::runtime::Handle,
+        rt: crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         tracing::debug!(
             "loading database from {} {}",
@@ -1470,7 +1465,7 @@ impl Store {
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
         meta_path: impl AsRef<Path>,
-        rt: &iroh_bytes::util::runtime::Handle,
+        rt: &crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
@@ -1485,7 +1480,7 @@ impl Store {
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
         meta_path: impl AsRef<Path>,
-        rt: &iroh_bytes::util::runtime::Handle,
+        rt: &crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();

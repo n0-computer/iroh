@@ -8,29 +8,29 @@ use std::{
     sync::Arc,
 };
 
+use crate::{
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+        PartialMapEntry, ReadableStore, ValidateProgress,
+    },
+    util::{
+        progress::{IdGenerator, ProgressSender},
+        BlobFormat, HashAndFormat, Tag,
+    },
+    Hash, TempTag, IROH_BLOCK_SIZE,
+};
 use bao_tree::{
     blake3,
     io::{
         outboard::{PreOrderMemOutboard, PreOrderOutboard},
         sync::Outboard,
     },
-    ChunkNum,
+    ChunkRanges,
 };
 use bytes::{Bytes, BytesMut};
 use futures::{
     future::{self, BoxFuture},
     FutureExt, Stream,
-};
-use iroh_bytes::{
-    baomap::{
-        self, range_collections::RangeSet2, EntryStatus, ExportMode, ImportMode, ImportProgress,
-        Map, MapEntry, PartialMap, PartialMapEntry, ReadableStore, TempTag, ValidateProgress,
-    },
-    util::{
-        progress::{IdGenerator, ProgressSender},
-        BlobFormat, HashAndFormat, Tag,
-    },
-    Hash, IROH_BLOCK_SIZE,
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
@@ -178,8 +178,8 @@ impl MapEntry<Store> for Entry {
         self.data.len() as u64
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+        futures::future::ok(ChunkRanges::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
@@ -282,7 +282,7 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
@@ -320,7 +320,7 @@ impl PartialMapEntry<Store> for PartialEntry {
     }
 }
 
-impl baomap::Store for Store {
+impl super::Store for Store {
     fn import_file(
         &self,
         data: PathBuf,

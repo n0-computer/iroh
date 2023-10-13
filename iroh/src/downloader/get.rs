@@ -2,25 +2,24 @@
 
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
+use bao_tree::ChunkRanges;
 use futures::FutureExt;
-use iroh_bytes::baomap::range_collections::RangeSet2;
-use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::{
-    baomap::{MapEntry, PartialMapEntry, Store},
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
         Stats,
     },
+    hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    util::Hash,
-    IROH_BLOCK_SIZE,
+    store::{MapEntry, PartialMapEntry, Store},
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 use tracing::trace;
 
-use crate::get::{get_missing_ranges_blob, get_missing_ranges_collection, BlobInfo};
+use crate::get::{get_missing_ranges_blob, get_missing_ranges_hash_seq, BlobInfo};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
@@ -38,14 +37,9 @@ impl<S: Store> Getter for IoGetter<S> {
     fn get(&mut self, kind: DownloadKind, conn: Self::Connection) -> GetFut {
         let store = self.store.clone();
         let fut = async move {
-            let get = match kind {
-                DownloadKind::Blob { hash } => get(&store, conn, hash, false),
-                DownloadKind::Collection { hash } => get(&store, conn, hash, true),
-            };
-
-            let res = get.await;
+            let res = get(&store, conn, kind.hash_and_format()).await;
             match res {
-                Ok(_stats) => {
+                Ok((_stats, tt)) => {
                     #[cfg(feature = "metrics")]
                     {
                         let Stats {
@@ -58,7 +52,7 @@ impl<S: Store> Getter for IoGetter<S> {
                         inc_by!(Metrics, download_bytes_total, bytes_written);
                         inc_by!(Metrics, download_time_total, elapsed.as_millis() as u64);
                     }
-                    Ok(())
+                    Ok(tt)
                 }
                 Err(e) => {
                     // record metrics according to the error
@@ -221,18 +215,18 @@ impl From<std::io::Error> for FailureAction {
 pub async fn get<D: Store>(
     db: &D,
     conn: quinn::Connection,
-    hash: Hash,
-    recursive: bool,
-) -> Result<Stats, FailureAction> {
-    let res = if recursive {
-        get_collection(db, conn, &hash).await
-    } else {
-        get_blob(db, conn, &hash).await
+    hash_and_format: HashAndFormat,
+) -> Result<(Stats, TempTag), FailureAction> {
+    let tt = db.temp_tag(hash_and_format);
+    let HashAndFormat { hash, format } = hash_and_format;
+    let stats = match format {
+        BlobFormat::Raw => get_blob(db, conn, &hash).await,
+        BlobFormat::HashSeq => get_hash_seq(db, conn, &hash).await,
     };
-    if let Err(e) = res.as_ref() {
+    if let Err(e) = stats.as_ref() {
         tracing::error!("get failed: {e:?}");
     }
-    res
+    Ok((stats?, tt))
 }
 
 /// Get a blob that was requested completely.
@@ -250,7 +244,7 @@ pub async fn get_blob<D: Store>(
         let required_ranges = get_missing_ranges_blob::<D>(&entry)
             .await
             .ok()
-            .unwrap_or_else(RangeSet2::all);
+            .unwrap_or_else(ChunkRanges::all);
         let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
         // full request
         let request = get::fsm::start(conn, request);
@@ -382,7 +376,7 @@ async fn get_blob_inner_partial<D: Store>(
 }
 
 /// Get a collection
-pub async fn get_collection<D: Store>(
+pub async fn get_hash_seq<D: Store>(
     db: &D,
     conn: quinn::Connection,
     root_hash: &Hash,
@@ -405,12 +399,12 @@ pub async fn get_collection<D: Store>(
         })? {
             children.push(hash);
         }
-        let missing_info = get_missing_ranges_collection(db, &children).await?;
+        let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
         if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
             log!("nothing to do");
             return Ok(Stats::default());
         }
-        let missing_iter = std::iter::once(RangeSet2::empty())
+        let missing_iter = std::iter::once(ChunkRanges::empty())
             .chain(missing_info.iter().map(|x| x.missing_chunks()))
             .collect::<Vec<_>>();
         log!("requesting chunks {:?}", missing_iter);

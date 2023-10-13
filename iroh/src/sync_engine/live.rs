@@ -12,11 +12,7 @@ use futures::{
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt, TryFutureExt,
 };
-use iroh_bytes::{
-    baomap::{self, EntryStatus},
-    util::runtime::Handle,
-    Hash,
-};
+use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -181,7 +177,7 @@ impl<S: store::Store> LiveSync<S> {
     ///
     /// This spawn a background actor to handle gossip events and forward operations over broadcast
     /// messages.
-    pub fn spawn<B: baomap::Store>(
+    pub fn spawn<B: iroh_bytes::store::Store>(
         rt: Handle,
         endpoint: MagicEndpoint,
         replica_store: S,
@@ -310,7 +306,7 @@ impl<S: store::Store> LiveSync<S> {
 }
 
 // Currently peers might double-sync in both directions.
-struct Actor<S: store::Store, B: baomap::Store> {
+struct Actor<S: store::Store, B: iroh_bytes::store::Store> {
     endpoint: MagicEndpoint,
     gossip: Gossip,
     bao_store: B,
@@ -360,7 +356,7 @@ struct Actor<S: store::Store, B: baomap::Store> {
 #[derive(Debug, Clone, Copy)]
 pub struct RemovalToken(u64);
 
-impl<S: store::Store, B: baomap::Store> Actor<S, B> {
+impl<S: store::Store, B: iroh_bytes::store::Store> Actor<S, B> {
     pub fn new(
         endpoint: MagicEndpoint,
         gossip: Gossip,
@@ -866,7 +862,7 @@ impl<S: store::Store, B: baomap::Store> Actor<S, B> {
                             entry,
                             *msg.delivered_from.as_bytes(),
                             content_status,
-                        )?
+                        )?;
                     }
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content

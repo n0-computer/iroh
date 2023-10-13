@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
-use crate::baomap::*;
 use crate::hashseq::parse_hash_seq;
 use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
+use crate::store::*;
 use crate::util::{BlobFormat, RpcError, Tag};
 use crate::Hash;
 
@@ -532,7 +532,7 @@ impl<E: EventSender> ResponseWriter<E> {
         let other_duration = total_duration
             .saturating_sub(send_duration)
             .saturating_sub(read_duration);
-        let avg_send_size = total_sent_bytes / send.stats.count;
+        let avg_send_size = total_sent_bytes.checked_div(send.stats.count).unwrap_or(0);
         info!(
             "sent {} bytes in {}s",
             total_sent_bytes,

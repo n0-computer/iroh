@@ -8,7 +8,7 @@
 //!     $ cargo run -p collection
 use iroh::bytes::util::runtime;
 use iroh::collection::{Blob, Collection};
-use iroh_bytes::util::BlobFormat;
+use iroh_bytes::BlobFormat;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -24,7 +24,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new database and add two blobs
-    let (mut db, names) = iroh::baomap::readonly_mem::Store::new([
+    let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
         ("blob1", b"the first blob of bytes".to_vec()),
         ("blob2", b"the second blob of bytes".to_vec()),
     ]);
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     // create a ticket
     // tickets wrap all details needed to get a collection
-    let ticket = node.ticket(hash, BlobFormat::HASHSEQ).await?;
+    let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.node_addr().peer_id);

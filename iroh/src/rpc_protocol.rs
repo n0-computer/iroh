@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::{BlobFormat, SetTagOption, Tag};
+use iroh_bytes::util::{BlobFormat, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
@@ -30,12 +30,21 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::{baomap::ValidateProgress, provider::AddProgress, util::RpcResult};
+pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
 
 use crate::sync_engine::{LiveEvent, LiveStatus};
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
+
+/// Option for commands that allow setting a tag
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SetTagOption {
+    /// A tag will be automatically generated
+    Auto,
+    /// The tag is explicitly named
+    Named(Tag),
+}
 
 /// A request to the node to provide the data at the given path
 ///
@@ -86,7 +95,7 @@ pub struct BlobAddPathResponse(pub AddProgress);
 pub struct BlobDownloadRequest {
     /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
-    /// If the format is [`BlobFormat::HASHSEQ`], all children are downloaded and shared as
+    /// If the format is [`BlobFormat::HashSeq`], all children are downloaded and shared as
     /// well.
     pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
@@ -649,6 +658,51 @@ pub struct DocSetResponse {
     pub entry: SignedEntry,
 }
 
+/// Delete entries in a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDelRequest {
+    /// The document id.
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Prefix to delete.
+    pub prefix: Vec<u8>,
+}
+
+impl RpcMsg<ProviderService> for DocDelRequest {
+    type Response = RpcResult<DocDelResponse>;
+}
+
+/// Response to [`DocDelRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocDelResponse {
+    /// The number of entries that were removed.
+    pub removed: usize,
+}
+
+/// Set an entry in a document via its hash
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Key of this entry.
+    pub key: Vec<u8>,
+    /// Hash of this entry.
+    pub hash: Hash,
+    /// Size of this entry.
+    pub size: u64,
+}
+
+impl RpcMsg<ProviderService> for DocSetHashRequest {
+    type Response = RpcResult<DocSetHashResponse>;
+}
+
+/// Response to [`DocSetHashRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetHashResponse {}
+
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyRequest {
@@ -815,8 +869,10 @@ pub enum ProviderRequest {
     DocDrop(DocDropRequest),
     DocImport(DocImportRequest),
     DocSet(DocSetRequest),
+    DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
     DocGetOne(DocGetOneRequest),
+    DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocLeave(DocLeaveRequest),
     DocShare(DocShareRequest),
@@ -856,8 +912,10 @@ pub enum ProviderResponse {
     DocDrop(RpcResult<DocDropResponse>),
     DocImport(RpcResult<DocImportResponse>),
     DocSet(RpcResult<DocSetResponse>),
+    DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetOne(RpcResult<DocGetOneResponse>),
+    DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocLeave(RpcResult<DocLeaveResponse>),

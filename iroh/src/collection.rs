@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use bao_tree::blake3;
 use bytes::Bytes;
-use iroh_bytes::baomap::{MapEntry, TempTag};
 use iroh_bytes::get::fsm::EndBlobNext;
 use iroh_bytes::get::Stats;
 use iroh_bytes::hashseq::HashSeq;
+use iroh_bytes::store::MapEntry;
 use iroh_bytes::util::BlobFormat;
-use iroh_bytes::{baomap, Hash};
+use iroh_bytes::{Hash, TempTag};
 use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 
@@ -113,7 +113,7 @@ impl Collection {
     /// It does not require that all child blobs are stored in the store.
     pub async fn load<D>(db: &D, root: &Hash) -> anyhow::Result<Self>
     where
-        D: baomap::Map,
+        D: iroh_bytes::store::Map,
     {
         let links_entry = db.get(root).context("links not found")?;
         anyhow::ensure!(links_entry.is_complete(), "links not complete");
@@ -135,16 +135,16 @@ impl Collection {
     /// as a TempTag.
     pub async fn store<D>(self, db: &D) -> anyhow::Result<TempTag>
     where
-        D: baomap::Store,
+        D: iroh_bytes::store::Store,
     {
         let (links, meta) = self.into_parts();
         let meta_bytes = postcard::to_stdvec(&meta)?;
-        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::RAW).await?;
+        let meta_tag = db.import_bytes(meta_bytes.into(), BlobFormat::Raw).await?;
         let links_bytes = std::iter::once(*meta_tag.hash())
             .chain(links)
             .collect::<HashSeq>();
         let links_tag = db
-            .import_bytes(links_bytes.into(), BlobFormat::HASHSEQ)
+            .import_bytes(links_bytes.into(), BlobFormat::HashSeq)
             .await?;
         Ok(links_tag)
     }
