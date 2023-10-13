@@ -351,7 +351,6 @@ impl Inner {
         let dest = QuicMappedAddr(dest);
 
         match self.peer_map.get_send_addrs_for_quic_mapped_addr(&dest) {
-            // TODO: Handle ping actions
             Some((public_key, udp_addr, derp_region, mut msgs)) => {
                 trace!(peer = %public_key.fmt_short(), quic_addr = %dest, n = %transmits.len(), "send");
                 // If we have pings to send, we *have* to send them out first.
@@ -374,9 +373,6 @@ impl Inner {
                     match ready!(self.poll_send_udp(addr, &transmits, cx)) {
                         Ok(n) => {
                             debug!(peer = %public_key.fmt_short(), ?addr, ?n, "sent udp");
-                            // truncate the transmits to be sent over derp, otherwise we'd
-                            // potentially send the same transmits multiple times over derp.
-                            transmits.truncate(n);
                             udp_sent = true;
                             // record metrics.
                             let total_bytes: u64 =
@@ -417,7 +413,10 @@ impl Inner {
             }
             None => {
                 error!(addr=%dest, "no endpoint for mapped address");
-                Poll::Ready(Ok(n))
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "trying to send to unknown endpoint",
+                )))
             }
         }
     }
@@ -604,7 +603,7 @@ impl Inner {
         Poll::Pending
     }
 
-    /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
+    /// Handles a discovery message and reports whether `msg` was a Tailscale inter-node discovery message.
     ///
     /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
     /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
@@ -845,6 +844,7 @@ impl Inner {
         if msgs.is_empty() {
             return Poll::Ready(Ok(()));
         }
+
         while let Some(msg) = msgs.pop() {
             if let Poll::Pending = self.poll_handle_ping_action(cx, &msg)? {
                 msgs.push(msg);
