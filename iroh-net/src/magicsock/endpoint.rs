@@ -1259,7 +1259,7 @@ impl PeerMapInner {
         let PeerAddr { peer_id, info } = peer_addr;
 
         if self.endpoint_for_node_key(&peer_id).is_none() {
-            info!(%peer_id, "inserting peer's endpoint in PeerMap");
+            info!(%peer_id, ?info.derp_region, "inserting peer's endpoint in PeerMap");
             self.insert_endpoint(Options {
                 public_key: peer_id,
                 derp_region: info.derp_region,

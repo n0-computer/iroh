@@ -352,12 +352,15 @@ impl Inner {
 
         match self.peer_map.get_send_addrs_for_quic_mapped_addr(&dest) {
             Some((public_key, udp_addr, derp_region, mut msgs)) => {
+                let mut pings_sent = false;
+
                 trace!(peer = %public_key.fmt_short(), quic_addr = %dest, n = %transmits.len(), "send");
                 // If we have pings to send, we *have* to send them out first.
                 if !msgs.is_empty() {
                     if let Err(err) = ready!(self.poll_handle_ping_actions(cx, &mut msgs)) {
                         warn!(peer = %public_key.fmt_short(), "failed to handle ping actions: {err:?}");
                     }
+                    pings_sent = true;
                 }
 
                 let mut udp_sent = false;
@@ -398,7 +401,7 @@ impl Inner {
                     derp_sent = true;
                 }
 
-                if !derp_sent && !udp_sent {
+                if !derp_sent && !udp_sent && !pings_sent {
                     warn!(peer = %public_key.fmt_short(), "failed to send: no UDP or DERP addr");
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
