@@ -13,6 +13,7 @@ use hyper::upgrade::{Parts, Upgraded};
 use hyper::{header::UPGRADE, Body, Request};
 use iroh_metrics::inc;
 use rand::Rng;
+use rustls::client::Resumption;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -48,8 +49,8 @@ pub enum ClientError {
     #[error("error sending a packet")]
     Send,
     /// There was an error receiving a packet
-    #[error("error receiving a packet")]
-    Receive,
+    #[error("error receiving a packet: {0:?}")]
+    Receive(anyhow::Error),
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
@@ -89,6 +90,9 @@ pub enum ClientError {
     /// The ping request timed out
     #[error("ping timeout")]
     PingTimeout,
+    /// The ping request was aborted
+    #[error("ping aborted")]
+    PingAborted,
     /// This [`Client`] cannot acknowledge pings
     #[error("cannot acknowledge pings")]
     CannotAckPings,
@@ -138,6 +142,7 @@ struct InnerClient {
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     url: Option<Url>,
+    tls_connector: tokio_rustls::TlsConnector,
 }
 
 /// Build a Client.
@@ -246,6 +251,29 @@ impl ClientBuilder {
     /// Will error if there is no region or no url set.
     pub fn build(self, key: SecretKey) -> anyhow::Result<Client> {
         anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
+
+        // TODO: review TLS config
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
+            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
+        let mut config = rustls::client::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        #[cfg(test)]
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertVerifier));
+
+        config.resumption = Resumption::default();
+
+        let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
+
         Ok(Client {
             inner: Arc::new(InnerClient {
                 secret_key: key,
@@ -261,6 +289,7 @@ impl ClientBuilder {
                 is_prober: self.is_prober,
                 server_public_key: self.server_public_key,
                 url: self.url,
+                tls_connector,
             }),
         })
     }
@@ -449,6 +478,7 @@ impl Client {
             (tcp_stream, Some(derp_node))
         };
 
+        let start = Instant::now();
         let local_addr = tcp_stream
             .local_addr()
             .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
@@ -461,30 +491,15 @@ impl Client {
 
         let res = if self.use_https(derp_node.as_deref()) {
             debug!("Starting TLS handshake");
-            // TODO: review TLS config
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-                rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                    ta.subject,
-                    ta.spki,
-                    ta.name_constraints,
-                )
-            }));
-            #[allow(unused_mut)]
-            let mut config = rustls::client::ClientConfig::builder()
-                .with_safe_defaults()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            #[cfg(test)]
-            config
-                .dangerous()
-                .set_certificate_verifier(Arc::new(NoCertVerifier));
 
-            let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
             let hostname = self
                 .tls_servername(derp_node.as_deref())
                 .ok_or_else(|| ClientError::InvalidUrl("no tls servername".into()))?;
-            let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
+            let tls_stream = self
+                .inner
+                .tls_connector
+                .connect(hostname, tcp_stream)
+                .await?;
             debug!("tls_connector connect success");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tls_stream)
@@ -542,6 +557,9 @@ impl Client {
             ));
         }
 
+        warn!("tls handshake done: {:?}", start.elapsed());
+        let start = Instant::now();
+
         debug!("starting upgrade");
         let upgraded = match hyper::upgrade::on(res).await {
             Ok(upgraded) => upgraded,
@@ -550,6 +568,9 @@ impl Client {
                 return Err(ClientError::Hyper(err));
             }
         };
+
+        warn!("derp upgrade done: {:?}", start.elapsed());
+        let start = Instant::now();
 
         debug!("connection upgraded");
         let (reader, writer) =
@@ -565,11 +586,16 @@ impl Client {
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
+        warn!("derp handshake: {:?}", start.elapsed());
+        let start = Instant::now();
         if *self.inner.is_preferred.lock().await && derp_client.note_preferred(true).await.is_err()
         {
             derp_client.close().await;
             return Err(ClientError::Send);
         }
+
+        warn!("connect_0 done: {:?}", start.elapsed());
+
         debug!("built");
         Ok(derp_client)
     }
@@ -788,10 +814,12 @@ impl Client {
     /// Send a ping to the server. Return once we get an expected pong.
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
-    pub async fn ping(&self) -> Result<(), ClientError> {
-        debug!("ping");
-        let (client, _) = self.connect().await?;
+    pub async fn ping(&self) -> Result<Duration, ClientError> {
         let ping = rand::thread_rng().gen::<[u8; 8]>();
+        debug!("ping: {}", hex::encode(&ping));
+        let (client, _) = self.connect().await?;
+
+        let start = Instant::now();
         let (send, recv) = oneshot::channel();
         self.register_ping(ping, send).await;
         if client.send_ping(ping).await.is_err() {
@@ -799,11 +827,17 @@ impl Client {
             let _ = self.unregister_ping(ping).await;
             return Err(ClientError::Send);
         }
-        if tokio::time::timeout(PING_TIMEOUT, recv).await.is_err() {
-            self.unregister_ping(ping).await;
-            return Err(ClientError::PingTimeout);
+        match tokio::time::timeout(PING_TIMEOUT, recv).await {
+            Ok(Ok(())) => Ok(start.elapsed()),
+            Err(_) => {
+                self.unregister_ping(ping).await;
+                Err(ClientError::PingTimeout)
+            }
+            Ok(Err(_)) => {
+                self.unregister_ping(ping).await;
+                Err(ClientError::PingAborted)
+            }
         }
-        Ok(())
     }
 
     /// Send a pong back to the server.
@@ -858,6 +892,7 @@ impl Client {
                     }
 
                     if let ReceivedMessage::Pong(ping) = msg {
+                        debug!("got pong: {}", hex::encode(&ping));
                         if let Some(chan) = self.unregister_ping(ping).await {
                             if chan.send(()).is_err() {
                                 warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
@@ -867,13 +902,13 @@ impl Client {
                     }
                     return Ok((msg, conn_gen));
                 }
-                Err(_) => {
+                Err(e) => {
                     self.close_for_reconnect().await;
                     if self.inner.is_closed.load(Ordering::SeqCst) {
                         return Err(ClientError::Closed);
                     }
                     // TODO(ramfox): more specific error?
-                    return Err(ClientError::Receive);
+                    return Err(ClientError::Receive(e));
                 }
             }
         }
@@ -898,8 +933,10 @@ impl Client {
 
     /// Close the underlying derp connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
-    async fn close_for_reconnect(&self) {
+    pub async fn close_for_reconnect(&self) {
         let mut client = self.inner.derp_client.lock().await;
+        // cleanup pings
+        self.inner.ping_tracker.lock().await.clear();
         if let Some(client) = client.take() {
             client.close().await
         }
