@@ -660,7 +660,6 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 
 async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
-    let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
     }
@@ -709,30 +708,30 @@ async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
 
             let (client, _) = clients.get(&region.region_id).as_ref().unwrap();
             let client = client.clone();
-            set.spawn(async move {
-                let start = std::time::Instant::now();
-                match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
-                    Err(e) => {
-                        region_details.error = Some(e.to_string());
-                    }
-                    Ok(Err(e)) => {
-                        region_details.error = Some(e.to_string());
-                    }
-                    Ok(_) => {
-                        region_details.connect = Some(start.elapsed());
-                        if let Ok(latency) = client.ping().await {
+
+            let start = std::time::Instant::now();
+            match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
+                Err(e) => {
+                    region_details.error = Some(e.to_string());
+                }
+                Ok(Err(e)) => {
+                    region_details.error = Some(e.to_string());
+                }
+                Ok(_) => {
+                    region_details.connect = Some(start.elapsed());
+                    match client.ping().await {
+                        Ok(latency) => {
                             region_details.latency = Some(latency);
+                        }
+                        Err(e) => {
+                            region_details.error = Some(e.to_string());
                         }
                     }
                 }
-                // disconnect, to be able to measure reconnects
-                client.close_for_reconnect().await;
-                region_details
-            });
-        }
-        while let Some(region_details) = set.join_next().await {
-            let region_details = region_details?;
-            if region_details.latency.is_some() {
+            }
+            // disconnect, to be able to measure reconnects
+            client.close_for_reconnect().await;
+            if region_details.error.is_none() {
                 success.push(region_details);
             } else {
                 fail.push(region_details);
@@ -776,13 +775,13 @@ struct RegionDetails {
 
 impl std::fmt::Display for RegionDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.connect {
-            Some(duration) => {
+        match self.error {
+            None => {
                 write!(
                     f,
                     "Region {}\nConnect: {:?}\nLatency: {:?}\nHosts:\n\t{:?}",
                     self.region_id,
-                    duration,
+                    self.connect.unwrap_or_default(),
                     self.latency.unwrap_or_default(),
                     self.hosts
                         .iter()
@@ -790,14 +789,12 @@ impl std::fmt::Display for RegionDetails {
                         .collect::<Vec<String>>()
                 )
             }
-            None => {
+            Some(ref err) => {
                 write!(
                     f,
-                    "Region {}\nError connecting to region: {}\nHosts:\n\t{:?}",
+                    "Region {}\nConnection Error: {:?}\nHosts:\n\t{:?}",
                     self.region_id,
-                    self.error
-                        .as_ref()
-                        .map_or("Unknown Error".to_string(), |e| e.clone()),
+                    err,
                     self.hosts
                         .iter()
                         .map(|u| u.to_string())

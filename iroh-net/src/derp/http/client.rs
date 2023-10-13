@@ -935,8 +935,6 @@ impl Client {
     /// requires a connection, it will call `connect`.
     pub async fn close_for_reconnect(&self) {
         let mut client = self.inner.derp_client.lock().await;
-        // cleanup pings
-        self.inner.ping_tracker.lock().await.clear();
         if let Some(client) = client.take() {
             client.close().await
         }
