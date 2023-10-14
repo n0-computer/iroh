@@ -525,13 +525,14 @@ impl<S: store::Store> Actor<S> {
                 let res = self.store.register_useful_peer(namespace, peer);
                 send_reply(reply, res)
             }
-            ReplicaAction::GetOne { author, key, reply } => {
-                let res = self.store.get_one(namespace, author, key);
-                send_reply(reply, res)
-            }
-            ReplicaAction::GetMany { filter, reply } => {
-                iter_to_channel(reply, self.store.get_many(namespace, filter))
-            }
+            ReplicaAction::GetOne { author, key, reply } => match self.get_or_open(namespace) {
+                Ok(_) => send_reply(reply, self.store.get_one(namespace, author, key)),
+                Err(err) => reply.send(Err(err)).map_err(send_reply_error),
+            },
+            ReplicaAction::GetMany { filter, reply } => match self.get_or_open(namespace) {
+                Ok(_) => iter_to_channel(reply, self.store.get_many(namespace, filter)),
+                Err(err) => reply.send(Err(err)).map_err(send_reply_error),
+            },
             ReplicaAction::DropReplica { reply } => {
                 self.states.remove(&namespace);
                 let res = self.store.remove_replica(&namespace);
