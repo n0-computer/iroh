@@ -142,7 +142,8 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub fn info(&self) -> EndpointInfo {
-        let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
+        let now = Instant::now();
+        let (conn_type, latency) = if self.is_best_addr_valid(now) {
             let addr_info = self.best_addr.as_ref().expect("checked");
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
         } else if let Some((region_id, relay_state)) = self.derp_region.as_ref() {
@@ -169,6 +170,7 @@ impl Endpoint {
             addrs,
             conn_type,
             latency,
+            active: self.is_active(&now),
         }
     }
 
@@ -1188,10 +1190,7 @@ impl PeerMap {
 
     /// Get the [`EndpointInfo`]s for each endpoint
     pub(super) fn endpoint_infos(&self) -> Vec<EndpointInfo> {
-        let now = Instant::now();
-        self.endpoints()
-            .filter_map(|(_, ep)| ep.is_active(&now).then(|| ep.info()))
-            .collect()
+        self.endpoints().map(|(_, ep)| ep.info()).collect()
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
@@ -1339,6 +1338,8 @@ pub struct EndpointInfo {
     pub conn_type: ConnectionType,
     /// The latency of the `conn_type`.
     pub latency: Option<Duration>,
+    /// Whether the [`Endpoint`] is considered active.
+    pub active: bool,
 }
 
 impl EndpointState {
@@ -1619,6 +1620,7 @@ mod tests {
                 addrs: Vec::from([(a_socket_addr, Some(latency))]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
+                active: true,
             },
             EndpointInfo {
                 id: b_endpoint.id,
@@ -1627,6 +1629,7 @@ mod tests {
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
+                active: true,
             },
             EndpointInfo {
                 id: c_endpoint.id,
@@ -1635,6 +1638,7 @@ mod tests {
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: None,
+                active: true,
             },
             EndpointInfo {
                 id: d_endpoint.id,
@@ -1643,6 +1647,7 @@ mod tests {
                 addrs: Vec::from([(d_socket_addr, Some(latency))]),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
+                active: true,
             },
         ]);
 

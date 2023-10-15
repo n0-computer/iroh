@@ -1382,7 +1382,7 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
         self.rt().local_pool().spawn_pinned(|| async move {
             match self.inner.endpoint.connection_infos().await {
                 Ok(mut conn_infos) => {
-                    conn_infos.sort_by_key(|n| n.public_key.to_string());
+                    conn_infos.sort_by_key(|n| (!n.active, n.public_key.to_string()));
                     for conn_info in conn_infos {
                         tx.send_async(Ok(NodeConnectionsResponse { conn_info }))
                             .await
