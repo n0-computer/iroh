@@ -652,16 +652,13 @@ impl Client {
                     if node.stun_only {
                         return Err(ClientError::StunOnlyNodesFound(target));
                     }
-                    let conn = this.dial_node(&node).await;
-                    match conn {
-                        Ok(conn) => Ok((conn, node)),
-                        Err(e) => Err(e),
-                    }
+
+                    this.dial_node(&node).await.map(|c| (c, node))
                 }
             })
             .buffer_unordered(DIAL_PARALLELISM);
 
-        let mut first_err = None;
+        let mut errs = Vec::new();
         while let Some(res) = dials.next().await {
             match res {
                 Ok((conn, node)) => {
@@ -670,14 +667,16 @@ impl Client {
                     return Ok((conn, node));
                 }
                 Err(e) => {
-                    if first_err.is_none() {
-                        first_err = Some(e);
-                    }
+                    errs.push(e);
                 }
             }
         }
 
-        Err(first_err.unwrap())
+        for (i, err) in errs.iter().enumerate() {
+            warn!("dial failed ({}): {:?}", i, err);
+        }
+
+        Err(errs.pop().unwrap())
     }
 
     /// Returns a TCP connection to node n, racing IPv4 and IPv6
