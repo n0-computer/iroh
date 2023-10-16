@@ -987,7 +987,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        store::{self, GetFilter, Store},
+        store::{self, GetFilter, OpenError, Store},
     };
 
     use super::*;
@@ -1021,7 +1021,7 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify(&()).expect("failed to verify");
 
-        let my_replica = store.new_replica(myspace)?;
+        let mut my_replica = store.new_replica(myspace)?;
         for i in 0..10 {
             my_replica.hash_and_insert(
                 format!("/{i}"),
@@ -1129,12 +1129,9 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
-        let replica = store.open_replica(&my_replica.namespace())?.unwrap();
         // Get Range of all should return all latest
-        let entries_second: Vec<_> = replica
-            .inner
+        let entries_second: Vec<_> = my_replica
             .peer
-            .read()
             .store()
             .get_range(Range::new(
                 RecordIdentifier::default(),
@@ -1221,7 +1218,7 @@ mod tests {
         for i in 0..n_replicas {
             let namespace = Namespace::new(&mut rng);
             let author = store.new_author(&mut rng)?;
-            let replica = store.new_replica(namespace)?;
+            let mut replica = store.new_replica(namespace)?;
             for j in 0..n_entries {
                 let key = format!("{j}");
                 let data = format!("{i}:{j}");
@@ -1345,7 +1342,7 @@ mod tests {
     fn test_timestamps<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
         let author = store.new_author(&mut rng)?;
 
         let key = b"hello";
@@ -1406,17 +1403,17 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let alice = alice_store.new_replica(myspace.clone())?;
+        let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let bob = bob_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone())?;
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let (alice_out, bob_out) = sync::<S>(&alice, &bob)?;
+        let (alice_out, bob_out) = sync::<S>(&mut alice, &mut bob)?;
 
         assert_eq!(alice_out.num_sent, 2);
         assert_eq!(bob_out.num_recv, 2);
@@ -1456,8 +1453,8 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let alice = alice_store.new_replica(namespace.clone())?;
-        let bob = bob_store.new_replica(namespace.clone())?;
+        let mut alice = alice_store.new_replica(namespace.clone())?;
+        let mut bob = bob_store.new_replica(namespace.clone())?;
 
         let key = b"key";
         let alice_value = b"alice";
@@ -1465,7 +1462,7 @@ mod tests {
         let _alice_hash = alice.hash_and_insert(key, &author, alice_value)?;
         // system time increased - sync should overwrite
         let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
@@ -1479,7 +1476,7 @@ mod tests {
         // system time increased - sync should overwrite
         let _bob_hash_2 = bob.hash_and_insert(key, &author, bob_value)?;
         let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
@@ -1498,7 +1495,7 @@ mod tests {
         let store = store::memory::Store::default();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         let key = b"hi";
         let t = system_time_now();
@@ -1541,7 +1538,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let replica = store.new_replica(myspace.clone())?;
+        let mut replica = store.new_replica(myspace.clone())?;
         let hash = Hash::new(b"");
         let res = replica.insert(b"foo", &alice, hash, 0);
         assert!(matches!(res, Err(InsertError::EntryIsEmpty)));
@@ -1568,7 +1565,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let replica = store.new_replica(myspace.clone())?;
+        let mut replica = store.new_replica(myspace.clone())?;
         let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
         let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
 
@@ -1617,17 +1614,17 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let alice = alice_store.new_replica(myspace.clone())?;
+        let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let bob = bob_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone())?;
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
 
         check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
@@ -1636,7 +1633,7 @@ mod tests {
 
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
         check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
         check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
@@ -1661,7 +1658,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let namespace = Namespace::new(&mut rng);
         let author = Author::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         // insert entry
         let hash = replica.hash_and_insert(b"foo", &author, b"bar")?;
@@ -1686,11 +1683,11 @@ mod tests {
         assert_eq!(res.len(), 0);
 
         // may not reopen removed replica
-        let res = store.open_replica(&namespace.id())?;
-        assert!(res.is_none());
+        let res = store.open_replica(&namespace.id());
+        assert!(matches!(res, Err(OpenError::NotFound)));
 
         // may recreate replica
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(b"foo", &author, hash, 3)?;
         let res = store
             .get_many(namespace.id(), GetFilter::All)?
@@ -1717,7 +1714,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         let edgecases = [0u8, 1u8, 255u8];
         let prefixes = [0u8, 255u8];
@@ -1778,7 +1775,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         let hash = Hash::new(b"foo");
         let len = 3;
@@ -1814,8 +1811,8 @@ mod tests {
 
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica1 = store1.new_replica(namespace.clone())?;
-        let replica2 = store2.new_replica(namespace.clone())?;
+        let mut replica1 = store1.new_replica(namespace.clone())?;
+        let mut replica2 = store2.new_replica(namespace.clone())?;
 
         let (events1_sender, events1) = flume::bounded(32);
         let (events2_sender, events2) = flume::bounded(32);
@@ -1909,8 +1906,8 @@ mod tests {
     }
 
     fn sync<S: store::Store>(
-        alice: &Replica<S::Instance>,
-        bob: &Replica<S::Instance>,
+        alice: &mut Replica<S::Instance>,
+        bob: &mut Replica<S::Instance>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
@@ -1938,9 +1935,8 @@ mod tests {
         author: &Author,
         set: &[&str],
     ) -> Result<()> {
-        let replica = store.open_replica(namespace)?.unwrap();
         for el in set {
-            store.get_one(replica.namespace(), author.id(), el)?;
+            store.get_one(*namespace, author.id(), el)?;
         }
         Ok(())
     }

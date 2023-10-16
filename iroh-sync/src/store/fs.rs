@@ -916,7 +916,7 @@ mod tests {
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = Namespace::new(&mut rand::thread_rng());
-        let replica = store.new_replica(namespace)?;
+        let mut replica = store.new_replica(namespace)?;
 
         // test author prefix relation for all-255 keys
         let key1 = vec![255, 255];
@@ -947,12 +947,9 @@ mod tests {
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = Namespace::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
-
-        let replica_back = store.open_replica(&namespace.id())?.unwrap();
-        assert_eq!(
-            replica.namespace().as_bytes(),
-            replica_back.namespace().as_bytes()
-        );
+        store.close_replica(replica);
+        let replica = store.open_replica(&namespace.id())?;
+        assert_eq!(replica.namespace(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);

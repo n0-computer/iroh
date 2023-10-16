@@ -318,13 +318,13 @@ mod tests {
 
         let namespace = Namespace::new(&mut rng);
 
-        let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
         alice_replica
             .hash_and_insert("hello bob", &author, "from alice")
             .unwrap();
 
         let bob_store = store::memory::Store::default();
-        let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
         bob_replica
             .hash_and_insert("hello alice", &author, "from bob")
             .unwrap();
@@ -434,7 +434,7 @@ mod tests {
     fn insert_messages<S: Store>(
         mut rng: impl CryptoRngCore,
         store: &S,
-        replica: &crate::sync::Replica<S::Instance>,
+        replica: &mut crate::sync::Replica<S::Instance>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
@@ -495,12 +495,12 @@ mod tests {
 
                 let mut all_messages = vec![];
 
-                let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+                let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
 
                 let alice_messages = insert_messages(
                     &mut rng,
                     &alice_store,
-                    &alice_replica,
+                    &mut alice_replica,
                     *num_authors,
                     *num_messages,
                     |author, i| {
@@ -512,11 +512,11 @@ mod tests {
                 );
                 all_messages.extend_from_slice(&alice_messages);
 
-                let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+                let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
                 let bob_messages = insert_messages(
                     &mut rng,
                     &bob_store,
-                    &bob_replica,
+                    &mut bob_replica,
                     *num_authors,
                     *num_messages,
                     |author, i| {
@@ -625,8 +625,8 @@ mod tests {
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let namespace = Namespace::new(&mut rng);
-        let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
-        let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
 
         let author = alice_store.new_author(&mut rng)?;
         bob_store.import_author(author.clone())?;
