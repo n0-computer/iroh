@@ -1,6 +1,7 @@
 use std::{
     future::Future,
     net::SocketAddr,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -9,18 +10,19 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use iroh::{
-    client::mem::Doc,
+    client::{mem::Doc, BlobReader},
     node::{Builder, Node},
     rpc_protocol::ShareMode,
     sync_engine::{LiveEvent, SyncEvent},
 };
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{util::runtime, Hash};
+use iroh_bytes::{provider::AddProgress, util::runtime, Hash};
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
     store::{self, GetFilter},
@@ -122,6 +124,110 @@ async fn sync_simple() -> Result<()> {
     )
     .await;
     assert_latest(&doc1, b"k1", b"v1").await;
+
+    info!("node0: assert 2 events");
+    assert_next_unordered(
+        &mut events0,
+        TIMEOUT,
+        vec![
+            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+        ],
+    )
+    .await;
+
+    for node in nodes {
+        node.shutdown();
+    }
+    Ok(())
+}
+
+#[ignore]
+#[tokio::test]
+async fn sync_big_values() -> Result<()> {
+    setup_logging();
+    println!("setup");
+    let mut rng = test_rng(b"sync_big_values");
+    let rt = test_runtime();
+    let nodes = spawn_nodes(rt, 2, &mut rng).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    // create doc on node0
+    let peer0 = nodes[0].peer_id();
+    let author0 = clients[0].authors.create().await?;
+    let doc0 = clients[0].docs.create().await?;
+    let doc_id = doc0.id();
+
+    println!("creating content");
+    let dir = testdir::testdir!();
+    let num_chunks = 1024 * 512;
+    let chunk_size = 1024;
+    let size = num_chunks * chunk_size;
+    let mut chunk = vec![0u8; chunk_size];
+
+    let file_name = dir.join("data");
+    let mut file = tokio::fs::File::create(&file_name).await?;
+    for _ in 0..num_chunks {
+        rng.fill_bytes(&mut chunk);
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+    drop(file);
+
+    println!("adding from path");
+    let mut progress = clients[0]
+        .blobs
+        .add_from_path(
+            file_name.to_path_buf(),
+            true,
+            iroh::rpc_protocol::SetTagOption::Auto,
+            iroh::rpc_protocol::WrapOption::NoWrap,
+        )
+        .await?;
+
+    let hash0 = loop {
+        match progress.next().await {
+            Some(e) => {
+                let e = e?;
+                if let AddProgress::AllDone { hash, .. } = e {
+                    break hash;
+                }
+            }
+            None => panic!("add never finished"),
+        }
+    };
+
+    println!("set hash");
+    doc0.set_hash(author0, b"k1".to_vec(), hash0, size as _)
+        .await?;
+
+    assert_latest_file(&doc0, b"k1", size, &file_name).await?;
+
+    // TODO: check content equality
+
+    println!("sharing");
+    let ticket = doc0.share(ShareMode::Write).await?;
+
+    let mut events0 = doc0.subscribe().await?;
+
+    info!("node1: join");
+    let peer1 = nodes[1].peer_id();
+    let doc1 = clients[1].docs.import(ticket.clone()).await?;
+    let mut events1 = doc1.subscribe().await?;
+    info!("node1: assert 4 events");
+    assert_next_unordered(
+        &mut events1,
+        TIMEOUT,
+        vec![
+            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
+            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
+            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+        ],
+    )
+    .await;
+
+    assert_latest_file(&doc1, b"k1", size, &file_name).await?;
 
     info!("node0: assert 2 events");
     assert_next_unordered(
@@ -595,6 +701,47 @@ async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
         .ok_or_else(|| anyhow!("entry not found"))??;
     let content = doc.read_to_bytes(&entry).await?;
     Ok(content.to_vec())
+}
+
+async fn assert_latest_file(
+    doc: &Doc,
+    key: &[u8],
+    size: usize,
+    value_path: impl AsRef<Path>,
+) -> Result<()> {
+    let mut reader = get_latest_reader(doc, key).await.unwrap();
+    assert_eq!(reader.size(), size as u64);
+
+    let mut file = tokio::fs::File::open(value_path).await?;
+
+    let mut chunk_a = vec![0u8; 1024];
+    let mut chunk_b = vec![0u8; 1024];
+
+    let mut left_to_read = size;
+    loop {
+        let chunk_size = left_to_read.min(1024);
+        reader.read_exact(&mut chunk_a[..chunk_size]).await?;
+        file.read_exact(&mut chunk_b[..chunk_size]).await?;
+        assert_eq!(&chunk_a[..chunk_size], &chunk_b[..chunk_size]);
+        left_to_read -= chunk_size;
+
+        if left_to_read == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
+async fn get_latest_reader(doc: &Doc, key: &[u8]) -> anyhow::Result<BlobReader> {
+    let filter = GetFilter::Key(key.to_vec());
+    let entry = doc
+        .get_many(filter)
+        .await?
+        .next()
+        .await
+        .ok_or_else(|| anyhow!("entry not found"))??;
+    let reader = doc.read(&entry).await?;
+    Ok(reader)
 }
 
 fn setup_logging() {
