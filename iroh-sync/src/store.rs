@@ -25,6 +25,20 @@ pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::ne
     None => panic!("this is clearly non zero"),
 };
 
+/// Error return from [`Store::open_replica`]
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    /// The replica was already opened.
+    #[error("Replica is already open")]
+    AlreadyOpen,
+    /// The replica does not exist.
+    #[error("Replica not found")]
+    NotFound,
+    /// Other error while opening the replica.
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
+}
+
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
@@ -56,7 +70,14 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Create a new replica for `namespace` and persist in this store.
-    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
+    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
+        let id = namespace.id();
+        self.import_namespace(namespace)?;
+        self.open_replica(&id).map_err(Into::into)
+    }
+
+    /// Import a new replica namespace.
+    fn import_namespace(&self, namespace: Namespace) -> Result<()>;
 
     /// List all replica namespaces in this store.
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;
@@ -65,16 +86,14 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
-    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
+    fn open_replica(&self, namespace: &NamespaceId) -> Result<Replica<Self::Instance>, OpenError>;
 
     /// Close a replica.
-    ///
-    /// This removes the event subscription from the replica, if active, and removes the replica
-    /// instance from the store's cache.
-    fn close_replica(&self, namespace: &NamespaceId);
+    fn close_replica(&self, replica: Replica<Self::Instance>);
 
     /// Remove a replica.
     ///
+    /// Make sure to close the replica before calling this method.
     /// Completely removes a replica and deletes both the namespace private key and all document
     /// entries.
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()>;

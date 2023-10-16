@@ -345,12 +345,12 @@ where
         &mut self,
         message: Message<E>,
         validate_cb: F,
-        on_insert_cb: F2,
+        mut on_insert_cb: F2,
         content_status_cb: F3,
     ) -> Result<Option<Message<E>>, S::Error>
     where
         F: Fn(&S, &E, ContentStatus) -> bool,
-        F2: Fn(&S, E, ContentStatus),
+        F2: FnMut(&S, E, ContentStatus),
         F3: Fn(&S, &E) -> ContentStatus,
     {
         let mut out = Vec::new();

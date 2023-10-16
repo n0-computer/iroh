@@ -9,10 +9,7 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    sync::{
-        atomic::{self, AtomicBool},
-        Arc,
-    },
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -22,8 +19,6 @@ use bytes::{Bytes, BytesMut};
 use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
-
-use parking_lot::{Mutex, RwLock};
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
@@ -126,19 +121,14 @@ impl Subscribers {
 }
 
 /// Local representation of a mutable, synchronizable key-value store.
-#[derive(derive_more::Debug, Clone)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    inner: Arc<InnerReplica<S>>,
-}
-
 #[derive(derive_more::Debug)]
-struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
-    peer: RwLock<Peer<SignedEntry, S>>,
-    subscribers: Mutex<Subscribers>,
+    peer: Peer<SignedEntry, S>,
+    subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
-    content_status_cb: RwLock<Option<ContentStatusCallback>>,
-    closed: AtomicBool,
+    content_status_cb: Option<ContentStatusCallback>,
+    closed: bool,
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
@@ -146,23 +136,21 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
         Replica {
-            inner: Arc::new(InnerReplica {
-                namespace,
-                peer: RwLock::new(Peer::from_store(store)),
-                subscribers: Default::default(),
-                // on_insert_sender: RwLock::new(None),
-                content_status_cb: RwLock::new(None),
-                closed: AtomicBool::new(false),
-            }),
+            namespace,
+            peer: Peer::from_store(store),
+            subscribers: Default::default(),
+            // on_insert_sender: RwLock::new(None),
+            content_status_cb: None,
+            closed: false,
         }
     }
 
     /// Mark the replica as closed, prohibiting any further operations.
     ///
     /// This method is not public. Use [store::Store::close_replica] instead.
-    pub(crate) fn close(&self) {
-        self.inner.subscribers.lock().clear();
-        self.inner.closed.store(true, atomic::Ordering::Release);
+    pub(crate) fn close(&mut self) {
+        self.subscribers.clear();
+        self.closed = true;
     }
 
     /// Subcribe to insert events.
@@ -170,8 +158,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
-    pub fn subscribe(&self, sender: flume::Sender<Event>) {
-        self.inner.subscribers.lock().subscribe(sender)
+    pub fn subscribe(&mut self, sender: flume::Sender<Event>) {
+        self.subscribers.subscribe(sender)
     }
 
     /// Explicitly unsubscribe a sender.
@@ -179,27 +167,25 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Simply dropping the receiver is fine too. If you cloned a single sender to subscribe to
     /// multiple replicas, you can use this method to explicitly unsubscribe the sender from
     /// this replica without having to drop the receiver.
-    pub fn unsubscribe(&self, sender: &flume::Sender<Event>) {
-        self.inner.subscribers.lock().unsubscribe(sender)
+    pub fn unsubscribe(&mut self, sender: &flume::Sender<Event>) {
+        self.subscribers.unsubscribe(sender)
     }
 
     /// Get the number of current event subscribers.
     pub fn subscribers_count(&self) -> usize {
-        self.inner.subscribers.lock().len()
+        self.subscribers.len()
     }
 
     /// Set the content status callback.
     ///
     /// Only one callback can be active at a time. If a previous callback was registered, this
     /// will return `false`.
-    pub fn set_content_status_callback(&self, cb: ContentStatusCallback) -> bool {
-        let mut content_status_cb = self.inner.content_status_cb.write();
-        match &*content_status_cb {
-            Some(_cb) => false,
-            None => {
-                *content_status_cb = Some(cb);
-                true
-            }
+    pub fn set_content_status_callback(&mut self, cb: ContentStatusCallback) -> bool {
+        if self.content_status_cb.is_some() {
+            false
+        } else {
+            self.content_status_cb = Some(cb);
+            true
         }
     }
 
@@ -217,7 +203,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// manually, it must be closed via [`store::Store::close_replica`] or
     /// [`store::Store::remove_replica`]
     pub fn closed(&self) -> bool {
-        self.inner.closed.load(atomic::Ordering::Acquire)
+        self.closed
     }
 
     /// Insert a new record at the given key.
@@ -228,7 +214,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Returns the number of entries removed as a consequence of this insertion,
     /// or an error either if the entry failed to validate or if a store operation failed.
     pub fn insert(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         author: &Author,
         hash: Hash,
@@ -241,7 +227,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
-        let signed_entry = entry.sign(&self.inner.namespace, author);
+        let signed_entry = entry.sign(&self.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -252,14 +238,14 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// Returns the number of entries deleted.
     pub fn delete_prefix(
-        &self,
+        &mut self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
     ) -> Result<usize, InsertError<S>> {
         self.ensure_open()?;
         let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
         let entry = Entry::new_empty(id);
-        let signed_entry = entry.sign(&self.inner.namespace, author);
+        let signed_entry = entry.sign(&self.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -271,7 +257,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Returns the number of entries removed as a consequence of this insertion,
     /// or an error if the entry failed to validate or if a store operation failed.
     pub fn insert_remote_entry(
-        &self,
+        &mut self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
@@ -289,7 +275,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// Returns the number of entries removed as a consequence of this insertion.
     fn insert_entry(
-        &self,
+        &mut self,
         entry: SignedEntry,
         origin: InsertOrigin,
     ) -> Result<usize, InsertError<S>> {
@@ -298,18 +284,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
-        let mut peer = self.inner.peer.write();
-        let store = peer.store();
+        let store = self.peer.store();
         validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
-        let outcome = peer.put(entry.clone()).map_err(InsertError::Store)?;
+        let outcome = self.peer.put(entry.clone()).map_err(InsertError::Store)?;
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
             InsertOutcome::NotInserted => return Err(InsertError::NewerEntryExists),
         };
-
-        drop(peer);
 
         #[cfg(feature = "metrics")]
         {
@@ -325,7 +308,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             }
         }
 
-        self.inner.subscribers.lock().send(Event::Insert {
+        self.subscribers.send(Event::Insert {
             namespace,
             origin,
             entry,
@@ -339,7 +322,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// This does not store the content, just the record of it.
     /// Returns the calculated hash.
     pub fn hash_and_insert(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
@@ -353,20 +336,20 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the identifier for an entry in this replica.
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        RecordIdentifier::new(self.inner.namespace.id(), author.id(), key)
+        RecordIdentifier::new(self.namespace.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
     pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
         self.ensure_open()?;
-        self.inner.peer.read().initial_message().map_err(Into::into)
+        self.peer.initial_message().map_err(Into::into)
     }
 
     /// Process a set reconciliation message from a remote peer.
     ///
     /// Returns the next message to be sent to the peer, if any.
     pub fn sync_process_message(
-        &self,
+        &mut self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
@@ -378,10 +361,10 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         // update state with incoming data.
         state.num_recv += message.value_count();
 
+        // let subscribers = std::rc::Rc::new(&mut self.subscribers);
+        // l
         let reply = self
-            .inner
             .peer
-            .write()
             .process_message(
                 message,
                 // validate callback: validate incoming entries, and send to on_insert channel
@@ -395,7 +378,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |_store, entry, content_status| {
                     // We use `send_with` to only clone the entry if we have active subcriptions.
-                    self.inner.subscribers.lock().send_with(|| Event::Insert {
+                    self.subscribers.send_with(|| Event::Insert {
                         namespace: my_namespace,
                         origin: InsertOrigin::Sync {
                             from: from_peer,
@@ -406,7 +389,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 },
                 // content_status callback: get content status for outgoing entries
                 |_store, entry| {
-                    if let Some(cb) = self.inner.content_status_cb.read().as_ref() {
+                    if let Some(cb) = self.content_status_cb.as_ref() {
                         cb(entry.content_hash())
                     } else {
                         ContentStatus::Missing
@@ -425,12 +408,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn namespace(&self) -> NamespaceId {
-        self.inner.namespace.id()
+        self.namespace.id()
     }
 
     /// Get the byte represenation of the [`Namespace`] key for this replica.
     pub fn secret_key(&self) -> Namespace {
-        self.inner.namespace.clone()
+        self.namespace.clone()
     }
 }
 

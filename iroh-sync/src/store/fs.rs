@@ -1,6 +1,6 @@
 //! On disk storage for replicas.
 
-use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::HashSet, path::Path, sync::Arc};
 
 use anyhow::Result;
 use derive_more::From;
@@ -22,13 +22,13 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<Database>,
-    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<StoreInstance>>>>,
+    open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
     pubkeys: MemPublicKeyStore,
 }
 
@@ -91,7 +91,7 @@ impl Store {
 
         Ok(Store {
             db: Arc::new(db),
-            replicas: Default::default(),
+            open_replicas: Default::default(),
             pubkeys: Default::default(),
         })
     }
@@ -128,26 +128,33 @@ impl super::Store for Store {
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
-    fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
-        if let Some(replica) = self.replicas.read().get(namespace_id) {
-            return Ok(Some(replica.clone()));
+    fn open_replica(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Replica<Self::Instance>, OpenError> {
+        if self.open_replicas.read().contains(namespace_id) {
+            return Err(OpenError::AlreadyOpen);
         }
 
-        let read_tx = self.db.begin_read()?;
-        let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
-        let Some(namespace) = namespace_table.get(namespace_id.as_bytes())? else {
-            return Ok(None);
+        let read_tx = self.db.begin_read().map_err(anyhow::Error::from)?;
+        let namespace_table = read_tx
+            .open_table(NAMESPACES_TABLE)
+            .map_err(anyhow::Error::from)?;
+        let Some(namespace) = namespace_table
+            .get(namespace_id.as_bytes())
+            .map_err(anyhow::Error::from)?
+        else {
+            return Err(OpenError::NotFound);
         };
         let namespace = Namespace::from_bytes(namespace.value());
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
-        self.replicas.write().insert(*namespace_id, replica.clone());
-        Ok(Some(replica))
+        self.open_replicas.write().insert(*namespace_id);
+        Ok(replica)
     }
 
-    fn close_replica(&self, namespace_id: &NamespaceId) {
-        if let Some(replica) = self.replicas.write().remove(namespace_id) {
-            replica.close();
-        }
+    fn close_replica(&self, mut replica: Replica<Self::Instance>) {
+        self.open_replicas.write().remove(&replica.namespace());
+        replica.close();
     }
 
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
@@ -195,19 +202,12 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
-        let id = namespace.id();
+    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
         self.insert_namespace(namespace.clone())?;
-
-        let replica = Replica::new(namespace, StoreInstance::new(id, self.clone()));
-
-        self.replicas.write().insert(id, replica.clone());
-        Ok(replica)
+        Ok(())
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
-        self.close_replica(namespace);
-        self.replicas.write().remove(namespace);
         let start = range_start(namespace);
         let end = range_end(namespace);
         let write_tx = self.db.begin_write()?;
