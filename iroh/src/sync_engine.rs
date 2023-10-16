@@ -35,6 +35,8 @@ pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
 const ACTOR_CHANNEL_CAP: usize = 64;
+/// Capacity for the channels for [`SyncEngine::subscribe`].
+const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 
 /// The SyncEngine contains the [`LiveActor`] handle, and keeps a copy of the store and endpoint.
 ///
@@ -204,7 +206,7 @@ impl<S: Store> SyncEngine<S> {
         let fut = async move {
             // Subscribe to insert events from the replica.
             let replica_events = {
-                let (s, r) = flume::bounded(64);
+                let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
                 this.sync.subscribe(namespace, s).await?;
                 r.into_stream()
                     .map(move |ev| Ok(LiveEvent::from_replica_event(ev, &content_status_cb)))
@@ -212,7 +214,7 @@ impl<S: Store> SyncEngine<S> {
 
             // Subscribe to events from the [`live::Actor`].
             let sync_events = {
-                let (s, r) = flume::bounded(64);
+                let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
                 let (reply, reply_rx) = oneshot::channel();
                 this.to_live_actor
                     .send(ToLiveActor::Subscribe {
