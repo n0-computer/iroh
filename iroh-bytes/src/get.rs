@@ -725,6 +725,11 @@ pub mod fsm {
                 }
             }
         }
+
+        /// Immediately finish the get response without reading further
+        pub fn finish(self) -> AtClosing {
+            AtClosing::new(self.misc, self.stream.finish())
+        }
     }
 
     /// State after we have read all the content for a blob
