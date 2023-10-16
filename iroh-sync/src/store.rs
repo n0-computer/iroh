@@ -93,9 +93,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Remove a replica.
     ///
-    /// Make sure to close the replica before calling this method.
     /// Completely removes a replica and deletes both the namespace private key and all document
     /// entries.
+    ///
+    /// Note that a replica has to be closed before it can be removed. The store has to enforce
+    /// that a replica cannot be removed while it is still open.
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()>;
 
     /// Create a new author key and persist it in the store.

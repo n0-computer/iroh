@@ -2,7 +2,7 @@
 
 use std::{cmp::Ordering, collections::HashSet, path::Path, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
@@ -208,6 +208,9 @@ impl super::Store for Store {
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
+        if self.open_replicas.read().contains(namespace) {
+            return Err(anyhow!("replica is not closed"));
+        }
         let start = range_start(namespace);
         let end = range_end(namespace);
         let write_tx = self.db.begin_write()?;

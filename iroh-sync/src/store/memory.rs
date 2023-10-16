@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
 use parking_lot::{RwLock, RwLockReadGuard};
@@ -106,6 +106,9 @@ impl super::Store for Store {
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
+        if self.open_replicas.read().contains(namespace) {
+            return Err(anyhow!("replica is not closed"));
+        }
         self.replica_records.write().remove(namespace);
         self.namespaces.write().remove(namespace);
         Ok(())

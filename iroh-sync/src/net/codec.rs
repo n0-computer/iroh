@@ -348,6 +348,10 @@ mod tests {
             1
         );
 
+        // close the replicas because now the async actor will take over
+        alice_store.close_replica(alice_replica);
+        bob_store.close_replica(bob_replica);
+
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
@@ -388,9 +392,12 @@ mod tests {
         alice_task.await??;
         bob_task.await??;
 
+        alice_handle.shutdown().await;
+        bob_handle.shutdown().await;
+
         assert_eq!(
             bob_store
-                .get_many(bob_replica.namespace(), GetFilter::All)
+                .get_many(namespace.id(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -399,15 +406,13 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(alice_replica.namespace(), GetFilter::All)
+                .get_many(namespace.id(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
                 .len(),
             2
         );
-        alice_handle.shutdown().await;
-        bob_handle.shutdown().await;
 
         Ok(())
     }
@@ -477,11 +482,7 @@ mod tests {
     async fn test_sync_many_authors<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
         let num_messages = &[1, 2, 5, 10];
         let num_authors = &[2, 3, 4, 5, 10];
-
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
-
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
 
         for num_messages in num_messages {
             for num_authors in num_authors {
@@ -496,7 +497,6 @@ mod tests {
                 let mut all_messages = vec![];
 
                 let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
-
                 let alice_messages = insert_messages(
                     &mut rng,
                     &alice_store,
@@ -530,11 +530,20 @@ mod tests {
 
                 all_messages.sort();
 
-                let res = get_messages(&alice_store, alice_replica.namespace());
+                let res = get_messages(&alice_store, namespace.id());
                 assert_eq!(res, alice_messages);
 
-                let res = get_messages(&bob_store, bob_replica.namespace());
+                let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res, bob_messages);
+
+                // replicas can be opened only once so close the replicas before spawning the
+                // actors
+                alice_store.close_replica(alice_replica);
+                let alice_handle =
+                    SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+
+                bob_store.close_replica(bob_replica);
+                let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
 
                 run_sync(
                     alice_handle.clone(),
@@ -545,17 +554,19 @@ mod tests {
                 )
                 .await?;
 
-                let res = get_messages(&bob_store, bob_replica.namespace());
+                let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
 
-                let res = get_messages(&bob_store, bob_replica.namespace());
+                let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
+
+                alice_handle.shutdown().await;
+                bob_handle.shutdown().await;
             }
         }
-        alice_handle.shutdown().await;
-        bob_handle.shutdown().await;
+
         Ok(())
     }
 
@@ -653,6 +664,9 @@ mod tests {
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
+        alice_store.close_replica(alice_replica);
+        bob_store.close_replica(bob_replica);
+
         let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
         let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
 
@@ -666,12 +680,12 @@ mod tests {
         .await?;
 
         assert_eq!(
-            get_messages(&alice_store, alice_replica.namespace()),
+            get_messages(&alice_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, bob_replica.namespace()),
+            get_messages(&bob_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 

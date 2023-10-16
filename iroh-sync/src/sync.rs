@@ -1668,15 +1668,11 @@ mod tests {
         assert_eq!(res.len(), 1);
 
         // remove replica
+        let res = store.remove_replica(&namespace.id());
+        // may not remove replica while still open;
+        assert!(res.is_err());
+        store.close_replica(replica);
         store.remove_replica(&namespace.id())?;
-        let res = store
-            .get_many(namespace.id(), GetFilter::All)?
-            .collect::<Vec<_>>();
-        assert_eq!(res.len(), 0);
-
-        // may not insert on removed replica
-        let res = replica.insert(b"foo", &author, hash, 3);
-        assert!(matches!(res, Err(InsertError::Closed)));
         let res = store
             .get_many(namespace.id(), GetFilter::All)?
             .collect::<Vec<_>>();
