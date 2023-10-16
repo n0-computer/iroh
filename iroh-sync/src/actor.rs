@@ -411,10 +411,7 @@ struct Actor<S: store::Store> {
 
 impl<S: store::Store> Actor<S> {
     fn run(&mut self) -> Result<()> {
-        loop {
-            let Ok(action) = self.action_rx.recv() else {
-                break;
-            };
+        while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
             let is_shutdown = matches!(action, Action::Shutdown);
             if let Err(_) = self.on_action(action) {

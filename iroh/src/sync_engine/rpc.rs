@@ -240,8 +240,6 @@ impl<S: Store> SyncEngine<S> {
             key,
         } = req;
         let entry = self.sync.get_one(doc_id, author, key).await?;
-        // let replica = self.get_replica(&doc_id)?;
-        // let entry = self.store.get_one(replica.namespace(), author, key)?;
         Ok(DocGetOneResponse { entry })
     }
 }

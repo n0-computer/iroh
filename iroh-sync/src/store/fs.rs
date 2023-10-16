@@ -82,7 +82,7 @@ impl Store {
         // Setup all tables
         let write_tx = db.begin_write()?;
         {
-            let _ = write_tx.open_table(RECORDS_TABLE)?;
+            let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;

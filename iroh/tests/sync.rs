@@ -49,6 +49,9 @@ fn test_node(
         .bind_addr(addr)
 }
 
+// The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
+// capturing that `&mut` lifetime in the returned future. This allows to call it in a loop while
+// still collecting the futures before awaiting them alltogether (see [`spawn_nodes`])
 fn spawn_node(
     rt: runtime::Handle,
     i: usize,
