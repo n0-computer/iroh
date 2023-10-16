@@ -324,10 +324,9 @@ impl Endpoint {
         let mut msgs = Vec::new();
         let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_region) = derp_region {
-            // TODO(@divma):: this is cli_ping, never used. Intentionally commented out
-            // if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
-            //     msgs.push(msg);
-            // }
+            if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
+                msgs.push(msg);
+            }
         }
         if let Some(udp_addr) = udp_addr {
             if self.is_best_addr_valid(now) {
@@ -335,13 +334,15 @@ impl Endpoint {
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
                 // IPv6 address, both 1ms away, and it's random who replies first.
-                if let Some(msg) = self.start_ping(udp_addr.into(), DiscoPingPurpose::Cli) {
+                if let Some(msg) = self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::Cli) {
                     msgs.push(msg);
                 }
             } else {
                 let eps: Vec<_> = self.direct_addr_state.keys().cloned().collect();
                 for ep in eps {
-                    if let Some(msg) = self.start_ping(ep, DiscoPingPurpose::Cli) {
+                    if let Some(msg) =
+                        self.start_ping(SendAddr::Udp(ep.into()), DiscoPingPurpose::Cli)
+                    {
                         msgs.push(msg);
                     }
                 }
@@ -400,18 +401,17 @@ impl Endpoint {
         }
     }
 
-    // TODO(@divma): intentionally changed to prove we don't ping via relay.
-    fn start_ping(&mut self, ip_port: IpPort, purpose: DiscoPingPurpose) -> Option<PingAction> {
-        if derp_only_mode() {
+    fn start_ping(&mut self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<PingAction> {
+        if derp_only_mode() && !dst.is_derp() {
             // don't attempt any hole punching in derp only mode
             warn!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
-        info!("start ping to {}: {:?}", ip_port, purpose);
+        info!("start ping to {}: {:?}", dst, purpose);
         let tx_id = stun::TransactionId::default();
         Some(PingAction::SendPing {
             id: self.id,
-            dst: SendAddr::Udp(ip_port.into()),
+            dst,
             dst_key: self.public_key,
             tx_id,
             purpose,
@@ -477,6 +477,17 @@ impl Endpoint {
 
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
         let mut msgs = Vec::new();
+
+        if let Some((region, state)) = self.derp_region.as_ref() {
+            if state.needs_ping(&now) {
+                if let Some(msg) =
+                    self.start_ping(SendAddr::Derp(*region), DiscoPingPurpose::Discovery)
+                {
+                    msgs.push(msg)
+                }
+            }
+        }
+
         if derp_only_mode() {
             // don't send or respond to any hole punching pings if we are in
             // derp only mode
@@ -511,7 +522,9 @@ impl Endpoint {
                 debug!("disco: send, starting discovery for {:?}", self.public_key);
             }
 
-            if let Some(msg) = self.start_ping(ep, DiscoPingPurpose::Discovery) {
+            if let Some(msg) =
+                self.start_ping(SendAddr::Udp(ep.into()), DiscoPingPurpose::Discovery)
+            {
                 msgs.push(msg);
             }
         }
@@ -725,24 +738,43 @@ impl Endpoint {
                 let now = Instant::now();
                 let latency = now - sp.at;
 
-                if let SendAddr::Udp(addr) = src {
-                    let key = self.public_key;
-                    match self.direct_addr_state.get_mut(&addr.into()) {
-                        None => {
-                            info!("disco: ignoring pong: {}", sp.to);
-                            // This is no longer an endpoint we care about.
-                            return peer_map_insert;
+                match src {
+                    SendAddr::Udp(addr) => {
+                        let key = self.public_key;
+                        match self.direct_addr_state.get_mut(&addr.into()) {
+                            None => {
+                                info!("disco: ignoring pong: {}", sp.to);
+                                // This is no longer an endpoint we care about.
+                                return peer_map_insert;
+                            }
+                            Some(st) => {
+                                peer_map_insert = Some((addr, key));
+                                st.add_pong_reply(PongReply {
+                                    latency,
+                                    pong_at: now,
+                                    from: src,
+                                    pong_src: m.src,
+                                });
+                            }
                         }
-                        Some(st) => {
-                            peer_map_insert = Some((addr, key));
-                            st.add_pong_reply(PongReply {
+                    }
+                    SendAddr::Derp(region) => match self.derp_region.as_mut() {
+                        Some((home_region, state)) if *home_region == region => {
+                            state.add_pong_reply(PongReply {
                                 latency,
                                 pong_at: now,
                                 from: src,
                                 pong_src: m.src,
                             });
                         }
-                    }
+                        other => {
+                            // if we are here then we sent this ping, but the region changed
+                            // waiting for the response. It was either set to None or changed to
+                            // another region. This should either never happen or be extremely
+                            // unlikely. Log and ignore for now
+                            warn!(stored=?other, received=?region, "disco: ignoring pong via derp for region different to last one stored");
+                        }
+                    },
                 }
 
                 info!(
@@ -950,7 +982,9 @@ impl Endpoint {
                     "stayin alive ping for {}: {:?} {:?}",
                     udp_addr, elapsed, now
                 );
-                if let Some(msg) = self.start_ping(udp_addr.into(), DiscoPingPurpose::StayinAlive) {
+                if let Some(msg) =
+                    self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::StayinAlive)
+                {
                     return vec![msg];
                 }
             }
