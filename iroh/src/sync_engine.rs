@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures::{
     future::{BoxFuture, FutureExt, Shared},
-    Stream,
+    Stream, TryStreamExt,
 };
 use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::net::Gossip;
@@ -192,30 +192,49 @@ impl<S: Store> SyncEngine<S> {
     }
 
     /// Subscribe to replica and sync progress events.
-    pub async fn subscribe(self, namespace: NamespaceId) -> Result<impl Stream<Item = LiveEvent>> {
-        let replica_events = {
-            let (s, r) = flume::bounded(64);
-            self.sync.subscribe(namespace, s).await?;
-            let content_status_cb = self.content_status_cb.clone();
-            r.into_stream()
-                .map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
+    pub fn subscribe(
+        &self,
+        namespace: NamespaceId,
+    ) -> impl Stream<Item = Result<LiveEvent>> + Unpin + 'static {
+        let content_status_cb = self.content_status_cb.clone();
+
+        // Create a future that sends channel senders to the respective actors.
+        // We clone `self` so that the future does not capture any lifetimes.
+        let this = self.clone();
+        let fut = async move {
+            // Subscribe to insert events from the replica.
+            let replica_events = {
+                let (s, r) = flume::bounded(64);
+                this.sync.subscribe(namespace, s).await?;
+                r.into_stream()
+                    .map(move |ev| Ok(LiveEvent::from_replica_event(ev, &content_status_cb)))
+            };
+
+            // Subscribe to events from the [`live::Actor`].
+            let sync_events = {
+                let (s, r) = flume::bounded(64);
+                let (reply, reply_rx) = oneshot::channel();
+                this.to_live_actor
+                    .send(ToLiveActor::Subscribe {
+                        namespace,
+                        sender: s,
+                        reply,
+                    })
+                    .await?;
+                reply_rx.await??;
+                r.into_stream().map(|event| Ok(LiveEvent::from(event)))
+            };
+
+            // Merge the two receivers into a single stream.
+            let stream = replica_events.merge(sync_events);
+            // We need type annotations for the error type here.
+            Result::<_, anyhow::Error>::Ok(stream)
         };
 
-        let sync_events = {
-            let (s, r) = flume::bounded(64);
-            let (reply, reply_rx) = oneshot::channel();
-            self.to_live_actor
-                .send(ToLiveActor::Subscribe {
-                    namespace,
-                    sender: s,
-                    reply,
-                })
-                .await?;
-            reply_rx.await??;
-            r.into_stream().map(LiveEvent::from)
-        };
-
-        Ok(replica_events.merge(sync_events))
+        // Flatten the future into a single stream. If the future errors, the error will be
+        // returned from the first call to [`Stream::next`].
+        // We first pin the future so that the resulting stream is `Unpin`.
+        Box::pin(fut).into_stream().try_flatten()
     }
 
     /// Handle an incoming iroh-sync connection.

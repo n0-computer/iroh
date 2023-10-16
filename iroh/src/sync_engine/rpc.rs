@@ -1,7 +1,7 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::{FutureExt, Stream, TryStreamExt};
+use futures::Stream;
 use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
 use iroh_sync::{store::Store, sync::Namespace, Author};
 use tokio_stream::StreamExt;
@@ -123,11 +123,11 @@ impl<S: Store> SyncEngine<S> {
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
-        self.clone()
-            .subscribe(req.doc_id)
-            .map(|res| res.map(|stream| stream.map(|event| Ok(DocSubscribeResponse { event }))))
-            .into_stream()
-            .try_flatten()
+        let stream = self.subscribe(req.doc_id);
+        stream.map(|res| {
+            res.map(|event| DocSubscribeResponse { event })
+                .map_err(Into::into)
+        })
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {

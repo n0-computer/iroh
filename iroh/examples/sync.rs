@@ -271,16 +271,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Arc::new(tokio::sync::Mutex::new(None));
 
     let watch = current_watch.clone();
-    let mut doc_events = live_sync
-        .doc_subscribe(iroh::rpc_protocol::DocSubscribeRequest {
-            doc_id: doc.namespace(),
-        })
-        .await;
+    let mut doc_events = live_sync.subscribe(doc.namespace());
     rt.main().spawn(async move {
         while let Some(Ok(event)) = doc_events.next().await {
             let matcher = watch.lock().await;
             if let Some(matcher) = &*matcher {
-                match event.event {
+                match event {
                     LiveEvent::ContentReady { .. } | LiveEvent::SyncFinished { .. } => {}
                     LiveEvent::InsertLocal { entry } | LiveEvent::InsertRemote { entry, .. } => {
                         let key = entry.id().key();
