@@ -365,7 +365,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         // cancel all subscriptions
-        self.subscribers = Default::default();
+        self.subscribers.clear();
         // shutdown gossip actor
         self.gossip_actor_tx
             .send(ToGossipActor::Shutdown)
@@ -767,6 +767,10 @@ impl SubscribersMap {
 
     fn remove(&mut self, namespace: &NamespaceId) {
         self.0.remove(namespace);
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
     }
 }
 

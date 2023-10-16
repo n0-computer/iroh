@@ -121,7 +121,7 @@ impl Subscribers {
         }
     }
     pub fn clear(&mut self) {
-        self.0 = vec![];
+        self.0.clear()
     }
 }
 
