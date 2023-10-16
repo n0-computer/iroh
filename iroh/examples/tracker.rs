@@ -18,9 +18,12 @@ use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::util::Hash;
 use iroh_bytes::BlobFormat;
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::task::LocalPoolHandle;
 
 type ShortPeerId = [u8; 32];
@@ -348,7 +351,7 @@ struct State {
     collections: BTreeMap<Hash, (HashSeq, Arc<[u64]>)>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProbeKind {
     Incomplete,
     Complete,
@@ -376,13 +379,27 @@ struct PeerInfo {
     last_probed: Option<Instant>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Options {
     announce_timeout: Duration,
     probe_timeout: Duration,
     size_probe_timeout: Duration,
     probe_interval: Duration,
     max_hash_seq_size: u64,
+    dial_log: Option<PathBuf>,
+    probe_log: Option<PathBuf>,
+}
+
+impl Options {
+    /// Make the paths in the options relative to the given base path.
+    pub fn make_paths_relative(&mut self, base: &Path) {
+        if let Some(path) = &mut self.dial_log {
+            *path = base.join(&path);
+        }
+        if let Some(path) = &mut self.probe_log {
+            *path = base.join(&path);
+        }
+    }
 }
 
 impl Default for Options {
@@ -395,6 +412,8 @@ impl Default for Options {
             probe_interval: Duration::from_secs(1),
             // max hash seq size is 1000 hashes
             max_hash_seq_size: 1024 * 32,
+            dial_log: Some("dial.log".into()),
+            probe_log: Some("probe.log".into()),
         }
     }
 }
@@ -472,10 +491,7 @@ async fn chunk_probe(
     let ranges = ChunkRanges::from(chunk..chunk + 1);
     println!("random blob probe, chunks {:?}", ranges);
     let ranges = RangeSpecSeq::from_ranges([ranges]);
-    let request = GetRequest::new(
-        *hash,
-        ranges,
-    );
+    let request = GetRequest::new(*hash, ranges);
     let request = iroh_bytes::get::fsm::start(connection.clone(), request);
     let connected = request.next().await?;
     let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
@@ -581,8 +597,18 @@ fn random_hash_seq_ranges(sizes: &[u64], mut rng: impl Rng) -> RangeSpecSeq {
 }
 
 impl Tracker {
+    pub fn new(options: Options) -> Self {
+        Self(Arc::new(Inner {
+            state: RwLock::new(State::default()),
+            options,
+        }))
+    }
 
-    async fn get_or_insert_size(&self, connection: &quinn::Connection, hash: &Hash) -> anyhow::Result<u64> {
+    async fn get_or_insert_size(
+        &self,
+        connection: &quinn::Connection,
+        hash: &Hash,
+    ) -> anyhow::Result<u64> {
         let state = &self.0.state;
         let size_opt = state.read().unwrap().sizes.get(hash).copied();
         let size = match size_opt {
@@ -596,23 +622,19 @@ impl Tracker {
         Ok(size)
     }
 
-    async fn get_or_insert_sizes(&self, connection: &quinn::Connection, hash: &Hash) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
+    async fn get_or_insert_sizes(
+        &self,
+        connection: &quinn::Connection,
+        hash: &Hash,
+    ) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
         let state = &self.0.state;
         let entry = state.read().unwrap().collections.get(&hash).cloned();
         let res = match entry {
             Some(hs) => hs,
             None => {
-                let hs = get_hash_seq_and_sizes(
-                    connection,
-                    hash,
-                    self.0.options.max_hash_seq_size,
-                )
-                .await?;
-                state
-                    .write()
-                    .unwrap()
-                    .collections
-                    .insert(*hash, hs.clone());
+                let hs = get_hash_seq_and_sizes(connection, hash, self.0.options.max_hash_seq_size)
+                    .await?;
+                state.write().unwrap().collections.insert(*hash, hs.clone());
                 hs
             }
         };
@@ -624,38 +646,43 @@ impl Tracker {
         connection: &quinn::Connection,
         content: &HashAndFormat,
         probe_kind: ProbeKind,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<Stats> {
         let HashAndFormat { hash, format } = content;
         let mut rng = rand::thread_rng();
-        match format {
-            BlobFormat::Raw => {
-                let size = self.get_or_insert_size(connection, hash).await?;
-                let random_chunk = rng.gen_range(0..ByteNum(size).chunks().0);
-                let _stats = chunk_probe(&connection, &hash, ChunkNum(random_chunk)).await?;
-                Ok(true)
+        let stats = if probe_kind == ProbeKind::Incomplete {
+            let (_size, stats) = unverified_size(connection, hash).await?;
+            stats
+        } else {
+            match format {
+                BlobFormat::Raw => {
+                    let size = self.get_or_insert_size(connection, hash).await?;
+                    let random_chunk = rng.gen_range(0..ByteNum(size).chunks().0);
+                    chunk_probe(&connection, &hash, ChunkNum(random_chunk)).await?
+                }
+                BlobFormat::HashSeq => {
+                    let (hs, sizes) = self.get_or_insert_sizes(connection, hash).await?;
+                    let ranges = random_hash_seq_ranges(&sizes, rand::thread_rng());
+                    let request = GetRequest::new(*hash, ranges);
+                    let request = iroh_bytes::get::fsm::start(connection.clone(), request);
+                    let connected = request.next().await?;
+                    let iroh_bytes::get::fsm::ConnectedNext::StartChild(child) =
+                        connected.next().await?
+                    else {
+                        unreachable!("request does not include root");
+                    };
+                    let index =
+                        usize::try_from(child.child_offset()).expect("child offset too large");
+                    let hash = hs.get(index).expect("request inconsistent with hash seq");
+                    let at_blob_header = child.next(hash);
+                    let at_end_blob = at_blob_header.drain().await?;
+                    let EndBlobNext::Closing(closing) = at_end_blob.next() else {
+                        unreachable!("request contains only one blob");
+                    };
+                    closing.next().await?
+                }
             }
-            BlobFormat::HashSeq => {
-                let (hs, sizes) = self.get_or_insert_sizes(connection, hash).await?;
-                let ranges = random_hash_seq_ranges(&sizes, rand::thread_rng());
-                let request = GetRequest::new(*hash, ranges);
-                let request = iroh_bytes::get::fsm::start(connection.clone(), request);
-                let connected = request.next().await?;
-                let iroh_bytes::get::fsm::ConnectedNext::StartChild(child) =
-                    connected.next().await?
-                else {
-                    unreachable!("request does not include root");
-                };
-                let index = usize::try_from(child.child_offset()).expect("child offset too large");
-                let hash = hs.get(index).expect("request inconsistent with hash seq");
-                let at_blob_header = child.next(hash);
-                let at_end_blob = at_blob_header.drain().await?;
-                let EndBlobNext::Closing(closing) = at_end_blob.next() else {
-                    unreachable!("request contains only one blob");
-                };
-                let _stats = closing.next().await?;
-                Ok(true)
-            }
-        }
+        };
+        Ok(stats)
     }
 
     async fn handle_connecting(&self, connecting: quinn::Connecting) -> anyhow::Result<()> {
@@ -739,18 +766,25 @@ impl Tracker {
     }
 
     /// Get the content that is supposedly available, grouped by peers
-    fn get_content_by_peers(&self) -> BTreeMap::<ShortPeerId, BTreeMap<HashAndFormat, bool>> {
+    fn get_content_by_peers(&self) -> BTreeMap<ShortPeerId, BTreeMap<HashAndFormat, bool>> {
         let state = self.0.state.read().unwrap();
         let mut content_by_peers = BTreeMap::<[u8; 32], BTreeMap<HashAndFormat, bool>>::new();
         for (content, peers) in state.peer_info.iter() {
             for (peer, info) in peers {
-                content_by_peers.entry(*peer).or_default().insert(*content, info.complete);
+                content_by_peers
+                    .entry(*peer)
+                    .or_default()
+                    .insert(*content, info.complete);
             }
         }
         content_by_peers
     }
 
-    fn apply_result(&self, results: BTreeMap::<HashAndFormat, Vec<(ShortPeerId, ProbeKind)>>, now: Instant) {
+    fn apply_result(
+        &self,
+        results: BTreeMap<HashAndFormat, Vec<(ShortPeerId, ProbeKind)>>,
+        now: Instant,
+    ) {
         let mut state = self.0.state.write().unwrap();
         for (haf, peers) in results {
             let entry = state.peer_info.entry(haf).or_default();
@@ -768,6 +802,74 @@ impl Tracker {
         }
     }
 
+    fn log_connection_attempt(
+        &self,
+        peer: &PublicKey,
+        t0: Instant,
+        outcome: &anyhow::Result<quinn::Connection>,
+    ) -> anyhow::Result<()> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        if let Some(path) = &self.0.options.dial_log {
+            let outcome = match outcome {
+                Ok(_) => "ok",
+                Err(_) => "err",
+            };
+            let line = format!(
+                "{:.6},{},{:.6},{}\n",
+                now,
+                peer,
+                t0.elapsed().as_secs_f64(),
+                outcome
+            );
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(path)
+                .unwrap();
+            file.write_all(line.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    fn log_probe_attempt(
+        &self,
+        peer: &PublicKey,
+        content: &HashAndFormat,
+        kind: ProbeKind,
+        t0: Instant,
+        outcome: &anyhow::Result<Stats>,
+    ) -> anyhow::Result<()> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        if let Some(path) = &self.0.options.probe_log {
+            let outcome = match outcome {
+                Ok(_) => "ok",
+                Err(_) => "err",
+            };
+            let line = format!(
+                "{:.6},{},{},{:?},{:.6},{}\n",
+                now,
+                peer,
+                HashAndFormat2(*content),
+                kind,
+                t0.elapsed().as_secs_f64(),
+                outcome
+            );
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(path)
+                .unwrap();
+            file.write_all(line.as_bytes())?;
+        }
+        Ok(())
+    }
+
     async fn probe_loop(self, dialer: impl DialByPeer) -> anyhow::Result<()> {
         loop {
             let content_by_peers = self.get_content_by_peers();
@@ -775,12 +877,29 @@ impl Tracker {
             let now = Instant::now();
             for (short_peer, content) in content_by_peers {
                 let peer = PublicKey::from_bytes(&short_peer)?;
-                let connection = dialer.dial_by_peer(&peer, &iroh_bytes::protocol::ALPN).await?;
+                let t0 = Instant::now();
+                let res = dialer
+                    .dial_by_peer(&peer, &iroh_bytes::protocol::ALPN)
+                    .await;
+                self.log_connection_attempt(&peer, t0, &res)?;
+                let connection = match res {
+                    Ok(connection) => connection,
+                    Err(cause) => {
+                        tracing::error!("error dialing peer {}: {}", peer, cause);
+                        continue;
+                    }
+                };
                 for (haf, complete) in content {
                     let probe_kind = ProbeKind::new(complete);
-                    match self.probe(&connection, &haf, probe_kind).await {
+                    let t0 = Instant::now();
+                    let res = self.probe(&connection, &haf, probe_kind).await;
+                    self.log_probe_attempt(&peer, &haf, probe_kind, t0, &res)?;
+                    match res {
                         Ok(_) => {
-                            results.entry(haf).or_default().push((short_peer, probe_kind));
+                            results
+                                .entry(haf)
+                                .or_default()
+                                .push((short_peer, probe_kind));
                         }
                         Err(cause) => {
                             tracing::error!("error probing peer {}: {}", peer, cause)
@@ -819,9 +938,36 @@ async fn await_derp_region(endpoint: &MagicEndpoint) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn tracker_home() -> anyhow::Result<PathBuf> {
+    Ok(if let Some(val) = env::var_os("IROH_TRACKER_HOME") {
+        PathBuf::from(val)
+    } else {
+        dirs_next::data_dir()
+            .ok_or_else(|| {
+                anyhow::anyhow!("operating environment provides no directory for application data")
+            })?
+            .join("iroh_tracker")
+    })
+}
+
+pub fn tracker_path(file_name: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+    Ok(tracker_home()?.join(file_name))
+}
+
 async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyhow::Result<()> {
-    let key = load_secret_key("server.key".into()).await?;
-    let db = Tracker::default();
+    let home = tracker_home()?;
+    println!("tracker starting using {}", tracker_home()?.display());
+    let key_path = tracker_path("server.key")?;
+    let key = load_secret_key(key_path).await?;
+    let config_path = tracker_path("server.config")?;
+    let mut options = if config_path.exists() {
+        let config = std::fs::read_to_string(config_path)?;
+        toml::from_str(&config)?
+    } else {
+        Options::default()
+    };
+    options.make_paths_relative(&home);
+    let db = Tracker::new(options);
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(key)
         .alpns(vec![TRACKER_ALPN.to_vec()])
@@ -846,7 +992,7 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
 }
 
 async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
-    let key = load_secret_key("client.key".into()).await?;
+    let key = load_secret_key(tracker_path("client.key")?).await?;
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(key)
         .alpns(vec![TRACKER_ALPN.to_vec()])
@@ -894,7 +1040,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
 }
 
 async fn query(args: QueryArgs) -> anyhow::Result<()> {
-    let key = load_secret_key("client.key".into()).await?;
+    let key = load_secret_key(tracker_path("client.key")?).await?;
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(key)
         .alpns(vec![TRACKER_ALPN.to_vec()])
