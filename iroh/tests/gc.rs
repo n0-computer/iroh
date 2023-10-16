@@ -30,7 +30,7 @@ async fn wrap_in_node<S>(
     bao_store: S,
     rt: iroh_bytes::util::runtime::Handle,
     gc_period: Duration,
-) -> Node<S, iroh_sync::store::memory::Store>
+) -> Node<S>
 where
     S: iroh_bytes::store::Store,
 {
@@ -43,8 +43,8 @@ where
         .unwrap()
 }
 
-async fn attach_db_events<D: iroh_bytes::store::Store, S: iroh_sync::store::Store>(
-    node: &Node<D, S>,
+async fn attach_db_events<D: iroh_bytes::store::Store>(
+    node: &Node<D>,
 ) -> flume::Receiver<iroh_bytes::store::Event> {
     let (db_send, db_recv) = flume::unbounded();
     node.subscribe(move |ev| {
@@ -62,7 +62,7 @@ async fn attach_db_events<D: iroh_bytes::store::Store, S: iroh_sync::store::Stor
 }
 
 async fn gc_test_node() -> (
-    Node<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store>,
+    Node<iroh_bytes::store::mem::Store>,
     iroh_bytes::store::mem::Store,
     flume::Receiver<iroh_bytes::store::Event>,
 ) {

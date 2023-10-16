@@ -14,14 +14,13 @@ use iroh::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 use iroh_bytes::{
-    protocol::RequestToken, store::flat::Store as BaoFsStore, store::Store as BaoStore,
+    protocol::RequestToken, 
     util::runtime,
 };
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
 };
-use iroh_sync::store::{fs::Store as DocFsStore, Store as DocStore};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
@@ -87,10 +86,7 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     Ok(())
 }
 
-async fn start_daemon_node(
-    rt: &runtime::Handle,
-    opts: StartOptions,
-) -> Result<Node<BaoFsStore, DocFsStore>> {
+async fn start_daemon_node(rt: &runtime::Handle, opts: StartOptions) -> Result<Node<iroh_bytes::store::flat::Store>> {
     let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
     let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
     let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
@@ -106,14 +102,14 @@ async fn start_daemon_node(
     spawn_daemon_node(rt, bao_store, doc_store, key, peer_data_path, opts).await
 }
 
-async fn spawn_daemon_node<B: BaoStore, D: DocStore>(
+async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Store>(
     rt: &runtime::Handle,
     bao_store: B,
     doc_store: D,
     key: Option<PathBuf>,
     peers_data_path: PathBuf,
     opts: StartOptions,
-) -> Result<Node<B, D>> {
+) -> Result<Node<B>> {
     let secret_key = get_secret_key(key).await?;
 
     let mut builder = Node::builder(bao_store, doc_store)

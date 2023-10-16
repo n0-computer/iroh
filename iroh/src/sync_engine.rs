@@ -13,7 +13,7 @@ use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use iroh_sync::{
-    actor::SyncHandle, store::Store, sync::NamespaceId, ContentStatus, ContentStatusCallback,
+    actor::SyncHandle, sync::NamespaceId, ContentStatus, ContentStatusCallback,
     Entry, InsertOrigin,
 };
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 /// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
 /// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
-pub struct SyncEngine<S: Store> {
+pub struct SyncEngine {
     pub(crate) rt: Handle,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
@@ -52,21 +52,14 @@ pub struct SyncEngine<S: Store> {
     tasks_fut: Shared<BoxFuture<'static, ()>>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
-
-    // TODO:
-    // After the latest refactoring we don't need the store here anymore because all interactions
-    // go over the [`SyncHandle`]. Removing the store removes the `S: Store` generic from the
-    // `SyncEngine`, in turn removing the `S: Store` generic from [`iroh::node::Node`]. Yay!
-    // As this changes the code in many lines, I'd defer it to a follwup.
-    _store: S,
 }
 
-impl<S: Store> SyncEngine<S> {
+impl SyncEngine {
     /// Start the sync engine.
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
-    pub fn spawn<B: iroh_bytes::store::Store>(
+    pub fn spawn<S: iroh_sync::store::Store, B: iroh_bytes::store::Store>(
         rt: Handle,
         endpoint: MagicEndpoint,
         gossip: Gossip,
@@ -142,7 +135,6 @@ impl<S: Store> SyncEngine<S> {
             to_live_actor: live_actor_tx,
             tasks_fut,
             content_status_cb,
-            _store: replica_store,
         }
     }
 
