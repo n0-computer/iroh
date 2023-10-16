@@ -112,6 +112,9 @@ impl Subscribers {
     pub fn send(&mut self, event: Event) {
         self.0.retain(|sender| sender.send(event.clone()).is_ok())
     }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
     pub fn send_with(&mut self, f: impl FnOnce() -> Event) {
         if !self.0.is_empty() {
             self.send(f())
@@ -182,7 +185,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the number of current event subscribers.
     pub fn subscribers_count(&self) -> usize {
-        self.inner.subscribers.lock().0.len()
+        self.inner.subscribers.lock().len()
     }
 
     /// Set the content status callback.

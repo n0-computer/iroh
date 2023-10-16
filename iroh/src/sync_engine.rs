@@ -38,7 +38,8 @@ const ACTOR_CHANNEL_CAP: usize = 64;
 /// Capacity for the channels for [`SyncEngine::subscribe`].
 const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 
-/// The SyncEngine contains the [`LiveActor`] handle, and keeps a copy of the store and endpoint.
+/// The sync engine coordinates actors that manage open documents, set-reconciliation syncs with
+/// peers and a gossip swarm for each syncing document.
 ///
 /// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
 /// implementations in [rpc].
@@ -63,8 +64,8 @@ pub struct SyncEngine<S: Store> {
 impl<S: Store> SyncEngine<S> {
     /// Start the sync engine.
     ///
-    /// This will spawn background tasks for the [`LiveActor`] and [`GossipActor`],
-    /// and a background thread for the [`SyncHandle`].
+    /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
+    /// thread for the [`iroh_sync::actor::SyncHandle`].
     pub fn spawn<B: iroh_bytes::store::Store>(
         rt: Handle,
         endpoint: MagicEndpoint,
@@ -209,7 +210,7 @@ impl<S: Store> SyncEngine<S> {
                 let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
                 this.sync.subscribe(namespace, s).await?;
                 r.into_stream()
-                    .map(move |ev| Ok(LiveEvent::from_replica_event(ev, &content_status_cb)))
+                    .map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
             };
 
             // Subscribe to events from the [`live::Actor`].
@@ -306,8 +307,11 @@ impl From<live::Event> for LiveEvent {
 }
 
 impl LiveEvent {
-    fn from_replica_event(ev: iroh_sync::Event, content_status_cb: &ContentStatusCallback) -> Self {
-        match ev {
+    fn from_replica_event(
+        ev: iroh_sync::Event,
+        content_status_cb: &ContentStatusCallback,
+    ) -> Result<Self> {
+        Ok(match ev {
             iroh_sync::Event::Insert { origin, entry, .. } => match origin {
                 InsertOrigin::Local => Self::InsertLocal {
                     entry: entry.into(),
@@ -315,10 +319,9 @@ impl LiveEvent {
                 InsertOrigin::Sync { from, .. } => Self::InsertRemote {
                     content_status: content_status_cb(entry.content_hash()),
                     entry: entry.into(),
-                    // TODO: unwrap
-                    from: PublicKey::from_bytes(&from).unwrap(),
+                    from: PublicKey::from_bytes(&from)?,
                 },
             },
-        }
+        })
     }
 }
