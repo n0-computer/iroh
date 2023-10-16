@@ -79,6 +79,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # metrics
 iroh-metrics = { version = "0.7.0", path = "../iroh-metrics", default-features = false }
+bounded_join_set = "0.1.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
