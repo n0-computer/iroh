@@ -417,8 +417,33 @@ async fn sync_full_basic() -> Result<()> {
 }
 
 #[tokio::test]
-async fn sync_subscribe_stop() -> Result<()> {
-    let mut rng = test_rng(b"sync_subscribe_stop");
+async fn sync_open_close() -> Result<()> {
+    let mut rng = test_rng(b"sync_subscribe_stop_close");
+    setup_logging();
+    let rt = test_runtime();
+    let node = spawn_node(rt, 0, &mut rng).await?;
+    let client = node.client();
+
+    let doc = client.docs.create().await?;
+    let status = doc.status().await?;
+    assert_eq!(status.handles, 1);
+
+    let doc2 = client.docs.open(doc.id()).await?.unwrap();
+    let status = doc2.status().await?;
+    assert_eq!(status.handles, 2);
+
+    doc.close().await?;
+    assert!(doc.status().await.is_err());
+
+    let status = doc2.status().await?;
+    assert_eq!(status.handles, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sync_subscribe_stop_close() -> Result<()> {
+    let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
     let rt = test_runtime();
     let node = spawn_node(rt, 0, &mut rng).await?;
@@ -426,22 +451,32 @@ async fn sync_subscribe_stop() -> Result<()> {
 
     let doc = client.docs.create().await?;
     let author = client.authors.create().await?;
-    doc.start_sync(vec![]).await?;
 
     let status = doc.status().await?;
-    assert!(status.state.sync);
-    assert_eq!(status.subscriptions, 0);
+    assert_eq!(status.subscribers, 0);
+    assert_eq!(status.handles, 1);
+    assert!(!status.sync);
+
+    doc.start_sync(vec![]).await?;
+    let status = doc.status().await?;
+    assert!(status.sync);
+    assert_eq!(status.handles, 2);
+    assert_eq!(status.subscribers, 1);
 
     let sub = doc.subscribe().await?;
     let status = doc.status().await?;
-    assert_eq!(status.subscriptions, 1);
+    assert_eq!(status.subscribers, 2);
     drop(sub);
-
+    // trigger an event that makes the actor check if the event channels are still connected
     doc.set_bytes(author, b"x".to_vec(), b"x".to_vec()).await?;
     let status = doc.status().await?;
-    assert_eq!(status.subscriptions, 0);
+    assert_eq!(status.subscribers, 1);
 
-    node.shutdown();
+    doc.leave().await?;
+    let status = doc.status().await?;
+    assert_eq!(status.subscribers, 0);
+    assert_eq!(status.handles, 1);
+    assert!(!status.sync);
 
     Ok(())
 }
@@ -537,10 +572,8 @@ async fn sync_drop_doc() -> Result<()> {
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
         .await;
     assert!(res.is_err());
-    let res = client.docs.open(doc.id()).await?;
-    assert!(res.is_none());
-    let ev = sub.next().await;
-    assert!(matches!(ev, Some(Ok(LiveEvent::Closed))));
+    let res = client.docs.open(doc.id()).await;
+    assert!(res.is_err());
     let ev = sub.next().await;
     assert!(ev.is_none());
 

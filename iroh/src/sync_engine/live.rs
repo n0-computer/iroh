@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 
-use std::{collections::HashMap, time::SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    time::SystemTime,
+};
 
 use crate::downloader::{DownloadKind, Downloader, PeerRole};
 use anyhow::{Context, Result};
@@ -13,18 +16,18 @@ use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use iroh_sync::{
-    actor::{ReplicaState, StateUpdate, SyncHandle},
+    actor::{OpenOpts, SyncHandle},
     net::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
         SyncFinished,
     },
-    ContentStatus, Entry, InsertOrigin, NamespaceId, SignedEntry,
+    ContentStatus, InsertOrigin, NamespaceId, SignedEntry,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, instrument, trace, warn, Instrument, Span};
 
-use super::{entry_to_content_status, gossip::ToGossipActor};
+use super::gossip::ToGossipActor;
 
 /// An iroh-sync operation
 ///
@@ -46,22 +49,9 @@ enum SyncState {
     Failed,
 }
 
-/// Sync status for a document
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LiveStatus {
-    /// Whether this document is in the live sync
-    pub state: ReplicaState,
-    /// Number of event listeners registered
-    pub subscriptions: u64,
-}
-
 /// Messages to the sync actor
 #[derive(derive_more::Debug, strum::Display)]
 pub enum ToLiveActor {
-    Status {
-        namespace: NamespaceId,
-        reply: sync::oneshot::Sender<Option<LiveStatus>>,
-    },
     StartSync {
         namespace: NamespaceId,
         peers: Vec<PeerAddr>,
@@ -76,23 +66,17 @@ pub enum ToLiveActor {
     },
     Leave {
         namespace: NamespaceId,
-        /// If true removes all active client subscriptions.
-        force_remove: bool,
+        kill_subscribers: bool,
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     Shutdown,
     Subscribe {
         namespace: NamespaceId,
-        #[debug("cb")]
-        cb: OnLiveEventCallback,
+        #[debug("sender")]
+        sender: flume::Sender<Event>,
         #[debug("oneshot::Sender")]
-        reply: sync::oneshot::Sender<Result<RemovalToken>>,
-    },
-    Unsubscribe {
-        namespace: NamespaceId,
-        token: RemovalToken,
-        reply: sync::oneshot::Sender<bool>,
+        reply: sync::oneshot::Sender<Result<()>>,
     },
     HandleConnection {
         conn: quinn::Connecting,
@@ -113,37 +97,10 @@ pub enum ToLiveActor {
     },
 }
 
-/// Whether to keep a live event callback active.
-#[derive(Debug)]
-pub enum KeepCallback {
-    /// Keep active
-    Keep,
-    /// Drop this callback
-    Drop,
-}
-
-/// Callback used for tracking [`LiveEvent`]s.
-pub type OnLiveEventCallback =
-    Box<dyn Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static>;
-
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 #[allow(clippy::large_enum_variant)]
-pub enum LiveEvent {
-    /// A local insertion.
-    InsertLocal {
-        /// The inserted entry.
-        entry: Entry,
-    },
-    /// Received a remote insert.
-    InsertRemote {
-        /// The peer that sent us the entry.
-        from: PublicKey,
-        /// The inserted entry.
-        entry: Entry,
-        /// If the content is available at the local node
-        content_status: ContentStatus,
-    },
+pub enum Event {
     /// The content of an entry was downloaded and is now available at the local node
     ContentReady {
         /// The content hash of the newly available entry content
@@ -155,8 +112,6 @@ pub enum LiveEvent {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
-    /// The document was closed. No further events will be emitted.
-    Closed,
 }
 
 type SyncConnectFut = BoxFuture<
@@ -179,7 +134,8 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
-    sync_events: flume::Receiver<iroh_sync::Event>,
+    replica_events_tx: flume::Sender<iroh_sync::Event>,
+    replica_events_rx: flume::Receiver<iroh_sync::Event>,
     /// Last state of sync for a replica with a peer.
     sync_state: HashMap<(NamespaceId, PublicKey), SyncState>,
 
@@ -197,10 +153,9 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     /// Runnning download futures.
     pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
 
-    /// External subscriptions to replica events.
-    subscriptions: Subscriptions,
-
-    states: HashMap<NamespaceId, ReplicaState>,
+    // Subscribers to actor events
+    subscribers: SubscribersMap,
+    is_syncing: HashSet<NamespaceId>,
 }
 
 impl<B: iroh_bytes::store::Store> LiveActor<B> {
@@ -208,7 +163,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         sync: SyncHandle,
-        sync_events: flume::Receiver<iroh_sync::Event>,
         endpoint: MagicEndpoint,
         gossip: Gossip,
         bao_store: B,
@@ -217,10 +171,12 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         sync_actor_tx: mpsc::Sender<ToLiveActor>,
         gossip_actor_tx: mpsc::Sender<ToGossipActor>,
     ) -> Self {
+        let (replica_events_tx, replica_events_rx) = flume::bounded(1024);
         Self {
             inbox,
             sync,
-            sync_events,
+            replica_events_rx,
+            replica_events_tx,
             endpoint,
             gossip,
             bao_store,
@@ -230,9 +186,9 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             sync_state: Default::default(),
             running_sync_connect: Default::default(),
             running_sync_accept: Default::default(),
-            subscriptions: Default::default(),
+            subscribers: Default::default(),
             pending_downloads: Default::default(),
-            states: Default::default(),
+            is_syncing: Default::default(),
         }
     }
 
@@ -259,7 +215,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                         break;
                     }
                 }
-                event = self.sync_events.recv_async() => {
+                event = self.replica_events_rx.recv_async() => {
                     trace!(?i, "tick: replica_event");
                     let event = event.context("replica_events closed")?;
                     if let Err(err) = self.on_replica_event(event).await {
@@ -285,8 +241,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     trace!(?i, "tick: pending_downloads");
                     let res = res.context("pending_downloads closed")?;
                     if let Some((namespace, hash)) = res {
-                        let event = LiveEvent::ContentReady { hash };
-                        self.subscriptions.send(&namespace, event).await;
+                        self.subscribers.send(&namespace, Event::ContentReady { hash }).await;
 
                         // Inform our neighbors that we have new content ready.
                         let op = Op::ContentReady(hash);
@@ -311,14 +266,14 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             ToLiveActor::NeighborUp { namespace, peer } => {
                 debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), "neighbor up");
                 self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
-                self.subscriptions
-                    .send(&namespace, LiveEvent::NeighborUp(peer))
+                self.subscribers
+                    .send(&namespace, Event::NeighborUp(peer))
                     .await;
             }
             ToLiveActor::NeighborDown { namespace, peer } => {
                 debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), "neighbor down");
-                self.subscriptions
-                    .send(&namespace, LiveEvent::NeighborDown(peer))
+                self.subscribers
+                    .send(&namespace, Event::NeighborDown(peer))
                     .await;
             }
             ToLiveActor::StartSync {
@@ -331,10 +286,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             }
             ToLiveActor::Leave {
                 namespace,
-                force_remove,
+                kill_subscribers,
                 reply,
             } => {
-                let res = self.leave(namespace, force_remove).await;
+                let res = self.leave(namespace, kill_subscribers).await;
                 reply.send(res).ok();
             }
             ToLiveActor::JoinPeers {
@@ -347,23 +302,11 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             }
             ToLiveActor::Subscribe {
                 namespace,
-                cb,
+                sender,
                 reply,
             } => {
-                let result = self.subscribe(namespace, cb).await;
-                reply.send(result).ok();
-            }
-            ToLiveActor::Unsubscribe {
-                namespace,
-                token,
-                reply,
-            } => {
-                let result = self.unsubscribe(namespace, token).await;
-                reply.send(result).ok();
-            }
-            ToLiveActor::Status { namespace, reply } => {
-                let result = self.status(namespace).await;
-                reply.send(result).ok();
+                self.subscribers.subscribe(namespace, sender);
+                reply.send(Ok(())).ok();
             }
             ToLiveActor::HandleConnection { conn } => {
                 self.handle_connection(conn).await;
@@ -421,31 +364,26 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
-        for (namespace, _state) in self.states.drain() {
-            self.subscriptions.remove(&namespace);
-        }
+        // cancel all subscriptions
+        self.subscribers = Default::default();
+        // shutdown gossip actor
         self.gossip_actor_tx
             .send(ToGossipActor::Shutdown)
             .await
             .ok();
+        // shutdown sync thread
         self.sync.shutdown().await;
         Ok(())
-    }
-
-    async fn status(&mut self, namespace: NamespaceId) -> Option<LiveStatus> {
-        let state = self.states.get(&namespace).cloned().unwrap_or_default();
-        let subscriptions = self.subscriptions.len(&namespace) as u64;
-        Some(LiveStatus {
-            state,
-            subscriptions,
-        })
     }
 
     async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<PeerAddr>) -> Result<()> {
         // update state to allow sync
         if !self.is_syncing(&namespace) {
-            self.update_state(namespace, StateUpdate::with_sync(true))
-                .await?;
+            let opts = OpenOpts::default()
+                .sync()
+                .subscribe(self.replica_events_tx.clone());
+            self.sync.open(namespace, opts).await?;
+            self.is_syncing.insert(namespace);
         }
         // add the peers stored for this document
         match self.sync.get_sync_peers(namespace).await {
@@ -475,72 +413,28 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         Ok(())
     }
 
-    async fn subscribe(
+    async fn leave(
         &mut self,
         namespace: NamespaceId,
-        cb: OnLiveEventCallback,
-    ) -> anyhow::Result<RemovalToken> {
-        self.update_state(namespace, StateUpdate::with_watch(true))
-            .await?;
-        Ok(self.subscriptions.subscribe(namespace, cb))
-    }
-
-    /// Returns `true` if a callback was found and removed
-    async fn unsubscribe(&mut self, namespace: NamespaceId, token: RemovalToken) -> bool {
-        if !self.subscriptions.unsubscribe(namespace, token) {
-            return false;
-        }
-        // if there are no more subscriptions, and we are not syncing the replica, disable
-        // watch.
-        if !self.subscriptions.contains(&namespace) && !self.is_syncing(&namespace) {
-            self.update_state(namespace, StateUpdate::with_watch(false))
-                .await
-                .ok();
-        }
-        true
-    }
-
-    async fn update_state(
-        &mut self,
-        namespace: NamespaceId,
-        mut change: StateUpdate,
-    ) -> Result<()> {
-        // whenever we enable sync, also enable watch, because we need the events for gossiping
-        // changes.
-        if let Some(true) = change.sync {
-            change.watch = Some(true);
-        }
-        let state = self.states.get(&namespace).cloned().unwrap_or_default();
-        let next_state = state.with_update(change);
-
-        if next_state == state {
-            return Ok(());
-        }
-
-        // when disabling sync: leave gossip
-        if state.sync && !next_state.sync {
+        kill_subscribers: bool,
+    ) -> anyhow::Result<()> {
+        // self.subscribers.remove(&namespace);
+        if self.is_syncing.remove(&namespace) {
+            self.sync_state
+                .retain(|(cur_namespace, _peer), _state| cur_namespace != &namespace);
+            self.sync.set_sync(namespace, false).await?;
+            self.sync
+                .unsubscribe(namespace, self.replica_events_tx.clone())
+                .await?;
+            self.sync.close(namespace).await?;
             self.gossip_actor_tx
                 .send(ToGossipActor::Leave { namespace })
                 .await
                 .context("gossip actor failure")?;
         }
-        // update state of the iroh sync handle
-        self.sync
-            .update_state(namespace, change)
-            .await
-            .context("iroh_sync actor failure")?;
-        self.states.insert(namespace, next_state);
-        Ok(())
-    }
-
-    async fn leave(&mut self, namespace: NamespaceId, force_remove: bool) -> anyhow::Result<()> {
-        let mut change = StateUpdate::default().sync(false);
-        if force_remove {
-            self.subscriptions.send(&namespace, LiveEvent::Closed).await;
-            self.subscriptions.remove(&namespace);
-            change.watch = Some(false);
+        if kill_subscribers {
+            self.subscribers.remove(&namespace);
         }
-        self.update_state(namespace, change).await?;
         Ok(())
     }
 
@@ -670,26 +564,24 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
 
         self.set_sync_state(namespace, peer, state);
 
-        if self.subscriptions.contains(&namespace) {
-            let event = SyncEvent {
-                namespace,
-                peer,
-                origin,
-                result: result
-                    .as_ref()
-                    .map(|_| ())
-                    .map_err(|err| format!("{err:?}")),
-                finished: SystemTime::now(),
-            };
-            self.subscriptions
-                .send(&namespace, LiveEvent::SyncFinished(event))
-                .await;
-        }
+        let ev = SyncEvent {
+            namespace,
+            peer,
+            origin,
+            result: result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|err| format!("{err:?}")),
+            finished: SystemTime::now(),
+        };
+        self.subscribers
+            .send(&namespace, Event::SyncFinished(ev))
+            .await;
         Ok(())
     }
 
     fn is_syncing(&self, namespace: &NamespaceId) -> bool {
-        self.states.get(namespace).map(|x| x.sync).unwrap_or(false)
+        self.is_syncing.contains(namespace)
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
@@ -706,13 +598,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     let op = Op::Put(signed_entry.clone());
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(topic, message).await?;
-                }
-                // Notify subscribers about the event
-                if self.subscriptions.contains(&namespace) {
-                    let event = LiveEvent::InsertLocal {
-                        entry: signed_entry.entry().clone(),
-                    };
-                    self.subscriptions.send(&namespace, event).await;
                 }
             }
             InsertOrigin::Sync {
@@ -744,16 +629,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     }
                     .boxed();
                     self.pending_downloads.push(fut);
-                }
-
-                // Notify subscribers about the event
-                if self.subscriptions.contains(&namespace) {
-                    let event = LiveEvent::InsertRemote {
-                        from,
-                        entry: entry.clone(),
-                        content_status: entry_to_content_status(entry_status),
-                    };
-                    self.subscriptions.send(&namespace, event).await;
                 }
             }
         }
@@ -871,71 +746,49 @@ pub enum Origin {
     Accept,
 }
 
-#[derive(Default)]
-struct Subscriptions {
-    inner: HashMap<NamespaceId, HashMap<u64, OnLiveEventCallback>>,
-    /// Next [`RemovalToken`] for external replica event subscriptions.
-    event_removal_id: u64,
-}
-impl Subscriptions {
-    fn contains(&self, namespace: &NamespaceId) -> bool {
-        self.inner.contains_key(namespace)
+#[derive(Debug, Default)]
+struct SubscribersMap(HashMap<NamespaceId, Subscribers>);
+
+impl SubscribersMap {
+    fn subscribe(&mut self, namespace: NamespaceId, sender: flume::Sender<Event>) {
+        self.0.entry(namespace).or_default().subscribe(sender);
     }
 
-    fn len(&self, namespace: &NamespaceId) -> usize {
-        self.inner.get(namespace).map(|map| map.len()).unwrap_or(0)
+    async fn send(&mut self, namespace: &NamespaceId, event: Event) -> bool {
+        let Some(subscribers) = self.0.get_mut(namespace) else {
+            return false;
+        };
+
+        if !subscribers.send(event).await {
+            self.0.remove(namespace);
+        }
+        true
     }
 
     fn remove(&mut self, namespace: &NamespaceId) {
-        self.inner.remove(namespace);
-    }
-
-    pub async fn send(&mut self, namespace: &NamespaceId, event: LiveEvent) {
-        let Some(subs) = self.inner.get_mut(namespace) else {
-            return;
-        };
-        let futs: Vec<_> = subs
-            .iter()
-            .map(|(idx, sub)| {
-                let fut = sub(event.clone());
-                fut.map(move |r| (*idx, r))
-            })
-            .collect();
-
-        let res = futures::future::join_all(futs).await;
-
-        let to_drop = res
-            .into_iter()
-            .filter(|res| matches!(res.1, KeepCallback::Drop));
-        for (idx, _) in to_drop {
-            subs.remove(&idx);
-        }
-    }
-
-    pub fn subscribe(&mut self, namespace: NamespaceId, cb: OnLiveEventCallback) -> RemovalToken {
-        let subs = self.inner.entry(namespace).or_default();
-        let removal_id = self.event_removal_id;
-        self.event_removal_id += 1;
-        subs.insert(removal_id, cb);
-        RemovalToken(removal_id)
-    }
-
-    /// Returns `true` if a callback was found and removed
-    pub fn unsubscribe(&mut self, namespace: NamespaceId, token: RemovalToken) -> bool {
-        if let Some(subs) = self.inner.get_mut(&namespace) {
-            let res = subs.remove(&token.0).is_some();
-            if subs.is_empty() {
-                self.inner.remove(&namespace);
-            }
-            return res;
-        }
-        false
+        self.0.remove(namespace);
     }
 }
 
-/// Token needed to remove inserted callbacks.
-#[derive(Debug, Clone, Copy)]
-pub struct RemovalToken(u64);
+#[derive(Debug, Default)]
+struct Subscribers(Vec<flume::Sender<Event>>);
+
+impl Subscribers {
+    fn subscribe(&mut self, sender: flume::Sender<Event>) {
+        self.0.push(sender)
+    }
+
+    async fn send(&mut self, event: Event) -> bool {
+        let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
+        let res = futures::future::join_all(futs).await;
+        for (i, res) in res.into_iter().enumerate() {
+            if res.is_err() {
+                self.0.remove(i);
+            }
+        }
+        !self.0.is_empty()
+    }
+}
 
 fn fmt_accept_peer(res: &Result<SyncFinished, AcceptError>) -> String {
     match res {

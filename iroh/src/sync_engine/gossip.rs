@@ -1,9 +1,12 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, future::Future, pin::Pin};
 
 use anyhow::{anyhow, Context, Result};
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::{
+    stream::{FuturesUnordered, StreamExt},
+    FutureExt,
+};
 use iroh_gossip::{
-    net::{Event, Gossip, JoinTopicFut},
+    net::{Event, Gossip},
     proto::TopicId,
 };
 use iroh_net::key::PublicKey;
@@ -26,6 +29,8 @@ pub enum ToGossipActor {
     },
 }
 
+type JoinFut = Pin<Box<dyn Future<Output = (NamespaceId, Result<TopicId>)> + Send + 'static>>;
+
 /// This actor subscribes to all gossip events. When receiving entries, they are inserted in the
 /// replica (if open). Other events are forwarded to the main actor to be handled there.
 pub struct GossipActor {
@@ -35,7 +40,8 @@ pub struct GossipActor {
     downloader: Downloader,
     to_sync_actor: mpsc::Sender<ToLiveActor>,
     joined: HashSet<NamespaceId>,
-    pending_joins: FuturesUnordered<JoinTopicFut>,
+    want_join: HashSet<NamespaceId>,
+    pending_joins: FuturesUnordered<JoinFut>,
 }
 
 impl GossipActor {
@@ -53,6 +59,7 @@ impl GossipActor {
             downloader,
             to_sync_actor,
             joined: Default::default(),
+            want_join: Default::default(),
             pending_joins: Default::default(),
         }
     }
@@ -79,15 +86,16 @@ impl GossipActor {
                 }
                 res = self.pending_joins.next(), if !self.pending_joins.is_empty() => {
                     trace!(?i, "tick: pending_joins");
-                    let res = res.context("pending_joins closed")?;
+                    let (namespace, res) = res.context("pending_joins closed")?;
                     match res {
-                        Ok(topic) => {
-                            let namespace: NamespaceId = topic.as_bytes().into();
+                        Ok(_topic) => {
                             debug!(namespace = %namespace.fmt_short(), "joined gossip");
                             self.joined.insert(namespace);
                         },
                         Err(err) => {
-                            error!(?err, "failed to join gossip");
+                            if self.want_join.contains(&namespace) {
+                                error!(?namespace, ?err, "failed to join gossip");
+                            }
                         }
                     }
                 }
@@ -107,12 +115,19 @@ impl GossipActor {
             }
             ToGossipActor::Join { namespace, peers } => {
                 // join gossip for the topic to receive and send message
-                let fut = self.gossip.join(namespace.into(), peers).await?;
+                let fut = self
+                    .gossip
+                    .join(namespace.into(), peers)
+                    .await?
+                    .map(move |res| (namespace, res))
+                    .boxed();
+                self.want_join.insert(namespace);
                 self.pending_joins.push(fut);
             }
             ToGossipActor::Leave { namespace } => {
                 self.gossip.quit(namespace.into()).await?;
                 self.joined.remove(&namespace);
+                self.want_join.remove(&namespace);
             }
         }
         Ok(true)

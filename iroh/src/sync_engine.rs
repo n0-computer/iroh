@@ -5,15 +5,20 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use futures::future::{BoxFuture, FutureExt, Shared};
-use iroh_bytes::{
-    store::{EntryStatus, Store as BaoStore},
-    util::runtime::Handle,
+use futures::{
+    future::{BoxFuture, FutureExt, Shared},
+    Stream,
 };
+use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::net::Gossip;
-use iroh_net::{MagicEndpoint, PeerAddr};
-use iroh_sync::{actor::SyncHandle, store::Store, sync::NamespaceId, ContentStatus};
+use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
+use iroh_sync::{
+    actor::SyncHandle, store::Store, sync::NamespaceId, ContentStatus, ContentStatusCallback,
+    Entry, InsertOrigin,
+};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
+use tokio_stream::StreamExt;
 use tracing::{error, error_span, Instrument};
 
 use crate::downloader::Downloader;
@@ -25,7 +30,7 @@ pub mod rpc;
 use gossip::GossipActor;
 use live::{LiveActor, ToLiveActor};
 
-pub use self::live::{KeepCallback, LiveEvent, LiveStatus, Origin, RemovalToken, SyncEvent};
+pub use self::live::{Origin, SyncEvent};
 pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
@@ -35,13 +40,15 @@ const ACTOR_CHANNEL_CAP: usize = 64;
 ///
 /// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
 /// implementations in [rpc].
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub struct SyncEngine<S: Store> {
     pub(crate) rt: Handle,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
     tasks_fut: Shared<BoxFuture<'static, ()>>,
+    #[debug("ContentStatusCallback")]
+    content_status_cb: ContentStatusCallback,
 
     // TODO:
     // After the latest refactoring we don't need the store here anymore because all interactions
@@ -56,7 +63,7 @@ impl<S: Store> SyncEngine<S> {
     ///
     /// This will spawn background tasks for the [`LiveActor`] and [`GossipActor`],
     /// and a background thread for the [`SyncHandle`].
-    pub fn spawn<B: BaoStore>(
+    pub fn spawn<B: iroh_bytes::store::Store>(
         rt: Handle,
         endpoint: MagicEndpoint,
         gossip: Gossip,
@@ -72,12 +79,14 @@ impl<S: Store> SyncEngine<S> {
             let bao_store = bao_store.clone();
             Arc::new(move |hash| entry_to_content_status(bao_store.contains(&hash)))
         };
-        let (sync, sync_events) =
-            SyncHandle::spawn(replica_store.clone(), Some(content_status_cb), me.clone());
+        let sync = SyncHandle::spawn(
+            replica_store.clone(),
+            Some(content_status_cb.clone()),
+            me.clone(),
+        );
 
         let mut actor = LiveActor::new(
             sync.clone(),
-            sync_events,
             endpoint.clone(),
             gossip.clone(),
             bao_store,
@@ -129,6 +138,7 @@ impl<S: Store> SyncEngine<S> {
             sync,
             to_live_actor: live_actor_tx,
             tasks_fut,
+            content_status_cb,
             _store: replica_store,
         }
     }
@@ -164,15 +174,16 @@ impl<S: Store> SyncEngine<S> {
         Ok(())
     }
 
-    /// Stop the live sync for a document.
+    /// Stop the live sync for a document and leave the gossip swarm.
     ///
-    /// This will leave the gossip swarm for this document.
-    pub async fn leave(&self, namespace: NamespaceId, force_remove: bool) -> Result<()> {
+    /// If `kill_subscribers` is true, all existing event subscribers will be dropped. This means
+    /// they will receive `None` and no further events in case of rejoining the document.
+    pub async fn leave(&self, namespace: NamespaceId, kill_subscribers: bool) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::Leave {
                 namespace,
-                force_remove,
+                kill_subscribers,
                 reply,
             })
             .await?;
@@ -180,46 +191,31 @@ impl<S: Store> SyncEngine<S> {
         Ok(())
     }
 
-    /// Subscribes `cb` to events on this `namespace`.
-    pub async fn subscribe<F>(&self, namespace: NamespaceId, cb: F) -> Result<RemovalToken>
-    where
-        F: Fn(LiveEvent) -> BoxFuture<'static, KeepCallback> + Send + Sync + 'static,
-    {
-        let (reply, reply_rx) = oneshot::channel();
-        self.to_live_actor
-            .send(ToLiveActor::Subscribe {
-                namespace,
-                cb: Box::new(cb),
-                reply,
-            })
-            .await?;
-        let token = reply_rx.await??;
-        Ok(token)
-    }
+    /// Subscribe to replica and sync progress events.
+    pub async fn subscribe(self, namespace: NamespaceId) -> Result<impl Stream<Item = LiveEvent>> {
+        let replica_events = {
+            let (s, r) = flume::bounded(64);
+            self.sync.subscribe(namespace, s).await?;
+            let content_status_cb = self.content_status_cb.clone();
+            r.into_stream()
+                .map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
+        };
 
-    /// Unsubscribes `token` to events on this `namespace`.
-    /// Returns `true` if a callback was found
-    pub async fn unsubscribe(&self, namespace: NamespaceId, token: RemovalToken) -> Result<bool> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.to_live_actor
-            .send(ToLiveActor::Unsubscribe {
-                namespace,
-                token,
-                reply,
-            })
-            .await?;
-        let token = reply_rx.await?;
-        Ok(token)
-    }
+        let sync_events = {
+            let (s, r) = flume::bounded(64);
+            let (reply, reply_rx) = oneshot::channel();
+            self.to_live_actor
+                .send(ToLiveActor::Subscribe {
+                    namespace,
+                    sender: s,
+                    reply,
+                })
+                .await?;
+            reply_rx.await??;
+            r.into_stream().map(LiveEvent::from)
+        };
 
-    /// Get status for a document
-    pub async fn status(&self, namespace: NamespaceId) -> Result<Option<LiveStatus>> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.to_live_actor
-            .send(ToLiveActor::Status { namespace, reply })
-            .await?;
-        let status = reply_rx.await?;
-        Ok(status)
+        Ok(replica_events.merge(sync_events))
     }
 
     /// Handle an incoming iroh-sync connection.
@@ -243,5 +239,65 @@ pub(crate) fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
         EntryStatus::Complete => ContentStatus::Complete,
         EntryStatus::Partial => ContentStatus::Incomplete,
         EntryStatus::NotFound => ContentStatus::Missing,
+    }
+}
+
+/// Events informing about actions of the live sync progres.
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
+#[allow(clippy::large_enum_variant)]
+pub enum LiveEvent {
+    /// A local insertion.
+    InsertLocal {
+        /// The inserted entry.
+        entry: Entry,
+    },
+    /// Received a remote insert.
+    InsertRemote {
+        /// The peer that sent us the entry.
+        from: PublicKey,
+        /// The inserted entry.
+        entry: Entry,
+        /// If the content is available at the local node
+        content_status: ContentStatus,
+    },
+    /// The content of an entry was downloaded and is now available at the local node
+    ContentReady {
+        /// The content hash of the newly available entry content
+        hash: Hash,
+    },
+    /// We have a new neighbor in the swarm.
+    NeighborUp(PublicKey),
+    /// We lost a neighbor in the swarm.
+    NeighborDown(PublicKey),
+    /// A set-reconciliation sync finished.
+    SyncFinished(SyncEvent),
+}
+
+impl From<live::Event> for LiveEvent {
+    fn from(ev: live::Event) -> Self {
+        match ev {
+            live::Event::ContentReady { hash } => Self::ContentReady { hash },
+            live::Event::NeighborUp(peer) => Self::NeighborUp(peer),
+            live::Event::NeighborDown(peer) => Self::NeighborDown(peer),
+            live::Event::SyncFinished(ev) => Self::SyncFinished(ev),
+        }
+    }
+}
+
+impl LiveEvent {
+    fn from_replica_event(ev: iroh_sync::Event, content_status_cb: &ContentStatusCallback) -> Self {
+        match ev {
+            iroh_sync::Event::Insert { origin, entry, .. } => match origin {
+                InsertOrigin::Local => Self::InsertLocal {
+                    entry: entry.into(),
+                },
+                InsertOrigin::Sync { from, .. } => Self::InsertRemote {
+                    content_status: content_status_cb(entry.content_hash()),
+                    entry: entry.into(),
+                    // TODO: unwrap
+                    from: PublicKey::from_bytes(&from).unwrap(),
+                },
+            },
+        }
     }
 }

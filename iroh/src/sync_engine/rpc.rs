@@ -1,7 +1,7 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::{FutureExt, Stream};
+use futures::{FutureExt, Stream, TryStreamExt};
 use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
 use iroh_sync::{store::Store, sync::Namespace, Author};
 use tokio_stream::StreamExt;
@@ -9,15 +9,16 @@ use tokio_stream::StreamExt;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
-        DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
-        DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
-        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
-        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
+        DocDelResponse, DocDropRequest, DocDropResponse, DocGetManyRequest, DocGetManyResponse,
+        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
+        DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
+        DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
+        DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
+        ShareMode,
     },
-    sync_engine::{KeepCallback, LiveStatus, SyncEngine},
+    sync_engine::SyncEngine,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
@@ -60,6 +61,7 @@ impl<S: Store> SyncEngine<S> {
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let namespace = Namespace::new(&mut rand::rngs::OsRng {});
         self.sync.import_replica(namespace.clone()).await?;
+        self.sync.open(namespace.id(), Default::default()).await?;
         Ok(DocCreateResponse { id: namespace.id() })
     }
 
@@ -85,13 +87,19 @@ impl<S: Store> SyncEngine<S> {
             .map(|r| r.map(|id| DocListResponse { id }).map_err(Into::into))
     }
 
-    pub async fn doc_info(&self, req: DocInfoRequest) -> RpcResult<DocInfoResponse> {
-        let status = self.status(req.doc_id).await?;
-        let status = status.unwrap_or(LiveStatus {
-            state: Default::default(),
-            subscriptions: 0,
-        });
-        Ok(DocInfoResponse { status })
+    pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
+        self.sync.open(req.doc_id, Default::default()).await?;
+        Ok(DocOpenResponse {})
+    }
+
+    pub async fn doc_close(&self, req: DocCloseRequest) -> RpcResult<DocCloseResponse> {
+        self.sync.close(req.doc_id).await?;
+        Ok(DocCloseResponse {})
+    }
+
+    pub async fn doc_status(&self, req: DocStatusRequest) -> RpcResult<DocStatusResponse> {
+        let status = self.sync.get_state(req.doc_id).await?;
+        Ok(DocStatusResponse { status })
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
@@ -115,36 +123,18 @@ impl<S: Store> SyncEngine<S> {
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
-        let (s, r) = flume::bounded(64);
-        let s2 = s.clone();
-        let res = self
-            .subscribe(req.doc_id, {
-                move |event| {
-                    let s = s.clone();
-                    async move {
-                        // Send event over the channel, unsubscribe if the channel is closed.
-                        match s.send_async(Ok(DocSubscribeResponse { event })).await {
-                            Err(_err) => KeepCallback::Drop,
-                            Ok(()) => KeepCallback::Keep,
-                        }
-                    }
-                    .boxed()
-                }
-            })
-            .await;
-        match res {
-            Err(err) => {
-                s2.send_async(Err(err.into())).await.ok();
-            }
-            Ok(_token) => {}
-        };
-        r.into_stream()
+        self.clone()
+            .subscribe(req.doc_id)
+            .map(|res| res.map(|stream| stream.map(|event| Ok(DocSubscribeResponse { event }))))
+            .into_stream()
+            .try_flatten()
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
         let DocImportRequest(DocTicket { key, peers }) = req;
         let namespace = Namespace::from_bytes(&key);
         let doc_id = self.sync.import_replica(namespace).await?;
+        self.sync.open(doc_id, Default::default()).await?;
         self.start_sync(doc_id, peers).await?;
         Ok(DocImportResponse { doc_id })
     }

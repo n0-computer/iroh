@@ -23,7 +23,7 @@ use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
@@ -100,6 +100,28 @@ pub struct SyncOutcome {
     pub num_sent: usize,
 }
 
+#[derive(Debug, Default)]
+struct Subscribers(Vec<flume::Sender<Event>>);
+impl Subscribers {
+    pub fn subscribe(&mut self, sender: flume::Sender<Event>) {
+        self.0.push(sender)
+    }
+    pub fn unsubscribe(&mut self, sender: &flume::Sender<Event>) {
+        self.0.retain(|s| !s.same_channel(sender));
+    }
+    pub fn send(&mut self, event: Event) {
+        self.0.retain(|sender| sender.send(event.clone()).is_ok())
+    }
+    pub fn send_with(&mut self, f: impl FnOnce() -> Event) {
+        if !self.0.is_empty() {
+            self.send(f())
+        }
+    }
+    pub fn clear(&mut self) {
+        self.0 = vec![];
+    }
+}
+
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
@@ -110,7 +132,7 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
     peer: RwLock<Peer<SignedEntry, S>>,
-    on_insert_sender: RwLock<Option<flume::Sender<Event>>>,
+    subscribers: Mutex<Subscribers>,
     #[debug("ContentStatusCallback")]
     content_status_cb: RwLock<Option<ContentStatusCallback>>,
     closed: AtomicBool,
@@ -124,7 +146,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             inner: Arc::new(InnerReplica {
                 namespace,
                 peer: RwLock::new(Peer::from_store(store)),
-                on_insert_sender: RwLock::new(None),
+                subscribers: Default::default(),
+                // on_insert_sender: RwLock::new(None),
                 content_status_cb: RwLock::new(None),
                 closed: AtomicBool::new(false),
             }),
@@ -135,33 +158,31 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// This method is not public. Use [store::Store::close_replica] instead.
     pub(crate) fn close(&self) {
-        self.unset_event_sender();
+        self.inner.subscribers.lock().clear();
         self.inner.closed.store(true, atomic::Ordering::Release);
     }
 
-    /// Subscribe to replica events.
-    ///
-    /// Only one subscription can be active at a time. If a previous subscription was created, this
-    /// will return `false`. To set a new subscription, first clear the existing subscription with
-    /// [`Self::unset_event_sender`].
+    /// Subcribe to insert events.
     ///
     /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
-    pub fn set_event_sender(&self, sender: flume::Sender<Event>) -> bool {
-        let mut on_insert_sender = self.inner.on_insert_sender.write();
-        match &*on_insert_sender {
-            Some(_sender) => false,
-            None => {
-                *on_insert_sender = Some(sender);
-                true
-            }
-        }
+    pub fn subscribe(&self, sender: flume::Sender<Event>) {
+        self.inner.subscribers.lock().subscribe(sender)
     }
 
-    /// Remove the subscription.
-    pub fn unset_event_sender(&self) -> bool {
-        self.inner.on_insert_sender.write().take().is_some()
+    /// Explicitly unsubscribe a sender.
+    ///
+    /// Simply dropping the receiver is fine too. If you cloned a single sender to subscribe to
+    /// multiple replicas, you can use this method to explicitly unsubscribe the sender from
+    /// this replica without having to drop the receiver.
+    pub fn unsubscribe(&self, sender: &flume::Sender<Event>) {
+        self.inner.subscribers.lock().unsubscribe(sender)
+    }
+
+    /// Get the number of current event subscribers.
+    pub fn subscribers_count(&self) -> usize {
+        self.inner.subscribers.lock().0.len()
     }
 
     /// Set the content status callback.
@@ -269,20 +290,14 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         entry: SignedEntry,
         origin: InsertOrigin,
     ) -> Result<usize, InsertError<S>> {
-        let expected_namespace = self.namespace();
+        let namespace = self.namespace();
 
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
         let mut peer = self.inner.peer.write();
         let store = peer.store();
-        validate_entry(
-            system_time_now(),
-            store,
-            expected_namespace,
-            &entry,
-            &origin,
-        )?;
+        validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
         let outcome = peer.put(entry.clone()).map_err(InsertError::Store)?;
 
@@ -292,15 +307,6 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         };
 
         drop(peer);
-
-        if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
-            let event = Event::Insert {
-                namespace: self.namespace(),
-                origin: origin.clone(),
-                entry,
-            };
-            sender.send(event).ok();
-        }
 
         #[cfg(feature = "metrics")]
         {
@@ -315,6 +321,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 }
             }
         }
+
+        self.inner.subscribers.lock().send(Event::Insert {
+            namespace,
+            origin,
+            entry,
+        });
 
         Ok(removed_count)
     }
@@ -379,17 +391,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |_store, entry, content_status| {
-                    if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
-                        let event = Event::Insert {
-                            namespace: my_namespace,
-                            origin: InsertOrigin::Sync {
-                                from: from_peer,
-                                content_status,
-                            },
-                            entry: entry.clone(),
-                        };
-                        sender.send(event).ok();
-                    }
+                    // We use `send_with` to only clone the entry if we have active subcriptions.
+                    self.inner.subscribers.lock().send_with(|| Event::Insert {
+                        namespace: my_namespace,
+                        origin: InsertOrigin::Sync {
+                            from: from_peer,
+                            content_status,
+                        },
+                        entry: entry.clone(),
+                    })
                 },
                 // content_status callback: get content status for outgoing entries
                 |_store, entry| {
@@ -1824,8 +1834,8 @@ mod tests {
         let (events1_sender, events1) = flume::bounded(32);
         let (events2_sender, events2) = flume::bounded(32);
 
-        replica1.set_event_sender(events1_sender);
-        replica2.set_event_sender(events2_sender);
+        replica1.subscribe(events1_sender);
+        replica2.subscribe(events2_sender);
 
         replica1.hash_and_insert(b"foo", &author, b"init")?;
 

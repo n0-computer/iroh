@@ -294,7 +294,7 @@ impl BobState {
 #[cfg(test)]
 mod tests {
     use crate::{
-        actor::StateUpdate,
+        actor::OpenOpts,
         store::{self, GetFilter, Store},
         sync::Namespace,
         AuthorId,
@@ -351,10 +351,9 @@ mod tests {
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let (alice_handle, _events) =
-            SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
         alice_handle
-            .update_state(namespace.id(), StateUpdate::with_sync(true))
+            .open(namespace.id(), OpenOpts::default().sync())
             .await?;
         let namespace_id = namespace.id();
         let alice_handle2 = alice_handle.clone();
@@ -370,9 +369,9 @@ mod tests {
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let (bob_handle, _events) = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
         bob_handle
-            .update_state(namespace.id(), StateUpdate::with_sync(true))
+            .open(namespace.id(), OpenOpts::default().sync())
             .await?;
         let bob_handle2 = bob_handle.clone();
         let bob_task = tokio::task::spawn(async move {
@@ -481,9 +480,8 @@ mod tests {
 
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
 
-        let (alice_handle, _events) =
-            SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
-        let (bob_handle, _events) = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
 
         for num_messages in num_messages {
             for num_authors in num_authors {
@@ -569,10 +567,10 @@ mod tests {
         namespace: NamespaceId,
     ) -> Result<()> {
         alice_handle
-            .update_state(namespace, StateUpdate::with_sync(true))
+            .open(namespace, OpenOpts::default().sync())
             .await?;
         bob_handle
-            .update_state(namespace, StateUpdate::with_sync(true))
+            .open(namespace, OpenOpts::default().sync())
             .await?;
         let (alice, bob) = tokio::io::duplex(1024);
 
@@ -655,9 +653,8 @@ mod tests {
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
-        let (alice_handle, _events) =
-            SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
-        let (bob_handle, _events) = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
 
         run_sync(
             alice_handle.clone(),

@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
@@ -43,19 +43,39 @@ enum Action {
         #[debug("reply")]
         reply: flume::Sender<Result<NamespaceId>>,
     },
-    #[display("Replica({}, {})", namespace.fmt_short(), action)]
-    Namespaced {
-        namespace: NamespaceId,
-        action: ReplicaAction,
-    },
+    #[display("Replica({}, {})", _0.fmt_short(), _1)]
+    Replica(NamespaceId, ReplicaAction),
     #[display("Shutdown")]
     Shutdown,
 }
 
 #[derive(derive_more::Debug, strum::Display)]
 enum ReplicaAction {
-    UpdateState {
-        change: StateUpdate,
+    Open {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
+        opts: OpenOpts,
+    },
+    Close {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<bool>>,
+    },
+    GetState {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<OpenState>>,
+    },
+    SetSync {
+        sync: bool,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Subscribe {
+        sender: flume::Sender<Event>,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Unsubscribe {
+        sender: flume::Sender<Event>,
         #[debug("reply")]
         reply: oneshot::Sender<Result<()>>,
     },
@@ -117,74 +137,48 @@ enum ReplicaAction {
     },
 }
 
-/// Describes the intended state change for a replica.
-///
-/// Fields set to `None` mean no change (keep current state).
-/// Fields set to `Some` mean change the state to the desired value.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct StateUpdate {
-    /// Whether to emit insert events for this replica.
-    pub watch: Option<bool>,
-    /// Whether to accept sync requests for this replica.
-    pub sync: Option<bool>,
-}
-impl StateUpdate {
-    /// Create a state update with a change for [`Self::watch`].
-    pub fn with_watch(watch: bool) -> Self {
-        Self::default().watch(watch)
-    }
-    /// Create a state update with a change for [`Self::sync`].
-    pub fn with_sync(sync: bool) -> Self {
-        Self::default().sync(sync)
-    }
-    /// Set [`Self::watch`].
-    pub fn watch(mut self, watch: bool) -> Self {
-        self.watch = Some(watch);
-        self
-    }
-    /// Set [`Self::sync`].
-    pub fn sync(mut self, sync: bool) -> Self {
-        self.sync = Some(sync);
-        self
-    }
-}
-
 /// The state for an open replica.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReplicaState {
-    /// Whether to emit insert events for this replica.
-    pub watch: bool,
+pub struct OpenState {
     /// Whether to accept sync requests for this replica.
     pub sync: bool,
+    /// How many event subscriptions are open
+    pub subscribers: usize,
+    /// By how many handles the replica is currently held open
+    pub handles: usize,
 }
 
-impl ReplicaState {
-    /// Create a new state with a [`StateUpdate`] applied.
-    pub fn with_update(mut self, update: StateUpdate) -> Self {
-        if let Some(watch) = update.watch {
-            self.watch = watch;
-        }
-        if let Some(sync) = update.sync {
-            self.sync = sync;
-        }
-        self
-    }
-
-    /// Apply a [`StateUpdate`] to this state.
-    pub fn update(&mut self, update: StateUpdate) {
-        *self = self.with_update(update)
-    }
+struct OpenReplica<S: store::Store> {
+    replica: Replica<S::Instance>,
+    handles: usize,
+    sync: bool,
 }
-
-type ActorSender = flume::Sender<Action>;
-
-/// A channel to receive replica events on.
-pub type EventReceiver = flume::Receiver<Event>;
 
 /// The [`SyncHandle`] is the handle to a thread that runs replica and store operations.
 #[derive(Debug, Clone)]
 pub struct SyncHandle {
-    tx: ActorSender,
+    tx: flume::Sender<Action>,
+}
+
+/// Options when opening a replica.
+#[derive(Debug, Default)]
+pub struct OpenOpts {
+    /// Set to true to set sync state to true.
+    pub sync: bool,
+    /// Optionally subscribe to replica events.
+    pub subscribe: Option<flume::Sender<Event>>,
+}
+impl OpenOpts {
+    /// Set sync state to true.
+    pub fn sync(mut self) -> Self {
+        self.sync = true;
+        self
+    }
+    /// Subscribe to replica events.
+    pub fn subscribe(mut self, subscribe: flume::Sender<Event>) -> Self {
+        self.subscribe = Some(subscribe);
+        self
+    }
 }
 
 #[allow(missing_docs)]
@@ -194,15 +188,12 @@ impl SyncHandle {
         store: S,
         content_status_callback: Option<ContentStatusCallback>,
         me: String,
-    ) -> (SyncHandle, EventReceiver) {
-        const EVENT_CAP: usize = 1024;
+    ) -> SyncHandle {
         const ACTION_CAP: usize = 1024;
-        let (event_tx, event_rx) = flume::bounded(EVENT_CAP);
         let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
         let mut actor = Actor {
             store,
             states: Default::default(),
-            event_tx,
             action_rx,
             content_status_callback,
         };
@@ -214,13 +205,48 @@ impl SyncHandle {
                 error!("Sync actor closed with error: {err:?}");
             }
         });
-        let handle = SyncHandle { tx: action_tx };
-        (handle, event_rx)
+        SyncHandle { tx: action_tx }
     }
 
-    pub async fn update_state(&self, namespace: NamespaceId, change: StateUpdate) -> Result<()> {
+    pub async fn open(&self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
         let (reply, rx) = oneshot::channel();
-        let action = ReplicaAction::UpdateState { change, reply };
+        let action = ReplicaAction::Open { reply, opts };
+        self.send_replica(namespace, action).await?;
+        rx.await?
+    }
+
+    pub async fn close(&self, namespace: NamespaceId) -> Result<bool> {
+        let (reply, rx) = oneshot::channel();
+        self.send_replica(namespace, ReplicaAction::Close { reply })
+            .await?;
+        rx.await?
+    }
+
+    pub async fn subscribe(
+        &self,
+        namespace: NamespaceId,
+        sender: flume::Sender<Event>,
+    ) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send_replica(namespace, ReplicaAction::Subscribe { sender, reply })
+            .await?;
+        rx.await?
+    }
+
+    pub async fn unsubscribe(
+        &self,
+        namespace: NamespaceId,
+        sender: flume::Sender<Event>,
+    ) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send_replica(namespace, ReplicaAction::Unsubscribe { sender, reply })
+            .await?;
+        rx.await?
+    }
+
+    pub async fn set_sync(&self, namespace: NamespaceId, sync: bool) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        let action = ReplicaAction::SetSync { sync, reply };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -349,13 +375,19 @@ impl SyncHandle {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::DropReplica { reply };
         self.send_replica(namespace, action).await?;
-        let res = rx.await?;
-        res
+        rx.await?
     }
 
     pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<Namespace> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::ExportSecretKey { reply };
+        self.send_replica(namespace, action).await?;
+        rx.await?
+    }
+
+    pub async fn get_state(&self, namespace: NamespaceId) -> Result<OpenState> {
+        let (reply, rx) = oneshot::channel();
+        let action = ReplicaAction::GetState { reply };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -393,18 +425,14 @@ impl SyncHandle {
         Ok(())
     }
     async fn send_replica(&self, namespace: NamespaceId, action: ReplicaAction) -> Result<()> {
-        self.send(Action::Namespaced { namespace, action }).await?;
+        self.send(Action::Replica(namespace, action)).await?;
         Ok(())
     }
 }
 
-type ReplicaStates<S> =
-    HashMap<NamespaceId, (Replica<<S as store::Store>::Instance>, ReplicaState)>;
-
 struct Actor<S: store::Store> {
     store: S,
-    states: ReplicaStates<S>,
-    event_tx: flume::Sender<Event>,
+    states: HashMap<NamespaceId, OpenReplica<S>>,
     action_rx: flume::Receiver<Action>,
     content_status_callback: Option<ContentStatusCallback>,
 }
@@ -414,7 +442,7 @@ impl<S: store::Store> Actor<S> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
             let is_shutdown = matches!(action, Action::Shutdown);
-            if let Err(_) = self.on_action(action) {
+            if self.on_action(action).is_err() {
                 warn!("failed to send reply: receiver dropped");
             }
             if is_shutdown {
@@ -448,7 +476,7 @@ impl<S: store::Store> Actor<S> {
                     .map(|a| a.map(|a| a.map(|a| a.id()))),
             ),
             Action::ListReplicas { reply } => iter_to_channel(reply, self.store.list_namespaces()),
-            Action::Namespaced { namespace, action } => self.on_replica_action(namespace, action),
+            Action::Replica(namespace, action) => self.on_replica_action(namespace, action),
         }
     }
 
@@ -458,10 +486,32 @@ impl<S: store::Store> Actor<S> {
         action: ReplicaAction,
     ) -> Result<(), SendReplyError> {
         match action {
-            ReplicaAction::UpdateState { change, reply } => {
-                let res = self.update_state(namespace, change);
+            ReplicaAction::Open { reply, opts } => {
+                let res = self.open(namespace, opts);
                 send_reply(reply, res)
             }
+            ReplicaAction::Close { reply } => {
+                let res = self.close(namespace);
+                // ignore errors when no receiver is present for close
+                reply.send(Ok(res)).ok();
+                Ok(())
+            }
+            ReplicaAction::Subscribe { sender, reply } => send_reply_with(reply, self, |this| {
+                let replica = this.get(&namespace)?;
+                replica.subscribe(sender);
+                Ok(())
+            }),
+            ReplicaAction::Unsubscribe { sender, reply } => send_reply_with(reply, self, |this| {
+                let replica = this.get(&namespace)?;
+                replica.unsubscribe(&sender);
+                drop(sender);
+                Ok(())
+            }),
+            ReplicaAction::SetSync { sync, reply } => send_reply_with(reply, self, |this| {
+                let state = this.get_state_mut(&namespace)?;
+                state.sync = sync;
+                Ok(())
+            }),
             ReplicaAction::InsertLocal {
                 author,
                 key,
@@ -469,15 +519,15 @@ impl<S: store::Store> Actor<S> {
                 len,
                 reply,
             } => send_reply_with(reply, self, |this| {
+                let replica = this.get(&namespace)?;
                 let author = this.get_author(&author)?;
-                let replica = this.get_or_open(namespace)?;
                 replica.insert(&key, &author, hash, len)?;
                 Ok(())
             }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
                 send_reply_with(reply, self, |this| {
+                    let replica = this.get(&namespace)?;
                     let author = this.get_author(&author)?;
-                    let replica = this.get_or_open(namespace)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
                 })
@@ -510,110 +560,134 @@ impl<S: store::Store> Actor<S> {
                 let res = replica.sync_process_message(message, from, &mut state)?;
                 Ok((res, state))
             }),
-            ReplicaAction::GetSyncPeers { reply } => {
-                let peers = match self.store.get_sync_peers(&namespace) {
-                    Err(err) => Err(err),
-                    Ok(None) => Ok(None),
-                    Ok(Some(iter)) => Ok(Some(iter.collect())),
-                };
-                send_reply(reply, peers)
-            }
+            ReplicaAction::GetSyncPeers { reply } => send_reply_with(reply, self, move |this| {
+                this.ensure_open(&namespace)?;
+                let peers = this.store.get_sync_peers(&namespace)?;
+                Ok(peers.map(|iter| iter.collect()))
+            }),
             ReplicaAction::RegisterUsefulPeer { peer, reply } => {
                 let res = self.store.register_useful_peer(namespace, peer);
                 send_reply(reply, res)
             }
-            ReplicaAction::GetOne { author, key, reply } => match self.get_or_open(namespace) {
-                Ok(_) => send_reply(reply, self.store.get_one(namespace, author, key)),
-                Err(err) => reply.send(Err(err)).map_err(send_reply_error),
-            },
-            ReplicaAction::GetMany { filter, reply } => match self.get_or_open(namespace) {
-                Ok(_) => iter_to_channel(reply, self.store.get_many(namespace, filter)),
-                Err(err) => reply.send(Err(err)).map_err(send_reply_error),
-            },
-            ReplicaAction::DropReplica { reply } => {
-                self.states.remove(&namespace);
-                let res = self.store.remove_replica(&namespace);
-                send_reply(reply, res)
+            ReplicaAction::GetOne { author, key, reply } => {
+                send_reply_with(reply, self, move |this| {
+                    this.ensure_open(&namespace)?;
+                    this.store.get_one(namespace, author, key)
+                })
             }
+            ReplicaAction::GetMany { filter, reply } => {
+                let iter = self
+                    .ensure_open(&namespace)
+                    .and_then(|_| self.store.get_many(namespace, filter));
+                iter_to_channel(reply, iter)
+            }
+            ReplicaAction::DropReplica { reply } => send_reply_with(reply, self, |this| {
+                this.states.remove(&namespace);
+                this.store.remove_replica(&namespace)
+            }),
             ReplicaAction::ExportSecretKey { reply } => {
-                let res = self.get_or_open(namespace).map(|r| r.secret_key());
+                let res = self.get(&namespace).map(|r| r.secret_key());
                 send_reply(reply, res)
             }
+            ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {
+                let state = this.get_state(&namespace)?;
+                Ok(OpenState {
+                    handles: state.handles,
+                    sync: state.sync,
+                    subscribers: state.replica.subscribers_count(),
+                })
+            }),
         }
     }
 
-    fn get_or_open(&mut self, namespace: NamespaceId) -> Result<&Replica<S::Instance>> {
-        let (replica, _state) = get_or_open(
-            &self.store,
-            &mut self.states,
-            &self.content_status_callback,
-            namespace,
-        )?;
-        Ok(&*replica)
+    fn get(&self, namespace: &NamespaceId) -> Result<&Replica<S::Instance>> {
+        self.get_state(namespace).map(|state| &state.replica)
     }
 
-    // TODO: Do we limit operations to replicas opened before?
-    // fn get_if_open(&self, namespace: &NamespaceId) -> Result<&Replica<S::Instance>> {
-    //     self.states
-    //         .get(namespace)
-    //         .map(|(replica, _state)| replica)
-    //         .context("replica not open")
-    // }
+    fn get_state(&self, namespace: &NamespaceId) -> Result<&OpenReplica<S>> {
+        self.states.get(namespace).context("replica not open")
+    }
+
+    fn get_state_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica<S>> {
+        self.states.get_mut(namespace).context("replica not open")
+    }
 
     fn get_if_syncing(&self, namespace: &NamespaceId) -> Result<&Replica<S::Instance>> {
-        self.states
-            .get(namespace)
-            .and_then(|(replica, state)| match state.sync {
-                false => None,
-                true => Some(replica),
-            })
-            .context("replica not open")
+        let state = self.get_state(namespace)?;
+        if !state.sync {
+            Err(anyhow!("sync is not enabled for replica"))
+        } else {
+            Ok(&state.replica)
+        }
+    }
+
+    fn is_open(&self, namespace: &NamespaceId) -> bool {
+        self.states.contains_key(namespace)
+    }
+
+    fn ensure_open(&self, namespace: &NamespaceId) -> Result<()> {
+        match self.is_open(namespace) {
+            true => Ok(()),
+            false => Err(anyhow!("replica not open")),
+        }
     }
 
     fn get_author(&self, id: &AuthorId) -> Result<Author> {
         self.store.get_author(id)?.context("author not found")
     }
 
-    fn update_state(&mut self, namespace: NamespaceId, change: StateUpdate) -> Result<()> {
-        // open the replica, if it is not yet open.
-        let (replica, state) = get_or_open(
-            &self.store,
-            &mut self.states,
-            &self.content_status_callback,
-            namespace,
-        )?;
-        let next_state = state.with_update(change);
-        trace!(namespace = %namespace.fmt_short(), ?change, ?next_state, "update state");
-        match (state.watch, next_state.watch) {
-            (true, false) => {
-                replica.unset_event_sender();
+    fn open(&mut self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
+        match self.states.entry(namespace) {
+            hash_map::Entry::Vacant(e) => {
+                let replica = self
+                    .store
+                    .open_replica(&namespace)?
+                    .context("replica not found")?;
+                if let Some(cb) = &self.content_status_callback {
+                    replica.set_content_status_callback(Arc::clone(cb));
+                }
+                if let Some(sender) = opts.subscribe {
+                    replica.subscribe(sender);
+                }
+                debug!(namespace = %namespace.fmt_short(), "open");
+                let state = OpenReplica {
+                    replica,
+                    sync: opts.sync,
+                    handles: 1,
+                };
+                e.insert(state);
             }
-            (false, true) => {
-                replica.set_event_sender(self.event_tx.clone());
+            hash_map::Entry::Occupied(mut e) => {
+                let state = e.get_mut();
+                state.handles += 1;
+                state.sync = state.sync || opts.sync;
+                if let Some(sender) = opts.subscribe {
+                    state.replica.subscribe(sender);
+                }
             }
-            _ => {}
         };
-        *state = next_state;
         Ok(())
     }
-}
-fn get_or_open<'a, S: store::Store>(
-    store: &S,
-    states: &'a mut ReplicaStates<S>,
-    content_status_callback: &Option<ContentStatusCallback>,
-    namespace: NamespaceId,
-) -> Result<&'a mut (Replica<S::Instance>, ReplicaState)> {
-    match states.entry(namespace) {
-        hash_map::Entry::Vacant(e) => {
-            let replica = store
-                .open_replica(&namespace)?
-                .context("replica not found")?;
-            if let Some(cb) = &content_status_callback {
-                replica.set_content_status_callback(Arc::clone(cb));
+
+    fn close(&mut self, namespace: NamespaceId) -> bool {
+        match self.states.entry(namespace) {
+            hash_map::Entry::Vacant(_e) => {
+                warn!(namespace = %namespace.fmt_short(), "received close request for closed replica");
+                true
             }
-            Ok(e.insert((replica, ReplicaState::default())))
+            hash_map::Entry::Occupied(mut e) => {
+                let state = e.get_mut();
+                state.handles = state.handles.wrapping_sub(1);
+                if state.handles == 0 {
+                    e.remove_entry();
+                    debug!(namespace = %namespace.fmt_short(), "close");
+                    self.store.close_replica(&namespace);
+                    true
+                } else {
+                    false
+                }
+            }
         }
-        hash_map::Entry::Occupied(e) => Ok(e.into_mut()),
     }
 }
 
@@ -649,4 +723,22 @@ fn send_reply_with<T, S: store::Store>(
 
 fn send_reply_error<T>(_err: T) -> SendReplyError {
     SendReplyError
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn open_close() -> anyhow::Result<()> {
+        let store = store::memory::Store::default();
+        let sync = SyncHandle::spawn(store, None, "foo".into());
+        let namespace = Namespace::new(&mut rand::rngs::OsRng {});
+        sync.import_replica(namespace.clone()).await?;
+        sync.open(namespace.id(), Default::default()).await?;
+        let (tx, rx) = flume::bounded(10);
+        sync.subscribe(namespace.id(), tx).await?;
+        sync.close(namespace.id()).await?;
+        assert!(rx.recv_async().await.is_err());
+        Ok(())
+    }
 }

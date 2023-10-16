@@ -521,7 +521,6 @@ impl DocCommands {
                         LiveEvent::NeighborDown(peer) => {
                             println!("neighbor peer down: {peer:?}");
                         }
-                        LiveEvent::Closed => println!("document closed"),
                     }
                 }
             }

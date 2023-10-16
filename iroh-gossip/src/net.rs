@@ -589,7 +589,7 @@ async fn wait_for_neighbor_up(mut sub: broadcast::Receiver<Event>) -> anyhow::Re
             Ok(Event::NeighborUp(_neighbor)) => break Ok(()),
             Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => {
-                break Err(anyhow!("Failed to join swarm: Gossip actor dropped"))
+                break Err(anyhow!("Failed to join swarm: channel closed"))
             }
         }
     }
