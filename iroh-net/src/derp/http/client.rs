@@ -478,7 +478,6 @@ impl Client {
             (tcp_stream, Some(derp_node))
         };
 
-        let start = Instant::now();
         let local_addr = tcp_stream
             .local_addr()
             .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
@@ -557,9 +556,6 @@ impl Client {
             ));
         }
 
-        trace!("tls handshake done: {:?}", start.elapsed());
-        let start = Instant::now();
-
         debug!("starting upgrade");
         let upgraded = match hyper::upgrade::on(res).await {
             Ok(upgraded) => upgraded,
@@ -568,9 +564,6 @@ impl Client {
                 return Err(ClientError::Hyper(err));
             }
         };
-
-        trace!("derp upgrade done: {:?}", start.elapsed());
-        let start = Instant::now();
 
         debug!("connection upgraded");
         let (reader, writer) =
@@ -586,15 +579,13 @@ impl Client {
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        trace!("derp handshake: {:?}", start.elapsed());
-        let start = Instant::now();
         if *self.inner.is_preferred.lock().await && derp_client.note_preferred(true).await.is_err()
         {
             derp_client.close().await;
             return Err(ClientError::Send);
         }
 
-        trace!("connect_0 done: {:?}", start.elapsed());
+        trace!("connect_0 done");
         Ok(derp_client)
     }
 
@@ -645,7 +636,6 @@ impl Client {
         reg: DerpRegion,
     ) -> Result<(TcpStream, Arc<DerpNode>), ClientError> {
         debug!("dial region: {:?}", reg);
-        let start = Instant::now();
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
             return Err(ClientError::NoNodeForTarget(target));
@@ -676,7 +666,7 @@ impl Client {
             match res {
                 Ok((conn, node)) => {
                     // return on the first successfull one
-                    trace!("dialed region in {:?}", start.elapsed());
+                    trace!("dialed region");
                     return Ok((conn, node));
                 }
                 Err(e) => {
