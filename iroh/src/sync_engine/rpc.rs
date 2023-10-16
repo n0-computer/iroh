@@ -60,7 +60,7 @@ impl<S: Store> SyncEngine<S> {
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let namespace = Namespace::new(&mut rand::rngs::OsRng {});
-        self.sync.import_replica(namespace.clone()).await?;
+        self.sync.import_namespace(namespace.clone()).await?;
         self.sync.open(namespace.id(), Default::default()).await?;
         Ok(DocCreateResponse { id: namespace.id() })
     }
@@ -133,7 +133,7 @@ impl<S: Store> SyncEngine<S> {
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
         let DocImportRequest(DocTicket { key, peers }) = req;
         let namespace = Namespace::from_bytes(&key);
-        let doc_id = self.sync.import_replica(namespace).await?;
+        let doc_id = self.sync.import_namespace(namespace).await?;
         self.sync.open(doc_id, Default::default()).await?;
         self.start_sync(doc_id, peers).await?;
         Ok(DocImportResponse { doc_id })
