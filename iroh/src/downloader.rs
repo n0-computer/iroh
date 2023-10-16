@@ -29,6 +29,10 @@
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use bao_tree::ChunkRanges;
@@ -37,7 +41,7 @@ use iroh_bytes::{protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat, Temp
 use iroh_net::{key::PublicKey, MagicEndpoint};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
-use tracing::{debug, error_span, trace, Instrument};
+use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
 mod invariants;
@@ -207,10 +211,10 @@ impl std::future::Future for DownloadHandle {
 }
 
 /// Handle for the download services.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Downloader {
     /// Next id to use for a download intent.
-    next_id: Id,
+    next_id: Arc<AtomicU64>,
     /// Channel to communicate with the service.
     msg_tx: mpsc::Sender<Message>,
 }
@@ -238,13 +242,15 @@ impl Downloader {
             service.run().instrument(error_span!("downloader", %me))
         };
         rt.local_pool().spawn_pinned(create_future);
-        Self { next_id: 0, msg_tx }
+        Self {
+            next_id: Arc::new(AtomicU64::new(0)),
+            msg_tx,
+        }
     }
 
     /// Queue a download.
     pub async fn queue(&mut self, kind: DownloadKind, peers: Vec<PeerInfo>) -> DownloadHandle {
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let (sender, receiver) = oneshot::channel();
         let handle = DownloadHandle {
@@ -888,7 +894,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     let next_peer = self.get_best_candidate(kind.hash());
                     self.schedule_request(kind, remaining_retries, next_peer, intents);
                 } else {
-                    debug!(%peer, ?kind, %reason, "download failed");
+                    warn!(%peer, ?kind, %reason, "download failed");
                     for sender in intents.into_values() {
                         let _ = sender.send(Err(anyhow::anyhow!("download ran out of attempts")));
                     }
