@@ -129,6 +129,38 @@ impl HashAndFormat {
     }
 }
 
+impl Display for HashAndFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut slice = [0u8; 64];
+        hex::encode_to_slice(self.hash.as_bytes(), &mut slice).unwrap();
+        write!(f, "{}", std::str::from_utf8(&slice).unwrap())?;
+        if self.format.is_hash_seq() {
+            write!(f, "s")?;
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for HashAndFormat {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.as_bytes();
+        let mut hash = [0u8; 32];
+        match s.len() {
+            64 => {
+                hex::decode_to_slice(s, &mut hash)?;
+                Ok(Self::raw(hash.into()))
+            }
+            65 if s[64].to_ascii_lowercase() == b's' => {
+                hex::decode_to_slice(s, &mut hash)?;
+                Ok(Self::hash_seq(hash.into()))
+            }
+            _ => anyhow::bail!("invalid hash and format"),
+        }
+    }
+}
+
 /// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);

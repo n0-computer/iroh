@@ -6,6 +6,7 @@
 //! cargo as well:
 //!   $ cargo run node stats
 //! The `node stats` command will reach out over RPC to the node constructed in the example
+use anyhow::Context;
 use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -17,6 +18,7 @@ use iroh_bytes::hashseq::HashSeq;
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::util::Hash;
 use iroh_bytes::BlobFormat;
+use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::io::Write;
@@ -52,7 +54,7 @@ impl DialByPeer for Dialer {
         alpn: &'a [u8],
     ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>> {
         let peer_addr = PeerAddr {
-            peer_id: peer.clone(),
+            peer_id: *peer,
             info: AddrInfo {
                 derp_region: Some(2),
                 direct_addresses: Default::default(),
@@ -67,7 +69,7 @@ impl DialByPeer for Dialer {
 }
 
 /// Announce kind
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnnounceKind {
     /// The peer supposedly has the complete data.
     Complete,
@@ -165,41 +167,6 @@ pub fn setup_logging() {
         .ok();
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct HashAndFormat2(HashAndFormat);
-
-impl Display for HashAndFormat2 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut slice = [0u8; 64];
-        hex::encode_to_slice(self.0.hash.as_bytes(), &mut slice).unwrap();
-        write!(f, "{}", std::str::from_utf8(&slice).unwrap())?;
-        if self.0.format.is_hash_seq() {
-            write!(f, "s")?;
-        }
-        Ok(())
-    }
-}
-
-impl FromStr for HashAndFormat2 {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.as_bytes();
-        let mut hash = [0u8; 32];
-        match s.len() {
-            64 => {
-                hex::decode_to_slice(s, &mut hash)?;
-                Ok(Self(HashAndFormat::raw(hash.into())))
-            }
-            65 if s[64].to_ascii_lowercase() == b's' => {
-                hex::decode_to_slice(s, &mut hash)?;
-                Ok(Self(HashAndFormat::hash_seq(hash.into())))
-            }
-            _ => anyhow::bail!("invalid hash and format"),
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 struct Args {
     #[clap(subcommand)]
@@ -253,7 +220,7 @@ impl Display for ContentArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentArg::Hash(hash) => Display::fmt(hash, f),
-            ContentArg::HashAndFormat(haf) => Display::fmt(&HashAndFormat2(*haf), f),
+            ContentArg::HashAndFormat(haf) => Display::fmt(haf, f),
             ContentArg::Ticket(ticket) => Display::fmt(ticket, f),
         }
     }
@@ -264,11 +231,9 @@ impl FromStr for ContentArg {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(hash) = Hash::from_str(s) {
-            // was able to parse as a hash. we assume raw for this!
-            Ok(HashAndFormat::raw(hash).into())
-        } else if let Ok(haf) = HashAndFormat2::from_str(s) {
-            // was able to parse as a hash and format, just use it
-            Ok(haf.0.into())
+            Ok(hash.into())
+        } else if let Ok(haf) = HashAndFormat::from_str(s) {
+            Ok(haf.into())
         } else if let Ok(ticket) = Ticket::from_str(s) {
             Ok(ticket.into())
         } else {
@@ -388,7 +353,10 @@ pub struct Options {
     max_hash_seq_size: u64,
     dial_log: Option<PathBuf>,
     probe_log: Option<PathBuf>,
+    announce_data_path: Option<PathBuf>,
 }
+
+type AnnounceData = BTreeMap<HashAndFormat, BTreeMap<[u8; 32], bool>>;
 
 impl Options {
     /// Make the paths in the options relative to the given base path.
@@ -397,6 +365,9 @@ impl Options {
             *path = base.join(&path);
         }
         if let Some(path) = &mut self.probe_log {
+            *path = base.join(&path);
+        }
+        if let Some(path) = &mut self.announce_data_path {
             *path = base.join(&path);
         }
     }
@@ -414,6 +385,7 @@ impl Default for Options {
             max_hash_seq_size: 1024 * 32,
             dial_log: Some("dial.log".into()),
             probe_log: Some("probe.log".into()),
+            announce_data_path: Some("announce.data".into()),
         }
     }
 }
@@ -431,8 +403,7 @@ pub async fn unverified_size(
     let request = iroh_bytes::protocol::GetRequest::new(
         *hash,
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
-    )
-    .into();
+    );
     let request = iroh_bytes::get::fsm::start(connection.clone(), request);
     let connected = request.next().await?;
     let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
@@ -455,8 +426,7 @@ pub async fn verified_size(
     let request = iroh_bytes::protocol::GetRequest::new(
         *hash,
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
-    )
-    .into();
+    );
     let request = iroh_bytes::get::fsm::start(connection.clone(), request);
     let connected = request.next().await?;
     let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
@@ -581,7 +551,7 @@ fn random_hash_seq_ranges(sizes: &[u64], mut rng: impl Rng) -> RangeSpecSeq {
     let mut remaining = random_chunk;
     let mut ranges = vec![];
     ranges.push(ChunkRanges::empty());
-    for (i, size) in sizes.into_iter().enumerate() {
+    for (i, size) in sizes.iter().enumerate() {
         let chunks = ByteNum(*size).full_chunks().0;
         if remaining < chunks {
             let range = ChunkRanges::from(ChunkNum(remaining)..ChunkNum(remaining + 1));
@@ -597,11 +567,24 @@ fn random_hash_seq_ranges(sizes: &[u64], mut rng: impl Rng) -> RangeSpecSeq {
 }
 
 impl Tracker {
-    pub fn new(options: Options) -> Self {
-        Self(Arc::new(Inner {
-            state: RwLock::new(State::default()),
+    pub fn new(options: Options) -> anyhow::Result<Self> {
+        let announce_data = if let Some(data_path) = &options.announce_data_path {
+            load_from_file::<AnnounceData>(data_path)?
+        } else {
+            Default::default()
+        };
+        let mut state = State::default();
+        for (content, peers) in announce_data {
+            for (peer, complete) in peers {
+                let peer_info = state.peer_info.entry(content).or_default();
+                let peer_info = peer_info.entry(peer).or_default();
+                peer_info.complete = complete;
+            }
+        }
+        Ok(Self(Arc::new(Inner {
+            state: RwLock::new(state),
             options,
-        }))
+        })))
     }
 
     async fn get_or_insert_size(
@@ -628,7 +611,7 @@ impl Tracker {
         hash: &Hash,
     ) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
         let state = &self.0.state;
-        let entry = state.read().unwrap().collections.get(&hash).cloned();
+        let entry = state.read().unwrap().collections.get(hash).cloned();
         let res = match entry {
             Some(hs) => hs,
             None => {
@@ -657,7 +640,7 @@ impl Tracker {
                 BlobFormat::Raw => {
                     let size = self.get_or_insert_size(connection, hash).await?;
                     let random_chunk = rng.gen_range(0..ByteNum(size).chunks().0);
-                    chunk_probe(&connection, &hash, ChunkNum(random_chunk)).await?
+                    chunk_probe(connection, hash, ChunkNum(random_chunk)).await?
                 }
                 BlobFormat::HashSeq => {
                     let (hs, sizes) = self.get_or_insert_sizes(connection, hash).await?;
@@ -693,7 +676,7 @@ impl Tracker {
         match request {
             Request::Announce(announce) => {
                 println!("got announce: {:?}", announce);
-                self.handle_announce(announce).await;
+                self.handle_announce(announce).await?;
                 send.finish().await?;
             }
 
@@ -708,7 +691,7 @@ impl Tracker {
         Ok(())
     }
 
-    async fn handle_announce(&self, announce: Announce) {
+    async fn handle_announce(&self, announce: Announce) -> anyhow::Result<()> {
         let mut state = self.0.state.write().unwrap();
         let peer = announce.peer;
         for content in announce.content {
@@ -718,10 +701,22 @@ impl Tracker {
             peer_info.last_announced = Some(now);
             peer_info.complete = announce.kind == AnnounceKind::Complete;
         }
+        if let Some(path) = &self.0.options.announce_data_path {
+            let mut data: AnnounceData = Default::default();
+            for (content, peers) in state.peer_info.iter() {
+                let mut peers2 = BTreeMap::new();
+                for (peer, info) in peers {
+                    peers2.insert(*peer, info.complete);
+                }
+                data.insert(*content, peers2);
+            }
+            drop(state);
+            save_to_file(&data, path)?;
+        }
+        Ok(())
     }
 
     async fn handle_query(&self, query: Query) -> anyhow::Result<QueryResponse> {
-        println!("got query: {:?}", query);
         let state = self.0.state.read().unwrap();
         let entry = state.peer_info.get(&query.content);
         let options = &self.0.options;
@@ -855,7 +850,7 @@ impl Tracker {
                 "{:.6},{},{},{:?},{:.6},{}\n",
                 now,
                 peer,
-                HashAndFormat2(*content),
+                content,
                 kind,
                 t0.elapsed().as_secs_f64(),
                 outcome
@@ -913,6 +908,21 @@ impl Tracker {
     }
 }
 
+fn save_to_file(data: impl Serialize, path: &Path) -> anyhow::Result<()> {
+    let data = postcard::to_stdvec(&data)?;
+    let data_dir = path.parent().context("non absolute data file")?;
+    let mut temp = tempfile::NamedTempFile::new_in(data_dir)?;
+    temp.write_all(&data)?;
+    std::fs::rename(temp.into_temp_path(), path)?;
+    Ok(())
+}
+
+fn load_from_file<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
+    let data = std::fs::read(path)?;
+    let data = postcard::from_bytes(&data)?;
+    Ok(data)
+}
+
 #[allow(dead_code)]
 fn utf8_or_hex(bytes: &[u8]) -> String {
     if let Ok(s) = std::str::from_utf8(bytes) {
@@ -967,7 +977,7 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
         Options::default()
     };
     options.make_paths_relative(&home);
-    let db = Tracker::new(options);
+    let db = Tracker::new(options)?;
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(key)
         .alpns(vec![TRACKER_ALPN.to_vec()])
@@ -1007,7 +1017,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     };
     println!("announce {:?}", args);
     println!("trying to connect to {:?}", peer_addr);
-    let connection = endpoint.connect(peer_addr, &TRACKER_ALPN).await?;
+    let connection = endpoint.connect(peer_addr, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");
@@ -1056,7 +1066,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
     };
     let peer_addr = args.host;
     println!("trying to connect to tracker at {:?}", peer_addr);
-    let connection = dialer.dial_by_peer(&peer_addr, &TRACKER_ALPN).await?;
+    let connection = dialer.dial_by_peer(&peer_addr, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");
@@ -1069,7 +1079,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
     let response = postcard::from_bytes::<Response>(&response)?;
     match response {
         Response::QueryResponse(response) => {
-            println!("content {}", HashAndFormat2(response.content));
+            println!("content {}", response.content);
             for peer in response.peers {
                 println!("- peer {}", peer);
             }
