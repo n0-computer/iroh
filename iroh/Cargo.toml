@@ -18,7 +18,7 @@ bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = fal
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
-flume = "0.10.14"
+flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
