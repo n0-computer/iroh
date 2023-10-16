@@ -28,7 +28,7 @@ enum Action {
         reply: oneshot::Sender<Result<AuthorId>>,
     },
     #[display("NewReplica")]
-    ImportReplica {
+    ImportNamespace {
         namespace: Namespace,
         #[debug("reply")]
         reply: oneshot::Sender<Result<NamespaceId>>,
@@ -411,9 +411,9 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn import_replica(&self, namespace: Namespace) -> Result<NamespaceId> {
+    pub async fn import_namespace(&self, namespace: Namespace) -> Result<NamespaceId> {
         let (reply, rx) = oneshot::channel();
-        self.send(Action::ImportReplica { namespace, reply })
+        self.send(Action::ImportNamespace { namespace, reply })
             .await?;
         rx.await?
     }
@@ -464,9 +464,9 @@ impl<S: store::Store> Actor<S> {
                 let id = author.id();
                 send_reply(reply, self.store.import_author(author).map(|_| id))
             }
-            Action::ImportReplica { namespace, reply } => {
+            Action::ImportNamespace { namespace, reply } => {
                 let id = namespace.id();
-                send_reply(reply, self.store.new_replica(namespace).map(|_| id))
+                send_reply(reply, self.store.import_namespace(namespace).map(|_| id))
             }
             Action::ListAuthors { reply } => iter_to_channel(
                 reply,
@@ -767,7 +767,7 @@ mod tests {
         let store = store::memory::Store::default();
         let sync = SyncHandle::spawn(store, None, "foo".into());
         let namespace = Namespace::new(&mut rand::rngs::OsRng {});
-        sync.import_replica(namespace.clone()).await?;
+        sync.import_namespace(namespace.clone()).await?;
         sync.open(namespace.id(), Default::default()).await?;
         let (tx, rx) = flume::bounded(10);
         sync.subscribe(namespace.id(), tx).await?;
