@@ -1190,11 +1190,29 @@ impl PeerMap {
             .and_then(|id| self.by_id.get_mut(id))
     }
 
-    /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
-    pub(super) fn endpoint_for_ip_port(&self, ipp: impl Into<IpPort>) -> Option<&Endpoint> {
-        self.by_ip_port
-            .get(&ipp.into())
-            .and_then(|id| self.by_id(id))
+    /// Returns the endpoint for the peer we believe to be at ipp, or None if we don't know of any
+    /// such peer. When this is called, the endpoint is marked as recently used.
+    pub(super) fn endpoint_for_ip_port_on_receive(
+        &mut self,
+        ipp: impl Into<IpPort>,
+    ) -> Option<&Endpoint> {
+        let ip_port = ipp.into();
+        // search by IpPort to get the Id
+        let id = *self.by_ip_port.get(&ip_port)?;
+        // search by Id to get the endpoint. This should never fail
+        let Some(endpoint) = self.by_id_mut(&id) else {
+            debug_assert!(false, "peer map inconsistency by_ip_port <-> by_id");
+            return None;
+        };
+        // the endpoint we found must have the original address among its direct udp addresses if
+        // the peer map maintains consistency
+        let Some(state) = endpoint.direct_addr_state.get_mut(&ip_port) else {
+            debug_assert!(false, "peer map inconsistency by_ip_port <-> direct addr");
+            return None;
+        };
+        // record this address being in use
+        state.last_active = Some(Instant::now());
+        Some(endpoint)
     }
 
     pub fn endpoint_for_ip_port_mut(&mut self, ipp: impl Into<IpPort>) -> Option<&mut Endpoint> {
@@ -1338,6 +1356,9 @@ struct EndpointState {
 
     /// Last [`PongReply`] received.
     recent_pong: Option<PongReply>,
+
+    /// When was this endpoint last used.
+    last_active: Option<Instant>,
 }
 
 /// The type of connection we have to the endpoint.
@@ -1495,16 +1516,13 @@ mod tests {
             let endpoint_state = HashMap::from([(
                 ip_port,
                 EndpointState {
-                    last_ping: None,
-                    last_got_ping: None,
-                    last_got_ping_tx_id: None,
-                    call_me_maybe_time: None,
                     recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Udp(ip_port.into()),
                         pong_src,
                     }),
+                    ..Default::default()
                 },
             )]);
             let key = SecretKey::generate();
@@ -1535,16 +1553,13 @@ mod tests {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
             let now = Instant::now();
             let relay_state = EndpointState {
-                last_ping: None,
-                last_got_ping: None,
-                last_got_ping_tx_id: None,
-                call_me_maybe_time: None,
                 recent_pong: Some(PongReply {
                     latency,
                     pong_at: now,
                     from: SendAddr::Derp(0),
                     pong_src,
                 }),
+                ..Default::default()
             };
             let key = SecretKey::generate();
             Endpoint {
@@ -1595,29 +1610,23 @@ mod tests {
             let endpoint_state = HashMap::from([(
                 IpPort::from(socket_addr),
                 EndpointState {
-                    last_ping: None,
-                    last_got_ping: None,
-                    last_got_ping_tx_id: None,
-                    call_me_maybe_time: None,
                     recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Udp(socket_addr),
                         pong_src,
                     }),
+                    ..Default::default()
                 },
             )]);
             let relay_state = EndpointState {
-                last_ping: None,
-                last_got_ping: None,
-                last_got_ping_tx_id: None,
-                call_me_maybe_time: None,
                 recent_pong: Some(PongReply {
                     latency,
                     pong_at: now,
                     from: SendAddr::Derp(0),
                     pong_src,
                 }),
+                ..Default::default()
             };
             let key = SecretKey::generate();
             (
