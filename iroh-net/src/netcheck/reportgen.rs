@@ -785,9 +785,15 @@ async fn run_probe(
             match maybe_sock {
                 Some(sock) => match sock.send_to(&req, derp_addr).await {
                     Ok(n) if n == req.len() => {
-                        inc!(NetcheckMetrics, stun_packets_sent_ipv4);
                         debug!(%derp_addr, %txid, "sending probe {}", probe.proto());
-                        result.ipv4_can_send = true;
+
+                        if matches!(probe, Probe::StunIpv4 { .. }) {
+                            result.ipv4_can_send = true;
+                            inc!(NetcheckMetrics, stun_packets_sent_ipv4);
+                        } else {
+                            result.ipv6_can_send = true;
+                            inc!(NetcheckMetrics, stun_packets_sent_ipv6);
+                        }
                         let (delay, addr) = stun_rx
                             .await
                             .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
@@ -795,12 +801,13 @@ async fn run_probe(
                         result.addr = Some(addr);
                     }
                     Ok(n) => {
-                        let err = anyhow!("Failed to send full STUN request");
+                        let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
                         error!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                     Err(err) => {
-                        let err = anyhow::Error::new(err).context("Failed to send STUN request");
+                        let err = anyhow::Error::new(err)
+                            .context(format!("Failed to send STUN request: {}", probe.proto()));
                         error!(%derp_addr, "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
