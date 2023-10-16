@@ -1243,11 +1243,6 @@ impl Actor {
         // Normalize local_ip
         meta.dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
-        // ep.noteRecvActivity();
-        // if stats := c.stats.Load(); stats != nil {
-        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
-        // }
-
         debug!("received passthrough message {}", bytes.len());
         true
     }

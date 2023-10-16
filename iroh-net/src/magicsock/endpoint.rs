@@ -83,14 +83,14 @@ pub(super) struct Endpoint {
     /// [`EndpointState`] for this peer's direct addresses.
     direct_addr_state: HashMap<IpPort, EndpointState>,
     is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
-
     /// Any outstanding "tailscale ping" commands running
     pending_cli_pings: Vec<PendingCliPing>,
-
     sent_ping: HashMap<stun::TransactionId, SentPing>,
-
-    /// Last time this endpoint was used. If set to `None` it is inactive.
-    last_active: Option<Instant>,
+    /// Last time an endpoint for this peer was requested.
+    ///
+    /// This does not mean the peer was in fact contacted but gives us an insight of it being of
+    /// interest for the application level.
+    last_of_interest: Option<Instant>,
 }
 
 #[derive(derive_more::Debug)]
@@ -132,7 +132,7 @@ impl Endpoint {
             direct_addr_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            last_active: options.active.then(Instant::now),
+            last_of_interest: options.active.then(Instant::now),
         }
     }
 
@@ -679,7 +679,7 @@ impl Endpoint {
 
     fn cleanup_endpoint_state(&mut self) {
         self.direct_addr_state.retain(|ep, st| {
-            if st.should_delete() {
+            if !st.is_alive() {
                 if let Some(best_addr) = self.best_addr.take() {
                     let ep: SocketAddr = (*ep).into();
                     if ep == best_addr.addr {
@@ -945,7 +945,7 @@ impl Endpoint {
 
     /// Checks if this `Endpoint` is currently actively being used.
     fn is_active(&self, now: &Instant) -> bool {
-        match self.last_active {
+        match self.last_of_interest {
             Some(last_active) => now.duration_since(last_active) <= SESSION_ACTIVE_TIMEOUT,
             None => false,
         }
@@ -995,7 +995,7 @@ impl Endpoint {
 
     pub(crate) fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>, Vec<PingAction>) {
         let now = Instant::now();
-        self.last_active.replace(now);
+        self.last_of_interest.replace(now);
         let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
         let mut msgs = Vec::new();
 
@@ -1211,7 +1211,7 @@ impl PeerMap {
             return None;
         };
         // record this address being in use
-        state.last_active = Some(Instant::now());
+        state.last_payload_msg = Some(Instant::now());
         Some(endpoint)
     }
 
@@ -1356,9 +1356,8 @@ struct EndpointState {
 
     /// Last [`PongReply`] received.
     recent_pong: Option<PongReply>,
-
-    /// When was this endpoint last used.
-    last_active: Option<Instant>,
+    /// When was this endpoint last used to transmit payload data (removing ping, pong, etc).
+    last_payload_msg: Option<Instant>,
 }
 
 /// The type of connection we have to the endpoint.
@@ -1398,18 +1397,41 @@ impl EndpointState {
         self.recent_pong = Some(r);
     }
 
-    /// Reports whether we should delete this endpoint.
-    fn should_delete(&self) -> bool {
-        if self.call_me_maybe_time.is_some() {
-            return false;
-        }
-        if let Some(last_got_ping) = self.last_got_ping {
-            // Receiving no pings anymore, probably gone
-            return last_got_ping.elapsed() > SESSION_ACTIVE_TIMEOUT;
-        }
+    /// Check whether this endpoint is considered active.
+    ///
+    /// An endpoint is considered alive if we have received payload messages from it within the
+    /// last [`SESSION_ACTIVE_TIMEOUT`]. Note that an endpoint might be alive but not active if
+    /// it's contactable but not in use.
+    fn is_active(&self) -> bool {
+        self.last_payload_msg
+            .as_ref()
+            .map(|instant| instant.elapsed() > SESSION_ACTIVE_TIMEOUT)
+            .unwrap_or(false)
+    }
 
-        // keep by default
-        false
+    /// Reports the last instant this endpoint was considered active.
+    ///
+    /// This is the most recent instant between:
+    /// - when last pong was received.
+    /// - when the last CallMeMaybe was received.
+    /// - When the last payload transmission occurred.
+    fn last_alive(&self) -> Option<Instant> {
+        self.recent_pong()
+            .map(|pong| &pong.pong_at)
+            .into_iter()
+            .chain(self.last_payload_msg.as_ref().into_iter())
+            .chain(self.call_me_maybe_time.as_ref().into_iter())
+            .max()
+            .copied()
+    }
+
+    /// Returns whether this endpoint is considered alive.
+    ///
+    /// An endpoint is considered alive if its [`Self::last_alive`] time is within the last [`SESSION_ACTIVE_TIMEOUT`].
+    fn is_alive(&self) -> bool {
+        self.last_alive()
+            .map(|active_instant| active_instant.elapsed() > SESSION_ACTIVE_TIMEOUT)
+            .unwrap_or(false)
     }
 
     /// Returns the most recent pong if available.
@@ -1543,7 +1565,7 @@ mod tests {
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
-                    last_active: Some(now),
+                    last_of_interest: Some(now),
                 },
                 ip_port.into(),
             )
@@ -1575,7 +1597,7 @@ mod tests {
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
-                last_active: Some(now),
+                last_of_interest: Some(now),
             }
         };
 
@@ -1598,7 +1620,7 @@ mod tests {
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
-                last_active: Some(now),
+                last_of_interest: Some(now),
             }
         };
 
@@ -1646,7 +1668,7 @@ mod tests {
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
-                    last_active: Some(now),
+                    last_of_interest: Some(now),
                 },
                 socket_addr,
             )
