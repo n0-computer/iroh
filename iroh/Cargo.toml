@@ -75,7 +75,6 @@ cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic
 metrics = ["iroh-metrics"]
 flat-db = ["iroh-bytes/flat-db"]
 test = []
-example-sync = ["cli"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -107,10 +106,6 @@ required-features = []
 [[example]]
 name = "hello-world"
 required-features = []
-
-[[example]]
-name = "sync"
-required-features = ["example-sync"]
 
 [[example]]
 name = "rpc"
