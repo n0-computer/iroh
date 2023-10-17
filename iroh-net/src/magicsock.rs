@@ -249,6 +249,9 @@ struct Inner {
     /// The state for an active DiscoKey.
     disco_info: parking_lot::Mutex<HashMap<PublicKey, DiscoInfo>>,
     udp_state: quinn_udp::UdpState,
+
+    // Send buffer used in `poll_send_udp`
+    send_buffer: parking_lot::Mutex<Vec<quinn_udp::Transmit>>,
 }
 
 impl Inner {
@@ -345,9 +348,18 @@ impl Inner {
             }
             n += 1;
         }
-        // TODO: This is the remaining alloc on the hot path for send.
-        // Unfortunately I don't see a way around this because we have do modify the transmits.
-        let mut transmits = transmits[..n].to_vec();
+
+        // Copy the transmits into an owned buffer, because we will have to modify the send
+        // addresses to translate from the quic mapped address to the actual UDP address.
+        // To avoid allocating on each call to `poll_send`, we use a fixed buffer.
+        let mut transmits = {
+            let mut buf = self.send_buffer.lock();
+            buf.clear();
+            buf.reserve(n);
+            buf.extend_from_slice(&transmits[..n]);
+            buf
+        };
+
         let dest = QuicMappedAddr(dest);
 
         match self.peer_map.get_send_addrs_for_quic_mapped_addr(&dest) {
@@ -404,7 +416,7 @@ impl Inner {
 
                 // send derp
                 if let Some(derp_region) = derp_region {
-                    self.send_derp(derp_region, public_key, split_packets(transmits));
+                    self.send_derp(derp_region, public_key, split_packets(&transmits));
                     derp_sent = true;
                 }
 
@@ -1105,6 +1117,7 @@ impl MagicSock {
             peer_map,
             derp_actor_sender: derp_actor_sender.clone(),
             udp_state,
+            send_buffer: Default::default(),
         });
 
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -2599,16 +2612,16 @@ impl Display for SendAddr {
 /// For each transmit, if it has a segment size, it will be split into
 /// multiple packets according to that segment size. If it does not have a
 /// segment size, the contents will be sent as a single packet.
-fn split_packets(transmits: Vec<quinn_udp::Transmit>) -> Vec<Bytes> {
+fn split_packets(transmits: &[quinn_udp::Transmit]) -> Vec<Bytes> {
     let mut res = Vec::with_capacity(transmits.len());
     for transmit in transmits {
-        let contents = transmit.contents;
+        let contents = &transmit.contents;
         if let Some(segment_size) = transmit.segment_size {
             for chunk in contents.chunks(segment_size) {
                 res.push(contents.slice_ref(chunk));
             }
         } else {
-            res.push(contents);
+            res.push(contents.clone());
         }
     }
     res
@@ -3429,10 +3442,10 @@ pub(crate) mod tests {
                 .collect()
         }
         // no packets
-        assert_eq!(split_packets(vec![]), Vec::<Bytes>::default());
+        assert_eq!(split_packets(&vec![]), Vec::<Bytes>::default());
         // no split
         assert_eq!(
-            split_packets(vec![
+            split_packets(&vec![
                 mk_transmit(b"hello", None),
                 mk_transmit(b"world", None)
             ]),
@@ -3440,12 +3453,12 @@ pub(crate) mod tests {
         );
         // split without rest
         assert_eq!(
-            split_packets(vec![mk_transmit(b"helloworld", Some(5)),]),
+            split_packets(&vec![mk_transmit(b"helloworld", Some(5)),]),
             mk_expected(["hello", "world"])
         );
         // split with rest and second transmit
         assert_eq!(
-            split_packets(vec![
+            split_packets(&vec![
                 mk_transmit(b"hello world", Some(5)),
                 mk_transmit(b"!", None)
             ]),
@@ -3453,7 +3466,7 @@ pub(crate) mod tests {
         );
         // split that results in 1 packet
         assert_eq!(
-            split_packets(vec![
+            split_packets(&vec![
                 mk_transmit(b"hello world", Some(1000)),
                 mk_transmit(b"!", None)
             ]),
