@@ -97,7 +97,7 @@ pub(super) struct Endpoint {
     sent_ping: HashMap<stun::TransactionId, SentPing>,
     /// Last time this peer was used.
     ///
-    /// A peer is marked as in used if an endpoint to contact them is requested or if udp activity
+    /// A peer is marked as in use when an endpoint to contact them is requested or if UDP activity
     /// is registered.
     last_used: Option<Instant>,
 }
@@ -671,17 +671,7 @@ impl Endpoint {
         };
 
         // if we landed here, a new endpoint was added
-
-        // If for some reason this gets very large, do some cleanup.
-        let size = self.direct_addr_state.len();
-        if size > 100 {
-            self.prune_direct_addresses();
-            let size2 = self.direct_addr_state.len();
-            info!(
-                "disco: addConfirmedEndpoint pruned candidate set from {} to {} entries",
-                size, size2
-            )
-        }
+        self.prune_direct_addresses();
 
         false
     }
@@ -713,11 +703,9 @@ impl Endpoint {
         for (ip_port, last_seen) in prune_candidates.into_iter() {
             self.direct_addr_state.remove(&ip_port);
 
-            if let Some(last_seen) = last_seen {
-                let last_seen = last_seen.elapsed();
-                trace!(%peer, %ip_port, ?last_seen, "prunning address");
-            } else {
-                trace!(%peer, %ip_port, last_seen=%"never", "prunning address");
+            match last_seen.map(|instant| instant.elapsed()) {
+                Some(last_seen) => trace!(%peer, %ip_port, ?last_seen, "prunning address"),
+                None => trace!(%peer, %ip_port, last_seen=%"never", "prunning address"),
             }
 
             if let Some(addr_and_latency) = self.best_addr.as_ref() {
