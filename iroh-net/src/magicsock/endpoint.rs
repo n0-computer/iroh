@@ -1242,8 +1242,10 @@ impl PeerMap {
             debug_assert!(false, "peer map inconsistency by_ip_port <-> direct addr");
             return None;
         };
-        // record this address being in use
-        state.last_payload_msg = Some(Instant::now());
+        // record this peer and this address being in use
+        let now = Instant::now();
+        endpoint.last_of_interest = Some(now);
+        state.last_payload_msg = Some(now);
         Some(endpoint)
     }
 

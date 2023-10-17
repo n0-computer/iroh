@@ -1224,7 +1224,7 @@ impl Actor {
 
     /// This modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
     /// to those that the QUIC layer should see.  E.g. the remote address will be set to the
-    /// [`QuicMappedAddr`] instead of the actual remote.
+    /// [`QuicMappedAddr`] instead of the actual remote. It also registers activity for this peer.
     ///
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
