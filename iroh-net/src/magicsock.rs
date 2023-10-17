@@ -486,11 +486,12 @@ impl Inner {
 
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
-        let mut num_quic_msgs = 0;
+        let mut quic_packets_total = 0;
 
         for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             let mut start = 0;
             let mut is_quic = true;
+            let mut quic_packets_count = 0;
             let count = meta.len / meta.stride;
 
             // find disco and stun packets and forward them to the actor
@@ -513,7 +514,9 @@ impl Inner {
                     packet_is_quic = false;
                 }
 
-                if !packet_is_quic {
+                if packet_is_quic {
+                    quic_packets_count += 1;
+                } else {
                     // overwrite the first byte of the packets with zero.
                     // this makes quinn reliably and quickly ignore the packet as long as
                     // [`quinn::EndpointConfig::grease_quic_bit`] is set to `true`.
@@ -531,7 +534,7 @@ impl Inner {
                     }
                     Some(quic_mapped_addr) => {
                         trace!(peer = ?meta.addr, len = meta.len, ?count, "recv ok, peer state found");
-                        num_quic_msgs += meta.len / meta.stride;
+                        quic_packets_total += quic_packets_count;
                         meta.addr = quic_mapped_addr.0;
                     }
                 }
@@ -540,9 +543,9 @@ impl Inner {
             meta.dst_ip = dst_ip;
         }
 
-        if num_quic_msgs > 0 {
-            inc_by!(MagicsockMetrics, recv_datagrams, num_quic_msgs as _);
-            trace!("received {} datagrams", num_quic_msgs);
+        if quic_packets_total > 0 {
+            inc_by!(MagicsockMetrics, recv_datagrams, quic_packets_total as _);
+            trace!("received {} datagrams", quic_packets_total);
         }
 
         Poll::Ready(Ok(msgs))
