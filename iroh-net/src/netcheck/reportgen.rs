@@ -271,8 +271,7 @@ impl Actor {
                         Some(Ok(Ok(report))) => self.handle_probe_report(report),
                         Some(Ok(Err(_))) => (),
                         Some(Err(e)) => {
-                            warn!("fatal probes error: {:?}", e);
-                            self.handle_abort_probes();
+                            warn!("probes task error: {:?}", e);
                         }
                         None => {
                             self.handle_abort_probes();
