@@ -23,7 +23,7 @@ data-encoding = "2.3.3"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "deref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
-flume = "0.10.14"
+flume = "0.11"
 futures = "0.3.25"
 governor = "0.6.0"
 hex = "0.4.3"

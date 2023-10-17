@@ -7,6 +7,8 @@ use std::io::{self, Cursor};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::result::Result as StdResult;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use anyhow::{anyhow, Result};
@@ -18,7 +20,9 @@ use iroh_bytes::store::ValidateProgress;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
+use iroh_sync::actor::OpenState;
 use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
+use quic_rpc::message::RpcMsg;
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -29,15 +33,15 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCreateRequest, DocDelRequest, DocDelResponse,
-    DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest, DocInfoRequest,
-    DocLeaveRequest, DocListRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocSubscribeRequest, DocTicket, GetProgress, ListTagsRequest,
-    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
+    CounterStats, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
+    DocDelResponse, DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
+    DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetHashRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
+    GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
-use crate::sync_engine::{LiveEvent, LiveStatus};
+use crate::sync_engine::LiveEvent;
 
 pub mod mem;
 #[cfg(feature = "cli")]
@@ -134,10 +138,7 @@ where
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocCreateRequest {}).await??;
-        let doc = Doc {
-            id: res.id,
-            rpc: self.rpc.clone(),
-        };
+        let doc = Doc::new(self.rpc.clone(), res.id);
         Ok(doc)
     }
 
@@ -154,10 +155,7 @@ where
     /// Import a document from a ticket and join all peers in the ticket.
     pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
-        let doc = Doc {
-            id: res.doc_id,
-            rpc: self.rpc.clone(),
-        };
+        let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
     }
 
@@ -168,14 +166,9 @@ where
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
-    pub async fn get(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
-        if let Err(_err) = self.rpc.rpc(DocInfoRequest { doc_id: id }).await? {
-            return Ok(None);
-        }
-        let doc = Doc {
-            id,
-            rpc: self.rpc.clone(),
-        };
+    pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
+        self.rpc.rpc(DocOpenRequest { doc_id: id }).await??;
+        let doc = Doc::new(self.rpc.clone(), id);
         Ok(Some(doc))
     }
 }
@@ -523,34 +516,82 @@ impl AsyncRead for BlobReader {
 
 /// Document handle
 #[derive(Debug, Clone)]
-pub struct Doc<C> {
+pub struct Doc<C: ServiceConnection<ProviderService>>(Arc<DocInner<C>>);
+
+#[derive(Debug)]
+struct DocInner<C: ServiceConnection<ProviderService>> {
     id: NamespaceId,
     rpc: RpcClient<ProviderService, C>,
+    closed: AtomicBool,
+}
+
+impl<C> Drop for DocInner<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    fn drop(&mut self) {
+        let doc_id = self.id;
+        let rpc = self.rpc.clone();
+        tokio::task::spawn(async move {
+            rpc.rpc(DocCloseRequest { doc_id }).await.ok();
+        });
+    }
 }
 
 impl<C> Doc<C>
 where
     C: ServiceConnection<ProviderService>,
 {
+    fn new(rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
+        Self(Arc::new(DocInner {
+            rpc,
+            id,
+            closed: AtomicBool::new(false),
+        }))
+    }
+
+    async fn rpc<M>(&self, msg: M) -> Result<M::Response>
+    where
+        M: RpcMsg<ProviderService>,
+    {
+        let res = self.0.rpc.rpc(msg).await?;
+        Ok(res)
+    }
+
     /// Get the document id of this doc.
     pub fn id(&self) -> NamespaceId {
-        self.id
+        self.0.id
+    }
+
+    /// Close the document.
+    pub async fn close(&self) -> Result<()> {
+        self.0.closed.store(true, Ordering::Release);
+        self.rpc(DocCloseRequest { doc_id: self.id() }).await??;
+        Ok(())
+    }
+
+    fn ensure_open(&self) -> Result<()> {
+        if self.0.closed.load(Ordering::Acquire) {
+            Err(anyhow!("document is closed"))
+        } else {
+            Ok(())
+        }
     }
 
     /// Set the content of a key to a byte array.
     pub async fn set_bytes(
         &self,
         author_id: AuthorId,
-        key: Vec<u8>,
-        value: Vec<u8>,
+        key: impl Into<Bytes>,
+        value: impl Into<Bytes>,
     ) -> Result<Hash> {
+        self.ensure_open()?;
         let res = self
-            .rpc
             .rpc(DocSetRequest {
-                doc_id: self.id,
+                doc_id: self.id(),
                 author_id,
-                key,
-                value,
+                key: key.into(),
+                value: value.into(),
             })
             .await??;
         Ok(res.entry.content_hash())
@@ -560,30 +601,32 @@ where
     pub async fn set_hash(
         &self,
         author_id: AuthorId,
-        key: Vec<u8>,
+        key: impl Into<Bytes>,
         hash: Hash,
         size: u64,
     ) -> Result<()> {
-        self.rpc
-            .rpc(DocSetHashRequest {
-                doc_id: self.id,
-                author_id,
-                key,
-                hash,
-                size,
-            })
-            .await??;
+        self.ensure_open()?;
+        self.rpc(DocSetHashRequest {
+            doc_id: self.id(),
+            author_id,
+            key: key.into(),
+            hash,
+            size,
+        })
+        .await??;
         Ok(())
     }
 
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
     pub async fn read(&self, entry: &Entry) -> Result<BlobReader> {
-        BlobReader::from_rpc(&self.rpc, entry.content_hash()).await
+        self.ensure_open()?;
+        BlobReader::from_rpc(&self.0.rpc, entry.content_hash()).await
     }
 
     /// Read all content of an [`Entry`] into a buffer.
     pub async fn read_to_bytes(&self, entry: &Entry) -> Result<Bytes> {
-        BlobReader::from_rpc(&self.rpc, entry.content_hash())
+        self.ensure_open()?;
+        BlobReader::from_rpc(&self.0.rpc, entry.content_hash())
             .await?
             .read_to_bytes()
             .await
@@ -595,13 +638,13 @@ where
     /// entries whose key starts with or is equal to the given `prefix`.
     ///
     /// Returns the number of entries deleted.
-    pub async fn del(&self, author_id: AuthorId, prefix: Vec<u8>) -> Result<usize> {
+    pub async fn del(&self, author_id: AuthorId, prefix: impl Into<Bytes>) -> Result<usize> {
+        self.ensure_open()?;
         let res = self
-            .rpc
             .rpc(DocDelRequest {
-                doc_id: self.id,
+                doc_id: self.id(),
                 author_id,
-                prefix,
+                prefix: prefix.into(),
             })
             .await??;
         let DocDelResponse { removed } = res;
@@ -609,13 +652,13 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_one(&self, author: AuthorId, key: Vec<u8>) -> Result<Option<Entry>> {
+    pub async fn get_one(&self, author: AuthorId, key: impl Into<Bytes>) -> Result<Option<Entry>> {
+        self.ensure_open()?;
         let res = self
-            .rpc
             .rpc(DocGetOneRequest {
                 author,
-                key,
-                doc_id: self.id,
+                key: key.into(),
+                doc_id: self.id(),
             })
             .await??;
         Ok(res.entry.map(|entry| entry.into()))
@@ -623,10 +666,12 @@ where
 
     /// Get entries.
     pub async fn get_many(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
+        self.ensure_open()?;
         let stream = self
+            .0
             .rpc
             .server_streaming(DocGetManyRequest {
-                doc_id: self.id,
+                doc_id: self.id(),
                 filter,
             })
             .await?;
@@ -635,10 +680,10 @@ where
 
     /// Share this document with peers over a ticket.
     pub async fn share(&self, mode: ShareMode) -> anyhow::Result<DocTicket> {
+        self.ensure_open()?;
         let res = self
-            .rpc
             .rpc(DocShareRequest {
-                doc_id: self.id,
+                doc_id: self.id(),
                 mode,
             })
             .await??;
@@ -647,10 +692,10 @@ where
 
     /// Start to sync this document with a list of peers.
     pub async fn start_sync(&self, peers: Vec<PeerAddr>) -> Result<()> {
+        self.ensure_open()?;
         let _res = self
-            .rpc
             .rpc(DocStartSyncRequest {
-                doc_id: self.id,
+                doc_id: self.id(),
                 peers,
             })
             .await??;
@@ -659,22 +704,26 @@ where
 
     /// Stop the live sync for this document.
     pub async fn leave(&self) -> Result<()> {
-        let _res = self.rpc.rpc(DocLeaveRequest { doc_id: self.id }).await??;
+        self.ensure_open()?;
+        let _res = self.rpc(DocLeaveRequest { doc_id: self.id() }).await??;
         Ok(())
     }
 
     /// Subscribe to events for this document.
     pub async fn subscribe(&self) -> anyhow::Result<impl Stream<Item = anyhow::Result<LiveEvent>>> {
+        self.ensure_open()?;
         let stream = self
+            .0
             .rpc
-            .server_streaming(DocSubscribeRequest { doc_id: self.id })
+            .server_streaming(DocSubscribeRequest { doc_id: self.id() })
             .await?;
         Ok(flatten(stream).map_ok(|res| res.event).map_err(Into::into))
     }
 
     /// Get status info for this document
-    pub async fn status(&self) -> anyhow::Result<LiveStatus> {
-        let res = self.rpc.rpc(DocInfoRequest { doc_id: self.id }).await??;
+    pub async fn status(&self) -> anyhow::Result<OpenState> {
+        self.ensure_open()?;
+        let res = self.rpc(DocStatusRequest { doc_id: self.id() }).await??;
         Ok(res.status)
     }
 }

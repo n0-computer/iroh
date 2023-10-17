@@ -1,8 +1,8 @@
 //! On disk storage for replicas.
 
-use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::HashSet, path::Path, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
@@ -22,13 +22,13 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<Database>,
-    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<StoreInstance>>>>,
+    open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
     pubkeys: MemPublicKeyStore,
 }
 
@@ -53,14 +53,13 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
 // Value:
 //    (u64, [u8; 32], [u8; 32], u64, [u8; 32])
 //  # (timestamp, signature_namespace, signature_author, len, hash)
+const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 type DbResult<T> = Result<T, StorageError>;
-
-const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
 /// last time a peer was useful in a document.
@@ -92,7 +91,7 @@ impl Store {
 
         Ok(Store {
             db: Arc::new(db),
-            replicas: Default::default(),
+            open_replicas: Default::default(),
             pubkeys: Default::default(),
         })
     }
@@ -129,26 +128,33 @@ impl super::Store for Store {
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
-    fn open_replica(&self, namespace_id: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
-        if let Some(replica) = self.replicas.read().get(namespace_id) {
-            return Ok(Some(replica.clone()));
+    fn open_replica(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Replica<Self::Instance>, OpenError> {
+        if self.open_replicas.read().contains(namespace_id) {
+            return Err(OpenError::AlreadyOpen);
         }
 
-        let read_tx = self.db.begin_read()?;
-        let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
-        let Some(namespace) = namespace_table.get(namespace_id.as_bytes())? else {
-            return Ok(None);
+        let read_tx = self.db.begin_read().map_err(anyhow::Error::from)?;
+        let namespace_table = read_tx
+            .open_table(NAMESPACES_TABLE)
+            .map_err(anyhow::Error::from)?;
+        let Some(namespace) = namespace_table
+            .get(namespace_id.as_bytes())
+            .map_err(anyhow::Error::from)?
+        else {
+            return Err(OpenError::NotFound);
         };
         let namespace = Namespace::from_bytes(namespace.value());
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
-        self.replicas.write().insert(*namespace_id, replica.clone());
-        Ok(Some(replica))
+        self.open_replicas.write().insert(*namespace_id);
+        Ok(replica)
     }
 
-    fn close_replica(&self, namespace_id: &NamespaceId) {
-        if let Some(replica) = self.replicas.write().remove(namespace_id) {
-            replica.close();
-        }
+    fn close_replica(&self, mut replica: Replica<Self::Instance>) {
+        self.open_replicas.write().remove(&replica.namespace());
+        replica.close();
     }
 
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
@@ -196,19 +202,15 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
-        let id = namespace.id();
+    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
         self.insert_namespace(namespace.clone())?;
-
-        let replica = Replica::new(namespace, StoreInstance::new(id, self.clone()));
-
-        self.replicas.write().insert(id, replica.clone());
-        Ok(replica)
+        Ok(())
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
-        self.close_replica(namespace);
-        self.replicas.write().remove(namespace);
+        if self.open_replicas.read().contains(namespace) {
+            return Err(anyhow!("replica is not closed"));
+        }
         let start = range_start(namespace);
         let end = range_end(namespace);
         let write_tx = self.db.begin_write()?;
@@ -549,6 +551,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let write_tx = self.store.db.begin_write()?;
         {
+            // insert into record table
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
             let key = (
                 &e.id().namespace().to_bytes(),
@@ -916,7 +919,7 @@ mod tests {
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = Namespace::new(&mut rand::thread_rng());
-        let replica = store.new_replica(namespace)?;
+        let mut replica = store.new_replica(namespace)?;
 
         // test author prefix relation for all-255 keys
         let key1 = vec![255, 255];
@@ -947,12 +950,9 @@ mod tests {
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = Namespace::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
-
-        let replica_back = store.open_replica(&namespace.id())?.unwrap();
-        assert_eq!(
-            replica.namespace().as_bytes(),
-            replica_back.namespace().as_bytes()
-        );
+        store.close_replica(replica);
+        let replica = store.open_replica(&namespace.id())?;
+        assert_eq!(replica.namespace(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);

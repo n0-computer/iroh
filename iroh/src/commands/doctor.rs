@@ -1,6 +1,7 @@
 //! Tool to get information about the current network environment of a node,
 //! and to test connectivity to specific other nodes.
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
     time::{Duration, Instant},
@@ -137,7 +138,11 @@ pub enum Commands {
     ///
     /// Tests the latencies of the default DERP regions and nodes. To test custom regions or nodes,
     /// adjust the [`Config`].
-    DerpRegions,
+    DerpRegions {
+        /// How often to execute.
+        #[clap(long, default_value_t = 5)]
+        count: usize,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -657,60 +662,96 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
+async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
-    let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
     }
-    for region in config.derp_regions.into_iter() {
+
+    let mut clients = HashMap::new();
+    for region in &config.derp_regions {
         let secret_key = key.clone();
-        set.spawn(async move {
+        let reg = region.clone();
+        let client = iroh_net::derp::http::ClientBuilder::new()
+            .get_region(move || {
+                let region = reg.clone();
+                Box::pin(async move { Some(region) })
+            })
+            .build(secret_key)?;
+
+        clients.insert(region.region_id, client);
+    }
+
+    let mut success = Vec::new();
+    let mut fail = Vec::new();
+
+    for i in 0..count {
+        println!("Round {}/{count}", i + 1);
+        let derp_regions = config.derp_regions.clone();
+        for region in derp_regions.into_iter() {
             let mut region_details = RegionDetails {
+                connect: None,
                 latency: None,
                 error: None,
                 region_id: region.region_id,
                 hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
             };
-            let client = match iroh_net::derp::http::ClientBuilder::new()
-                .get_region(move || {
-                    let region = region.clone();
-                    Box::pin(async move { Some(region) })
-                })
-                .build(secret_key)
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    region_details.error = Some(e.to_string());
-                    return region_details;
-                }
-            };
+
+            let client = clients.get(&region.region_id).cloned().unwrap();
+
             let start = std::time::Instant::now();
+            assert!(!client.is_connected().await);
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
+                    tracing::warn!("connect timeout");
                     region_details.error = Some(e.to_string());
                 }
                 Ok(Err(e)) => {
+                    tracing::warn!("connect error");
                     region_details.error = Some(e.to_string());
                 }
                 Ok(_) => {
-                    region_details.latency = Some(start.elapsed());
+                    assert!(client.is_connected().await);
+                    region_details.connect = Some(start.elapsed());
+
+                    let c = client.clone();
+                    let t = tokio::task::spawn(async move {
+                        loop {
+                            match c.recv_detail().await {
+                                Ok(msg) => {
+                                    tracing::debug!("derp: {:?}", msg);
+                                }
+                                Err(err) => {
+                                    tracing::warn!("derp: {:?}", err);
+                                }
+                            }
+                        }
+                    });
+
+                    match client.ping().await {
+                        Ok(latency) => {
+                            region_details.latency = Some(latency);
+                        }
+                        Err(e) => {
+                            tracing::warn!("ping error: {:?}", e);
+                            region_details.error = Some(e.to_string());
+                        }
+                    }
+                    t.abort();
                 }
             }
-            region_details
-        });
-    }
-    let mut success = Vec::new();
-    let mut fail = Vec::new();
-    while let Some(region_details) = set.join_next().await {
-        let region_details = region_details?;
-        if region_details.latency.is_some() {
-            success.push(region_details);
-        } else {
-            fail.push(region_details);
+            // disconnect, to be able to measure reconnects
+            client.close_for_reconnect().await;
+            assert!(!client.is_connected().await);
+            if region_details.error.is_none() {
+                success.push(region_details);
+            } else {
+                fail.push(region_details);
+            }
         }
     }
-    success.sort_by_key(|d| d.latency);
+
+    // success.sort_by_key(|d| d.latency);
     if !success.is_empty() {
         println!("DERP Region Latencies:");
         println!();
@@ -727,10 +768,12 @@ async fn derp_regions(config: NodeConfig) -> anyhow::Result<()> {
         println!("{region}");
         println!();
     }
+
     Ok(())
 }
 
 struct RegionDetails {
+    connect: Option<Duration>,
     latency: Option<Duration>,
     region_id: u16,
     hosts: Vec<url::Url>,
@@ -739,27 +782,26 @@ struct RegionDetails {
 
 impl std::fmt::Display for RegionDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.latency {
-            Some(duration) => {
+        match self.error {
+            None => {
                 write!(
                     f,
-                    "Region {}\nLatency {:?}\nHosts:\n\t{:?}",
+                    "Region {}\nConnect: {:?}\nLatency: {:?}\nHosts:\n\t{:?}",
                     self.region_id,
-                    duration,
+                    self.connect.unwrap_or_default(),
+                    self.latency.unwrap_or_default(),
                     self.hosts
                         .iter()
                         .map(|u| u.to_string())
                         .collect::<Vec<String>>()
                 )
             }
-            None => {
+            Some(ref err) => {
                 write!(
                     f,
-                    "Region {}\nError connecting to region: {}\nHosts:\n\t{:?}",
+                    "Region {}\nConnection Error: {:?}\nHosts:\n\t{:?}",
                     self.region_id,
-                    self.error
-                        .as_ref()
-                        .map_or("Unknown Error".to_string(), |e| e.clone()),
+                    err,
                     self.hosts
                         .iter()
                         .map(|u| u.to_string())
@@ -847,9 +889,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             port_map_probe(config).await
         }
-        Commands::DerpRegions => {
+        Commands::DerpRegions { count } => {
             let config = NodeConfig::from_env(None)?;
-            derp_regions(config).await
+            derp_regions(count, config).await
         }
     }
 }

@@ -24,10 +24,10 @@ pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
 /// Maximum message size is limited to 1024 bytes.
 pub const MAX_MESSAGE_SIZE: usize = 1024;
 
-/// Channel capacity for topic subscription broadcast channels (one per topic)
-const SUBSCRIBE_ALL_CAP: usize = 64;
 /// Channel capacity for all subscription broadcast channels (single)
-const SUBSCRIBE_TOPIC_CAP: usize = 64;
+const SUBSCRIBE_ALL_CAP: usize = 2048;
+/// Channel capacity for topic subscription broadcast channels (one per topic)
+const SUBSCRIBE_TOPIC_CAP: usize = 2048;
 /// Channel capacity for the send queue (one per connection)
 const SEND_QUEUE_CAP: usize = 64;
 /// Channel capacity for the ToActor message queue (single)
@@ -199,24 +199,27 @@ impl Gossip {
     ///
     /// Note that this method takes self by value. Usually you would clone the [`Gossip`] handle.
     /// before.
-    pub fn subscribe_all(self) -> impl Stream<Item = anyhow::Result<(TopicId, Event)>> {
+    pub fn subscribe_all(
+        self,
+    ) -> impl Stream<Item = Result<(TopicId, Event), broadcast::error::RecvError>> {
         Gen::new(|co| async move {
-            if let Err(cause) = self.subscribe_all0(&co).await {
-                co.yield_(Err(cause)).await
+            if let Err(err) = self.subscribe_all0(&co).await {
+                warn!("subscribe_all produced error: {err:?}");
+                co.yield_(Err(broadcast::error::RecvError::Closed)).await
             }
         })
     }
 
     async fn subscribe_all0(
         &self,
-        co: &Co<anyhow::Result<(TopicId, Event)>>,
+        co: &Co<Result<(TopicId, Event), broadcast::error::RecvError>>,
     ) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.send(ToActor::SubscribeAll(tx)).await?;
-        let mut res = rx.await.map_err(|_| anyhow!("subscribe_tx dropped"))??;
+        let mut res = rx.await??;
         loop {
-            let event = res.recv().await?;
-            co.yield_(Ok(event)).await;
+            let event = res.recv().await;
+            co.yield_(event).await;
         }
     }
 
@@ -259,9 +262,9 @@ impl Gossip {
 ///
 /// TODO: Optionally resolve to an error once all connection attempts failed.
 #[derive(Debug)]
-pub struct JoinTopicFut(oneshot::Receiver<anyhow::Result<()>>);
+pub struct JoinTopicFut(oneshot::Receiver<anyhow::Result<TopicId>>);
 impl Future for JoinTopicFut {
-    type Output = anyhow::Result<()>;
+    type Output = anyhow::Result<TopicId>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
@@ -293,7 +296,7 @@ enum ToActor {
     Join(
         TopicId,
         Vec<PublicKey>,
-        #[debug(skip)] oneshot::Sender<anyhow::Result<()>>,
+        #[debug(skip)] oneshot::Sender<anyhow::Result<TopicId>>,
     ),
     /// Leave a topic, send disconnect messages and drop all state.
     Quit(TopicId),
@@ -348,10 +351,14 @@ struct Actor {
 
 impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
+        let mut i = 0;
         loop {
+            i += 1;
+            trace!(?i, "tick");
             tokio::select! {
                 biased;
                 msg = self.to_actor_rx.recv() => {
+                    trace!(?i, "tick: to_actor_rx");
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
@@ -374,6 +381,7 @@ impl Actor {
                     }
                 }
                 (peer_id, res) = self.dialer.next_conn() => {
+                    trace!(?i, "tick: dialer");
                     match res {
                         Ok(conn) => {
                             debug!(peer = ?peer_id, "dial successfull");
@@ -385,6 +393,7 @@ impl Actor {
                     }
                 }
                 event = self.in_event_rx.recv() => {
+                    trace!(?i, "tick: in_event_rx");
                     match event {
                         Some(event) => {
                             self.handle_in_event(event, Instant::now()).await.context("in_event_rx.recv -> handle_in_event")?;
@@ -393,6 +402,7 @@ impl Actor {
                     }
                 }
                 drain = self.timers.wait_and_drain() => {
+                    trace!(?i, "tick: timers");
                     let now = Instant::now();
                     for (_instant, timer) in drain {
                         self.handle_in_event(InEvent::TimerExpired(timer), now).await.context("timers.drain_expired -> handle_in_event")?;
@@ -415,21 +425,24 @@ impl Actor {
 
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
-                tokio::spawn(async move {
-                    debug!(peer = ?peer_id, "connection established");
-                    match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
-                        Ok(()) => {
-                            debug!(peer = ?peer_id, "connection closed without error")
+                tokio::spawn(
+                    async move {
+                        debug!("connection established");
+                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                            Ok(()) => {
+                                debug!("connection closed without error")
+                            }
+                            Err(err) => {
+                                debug!("connection closed with error {err:?}")
+                            }
                         }
-                        Err(err) => {
-                            debug!(peer = ?peer_id, "connection closed with error {err:?}")
-                        }
+                        in_event_tx
+                            .send(InEvent::PeerDisconnected(peer_id))
+                            .await
+                            .ok();
                     }
-                    in_event_tx
-                        .send(InEvent::PeerDisconnected(peer_id))
-                        .await
-                        .ok();
-                });
+                    .instrument(error_span!("gossip_conn", peer = %peer_id.fmt_short())),
+                );
 
                 // Forward queued pending sends
                 if let Some(send_queue) = self.pending_sends.remove(&peer_id) {
@@ -443,12 +456,13 @@ impl Actor {
                     .await?;
                 if self.state.has_active_peers(&topic_id) {
                     // If the active_view contains at least one peer, reply now
-                    reply.send(Ok(())).ok();
+                    reply.send(Ok(topic_id)).ok();
                 } else {
                     // Otherwise, wait for any peer to come up as neighbor.
                     let sub = self.subscribe(topic_id);
                     tokio::spawn(async move {
                         let res = wait_for_neighbor_up(sub).await;
+                        let res = res.map(|_| topic_id);
                         reply.send(res).ok();
                     });
                 }
@@ -578,7 +592,7 @@ async fn wait_for_neighbor_up(mut sub: broadcast::Receiver<Event>) -> anyhow::Re
             Ok(Event::NeighborUp(_neighbor)) => break Ok(()),
             Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => {
-                break Err(anyhow!("Failed to join swarm: Gossip actor dropped"))
+                break Err(anyhow!("Failed to join swarm: channel closed"))
             }
         }
     }
