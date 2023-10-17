@@ -704,8 +704,8 @@ impl Endpoint {
             self.direct_addr_state.remove(&ip_port);
 
             match last_seen.map(|instant| instant.elapsed()) {
-                Some(last_seen) => trace!(%peer, %ip_port, ?last_seen, "prunning address"),
-                None => trace!(%peer, %ip_port, last_seen=%"never", "prunning address"),
+                Some(last_seen) => trace!(%peer, %ip_port, ?last_seen, "pruning address"),
+                None => trace!(%peer, %ip_port, last_seen=%"never", "pruning address"),
             }
 
             if let Some(addr_and_latency) = self.best_addr.as_ref() {
@@ -1359,8 +1359,8 @@ impl PeerMap {
         for (public_key, last_used) in prune_candidates.into_iter() {
             let peer = public_key.fmt_short();
             match last_used.map(|instant| instant.elapsed()) {
-                Some(last_used) => trace!(%peer, ?last_used, "prunning inactive"),
-                None => trace!(%peer, last_used=%"never", "prunning inactive"),
+                Some(last_used) => trace!(%peer, ?last_used, "pruning inactive"),
+                None => trace!(%peer, last_used=%"never", "pruning inactive"),
             }
 
             let Some(id) = self.by_node_key.remove(&public_key) else {
@@ -1888,5 +1888,27 @@ mod tests {
                 .count(),
             MAX_INACTIVE_DIRECT_ADDRESSES
         )
+    }
+
+    #[test]
+    fn test_prune_inactive() {
+        let mut peer_map = PeerMap::default();
+        // add one active peer and more than MAX_INACTIVE_PEERS inactive peers
+        let active_peer = SecretKey::generate().public();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
+        peer_map.add_peer_addr(PeerAddr::new(active_peer).with_direct_addresses([addr]));
+        peer_map.receive_ip(addr).expect("registered");
+
+        for _ in 0..MAX_INACTIVE_PEERS + 1 {
+            let peer = SecretKey::generate().public();
+            peer_map.add_peer_addr(PeerAddr::new(peer));
+        }
+
+        assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 2);
+        peer_map.prune_inactive();
+        assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 1);
+        peer_map
+            .endpoint_for_node_key(&active_peer)
+            .expect("should not be pruned");
     }
 }
