@@ -27,7 +27,10 @@ impl Downloader {
                 service.run().await
             });
 
-        Downloader { next_id: 0, msg_tx }
+        Downloader {
+            next_id: Arc::new(AtomicU64::new(0)),
+            msg_tx,
+        }
     }
 }
 

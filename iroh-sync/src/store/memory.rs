@@ -1,12 +1,12 @@
 //! In memory storage for replicas.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::Infallible,
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
 use parking_lot::{RwLock, RwLockReadGuard};
@@ -17,14 +17,15 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes, Record,
 };
 
-use super::{pubkeys::MemPublicKeyStore, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
-    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<ReplicaStoreInstance>>>>,
+    open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
+    namespaces: Arc<RwLock<HashMap<NamespaceId, Namespace>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
@@ -46,21 +47,29 @@ impl super::Store for Store {
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
-    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
-        let replicas = &*self.replicas.read();
-        Ok(replicas.get(namespace).cloned())
+    fn open_replica(&self, id: &NamespaceId) -> Result<Replica<Self::Instance>, OpenError> {
+        if self.open_replicas.read().contains(id) {
+            return Err(OpenError::AlreadyOpen);
+        }
+        let namespace = {
+            let namespaces = self.namespaces.read();
+            let namespace = namespaces.get(id).ok_or(OpenError::NotFound)?;
+            namespace.clone()
+        };
+        let replica = Replica::new(namespace, ReplicaStoreInstance::new(*id, self.clone()));
+        self.open_replicas.write().insert(*id);
+        Ok(replica)
     }
 
-    fn close_replica(&self, namespace_id: &NamespaceId) {
-        if let Some(replica) = self.replicas.read().get(namespace_id) {
-            replica.close();
-        }
+    fn close_replica(&self, mut replica: Replica<Self::Instance>) {
+        self.open_replicas.write().remove(&replica.namespace());
+        replica.close();
     }
 
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
         // TODO: avoid collect?
         Ok(self
-            .replicas
+            .namespaces
             .read()
             .keys()
             .cloned()
@@ -91,19 +100,17 @@ impl super::Store for Store {
             .into_iter())
     }
 
-    fn new_replica(&self, namespace: Namespace) -> Result<Replica<ReplicaStoreInstance>> {
-        let id = namespace.id();
-        let replica = Replica::new(namespace, ReplicaStoreInstance::new(id, self.clone()));
-        self.replicas
-            .write()
-            .insert(replica.namespace(), replica.clone());
-        Ok(replica)
+    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
+        self.namespaces.write().insert(namespace.id(), namespace);
+        Ok(())
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
-        self.close_replica(namespace);
-        self.replicas.write().remove(namespace);
+        if self.open_replicas.read().contains(namespace) {
+            return Err(anyhow!("replica is not closed"));
+        }
         self.replica_records.write().remove(namespace);
+        self.namespaces.write().remove(namespace);
         Ok(())
     }
 

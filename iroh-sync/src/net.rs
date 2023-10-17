@@ -1,16 +1,18 @@
 //! Network implementation of the iroh-sync protocol
 
-use std::future::Future;
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 
 use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, PeerAddr};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, error_span, trace, Instrument};
 
 use crate::{
-    net::codec::{run_alice, run_bob},
-    store,
-    sync::Replica,
-    NamespaceId,
+    actor::SyncHandle,
+    net::codec::{run_alice, BobState},
+    NamespaceId, SyncOutcome,
 };
 
 #[cfg(feature = "metrics")]
@@ -24,22 +26,27 @@ pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 mod codec;
 
 /// Connect to a peer and sync a replica
-pub async fn connect_and_sync<S: store::Store>(
+pub async fn connect_and_sync(
     endpoint: &MagicEndpoint,
-    doc: &Replica<S::Instance>,
+    sync: &SyncHandle,
+    namespace: NamespaceId,
     peer: PeerAddr,
-) -> Result<(), ConnectError> {
+) -> Result<SyncFinished, ConnectError> {
+    let t_start = Instant::now();
     let peer_id = peer.peer_id;
-    debug!(?peer_id, "sync[dial]: connect");
-    let namespace = doc.namespace();
+    trace!("connect");
     let connection = endpoint
         .connect(peer, SYNC_ALPN)
         .await
         .map_err(ConnectError::connect)?;
-    debug!(?peer_id, ?namespace, "sync[dial]: connected");
+
     let (mut send_stream, mut recv_stream) =
         connection.open_bi().await.map_err(ConnectError::connect)?;
-    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, peer_id).await;
+
+    let t_connect = t_start.elapsed();
+    debug!(?t_connect, "connected");
+
+    let res = run_alice(&mut send_stream, &mut recv_stream, sync, namespace, peer_id).await;
 
     send_stream.finish().await.map_err(ConnectError::close)?;
     recv_stream
@@ -54,23 +61,59 @@ pub async fn connect_and_sync<S: store::Store>(
         inc!(Metrics, sync_via_connect_failure);
     }
 
-    debug!(?peer_id, ?namespace, ?res, "sync[dial]: done");
-    res
+    let t_process = t_start.elapsed() - t_connect;
+    match &res {
+        Ok(res) => {
+            debug!(
+                ?t_connect,
+                ?t_process,
+                sent = %res.num_sent,
+                recv = %res.num_recv,
+                "done, ok"
+            );
+        }
+        Err(err) => {
+            debug!(?t_connect, ?t_process, ?err, "done, failed");
+        }
+    }
+
+    let outcome = res?;
+
+    let timings = Timings {
+        connect: t_connect,
+        process: t_process,
+    };
+
+    let res = SyncFinished {
+        namespace,
+        peer: peer_id,
+        outcome,
+        timings,
+    };
+
+    Ok(res)
 }
 
-/// What to do with incoming sync requests
-pub type AcceptOutcome<S> = Result<Replica<<S as store::Store>::Instance>, AbortReason>;
+/// Whether we want to accept or reject an incoming sync request.
+#[derive(Debug, Clone)]
+pub enum AcceptOutcome {
+    /// Accept the sync request.
+    Allow,
+    /// Decline the sync request
+    Reject(AbortReason),
+}
 
 /// Handle an iroh-sync connection and sync all shared documents in the replica store.
-pub async fn handle_connection<S, F, Fut>(
+pub async fn handle_connection<F, Fut>(
+    sync: SyncHandle,
     connecting: quinn::Connecting,
     accept_cb: F,
-) -> Result<(NamespaceId, PublicKey), AcceptError>
+) -> Result<SyncFinished, AcceptError>
 where
-    S: store::Store,
     F: Fn(NamespaceId, PublicKey) -> Fut,
-    Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
+    Fut: Future<Output = AcceptOutcome>,
 {
+    let t_start = Instant::now();
     let connection = connecting.await.map_err(AcceptError::connect)?;
     let peer = get_peer_id(&connection)
         .await
@@ -79,9 +122,18 @@ where
         .accept_bi()
         .await
         .map_err(|e| AcceptError::open(peer, e))?;
-    debug!(?peer, "sync[accept]: handle");
 
-    let res = run_bob::<S, _, _, _, _>(&mut send_stream, &mut recv_stream, accept_cb, peer).await;
+    let t_connect = t_start.elapsed();
+    let span = error_span!("accept", peer = %peer.fmt_short(), namespace = tracing::field::Empty);
+    span.in_scope(|| {
+        debug!(?t_connect, "connection established");
+    });
+
+    let mut state = BobState::new(peer);
+    let res = state
+        .run(&mut send_stream, &mut recv_stream, sync, accept_cb)
+        .instrument(span.clone())
+        .await;
 
     #[cfg(feature = "metrics")]
     if res.is_ok() {
@@ -90,10 +142,8 @@ where
         inc!(Metrics, sync_via_accept_failure);
     }
 
-    let namespace = match &res {
-        Ok(namespace) => Some(*namespace),
-        Err(err) => err.namespace(),
-    };
+    let namespace = state.namespace();
+    let outcome = state.into_outcome();
 
     send_stream
         .finish()
@@ -103,11 +153,59 @@ where
         .read_to_end(0)
         .await
         .map_err(|error| AcceptError::close(peer, namespace, error))?;
+
+    let t_process = t_start.elapsed() - t_connect;
+    span.in_scope(|| match &res {
+        Ok(_res) => {
+            debug!(
+                ?t_connect,
+                ?t_process,
+                sent = %outcome.num_sent,
+                recv = %outcome.num_recv,
+                "done, ok"
+            );
+        }
+        Err(err) => {
+            debug!(?t_connect, ?t_process, ?err, "done, failed");
+        }
+    });
+
     let namespace = res?;
 
-    debug!(?peer, ?namespace, "sync[accept]: done");
+    let timings = Timings {
+        connect: t_connect,
+        process: t_process,
+    };
+    let res = SyncFinished {
+        namespace,
+        outcome,
+        peer,
+        timings,
+    };
 
-    Ok((namespace, peer))
+    Ok(res)
+}
+
+/// Details of a finished sync operation.
+#[derive(Debug, Clone)]
+pub struct SyncFinished {
+    /// The namespace that was synced.
+    pub namespace: NamespaceId,
+    /// The peer we syned with.
+    pub peer: PublicKey,
+    /// The outcome of the sync operation
+    pub outcome: SyncOutcome,
+    /// The time this operation took
+    pub timings: Timings,
+}
+
+/// Time a sync operation took
+#[derive(Debug, Default, Clone)]
+pub struct Timings {
+    /// Time to establish connection
+    pub connect: Duration,
+    /// Time to run sync exchange
+    pub process: Duration,
 }
 
 /// Errors that may occur on handling incoming sync connections.
@@ -165,9 +263,6 @@ pub enum ConnectError {
     /// The remote peer aborted the sync request.
     #[error("Remote peer aborted sync: {0:?}")]
     RemoteAbort(AbortReason),
-    /// We cancelled the operation
-    #[error("Cancelled")]
-    Cancelled,
     /// Failed to run sync
     #[error("Failed to sync")]
     Sync {
@@ -186,9 +281,11 @@ pub enum ConnectError {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AbortReason {
     /// Namespace is not avaiable.
-    NotAvailable,
+    NotFound,
     /// We are already syncing this namespace.
     AlreadySyncing,
+    /// We experienced an error while trying to provide the requested resource
+    InternalServerError,
 }
 
 impl AcceptError {

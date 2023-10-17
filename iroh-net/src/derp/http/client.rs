@@ -8,7 +8,6 @@ use std::time::Duration;
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use futures::StreamExt;
 use hyper::upgrade::{Parts, Upgraded};
 use hyper::{header::UPGRADE, Body, Request};
 use iroh_metrics::inc;
@@ -642,31 +641,32 @@ impl Client {
         }
         // usually 1 IPv4, 1 IPv6 and 2x http
         const DIAL_PARALLELISM: usize = 4;
+        let mut dials = bounded_join_set::JoinSet::new(DIAL_PARALLELISM);
 
-        let this = self.clone();
-        let mut dials = futures::stream::iter(reg.nodes.clone().into_iter())
-            .map(|node| {
-                let this = this.clone();
-                let target = target.clone();
-                async move {
-                    if node.stun_only {
-                        return Err(ClientError::StunOnlyNodesFound(target));
-                    }
-
-                    this.dial_node(&node).await.map(|c| (c, node))
+        for node in reg.nodes.clone().into_iter() {
+            let this = self.clone();
+            let target = target.clone();
+            dials.spawn(async move {
+                if node.stun_only {
+                    return Err(ClientError::StunOnlyNodesFound(target));
                 }
-            })
-            .buffer_unordered(DIAL_PARALLELISM);
+
+                this.dial_node(&node).await.map(|c| (c, node))
+            });
+        }
 
         let mut errs = Vec::new();
-        while let Some(res) = dials.next().await {
+        while let Some(res) = dials.join_next().await {
             match res {
-                Ok((conn, node)) => {
+                Ok(Ok((conn, node))) => {
                     // return on the first successfull one
                     trace!("dialed region");
                     return Ok((conn, node));
                 }
                 Err(e) => {
+                    warn!("dial join error: {:?}", e);
+                }
+                Ok(Err(e)) => {
                     errs.push(e);
                 }
             }
