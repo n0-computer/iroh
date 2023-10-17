@@ -84,8 +84,7 @@ impl DialByPeer for MultiDialer {
         async move {
             use futures::stream::StreamExt;
             let mut attempts = futures::stream::iter(self.regions.iter().cloned())
-            .then(|region| {
-                async move {
+                .map(|region| async move {
                     println!("dialing {} in region {}", peer, region);
                     let addr = PeerAddr {
                         peer_id: *peer,
@@ -97,12 +96,12 @@ impl DialByPeer for MultiDialer {
                     let res = self.endpoint.connect(addr, alpn).await;
                     println!("ok = {}", res.is_ok());
                     res
-                }
-            }).boxed();
+                })
+                .buffer_unordered(4)
+                .boxed();
             // tried concurrent dialing. There is a bug. See https://github.com/n0-computer/iroh/issues/1650
             let mut err = None;
-            while let Some(conn) = attempts.next().await
-            {
+            while let Some(conn) = attempts.next().await {
                 match conn {
                     Ok(conn) => return Ok(conn),
                     Err(e) => err = Some(e),
@@ -329,28 +328,6 @@ struct QueryArgs {
 
     #[clap(long, default_value_t = false)]
     validated: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct PeerAddrTicket(PeerAddr);
-
-impl Display for PeerAddrTicket {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bytes = postcard::to_stdvec(&self.0).unwrap();
-        let mut text = data_encoding::BASE32_NOPAD.encode(&bytes);
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
-    }
-}
-
-impl FromStr for PeerAddrTicket {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let peer = postcard::from_bytes(&bytes)?;
-        Ok(Self(peer))
-    }
 }
 
 #[derive(Debug, Clone, Default)]

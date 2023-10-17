@@ -1,0 +1,29 @@
+[package]
+name = "tracker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+iroh-net = { path = "../../iroh-net" }
+iroh = { path = "../../iroh" }
+serde = { version = "1", features = ["derive"] }
+bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
+iroh-bytes = { path = "../../iroh-bytes" }
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+toml = { version = "0.7.3" }
+hex = { version = "0.4.3" }
+futures = "0.3.25"
+tokio = { version = "1", features = ["io-util", "rt"] }
+quinn = "0.10"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
+tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
+rand = "0.8"
+bytes = "1"
+tracing = "0.1"
+tempfile = "3.4"
+dirs-next = "2"

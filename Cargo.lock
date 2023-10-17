@@ -4955,6 +4955,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bao-tree",
+ "bytes",
+ "clap",
+ "derive_more",
+ "dirs-next",
+ "futures",
+ "hex",
+ "iroh",
+ "iroh-bytes",
+ "iroh-net",
+ "postcard",
+ "quinn",
+ "rand",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml 0.7.8",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "triomphe"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
