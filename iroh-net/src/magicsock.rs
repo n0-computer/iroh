@@ -1463,7 +1463,7 @@ struct Actor {
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<config::NetInfo>,
-    /// Path where connection info from [`Self::peer_map`] is persisted.
+    /// Path where connection info from [`Inner::peer_map`] is persisted.
     peers_path: Option<PathBuf>,
 
     // The underlying UDP sockets used to send/rcv packets.
