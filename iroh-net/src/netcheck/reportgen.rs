@@ -232,7 +232,7 @@ impl Actor {
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
-        let mut probes = self.prepare_probes_task().await?;
+        let mut probes = self.spawn_probes_task().await?;
 
         let total_timer = tokio::time::sleep(OVERALL_PROBE_TIMEOUT);
         tokio::pin!(total_timer);
@@ -265,18 +265,16 @@ impl Actor {
                     trace!("portmapper future done");
                 }
 
-                // Drive the probes.
+                // Check for probes finishing.
                 set_result = probes.join_next(), if self.outstanding_tasks.probes => {
                     match set_result {
                         Some(Ok(Ok(report))) => self.handle_probe_report(report),
                         Some(Ok(Err(_))) => (),
                         Some(Err(e)) => {
                             warn!("fatal probes error: {:?}", e);
-                            probes.abort_all();
                             self.handle_abort_probes();
                         }
                         None => {
-                            probes.abort_all();
                             self.handle_abort_probes();
                         }
                     }
@@ -572,7 +570,7 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough regions, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn prepare_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
+    async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
@@ -636,7 +634,7 @@ impl Actor {
                         }
                         Err(err) => {
                             warn!("fatal probe set error, aborting: {:#}", err);
-                            return Err(anyhow::anyhow!(err));
+                            continue;
                         }
                     }
                 }

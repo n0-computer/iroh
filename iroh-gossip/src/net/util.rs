@@ -12,6 +12,7 @@ use tokio::{
     time::{sleep_until, Sleep},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 use crate::proto::util::TimerMap;
 
@@ -140,13 +141,22 @@ impl Dialer {
     pub async fn next_conn(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
         match self.pending_peers.is_empty() {
             false => {
-                let (peer_id, res) = self
-                    .pending
-                    .join_next()
-                    .await
-                    .expect("not canceled")
-                    .unwrap();
-                self.pending_peers.remove(&peer_id);
+                let (peer_id, res) = loop {
+                    match self.pending.join_next().await {
+                        Some(Ok((peer_id, res))) => {
+                            self.pending_peers.remove(&peer_id);
+                            break (peer_id, res);
+                        }
+                        Some(Err(e)) => {
+                            error!("next conn error: {:?}", e);
+                        }
+                        None => {
+                            error!("no more pending conns available");
+                            futures::future::pending().await
+                        }
+                    }
+                };
+
                 (peer_id, res)
             }
             true => futures::future::pending().await,
@@ -172,9 +182,8 @@ impl futures::Stream for Dialer {
                 std::task::Poll::Ready(Some((peer_id, result)))
             }
             std::task::Poll::Ready(Some(Err(e))) => {
-                // Should not happen unless the task paniced or got canceled
-                // TODO: is this what we want to do here?
-                panic!("{:?}", e);
+                error!("dialer error: {:?}", e);
+                std::task::Poll::Pending
             }
             _ => std::task::Poll::Pending,
         }
