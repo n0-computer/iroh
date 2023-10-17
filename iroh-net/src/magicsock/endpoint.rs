@@ -44,6 +44,11 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 /// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
+/// Number of addresses that are not active that we keep around per peer.
+///
+/// See [`Endpoint::prune_direct_addresses`].
+const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 5;
+
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum PingAction {
@@ -273,7 +278,7 @@ impl Endpoint {
         (udp_addr, udp_addr.is_some())
     }
 
-    /// Reports whether we should ping to all our peers looking for a better path.
+    /// Reports whether we should ping to all our direct addresses looking for a better path.
     fn want_full_ping(&self, now: &Instant) -> bool {
         debug!("want full ping? {:?}", now);
         if self.last_full_ping.is_none() {
@@ -497,7 +502,7 @@ impl Endpoint {
             return msgs;
         }
         self.last_full_ping.replace(now);
-        self.cleanup_endpoint_state();
+        self.prune_direct_addresses();
 
         let pings: Vec<_> = self
             .direct_addr_state
@@ -579,7 +584,7 @@ impl Endpoint {
         }
 
         // Delete outdated endpoints
-        self.cleanup_endpoint_state();
+        self.prune_direct_addresses();
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
@@ -666,7 +671,7 @@ impl Endpoint {
         // If for some reason this gets very large, do some cleanup.
         let size = self.direct_addr_state.len();
         if size > 100 {
-            self.cleanup_endpoint_state();
+            self.prune_direct_addresses();
             let size2 = self.direct_addr_state.len();
             info!(
                 "disco: addConfirmedEndpoint pruned candidate set from {} to {} entries",
@@ -677,25 +682,52 @@ impl Endpoint {
         false
     }
 
-    fn cleanup_endpoint_state(&mut self) {
-        self.direct_addr_state.retain(|ep, st| {
-            if !st.is_alive() {
-                if let Some(best_addr) = self.best_addr.take() {
-                    let ep: SocketAddr = (*ep).into();
-                    if ep == best_addr.addr {
-                        // no longer relying on a direct connection, remove conn count
-                        inc!(MagicsockMetrics, num_direct_conns_removed);
-                        if self.derp_region.is_some() {
-                            // we now rely on a relay connection, add a relay count
-                            inc!(MagicsockMetrics, num_relay_conns_added);
-                        }
+    /// Keep any direct address that is currently active. From those that aren't active, prune
+    /// first those that are not alive, then those alive but not active in order to keep at most
+    /// [`MAX_INACTIVE_DIRECT_ADDRESSES`].
+    fn prune_direct_addresses(&mut self) {
+        // prune candidates are addresses that are not active
+        let mut prune_candidates: Vec<_> = self
+            .direct_addr_state
+            .iter()
+            .filter(|(_ip_port, state)| !state.is_active())
+            .map(|(ip_port, state)| (*ip_port, state.last_alive()))
+            .collect();
+        let prune_count = prune_candidates
+            .len()
+            .saturating_sub(MAX_INACTIVE_DIRECT_ADDRESSES);
+        if prune_count == 0 {
+            // nothing to do, within limits
+            return;
+        }
+
+        // sort leaving the worst addresses first (never contacted) and better ones (most recently
+        // used ones) last
+        prune_candidates.sort_unstable_by_key(|(_ip_port, last_active)| *last_active);
+        prune_candidates.truncate(prune_count);
+        let peer = self.public_key.fmt_short();
+        for (ip_port, last_seen) in prune_candidates.into_iter() {
+            self.direct_addr_state.remove(&ip_port);
+
+            if let Some(last_seen) = last_seen {
+                let last_seen = last_seen.elapsed();
+                trace!(%peer, %ip_port, ?last_seen, "prunning address");
+            } else {
+                trace!(%peer, %ip_port, last_seen=%"never", "prunning address");
+            }
+
+            if let Some(addr_and_latency) = self.best_addr.as_ref() {
+                if addr_and_latency.addr == ip_port.into() {
+                    self.best_addr = None;
+                    // no longer relying on a direct connection, remove conn count
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    if self.derp_region.is_some() {
+                        // we now rely on a relay connection, add a relay count
+                        inc!(MagicsockMetrics, num_relay_conns_added);
                     }
                 }
-                false
-            } else {
-                true
             }
-        });
+        }
     }
 
     /// Called when connectivity changes enough that we should question our earlier
@@ -1402,10 +1434,10 @@ impl EndpointState {
     /// An endpoint is considered alive if we have received payload messages from it within the
     /// last [`SESSION_ACTIVE_TIMEOUT`]. Note that an endpoint might be alive but not active if
     /// it's contactable but not in use.
-    fn is_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.last_payload_msg
             .as_ref()
-            .map(|instant| instant.elapsed() > SESSION_ACTIVE_TIMEOUT)
+            .map(|instant| instant.elapsed() <= SESSION_ACTIVE_TIMEOUT)
             .unwrap_or(false)
     }
 
@@ -1415,23 +1447,16 @@ impl EndpointState {
     /// - when last pong was received.
     /// - when the last CallMeMaybe was received.
     /// - When the last payload transmission occurred.
-    fn last_alive(&self) -> Option<Instant> {
+    /// - when the last ping from them was received.
+    pub fn last_alive(&self) -> Option<Instant> {
         self.recent_pong()
             .map(|pong| &pong.pong_at)
             .into_iter()
             .chain(self.last_payload_msg.as_ref().into_iter())
             .chain(self.call_me_maybe_time.as_ref().into_iter())
+            .chain(self.last_got_ping.as_ref().into_iter())
             .max()
             .copied()
-    }
-
-    /// Returns whether this endpoint is considered alive.
-    ///
-    /// An endpoint is considered alive if its [`Self::last_alive`] time is within the last [`SESSION_ACTIVE_TIMEOUT`].
-    fn is_alive(&self) -> bool {
-        self.last_alive()
-            .map(|active_instant| active_instant.elapsed() > SESSION_ACTIVE_TIMEOUT)
-            .unwrap_or(false)
     }
 
     /// Returns the most recent pong if available.
@@ -1785,5 +1810,65 @@ mod tests {
             .collect();
         // compare the peer maps via their known peers
         assert_eq!(og, loaded);
+    }
+
+    #[test]
+    fn test_prune_direct_addresses() {
+        let _guard = iroh_test::logging::setup();
+
+        let mut peer_map = PeerMap::default();
+        let public_key = SecretKey::generate().public();
+        let id = peer_map.insert_endpoint(Options {
+            public_key,
+            derp_region: None,
+            active: false,
+        });
+
+        const LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
+        // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
+        // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
+
+        // active adddresses
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+            let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
+            let peer_addr = PeerAddr::new(public_key).with_direct_addresses([addr]);
+            // add address
+            peer_map.add_peer_addr(peer_addr);
+            // make it active
+            peer_map.endpoint_for_ip_port_on_receive(addr);
+        }
+
+        // offline adddresses
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+            let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
+            let peer_addr = PeerAddr::new(public_key).with_direct_addresses([addr]);
+            peer_map.add_peer_addr(peer_addr);
+        }
+
+        let endpoint = peer_map.by_id.get_mut(&id).unwrap();
+
+        // online but inactive addresses discovered via ping
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+            let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
+            let txid = stun::TransactionId::from([i as u8; 12]);
+            endpoint.endpoint_confirmed(addr, txid);
+        }
+
+        endpoint.prune_direct_addresses();
+
+        assert_eq!(
+            endpoint.direct_addresses().count(),
+            MAX_INACTIVE_DIRECT_ADDRESSES * 2
+        );
+
+        assert_eq!(
+            endpoint
+                .direct_addr_state
+                .values()
+                .filter(|state| !state.is_active())
+                .count(),
+            MAX_INACTIVE_DIRECT_ADDRESSES
+        )
     }
 }
