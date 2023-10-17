@@ -117,6 +117,9 @@ async fn main() -> anyhow::Result<()> {
             let gossip_cell = gossip_cell.clone();
             let notify = notify.clone();
             Box::new(move |endpoints| {
+                if endpoints.is_empty() {
+                    return;
+                }
                 // send our updated endpoints to the gossip protocol to be sent as PeerAddr to peers
                 if let Some(gossip) = gossip_cell.get() {
                     gossip.update_endpoints(endpoints).ok();
@@ -129,15 +132,14 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("> our peer id: {}", endpoint.peer_id());
 
-    // create the gossip protocol
-    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
-    // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
-    gossip_cell.set(gossip.clone()).unwrap();
-
     // wait for a first endpoint update so that we know about our endpoint addresses
     notify.notified().await;
-    // forward our initial endpoints to the gossip protocol
-    gossip.update_endpoints(&endpoint.local_endpoints().await?)?;
+
+    let my_addr = endpoint.my_addr().await?;
+    // create the gossip protocol
+    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr);
+    // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
+    gossip_cell.set(gossip.clone()).unwrap();
 
     // print a ticket that includes our own peer id and endpoint addresses
     let ticket = {
