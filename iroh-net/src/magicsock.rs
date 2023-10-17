@@ -376,6 +376,13 @@ impl Inner {
                     match ready!(self.poll_send_udp(addr, &transmits, cx)) {
                         Ok(n) => {
                             debug!(peer = %public_key.fmt_short(), ?addr, ?n, "sent udp");
+                            // truncate the transmits vec to `n`. these transmits will be sent to
+                            // Derp further below. We only want to send those transmits to Derp that were
+                            // sent to UDP, because the next transmits will be sent on the next
+                            // call to poll_send, which will happen immediately after, because we
+                            // are always returning Poll::Ready if poll_send_udp returned
+                            // Poll::Ready.
+                            transmits.truncate(n);
                             udp_sent = true;
                             // record metrics.
                             let total_bytes: u64 =
