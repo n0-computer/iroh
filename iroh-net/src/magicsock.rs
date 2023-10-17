@@ -3442,7 +3442,7 @@ pub(crate) mod tests {
                 .collect()
         }
         // no packets
-        assert_eq!(split_packets(&vec![]), Vec::<Bytes>::default());
+        assert_eq!(split_packets(&[]), Vec::<Bytes>::default());
         // no split
         assert_eq!(
             split_packets(&vec![
@@ -3453,7 +3453,7 @@ pub(crate) mod tests {
         );
         // split without rest
         assert_eq!(
-            split_packets(&vec![mk_transmit(b"helloworld", Some(5)),]),
+            split_packets(&[mk_transmit(b"helloworld", Some(5))]),
             mk_expected(["hello", "world"])
         );
         // split with rest and second transmit
