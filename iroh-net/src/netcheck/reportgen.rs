@@ -252,6 +252,7 @@ impl Actor {
 
                 _ = &mut probe_timer => {
                     warn!("probes timed out");
+                    probes.abort_all();
                     self.handle_abort_probes();
                 }
 
@@ -269,8 +270,15 @@ impl Actor {
                     match set_result {
                         Some(Ok(Ok(report))) => self.handle_probe_report(report),
                         Some(Ok(Err(_))) => (),
-                        Some(Err(_)) => (),
-                        None => self.handle_abort_probes(),
+                        Some(Err(e)) => {
+                            warn!("fatal probes error: {:?}", e);
+                            probes.abort_all();
+                            self.handle_abort_probes();
+                        }
+                        None => {
+                            probes.abort_all();
+                            self.handle_abort_probes();
+                        }
                     }
                 }
 
@@ -623,10 +631,11 @@ impl Actor {
                         }
                         Ok(Err(ProbeError::AbortSet(err, probe))) => {
                             debug!(?probe, "probe set aborted: {:#}", err);
+                            set.abort_all();
                             return Err(err);
                         }
                         Err(err) => {
-                            debug!("probe set error, aborting: {:#}", err);
+                            warn!("fatal probe set error, aborting: {:#}", err);
                             return Err(anyhow::anyhow!(err));
                         }
                     }
