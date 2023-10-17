@@ -84,17 +84,22 @@ impl DialByPeer for MultiDialer {
         async move {
             use futures::stream::StreamExt;
             let mut attempts = futures::stream::iter(self.regions.iter().cloned())
-            .map(|region| {
-                let addr = PeerAddr {
-                    peer_id: *peer,
-                    info: AddrInfo {
-                        derp_region: Some(region),
-                        direct_addresses: Default::default(),
-                    },
-                };
-                self.endpoint.connect(addr, alpn)
-            })
-            .buffer_unordered(4);
+            .then(|region| {
+                async move {
+                    println!("dialing {} in region {}", peer, region);
+                    let addr = PeerAddr {
+                        peer_id: *peer,
+                        info: AddrInfo {
+                            derp_region: Some(region),
+                            direct_addresses: Default::default(),
+                        },
+                    };
+                    let res = self.endpoint.connect(addr, alpn).await;
+                    println!("ok = {}", res.is_ok());
+                    res
+                }
+            }).boxed();
+            // tried concurrent dialing. There is a bug. See https://github.com/n0-computer/iroh/issues/1650
             let mut err = None;
             while let Some(conn) = attempts.next().await
             {
@@ -1043,7 +1048,7 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     println!("peer addr: {}", addr.peer_id);
     let dialer = MultiDialer {
         endpoint: endpoint.clone(),
-        regions: vec![1],
+        regions: vec![2, 1],
     };
     let db2 = db.clone();
     let _task = rt.local_pool().spawn_pinned(move || db2.probe_loop(dialer));
