@@ -36,7 +36,7 @@ const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
 trait DialByPeer: Clone {
     fn dial_by_peer<'a>(
         &'a self,
-        peer: &PublicKey,
+        peer: &'a PublicKey,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>>;
     fn accept(&self) -> quinn::Accept<'_>;
@@ -50,7 +50,7 @@ struct Dialer {
 impl DialByPeer for Dialer {
     fn dial_by_peer<'a>(
         &'a self,
-        peer: &PublicKey,
+        peer: &'a PublicKey,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>> {
         let peer_addr = PeerAddr {
@@ -61,6 +61,54 @@ impl DialByPeer for Dialer {
             },
         };
         self.endpoint.connect(peer_addr, alpn).boxed()
+    }
+
+    fn accept(&self) -> quinn::Accept<'_> {
+        self.endpoint.accept()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MultiDialer {
+    endpoint: MagicEndpoint,
+    regions: Vec<u16>,
+}
+
+impl DialByPeer for MultiDialer {
+    fn dial_by_peer<'a>(
+        &'a self,
+        peer: &'a PublicKey,
+        alpn: &'a [u8],
+    ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>> {
+        async move {
+            use futures::stream::StreamExt;
+            let mut err = None;
+            while let Some(conn) = futures::stream::iter(self.regions.iter().cloned())
+                .map(|region| {
+                    let addr = PeerAddr {
+                        peer_id: *peer,
+                        info: AddrInfo {
+                            derp_region: Some(region),
+                            direct_addresses: Default::default(),
+                        },
+                    };
+                    self.endpoint.connect(addr, alpn)
+                })
+                .buffer_unordered(4)
+                .next()
+                .await
+            {
+                match conn {
+                    Ok(conn) => return Ok(conn),
+                    Err(e) => err = Some(e),
+                }
+            }
+            Err(match err {
+                Some(err) => err,
+                None => anyhow::anyhow!("no regions to connect to"),
+            })
+        }
+        .boxed()
     }
 
     fn accept(&self) -> quinn::Accept<'_> {
@@ -987,8 +1035,9 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     let addr = endpoint.my_addr().await?;
     println!("listening on {:?}", addr);
     println!("peer addr: {}", addr.peer_id);
-    let dialer = Dialer {
+    let dialer = MultiDialer {
         endpoint: endpoint.clone(),
+        regions: vec![1, 2],
     };
     let db2 = db.clone();
     let _task = rt.local_pool().spawn_pinned(move || db2.probe_loop(dialer));
