@@ -1023,9 +1023,8 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     let addr = endpoint.my_addr().await?;
     println!("listening on {:?}", addr);
     println!("peer addr: {}", addr.peer_id);
-    let dialer = MultiDialer {
+    let dialer = Dialer {
         endpoint: endpoint.clone(),
-        regions: vec![2, 1],
     };
     let db2 = db.clone();
     let _task = rt.local_pool().spawn_pinned(move || db2.probe_loop(dialer));
