@@ -1043,6 +1043,7 @@ impl Actor {
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
+                    self.peer_map.prune_inactive();
                     let mut msgs = Vec::new();
                     for (_, ep) in self.peer_map.endpoints_mut() {
                         msgs.extend(ep.stayin_alive());
@@ -1058,6 +1059,7 @@ impl Actor {
                 }
                 _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
                     let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
+                    self.peer_map.prune_inactive();
                     match self.peer_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "peers persisted"),
                         Err(e) => debug!(%e, "failed to persist known peers"),
@@ -1229,7 +1231,7 @@ impl Actor {
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
-        match self.peer_map.endpoint_for_ip_port_on_receive(meta.addr) {
+        match self.peer_map.receive_ip(meta.addr) {
             None => {
                 warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
                 return false;
