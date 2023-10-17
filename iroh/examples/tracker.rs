@@ -80,23 +80,23 @@ impl DialByPeer for MultiDialer {
         peer: &'a PublicKey,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>> {
+        println!("dialing {} in regions {:?}", peer, self.regions);
         async move {
             use futures::stream::StreamExt;
+            let mut attempts = futures::stream::iter(self.regions.iter().cloned())
+            .map(|region| {
+                let addr = PeerAddr {
+                    peer_id: *peer,
+                    info: AddrInfo {
+                        derp_region: Some(region),
+                        direct_addresses: Default::default(),
+                    },
+                };
+                self.endpoint.connect(addr, alpn)
+            })
+            .buffer_unordered(4);
             let mut err = None;
-            while let Some(conn) = futures::stream::iter(self.regions.iter().cloned())
-                .map(|region| {
-                    let addr = PeerAddr {
-                        peer_id: *peer,
-                        info: AddrInfo {
-                            derp_region: Some(region),
-                            direct_addresses: Default::default(),
-                        },
-                    };
-                    self.endpoint.connect(addr, alpn)
-                })
-                .buffer_unordered(4)
-                .next()
-                .await
+            while let Some(conn) = attempts.next().await
             {
                 match conn {
                     Ok(conn) => return Ok(conn),
@@ -108,6 +108,9 @@ impl DialByPeer for MultiDialer {
                 None => anyhow::anyhow!("no regions to connect to"),
             })
         }
+        .inspect(|res| {
+            println!("dial result {:?}", res.as_ref().map(|_| ()));
+        })
         .boxed()
     }
 
@@ -965,10 +968,13 @@ fn save_to_file(data: impl Serialize, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn load_from_file<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let data = std::fs::read(path)?;
-    let data = postcard::from_bytes(&data)?;
-    Ok(data)
+fn load_from_file<T: DeserializeOwned + Default>(path: &Path) -> anyhow::Result<T> {
+    Ok(if path.exists() {
+        let data = std::fs::read(path)?;
+        postcard::from_bytes(&data)?
+    } else {
+        T::default()
+    })
 }
 
 #[allow(dead_code)]
@@ -1037,7 +1043,7 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     println!("peer addr: {}", addr.peer_id);
     let dialer = MultiDialer {
         endpoint: endpoint.clone(),
-        regions: vec![1, 2],
+        regions: vec![1],
     };
     let db2 = db.clone();
     let _task = rt.local_pool().spawn_pinned(move || db2.probe_loop(dialer));
