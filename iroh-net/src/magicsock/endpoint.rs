@@ -1452,9 +1452,9 @@ impl EndpointState {
         self.recent_pong()
             .map(|pong| &pong.pong_at)
             .into_iter()
-            .chain(self.last_payload_msg.as_ref().into_iter())
-            .chain(self.call_me_maybe_time.as_ref().into_iter())
-            .chain(self.last_got_ping.as_ref().into_iter())
+            .chain(self.last_payload_msg.as_ref())
+            .chain(self.call_me_maybe_time.as_ref())
+            .chain(self.last_got_ping.as_ref())
             .max()
             .copied()
     }
