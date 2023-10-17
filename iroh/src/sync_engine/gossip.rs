@@ -1,17 +1,17 @@
-use std::{collections::HashSet, future::Future, pin::Pin};
+use std::collections::HashSet;
 
 use anyhow::{anyhow, Context, Result};
-use futures::{
-    stream::{FuturesUnordered, StreamExt},
-    FutureExt,
-};
+use futures::{stream::StreamExt, FutureExt};
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
 };
 use iroh_net::key::PublicKey;
 use iroh_sync::{actor::SyncHandle, ContentStatus, NamespaceId};
-use tokio::sync::{broadcast::error::RecvError, mpsc};
+use tokio::{
+    sync::{broadcast::error::RecvError, mpsc},
+    task::JoinSet,
+};
 use tracing::{debug, error, trace};
 
 use super::live::{Op, ToLiveActor};
@@ -29,8 +29,6 @@ pub enum ToGossipActor {
     },
 }
 
-type JoinFut = Pin<Box<dyn Future<Output = (NamespaceId, Result<TopicId>)> + Send + 'static>>;
-
 /// This actor subscribes to all gossip events. When receiving entries, they are inserted in the
 /// replica (if open). Other events are forwarded to the main actor to be handled there.
 pub struct GossipActor {
@@ -41,7 +39,7 @@ pub struct GossipActor {
     to_sync_actor: mpsc::Sender<ToLiveActor>,
     joined: HashSet<NamespaceId>,
     want_join: HashSet<NamespaceId>,
-    pending_joins: FuturesUnordered<JoinFut>,
+    pending_joins: JoinSet<(NamespaceId, Result<TopicId>)>,
 }
 
 impl GossipActor {
@@ -84,7 +82,7 @@ impl GossipActor {
                         break;
                     }
                 }
-                res = self.pending_joins.next(), if !self.pending_joins.is_empty() => {
+                Some(res) = self.pending_joins.join_next(), if !self.pending_joins.is_empty() => {
                     trace!(?i, "tick: pending_joins");
                     let (namespace, res) = res.context("pending_joins closed")?;
                     match res {
@@ -119,10 +117,9 @@ impl GossipActor {
                     .gossip
                     .join(namespace.into(), peers)
                     .await?
-                    .map(move |res| (namespace, res))
-                    .boxed();
+                    .map(move |res| (namespace, res));
                 self.want_join.insert(namespace);
-                self.pending_joins.push(fut);
+                self.pending_joins.spawn(fut);
             }
             ToGossipActor::Leave { namespace } => {
                 self.gossip.quit(namespace.into()).await?;

@@ -7,11 +7,7 @@ use std::{
 
 use crate::downloader::{DownloadKind, Downloader, PeerRole};
 use anyhow::{Context, Result};
-use futures::{
-    future::BoxFuture,
-    stream::{FuturesUnordered, StreamExt},
-    FutureExt,
-};
+use futures::FutureExt;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
@@ -24,7 +20,10 @@ use iroh_sync::{
     ContentStatus, InsertOrigin, NamespaceId, SignedEntry,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{self, mpsc, oneshot};
+use tokio::{
+    sync::{self, mpsc, oneshot},
+    task::JoinSet,
+};
 use tracing::{debug, error, instrument, trace, warn, Instrument, Span};
 
 use super::gossip::ToGossipActor;
@@ -114,16 +113,13 @@ pub enum Event {
     SyncFinished(SyncEvent),
 }
 
-type SyncConnectFut = BoxFuture<
-    'static,
-    (
-        NamespaceId,
-        PublicKey,
-        SyncReason,
-        Result<SyncFinished, ConnectError>,
-    ),
->;
-type SyncAcceptFut = BoxFuture<'static, Result<SyncFinished, AcceptError>>;
+type SyncConnectRes = (
+    NamespaceId,
+    PublicKey,
+    SyncReason,
+    Result<SyncFinished, ConnectError>,
+);
+type SyncAcceptRes = Result<SyncFinished, AcceptError>;
 
 // Currently peers might double-sync in both directions.
 pub struct LiveActor<B: iroh_bytes::store::Store> {
@@ -146,12 +142,11 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     gossip_actor_tx: mpsc::Sender<ToGossipActor>,
 
     /// Running sync futures (from connect).
-    #[allow(clippy::type_complexity)]
-    running_sync_connect: FuturesUnordered<SyncConnectFut>,
+    running_sync_connect: JoinSet<SyncConnectRes>,
     /// Running sync futures (from accept).
-    running_sync_accept: FuturesUnordered<SyncAcceptFut>,
+    running_sync_accept: JoinSet<SyncAcceptRes>,
     /// Runnning download futures.
-    pending_downloads: FuturesUnordered<BoxFuture<'static, Option<(NamespaceId, Hash)>>>,
+    pending_downloads: JoinSet<Option<(NamespaceId, Hash)>>,
 
     // Subscribers to actor events
     subscribers: SubscribersMap,
@@ -222,7 +217,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                         error!(?err, "Failed to process replica event");
                     }
                 }
-                res = self.running_sync_connect.next(), if !self.running_sync_connect.is_empty() => {
+                Some(res) = self.running_sync_connect.join_next(), if !self.running_sync_connect.is_empty() => {
                     trace!(?i, "tick: on_sync_via_connect_finished");
                     let (namespace, peer, reason, res) = res.context("running_sync_connect closed")?;
                     if let Err(err) = self.on_sync_via_connect_finished(namespace, peer, reason, res).await {
@@ -230,14 +225,14 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     }
 
                 }
-                res = self.running_sync_accept.next(), if !self.running_sync_accept.is_empty() => {
+                Some(res) = self.running_sync_accept.join_next(), if !self.running_sync_accept.is_empty() => {
                     trace!(?i, "tick: on_sync_via_accept_finished");
                     let res = res.context("running_sync_accept closed")?;
                     if let Err(err) = self.on_sync_via_accept_finished(res).await {
                         error!(?err, "Failed to process incoming sync request");
                     }
                 }
-                res = self.pending_downloads.next(), if !self.pending_downloads.is_empty() => {
+                Some(res) = self.pending_downloads.join_next(), if !self.pending_downloads.is_empty() => {
                     trace!(?i, "tick: pending_downloads");
                     let res = res.context("pending_downloads closed")?;
                     if let Some((namespace, hash)) = res {
@@ -358,9 +353,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             let res = connect_and_sync(&endpoint, &sync, namespace, PeerAddr::new(peer)).await;
             (namespace, peer, reason, res)
         }
-        .instrument(Span::current())
-        .boxed();
-        self.running_sync_connect.push(fut);
+        .instrument(Span::current());
+        self.running_sync_connect.spawn(fut);
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
@@ -622,13 +616,12 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                         .downloader
                         .queue(DownloadKind::Blob { hash }, vec![(from, role).into()])
                         .await;
-                    let fut = async move {
+
+                    self.pending_downloads.spawn(async move {
                         // NOTE: this ignores the result for now, simply keeping the option
                         let res = handle.await.ok();
                         res.map(|_| (namespace, hash))
-                    }
-                    .boxed();
-                    self.pending_downloads.push(fut);
+                    });
                 }
             }
         }
@@ -665,8 +658,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         };
         debug!("incoming connection");
         let sync = self.sync.clone();
-        let fut = async move { handle_connection(sync, conn, accept_request_cb).await }.boxed();
-        self.running_sync_accept.push(fut);
+        self.running_sync_accept
+            .spawn(async move { handle_connection(sync, conn, accept_request_cb).await });
     }
 
     pub fn accept_sync_request(
