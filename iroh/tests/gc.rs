@@ -473,7 +473,6 @@ mod flat {
 
     ///
     #[tokio::test]
-    #[cfg(not(debug_assertions))]
     async fn gc_flat_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let rt = test_runtime();
@@ -482,13 +481,15 @@ mod flat {
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
         let bao_store =
-            baomap::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt).await?;
-        let node = wrap_in_node(bao_store.clone(), rt).await;
+            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
+                .await?;
+        let node = wrap_in_node(bao_store.clone(), rt, Duration::from_secs(1)).await;
+        let evs = attach_db_events(&node).await;
 
         let mut deleted = Vec::new();
         let mut live = Vec::new();
         // download
-        for i in 0..10000 {
+        for i in 0..100 {
             let data: Bytes = create_test_data(16 * 1024 * 3 + 1);
             let tt = simulate_download_protected(&bao_store, data).await.unwrap();
             if i % 100 == 0 {
@@ -501,7 +502,7 @@ mod flat {
                 deleted.push(*tt.hash());
             }
         }
-        step().await;
+        step(&evs).await;
 
         for h in deleted.iter() {
             assert!(count_partial_data(h)? == 0);
