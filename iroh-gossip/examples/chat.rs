@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
 
     let my_addr = endpoint.my_addr().await?;
     // create the gossip protocol
-    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr);
+    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
     // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
     gossip_cell.set(gossip.clone()).unwrap();
 
