@@ -13,10 +13,7 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_bytes::{
-    protocol::RequestToken, 
-    util::runtime,
-};
+use iroh_bytes::{protocol::RequestToken, util::runtime};
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
@@ -86,7 +83,10 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     Ok(())
 }
 
-async fn start_daemon_node(rt: &runtime::Handle, opts: StartOptions) -> Result<Node<iroh_bytes::store::flat::Store>> {
+async fn start_daemon_node(
+    rt: &runtime::Handle,
+    opts: StartOptions,
+) -> Result<Node<iroh_bytes::store::flat::Store>> {
     let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
     let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
     let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
