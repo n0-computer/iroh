@@ -17,7 +17,7 @@ use iroh_sync::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
         SyncFinished,
     },
-    ContentStatus, InsertOrigin, NamespaceId, SignedEntry,AuthorHeads
+    AuthorHeads, ContentStatus, InsertOrigin, NamespaceId, SignedEntry,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{

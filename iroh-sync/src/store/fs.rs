@@ -1,6 +1,11 @@
 //! On disk storage for replicas.
 
-use std::{cmp::Ordering, collections::{HashSet, HashMap}, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
 use derive_more::From;
@@ -1120,11 +1125,11 @@ mod tests {
     ) -> Result<tempfile::NamedTempFile> {
         let dbfile = tempfile::NamedTempFile::new()?;
         std::fs::copy(source, dbfile.path())?;
-        // drop the latest table to test the migration.
         let db = Database::create(dbfile.path())?;
         let write_tx = db.begin_write()?;
         modify(&write_tx)?;
         write_tx.commit()?;
+        drop(db);
         Ok(dbfile)
     }
 
@@ -1138,7 +1143,7 @@ mod tests {
             let store = Store::new(dbfile.path())?;
             let author1 = store.new_author(&mut rand::thread_rng())?;
             let author2 = store.new_author(&mut rand::thread_rng())?;
-            let replica = store.new_replica(namespace.clone())?;
+            let mut replica = store.new_replica(namespace.clone())?;
             replica.hash_and_insert(b"k1", &author1, b"v1")?;
             replica.hash_and_insert(b"k2", &author2, b"v1")?;
             replica.hash_and_insert(b"k3", &author1, b"v1")?;
@@ -1147,8 +1152,7 @@ mod tests {
                 .get_latest(namespace.id())?
                 .collect::<Result<Vec<_>>>()?;
             // drop everything to clear file locks.
-            drop(replica);
-            store.close_replica(&namespace.id());
+            store.close_replica(replica);
             drop(store);
             expected
         };

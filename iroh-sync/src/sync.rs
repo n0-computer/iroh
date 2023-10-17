@@ -1770,7 +1770,7 @@ mod tests {
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         replica.hash_and_insert(b"a0.1", &author0, b"hi")?;
         let latest = store
