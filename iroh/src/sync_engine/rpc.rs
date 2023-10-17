@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use futures::Stream;
 use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
-use iroh_sync::{store::Store, sync::Namespace, Author};
+use iroh_sync::{sync::Namespace, Author};
 use tokio_stream::StreamExt;
 
 use crate::{
@@ -25,7 +25,7 @@ use crate::{
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
-impl<S: Store> SyncEngine<S> {
+impl SyncEngine {
     pub async fn author_create(
         &self,
         _req: AuthorCreateRequest,
