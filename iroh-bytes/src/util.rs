@@ -131,13 +131,17 @@ impl HashAndFormat {
 
 impl Display for HashAndFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut slice = [0u8; 64];
-        hex::encode_to_slice(self.hash.as_bytes(), &mut slice).unwrap();
-        write!(f, "{}", std::str::from_utf8(&slice).unwrap())?;
-        if self.format.is_hash_seq() {
-            write!(f, "s")?;
+        let mut slice = [0u8; 65];
+        hex::encode_to_slice(self.hash.as_bytes(), &mut slice[1..]).unwrap();
+        match self.format {
+            BlobFormat::Raw => {
+                write!(f, "{}", std::str::from_utf8(&slice[1..]).unwrap())
+            }
+            BlobFormat::HashSeq => {
+                slice[0] = b's';
+                write!(f, "{}", std::str::from_utf8(&slice).unwrap())
+            }
         }
-        Ok(())
     }
 }
 
@@ -152,8 +156,8 @@ impl FromStr for HashAndFormat {
                 hex::decode_to_slice(s, &mut hash)?;
                 Ok(Self::raw(hash.into()))
             }
-            65 if s[64].to_ascii_lowercase() == b's' => {
-                hex::decode_to_slice(s, &mut hash)?;
+            65 if s[0].to_ascii_lowercase() == b's' => {
+                hex::decode_to_slice(&s[1..], &mut hash)?;
                 Ok(Self::hash_seq(hash.into()))
             }
             _ => anyhow::bail!("invalid hash and format"),
@@ -592,5 +596,18 @@ mod tests {
         assert_eq!(hash, de);
 
         assert_eq!(ser.len(), 32);
+    }
+
+    #[test]
+    fn test_hash_and_format_parse() {
+        let hash = Hash::new("hello");
+
+        let expected = HashAndFormat::raw(hash);
+        let actual = expected.to_string().parse::<HashAndFormat>().unwrap();
+        assert_eq!(expected, actual);
+
+        let expected = HashAndFormat::hash_seq(hash);
+        let actual = expected.to_string().parse::<HashAndFormat>().unwrap();
+        assert_eq!(expected, actual);
     }
 }
