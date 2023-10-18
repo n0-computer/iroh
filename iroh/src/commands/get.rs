@@ -161,7 +161,14 @@ async fn get_to_stdout_single(
     let id = sender.new_id();
     let hash = curr.hash();
     let (curr, size) = curr.next().await?;
-    sender.send(GetProgress::Found { id, hash, size }).await?;
+    sender
+        .send(GetProgress::Found {
+            id,
+            hash,
+            size,
+            child: 0,
+        })
+        .await?;
     let sender2 = sender.clone();
     let mut writer = ProgressSliceWriter::new(
         ConcatenateSliceWriter::new(tokio::io::stdout()),
@@ -181,13 +188,12 @@ async fn get_to_stdout_multi(
     curr: get::fsm::AtStartRoot,
     sender: FlumeProgressSender<GetProgress>,
 ) -> Result<get::Stats> {
-    let hash = *curr.hash();
-    let (mut next, _links, collection) = Collection::read_fsm(curr).await?;
+    let hash = curr.hash();
+    let (mut next, links, collection) = Collection::read_fsm(curr).await?;
     sender
-        .send(GetProgress::FoundCollection {
+        .send(GetProgress::FoundHashSeq {
             hash,
-            num_blobs: Some(collection.total_entries()),
-            total_blobs_size: Some(collection.total_blobs_size()),
+            children: links.len() as u64,
         })
         .await?;
     let collection = collection.into_inner();
@@ -211,6 +217,7 @@ async fn get_to_stdout_multi(
                 id,
                 hash: blob.hash,
                 size,
+                child: curr.offset(),
             })
             .await?;
         let sender2 = sender.clone();

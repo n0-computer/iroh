@@ -1015,7 +1015,6 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
-        debug!("share: {:?}", msg);
         let format = msg.format;
         let db = self.inner.db.clone();
         let haf = HashAndFormat { hash, format };

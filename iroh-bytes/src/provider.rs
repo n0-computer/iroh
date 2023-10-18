@@ -163,19 +163,19 @@ pub enum GetProgress {
     Found {
         /// A new unique id for this entry.
         id: u64,
+        /// child offset
+        child: u64,
         /// The name of the entry.
         hash: Hash,
         /// The size of the entry in bytes.
         size: u64,
     },
     /// An item was found with hash `hash`, from now on referred to via `id`.
-    FoundCollection {
+    FoundHashSeq {
         /// The name of the entry.
         hash: Hash,
         /// Number of children in the collection, if known.
-        num_blobs: Option<u64>,
-        /// The size of the entry in bytes, if known.
-        total_blobs_size: Option<u64>,
+        children: u64,
     },
     /// We got progress ingesting item `id`.
     Progress {
@@ -279,7 +279,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.as_single(), Some((0, _)));
     let mut c = if !just_root {
-        // use the collection parser to parse the collection
+        // parse the hash seq
         let (stream, num_blobs) = parse_hash_seq(&mut data).await?;
         writer
             .events

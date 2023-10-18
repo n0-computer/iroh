@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -11,7 +10,8 @@ use console::style;
 use futures::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use indicatif::{
-    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
+    ProgressStyle,
 };
 use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
@@ -727,15 +727,24 @@ fn fmt_latency(latency: Option<Duration>) -> String {
     }
 }
 
-const PROGRESS_STYLE: &str =
-    "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
-
-fn make_download_pb() -> ProgressBar {
+fn make_overall_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
-    pb.set_draw_target(ProgressDrawTarget::stderr());
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
     pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
+        ProgressStyle::with_template(
+            "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}",
+        )
+        .unwrap()
+        .progress_chars("#>-"),
+    );
+    pb
+}
+
+fn make_individual_progress() -> ProgressBar {
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             .unwrap()
             .with_key(
                 "eta",
@@ -753,64 +762,45 @@ pub async fn show_download_progress(
     mut stream: impl Stream<Item = Result<GetProgress>> + Unpin,
 ) -> Result<()> {
     eprintln!("Fetching: {}", hash);
-    let pb = make_download_pb();
-    pb.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-    let mut sizes = BTreeMap::new();
-    let mut downloading = false;
+    let mp = MultiProgress::new();
+    mp.set_draw_target(ProgressDrawTarget::stderr());
+    let op = mp.add(make_overall_progress());
+    let ip = mp.add(make_individual_progress());
+    op.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+
     while let Some(x) = stream.next().await {
         match x? {
             GetProgress::Connected => {
-                pb.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+                op.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
             }
-            GetProgress::FoundCollection {
-                total_blobs_size,
-                num_blobs,
-                ..
-            } => {
-                let count = num_blobs.unwrap_or_default();
-                let missing_bytes = total_blobs_size.unwrap_or_default();
-                pb.set_message(format!(
-                    "{} Downloading {} file(s) with total transfer size {}",
+            GetProgress::FoundHashSeq { children, .. } => {
+                op.set_message(format!(
+                    "{} Downloading {} blob(s)",
                     style("[3/3]").bold().dim(),
-                    count,
-                    HumanBytes(missing_bytes),
+                    children,
                 ));
-                pb.set_length(missing_bytes);
-                pb.reset();
-                downloading = true;
+                op.set_length(children + 1);
+                op.reset();
             }
-            GetProgress::Found { id, size, .. } => {
-                if !downloading {
-                    pb.set_message(format!(
-                        "{} Downloading blob with size {}",
-                        style("[3/3]").bold().dim(),
-                        size,
-                    ));
-                    pb.set_length(size);
-                    pb.reset();
-                }
-                sizes.insert(id, (size, 0));
+            GetProgress::Found {
+                size, child, ..
+            } => {
+                op.set_position(child);
+                ip.set_length(size);
+                ip.reset();
             }
-            GetProgress::Progress { id, offset } => {
-                if let Some((_, current)) = sizes.get_mut(&id) {
-                    *current = offset;
-                    let total = sizes.values().map(|(_, current)| current).sum::<u64>();
-                    pb.set_position(total);
-                }
+            GetProgress::Progress { offset, .. } => {
+                ip.set_position(offset);
             }
-            GetProgress::Done { id } => {
-                if let Some((size, current)) = sizes.get_mut(&id) {
-                    *current = *size;
-                    let total = sizes.values().map(|(_, current)| current).sum::<u64>();
-                    pb.set_position(total);
-                }
+            GetProgress::Done { .. } => {
+                ip.finish_and_clear();
             }
             GetProgress::NetworkDone {
                 bytes_read,
                 elapsed,
                 ..
             } => {
-                pb.finish_and_clear();
+                op.finish_and_clear();
                 eprintln!(
                     "Transferred {} in {}, {}/s",
                     HumanBytes(bytes_read),

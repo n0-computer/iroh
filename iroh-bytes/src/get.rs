@@ -55,7 +55,6 @@ pub mod fsm {
     use super::*;
 
     use bao_tree::{
-        blake3,
         io::{
             fsm::{
                 OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext,
@@ -97,6 +96,10 @@ pub mod fsm {
     impl RangesIter {
         pub fn new(owner: RangeSpecSeq) -> Self {
             Self(RangesIterInner::new(owner, |owner| owner.iter_non_empty()))
+        }
+
+        pub fn offset(&self) -> u64 {
+            self.0.with_dependent(|_owner, iter| iter.offset())
         }
     }
 
@@ -346,8 +349,8 @@ pub mod fsm {
         }
 
         /// Hash of the root blob
-        pub fn hash(&self) -> &Hash {
-            &self.hash
+        pub fn hash(&self) -> Hash {
+            self.hash
         }
 
         /// Go into the next state, reading the header
@@ -514,6 +517,11 @@ pub mod fsm {
         pub fn ranges(&self) -> &ChunkRanges {
             self.stream.ranges()
         }
+
+        /// The current offset of the blob we are reading.
+        pub fn offset(&self) -> u64 {
+            self.misc.ranges_iter.offset()
+        }
     }
 
     /// State while we are reading content
@@ -648,8 +656,13 @@ pub mod fsm {
         }
 
         /// The hash of the blob we are reading.
-        pub fn hash(&self) -> &blake3::Hash {
-            self.stream.hash()
+        pub fn hash(&self) -> Hash {
+            (*self.stream.hash()).into()
+        }
+
+        /// The current offset of the blob we are reading.
+        pub fn offset(&self) -> u64 {
+            self.misc.ranges_iter.offset()
         }
 
         /// Write the entire blob to a slice writer and to an optional outboard.
