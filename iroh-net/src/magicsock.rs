@@ -709,6 +709,9 @@ impl Inner {
                         if let Some((src, key)) = insert {
                             pm.set_node_key_for_ip_port(src, &key);
                         }
+                        debug!(?insert, "received pong")
+                    } else {
+                        warn!("received pong: peer unknown, ignore")
                     }
                 });
                 true
