@@ -89,10 +89,11 @@ impl AsyncUdpSocket for RebindingUdpConn {
             }) {
                 for t in transmits.iter().take(res) {
                     trace!(
-                        "[UDP] -> {} src: {:?} ({}b)",
-                        t.destination,
-                        t.src_ip,
-                        t.contents.len()
+                        dst = %t.destination,
+                        len = t.contents.len(),
+                        count = t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1),
+                        src = %t.src_ip.map(|x| x.to_string()).unwrap_or_default(),
+                        "UDP send"
                     );
                 }
 
@@ -114,10 +115,11 @@ impl AsyncUdpSocket for RebindingUdpConn {
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(
-                        "[UDP] <- {} dest: {:?} ({}b)",
-                        meta.addr,
-                        meta.dst_ip,
-                        meta.len
+                        src = %meta.addr,
+                        len = meta.len,
+                        count = meta.len / meta.stride,
+                        dst = %meta.dst_ip.map(|x| x.to_string()).unwrap_or_default(),
+                        "UDP recv"
                     );
                 }
 
