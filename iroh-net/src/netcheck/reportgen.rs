@@ -23,12 +23,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
 use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Instrument, Span};
 
@@ -233,7 +232,7 @@ impl Actor {
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
-        let mut probes = self.prepare_probes_task().await?;
+        let mut probes = self.spawn_probes_task().await?;
 
         let total_timer = tokio::time::sleep(OVERALL_PROBE_TIMEOUT);
         tokio::pin!(total_timer);
@@ -253,6 +252,7 @@ impl Actor {
 
                 _ = &mut probe_timer => {
                     warn!("probes timed out");
+                    probes.abort_all();
                     self.handle_abort_probes();
                 }
 
@@ -265,12 +265,17 @@ impl Actor {
                     trace!("portmapper future done");
                 }
 
-                // Drive the probes.
-                set_result = probes.next(), if self.outstanding_tasks.probes => {
+                // Check for probes finishing.
+                set_result = probes.join_next(), if self.outstanding_tasks.probes => {
                     match set_result {
-                        Some(Ok(report)) => self.handle_probe_report(report),
-                        Some(Err(_)) => (),
-                        None => self.handle_abort_probes(),
+                        Some(Ok(Ok(report))) => self.handle_probe_report(report),
+                        Some(Ok(Err(_))) => (),
+                        Some(Err(e)) => {
+                            warn!("probes task error: {:?}", e);
+                        }
+                        None => {
+                            self.handle_abort_probes();
+                        }
                     }
                 }
 
@@ -551,8 +556,8 @@ impl Actor {
     /// Probes operate like the following:
     ///
     /// - A future is created for each probe in all probe sets.
-    /// - All probes in a set are grouped in [`FuturesUnordered`].
-    /// - All those probe sets are grouped in one overall [`FuturesUnordered`].
+    /// - All probes in a set are grouped in [`JoinSet`].
+    /// - All those probe sets are grouped in one overall [`JoinSet`].
     ///   - This future is polled by the main actor loop to make progress.
     /// - Once a probe future is polled:
     ///   - Many probes start with a delay, they sleep during this time.
@@ -564,9 +569,7 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough regions, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn prepare_probes_task(
-        &mut self,
-    ) -> Result<FuturesUnordered<Pin<Box<impl Future<Output = Result<ProbeReport>>>>>> {
+    async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
@@ -587,9 +590,9 @@ impl Actor {
         };
 
         // A collection of futures running probe sets.
-        let probes = FuturesUnordered::default();
+        let mut probes = JoinSet::default();
         for probe_set in plan.iter() {
-            let mut set = FuturesUnordered::default();
+            let mut set = JoinSet::default();
             for probe in probe_set {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
@@ -599,42 +602,44 @@ impl Actor {
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();
 
-                set.push(Box::pin(async move {
-                    run_probe(
-                        reportstate,
-                        stun_sock4,
-                        stun_sock6,
-                        derp_node,
-                        probe,
-                        netcheck,
-                        pinger,
-                    )
-                    .await
-                }));
+                set.spawn(run_probe(
+                    reportstate,
+                    stun_sock4,
+                    stun_sock6,
+                    derp_node,
+                    probe,
+                    netcheck,
+                    pinger,
+                ));
             }
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
-            probes.push(Box::pin(async move {
+            probes.spawn(async move {
                 // Hack because ProbeSet is not it's own type yet.
                 let mut probe_proto = None;
-                while let Some(res) = set.next().await {
+                while let Some(res) = set.join_next().await {
                     match res {
-                        Ok(report) => return Ok(report),
-                        Err(ProbeError::Error(err, probe)) => {
+                        Ok(Ok(report)) => return Ok(report),
+                        Ok(Err(ProbeError::Error(err, probe))) => {
                             probe_proto = Some(probe.proto());
                             warn!(?probe, "probe failed: {:#}", err);
                             continue;
                         }
-                        Err(ProbeError::AbortSet(err, probe)) => {
+                        Ok(Err(ProbeError::AbortSet(err, probe))) => {
                             debug!(?probe, "probe set aborted: {:#}", err);
+                            set.abort_all();
                             return Err(err);
+                        }
+                        Err(err) => {
+                            warn!("fatal probe set error, aborting: {:#}", err);
+                            continue;
                         }
                     }
                 }
                 warn!(?probe_proto, "no successfull probes in ProbeSet");
                 Err(anyhow!("All probes in ProbeSet failed"))
-            }));
+            });
         }
         self.outstanding_tasks.probes = true;
 
