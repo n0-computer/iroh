@@ -313,6 +313,12 @@ impl DerpActor {
             // TODO: spawn
             f();
         }
+        // notify the actor that it should republish its addr info
+        self.conn
+            .actor_sender
+            .send(ActorMessage::PublishAddrInfo)
+            .await
+            .ok();
 
         dc
     }

@@ -20,7 +20,7 @@
 
 use std::{
     collections::HashMap,
-    fmt::Display,
+    fmt::{Debug, Display},
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
@@ -54,6 +54,7 @@ use crate::{
     net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
+    AddrInfo,
 };
 
 use self::{
@@ -150,6 +151,18 @@ pub struct Options {
 
     /// Path to store known peers.
     pub peers_path: Option<std::path::PathBuf>,
+
+    /// Optionally provides a discovery mechanism for finding peers.
+    pub discovery: Option<Box<dyn Discovery>>,
+}
+
+/// Discovery trait for [`MagicEndpoint`].
+pub trait Discovery: Debug + Send + Sync {
+    /// Publish the given [`AddrInfo`] to the discovery mechanisms.
+    fn publish(&self, info: AddrInfo);
+
+    /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
+    fn resolve(&self, peer_id: &PublicKey) -> BoxFuture<'static, Result<AddrInfo>>;
 }
 
 /// Contains options for `MagicSock::listen`.
@@ -176,6 +189,7 @@ impl Default for Options {
             secret_key: SecretKey::generate(),
             derp_map: DerpMap::empty(),
             callbacks: Default::default(),
+            discovery: None,
             peers_path: None,
         }
     }
@@ -241,6 +255,9 @@ struct Inner {
     derp_map: DerpMap,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
+
+    /// Optional discovery mechanism for finding peers.
+    discovery: Option<Box<dyn Discovery>>,
 }
 
 impl Inner {
@@ -338,6 +355,7 @@ impl MagicSock {
                     on_derp_active,
                     on_net_info,
                 },
+            discovery,
             peers_path,
         } = opts;
 
@@ -390,6 +408,7 @@ impl MagicSock {
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map,
             my_derp: AtomicU16::new(0),
+            discovery,
         });
 
         let udp_state = quinn_udp::UdpState::default();
@@ -888,6 +907,7 @@ enum ActorMessage {
     AddKnownAddr(PeerAddr, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
+    PublishAddrInfo,
 }
 
 struct Actor {
@@ -1211,6 +1231,9 @@ impl Actor {
                     ep.ping_timeout(txid);
                 }
             }
+            ActorMessage::PublishAddrInfo => {
+                self.publish_addr_info();
+            }
         }
 
         false
@@ -1457,6 +1480,16 @@ impl Actor {
         }
     }
 
+    fn publish_addr_info(&self) {
+        if let Some(ref discovery) = self.inner.discovery {
+            let info = AddrInfo {
+                direct_addresses: self.last_endpoints.iter().map(|x| x.addr).collect(),
+                derp_region: Some(self.inner.my_derp()).filter(|x| *x != 0),
+            };
+            discovery.publish(info);
+        }
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn update_endpoints(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_endpoints);
@@ -1478,6 +1511,7 @@ impl Actor {
                     if let Some(ref cb) = self.inner.on_endpoints {
                         cb(&endpoints[..]);
                     }
+                    self.publish_addr_info();
                 }
             }
             Err(err) => {

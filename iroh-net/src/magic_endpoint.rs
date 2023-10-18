@@ -3,6 +3,7 @@
 use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
+use derive_more::Debug;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
@@ -12,7 +13,7 @@ use crate::{
     defaults::default_derp_map,
     derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
-    magicsock::{self, Callbacks, MagicSock},
+    magicsock::{self, Callbacks, Discovery, MagicSock},
     tls,
 };
 
@@ -118,6 +119,7 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
+    discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
 }
@@ -132,6 +134,7 @@ impl Default for MagicEndpointBuilder {
             concurrent_connections: Default::default(),
             keylog: Default::default(),
             callbacks: Default::default(),
+            discovery: Default::default(),
             peers_path: None,
         }
     }
@@ -233,6 +236,12 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Optionally set a discovery mechanism for this endpoint.
+    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
+        self.discovery = Some(discovery);
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -264,6 +273,7 @@ impl MagicEndpointBuilder {
             derp_map,
             callbacks: self.callbacks,
             peers_path: self.peers_path,
+            discovery: self.discovery,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
