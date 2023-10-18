@@ -555,6 +555,8 @@ impl Inner {
                 match self.peer_map.get_quic_mapped_addr_for_ip_port(meta.addr) {
                     None => {
                         warn!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: no peer state found, skipping");
+                        // if we have no peer state for the from addr, set len to 0 to make quinn skip the buf completely.
+                        meta.len = 0;
                     }
                     Some(quic_mapped_addr) => {
                         trace!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: peer state found");
@@ -562,6 +564,10 @@ impl Inner {
                         meta.addr = quic_mapped_addr.0;
                     }
                 }
+            } else {
+                // if there is no non-stun,non-disco packet in the chunk, set len to zero to make
+                // quinn skip the buf completely.
+                meta.len = 0;
             }
             // Normalize local_ip
             meta.dst_ip = dst_ip;
