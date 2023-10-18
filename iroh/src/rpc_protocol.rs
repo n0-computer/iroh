@@ -20,6 +20,7 @@ use iroh_net::{
 };
 
 use iroh_sync::{
+    actor::OpenState,
     store::GetFilter,
     sync::{NamespaceId, SignedEntry},
     AuthorId,
@@ -32,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
 
-use crate::sync_engine::{LiveEvent, LiveStatus};
+use crate::sync_engine::LiveEvent;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -568,22 +569,52 @@ pub struct DocShareResponse(pub DocTicket);
 
 /// Get info on a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocInfoRequest {
+pub struct DocStatusRequest {
     /// The document id
     pub doc_id: NamespaceId,
 }
 
-impl RpcMsg<ProviderService> for DocInfoRequest {
-    type Response = RpcResult<DocInfoResponse>;
+impl RpcMsg<ProviderService> for DocStatusRequest {
+    type Response = RpcResult<DocStatusResponse>;
 }
 
-/// Response to [`DocInfoRequest`]
+/// Response to [`DocStatusRequest`]
 // TODO: actually provide info
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocInfoResponse {
+pub struct DocStatusResponse {
     /// Live sync status
-    pub status: LiveStatus,
+    pub status: OpenState,
 }
+
+/// Open a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocOpenRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocOpenRequest {
+    type Response = RpcResult<DocOpenResponse>;
+}
+
+/// Response to [`DocOpenRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocOpenResponse {}
+
+/// Open a document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocCloseRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocCloseRequest {
+    type Response = RpcResult<DocCloseResponse>;
+}
+
+/// Response to [`DocCloseRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocCloseResponse {}
 
 /// Start to sync a doc with peers.
 #[derive(Serialize, Deserialize, Debug)]
@@ -640,11 +671,11 @@ pub struct DocSetRequest {
     /// Author of this entry.
     pub author_id: AuthorId,
     /// Key of this entry.
-    pub key: Vec<u8>,
+    pub key: Bytes,
     /// Value of this entry.
     // TODO: Allow to provide the hash directly
     // TODO: Add a way to provide content as stream
-    pub value: Vec<u8>,
+    pub value: Bytes,
 }
 
 impl RpcMsg<ProviderService> for DocSetRequest {
@@ -666,7 +697,7 @@ pub struct DocDelRequest {
     /// Author of this entry.
     pub author_id: AuthorId,
     /// Prefix to delete.
-    pub prefix: Vec<u8>,
+    pub prefix: Bytes,
 }
 
 impl RpcMsg<ProviderService> for DocDelRequest {
@@ -688,7 +719,7 @@ pub struct DocSetHashRequest {
     /// Author of this entry.
     pub author_id: AuthorId,
     /// Key of this entry.
-    pub key: Vec<u8>,
+    pub key: Bytes,
     /// Hash of this entry.
     pub hash: Hash,
     /// Size of this entry.
@@ -733,7 +764,7 @@ pub struct DocGetOneRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// Key
-    pub key: Vec<u8>,
+    pub key: Bytes,
     /// Author
     pub author: AuthorId,
 }
@@ -863,7 +894,9 @@ pub enum ProviderRequest {
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
 
-    DocInfo(DocInfoRequest),
+    DocOpen(DocOpenRequest),
+    DocClose(DocCloseRequest),
+    DocStatus(DocStatusRequest),
     DocList(DocListRequest),
     DocCreate(DocCreateRequest),
     DocDrop(DocDropRequest),
@@ -906,7 +939,9 @@ pub enum ProviderResponse {
     ListTags(ListTagsResponse),
     DeleteTag(RpcResult<()>),
 
-    DocInfo(RpcResult<DocInfoResponse>),
+    DocOpen(RpcResult<DocOpenResponse>),
+    DocClose(RpcResult<DocCloseResponse>),
+    DocStatus(RpcResult<DocStatusResponse>),
     DocList(RpcResult<DocListResponse>),
     DocCreate(RpcResult<DocCreateResponse>),
     DocDrop(RpcResult<DocDropResponse>),

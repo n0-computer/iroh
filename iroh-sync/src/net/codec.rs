@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
-use tracing::trace;
+use tracing::{debug, trace, Span};
 
 use crate::{
+    actor::SyncHandle,
     net::{AbortReason, AcceptError, AcceptOutcome, ConnectError},
-    store, NamespaceId, Replica,
+    NamespaceId, SyncOutcome,
 };
 
 #[derive(Debug, Default)]
@@ -88,23 +89,27 @@ enum Message {
 }
 
 /// Runs the initiator side of the sync protocol.
-pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+pub(super) async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut R,
-    alice: &Replica<S::Instance>,
-    other_peer_id: PublicKey,
-) -> Result<(), ConnectError> {
-    let other_peer_id = *other_peer_id.as_bytes();
+    handle: &SyncHandle,
+    namespace: NamespaceId,
+    peer: PublicKey,
+) -> Result<SyncOutcome, ConnectError> {
+    let peer_bytes = *peer.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
     let mut writer = FramedWrite::new(writer, SyncCodec);
 
+    let mut progress = Some(SyncOutcome::default());
+
     // Init message
 
-    let init_message = Message::Init {
-        namespace: alice.namespace(),
-        message: alice.sync_initial_message().map_err(ConnectError::sync)?,
-    };
-    trace!("alice -> bob: {:#?}", init_message);
+    let message = handle
+        .sync_initial_message(namespace)
+        .await
+        .map_err(ConnectError::sync)?;
+    let init_message = Message::Init { namespace, message };
+    trace!("send init message");
     writer
         .send(init_message)
         .await
@@ -118,11 +123,15 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
                 return Err(ConnectError::sync(anyhow!("unexpected init message")));
             }
             Message::Sync(msg) => {
-                if let Some(msg) = alice
-                    .sync_process_message(msg, other_peer_id)
-                    .map_err(ConnectError::sync)?
-                {
-                    trace!("alice -> bob: {:#?}", msg);
+                trace!("recv process message");
+                let current_progress = progress.take().unwrap();
+                let (reply, next_progress) = handle
+                    .sync_process_message(namespace, msg, peer_bytes, current_progress)
+                    .await
+                    .map_err(ConnectError::sync)?;
+                progress = Some(next_progress);
+                if let Some(msg) = reply {
+                    trace!("send process message");
                     writer
                         .send(Message::Sync(msg))
                         .await
@@ -137,67 +146,81 @@ pub(super) async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWri
         }
     }
 
-    Ok(())
+    trace!("done");
+    Ok(progress.unwrap())
 }
 
 /// Runs the receiver side of the sync protocol.
-pub(super) async fn run_bob<S, R, W, F, Fut>(
+#[cfg(test)]
+pub(super) async fn run_bob<R, W, F, Fut>(
     writer: &mut W,
     reader: &mut R,
+    handle: SyncHandle,
     accept_cb: F,
-    other_peer_id: PublicKey,
-) -> Result<NamespaceId, AcceptError>
+    peer: PublicKey,
+) -> Result<(NamespaceId, SyncOutcome), AcceptError>
 where
-    S: store::Store,
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
     F: Fn(NamespaceId, PublicKey) -> Fut,
-    Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
+    Fut: Future<Output = AcceptOutcome>,
 {
-    let mut state = BobState::<S>::new(other_peer_id);
-    state.run(writer, reader, accept_cb).await
+    let mut state = BobState::new(peer);
+    let namespace = state.run(writer, reader, handle, accept_cb).await?;
+    Ok((namespace, state.into_outcome()))
 }
 
-struct BobState<S: store::Store> {
-    replica: Option<Replica<S::Instance>>,
+/// State for the receiver side of the sync protocol.
+pub struct BobState {
+    namespace: Option<NamespaceId>,
     peer: PublicKey,
+    progress: Option<SyncOutcome>,
 }
 
-impl<S: store::Store> BobState<S> {
+impl BobState {
+    /// Create a new state for a single connection.
     pub fn new(peer: PublicKey) -> Self {
         Self {
             peer,
-            replica: None,
+            namespace: None,
+            progress: Some(Default::default()),
         }
     }
 
-    pub fn fail(&self, reason: impl Into<anyhow::Error>) -> AcceptError {
+    fn fail(&self, reason: impl Into<anyhow::Error>) -> AcceptError {
         AcceptError::sync(self.peer, self.namespace(), reason.into())
     }
 
-    async fn run<R, W, F, Fut>(
+    /// Handle connection and run to end.
+    pub async fn run<R, W, F, Fut>(
         &mut self,
         writer: W,
         reader: R,
+        sync: SyncHandle,
         accept_cb: F,
     ) -> Result<NamespaceId, AcceptError>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
         F: Fn(NamespaceId, PublicKey) -> Fut,
-        Fut: Future<Output = anyhow::Result<AcceptOutcome<S>>>,
+        Fut: Future<Output = AcceptOutcome>,
     {
         let mut reader = FramedRead::new(reader, SyncCodec);
         let mut writer = FramedWrite::new(writer, SyncCodec);
         while let Some(msg) = reader.next().await {
             let msg = msg.map_err(|e| self.fail(e))?;
-            let next = match (msg, self.replica.as_ref()) {
+            let next = match (msg, self.namespace.as_ref()) {
                 (Message::Init { namespace, message }, None) => {
+                    Span::current()
+                        .record("namespace", tracing::field::display(&namespace.fmt_short()));
+                    trace!("recv init message");
                     let accept = accept_cb(namespace, self.peer).await;
-                    let accept = accept.map_err(|e| self.fail(e))?;
-                    let replica = match accept {
-                        Ok(replica) => replica,
-                        Err(reason) => {
+                    match accept {
+                        AcceptOutcome::Allow => {
+                            trace!("allow request");
+                        }
+                        AcceptOutcome::Reject(reason) => {
+                            debug!(?reason, "reject request");
                             writer
                                 .send(Message::Abort { reason })
                                 .await
@@ -208,15 +231,24 @@ impl<S: store::Store> BobState<S> {
                                 reason,
                             });
                         }
-                    };
-                    trace!(?namespace, peer = ?self.peer, "run_bob: recv initial message {message:#?}");
-                    let next = replica.sync_process_message(message, *self.peer.as_bytes());
-                    self.replica = Some(replica);
+                    }
+                    let last_progress = self.progress.take().unwrap();
+                    let next = sync
+                        .sync_process_message(
+                            namespace,
+                            message,
+                            *self.peer.as_bytes(),
+                            last_progress,
+                        )
+                        .await;
+                    self.namespace = Some(namespace);
                     next
                 }
-                (Message::Sync(msg), Some(replica)) => {
-                    trace!(namespace = ?replica.namespace(), peer = ?self.peer, "run_bob: recv {msg:#?}");
-                    replica.sync_process_message(msg, *self.peer.as_bytes())
+                (Message::Sync(msg), Some(namespace)) => {
+                    trace!("recv process message");
+                    let last_progress = self.progress.take().unwrap();
+                    sync.sync_process_message(*namespace, msg, *self.peer.as_bytes(), last_progress)
+                        .await
                 }
                 (Message::Init { .. }, Some(_)) => {
                     return Err(self.fail(anyhow!("double init message")))
@@ -224,14 +256,15 @@ impl<S: store::Store> BobState<S> {
                 (Message::Sync(_), None) => {
                     return Err(self.fail(anyhow!("unexpected sync message before init")))
                 }
-                (Message::Abort { reason }, _) => {
-                    return Err(self.fail(anyhow!("unexpected abort message ({reason:?})")))
+                (Message::Abort { .. }, _) => {
+                    return Err(self.fail(anyhow!("unexpected sync abort message")))
                 }
             };
-            let next = next.map_err(|e| self.fail(e))?;
-            match next {
+            let (reply, progress) = next.map_err(|e| self.fail(e))?;
+            self.progress = Some(progress);
+            match reply {
                 Some(msg) => {
-                    trace!(namespace = ?self.namespace(), peer = ?self.peer, "run_bob: send {msg:#?}");
+                    trace!("send process message");
                     writer
                         .send(Message::Sync(msg))
                         .await
@@ -241,21 +274,28 @@ impl<S: store::Store> BobState<S> {
             }
         }
 
-        trace!(namespace = ?self.namespace().unwrap(), peer = ?self.peer, "run_bob: finished");
+        trace!("done");
 
         self.namespace()
             .ok_or_else(|| self.fail(anyhow!("Stream closed before init message")))
     }
 
-    fn namespace(&self) -> Option<NamespaceId> {
-        self.replica.as_ref().map(|r| r.namespace()).to_owned()
+    /// Get the namespace that is synced, if available.
+    pub fn namespace(&self) -> Option<NamespaceId> {
+        self.namespace
+    }
+
+    /// Consume self and get the [`SyncOutcome`] for this connection.
+    pub fn into_outcome(self) -> SyncOutcome {
+        self.progress.unwrap()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        store::{GetFilter, Store},
+        actor::OpenOpts,
+        store::{self, GetFilter, Store},
         sync::Namespace,
         AuthorId,
     };
@@ -272,25 +312,25 @@ mod tests {
         let alice_peer_id = SecretKey::from_bytes(&[1u8; 32]).public();
         let bob_peer_id = SecretKey::from_bytes(&[2u8; 32]).public();
 
-        let alice_replica_store = store::memory::Store::default();
+        let alice_store = store::memory::Store::default();
         // For now uses same author on both sides.
-        let author = alice_replica_store.new_author(&mut rng).unwrap();
+        let author = alice_store.new_author(&mut rng).unwrap();
 
         let namespace = Namespace::new(&mut rng);
 
-        let alice_replica = alice_replica_store.new_replica(namespace.clone()).unwrap();
+        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
         alice_replica
             .hash_and_insert("hello bob", &author, "from alice")
             .unwrap();
 
-        let bob_replica_store = store::memory::Store::default();
-        let bob_replica = bob_replica_store.new_replica(namespace.clone()).unwrap();
+        let bob_store = store::memory::Store::default();
+        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
         bob_replica
             .hash_and_insert("hello alice", &author, "from bob")
             .unwrap();
 
         assert_eq!(
-            bob_replica_store
+            bob_store
                 .get_many(bob_replica.namespace(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
@@ -299,7 +339,7 @@ mod tests {
             1
         );
         assert_eq!(
-            alice_replica_store
+            alice_store
                 .get_many(alice_replica.namespace(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
@@ -308,33 +348,42 @@ mod tests {
             1
         );
 
+        // close the replicas because now the async actor will take over
+        alice_store.close_replica(alice_replica);
+        bob_store.close_replica(bob_replica);
+
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let replica = alice_replica.clone();
+        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        alice_handle
+            .open(namespace.id(), OpenOpts::default().sync())
+            .await?;
+        let namespace_id = namespace.id();
+        let alice_handle2 = alice_handle.clone();
         let alice_task = tokio::task::spawn(async move {
-            run_alice::<store::memory::Store, _, _>(
+            run_alice(
                 &mut alice_writer,
                 &mut alice_reader,
-                &replica,
+                &alice_handle2,
+                namespace_id,
                 bob_peer_id,
             )
             .await
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_replica_store_task = bob_replica_store.clone();
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        bob_handle
+            .open(namespace.id(), OpenOpts::default().sync())
+            .await?;
+        let bob_handle2 = bob_handle.clone();
         let bob_task = tokio::task::spawn(async move {
-            run_bob::<store::memory::Store, _, _, _, _>(
+            run_bob(
                 &mut bob_writer,
                 &mut bob_reader,
-                |namespace, _| {
-                    futures::future::ready(
-                        bob_replica_store_task
-                            .open_replica(&namespace)
-                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
-                    )
-                },
+                bob_handle2,
+                |_namespace, _peer| futures::future::ready(AcceptOutcome::Allow),
                 alice_peer_id,
             )
             .await
@@ -343,9 +392,12 @@ mod tests {
         alice_task.await??;
         bob_task.await??;
 
+        alice_handle.shutdown().await;
+        bob_handle.shutdown().await;
+
         assert_eq!(
-            bob_replica_store
-                .get_many(bob_replica.namespace(), GetFilter::All)
+            bob_store
+                .get_many(namespace.id(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -353,8 +405,8 @@ mod tests {
             2
         );
         assert_eq!(
-            alice_replica_store
-                .get_many(alice_replica.namespace(), GetFilter::All)
+            alice_store
+                .get_many(namespace.id(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -387,7 +439,7 @@ mod tests {
     fn insert_messages<S: Store>(
         mut rng: impl CryptoRngCore,
         store: &S,
-        replica: &Replica<S::Instance>,
+        replica: &mut crate::sync::Replica<S::Instance>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
@@ -430,8 +482,8 @@ mod tests {
     async fn test_sync_many_authors<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
         let num_messages = &[1, 2, 5, 10];
         let num_authors = &[2, 3, 4, 5, 10];
-
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
+
         for num_messages in num_messages {
             for num_authors in num_authors {
                 println!(
@@ -444,12 +496,11 @@ mod tests {
 
                 let mut all_messages = vec![];
 
-                let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
-
+                let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
                 let alice_messages = insert_messages(
                     &mut rng,
                     &alice_store,
-                    &alice_replica,
+                    &mut alice_replica,
                     *num_authors,
                     *num_messages,
                     |author, i| {
@@ -461,11 +512,11 @@ mod tests {
                 );
                 all_messages.extend_from_slice(&alice_messages);
 
-                let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+                let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
                 let bob_messages = insert_messages(
                     &mut rng,
                     &bob_store,
-                    &bob_replica,
+                    &mut bob_replica,
                     *num_authors,
                     *num_messages,
                     |author, i| {
@@ -479,67 +530,80 @@ mod tests {
 
                 all_messages.sort();
 
-                let res = get_messages(&alice_store, alice_replica.namespace());
+                let res = get_messages(&alice_store, namespace.id());
                 assert_eq!(res, alice_messages);
 
-                let res = get_messages(&bob_store, bob_replica.namespace());
+                let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res, bob_messages);
 
+                // replicas can be opened only once so close the replicas before spawning the
+                // actors
+                alice_store.close_replica(alice_replica);
+                let alice_handle =
+                    SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+
+                bob_store.close_replica(bob_replica);
+                let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+
                 run_sync(
-                    &alice_store,
+                    alice_handle.clone(),
                     alice_node_pubkey,
-                    &bob_store,
+                    bob_handle.clone(),
                     bob_node_pubkey,
                     namespace.id(),
                 )
                 .await?;
 
-                let res = get_messages(&bob_store, bob_replica.namespace());
+                let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
 
-                let res = get_messages(&bob_store, bob_replica.namespace());
+                let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
+
+                alice_handle.shutdown().await;
+                bob_handle.shutdown().await;
             }
         }
+
         Ok(())
     }
 
-    async fn run_sync<S: Store>(
-        alice_store: &S,
+    async fn run_sync(
+        alice_handle: SyncHandle,
         alice_node_pubkey: PublicKey,
-        bob_store: &S,
+        bob_handle: SyncHandle,
         bob_node_pubkey: PublicKey,
         namespace: NamespaceId,
     ) -> Result<()> {
+        alice_handle
+            .open(namespace, OpenOpts::default().sync())
+            .await?;
+        bob_handle
+            .open(namespace, OpenOpts::default().sync())
+            .await?;
         let (alice, bob) = tokio::io::duplex(1024);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let alice_replica = alice_store.open_replica(&namespace)?.unwrap();
         let alice_task = tokio::task::spawn(async move {
-            run_alice::<S, _, _>(
+            run_alice(
                 &mut alice_writer,
                 &mut alice_reader,
-                &alice_replica,
+                &alice_handle,
+                namespace,
                 bob_node_pubkey,
             )
             .await
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_store = bob_store.clone();
         let bob_task = tokio::task::spawn(async move {
-            run_bob::<S, _, _, _, _>(
+            run_bob(
                 &mut bob_writer,
                 &mut bob_reader,
-                |namespace, _| {
-                    futures::future::ready(
-                        bob_store
-                            .open_replica(&namespace)
-                            .map(|r| r.ok_or(AbortReason::NotAvailable)),
-                    )
-                },
+                bob_handle,
+                |_namespace, _peer| futures::future::ready(AcceptOutcome::Allow),
                 alice_node_pubkey,
             )
             .await
@@ -572,8 +636,8 @@ mod tests {
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let namespace = Namespace::new(&mut rng);
-        let alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
-        let bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
 
         let author = alice_store.new_author(&mut rng)?;
         bob_store.import_author(author.clone())?;
@@ -600,24 +664,33 @@ mod tests {
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
+        alice_store.close_replica(alice_replica);
+        bob_store.close_replica(bob_replica);
+
+        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+
         run_sync(
-            &alice_store,
+            alice_handle.clone(),
             alice_node_pubkey,
-            &bob_store,
+            bob_handle.clone(),
             bob_node_pubkey,
             namespace.id(),
         )
         .await?;
 
         assert_eq!(
-            get_messages(&alice_store, alice_replica.namespace()),
+            get_messages(&alice_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, bob_replica.namespace()),
+            get_messages(&bob_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
+
+        alice_handle.shutdown().await;
+        bob_handle.shutdown().await;
 
         Ok(())
     }

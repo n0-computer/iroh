@@ -1,6 +1,6 @@
 // copied from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
-use iroh_net::key::PublicKey as PeerId;
 use anyhow::Result;
+use iroh_net::key::PublicKey as PeerId;
 use iroh_net::{AddrInfo, PeerAddr};
 use pkarr::dns::rdata::{RData, A, AAAA, TXT};
 use pkarr::dns::{Name, Packet, ResourceRecord, CLASS};

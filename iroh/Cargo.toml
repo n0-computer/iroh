@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 default-run = "iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.70"
+rust-version = "1.71"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -18,7 +18,7 @@ bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = fal
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
-flume = "0.10.14"
+flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
@@ -75,16 +75,17 @@ cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic
 metrics = ["iroh-metrics"]
 flat-db = ["iroh-bytes/flat-db"]
 test = []
-example-sync = ["cli"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
+console-subscriber = "0.1.10"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh-test = { path = "../iroh-test" }
 nix = "0.26.2"
 proptest = "1.2.0"
+rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
@@ -105,10 +106,6 @@ required-features = []
 [[example]]
 name = "hello-world"
 required-features = []
-
-[[example]]
-name = "sync"
-required-features = ["example-sync"]
 
 [[example]]
 name = "rpc"
