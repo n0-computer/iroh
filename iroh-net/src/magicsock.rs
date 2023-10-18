@@ -511,7 +511,7 @@ impl Inner {
 
         for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
             let mut start = 0;
-            let mut is_quic = true;
+            let mut is_quic = false;
             let mut quic_packets_count = 0;
 
             // find disco and stun packets and forward them to the actor
@@ -540,12 +540,12 @@ impl Inner {
 
                 if packet_is_quic {
                     quic_packets_count += 1;
+                    is_quic = true;
                 } else {
                     // overwrite the first byte of the packets with zero.
                     // this makes quinn reliably and quickly ignore the packet as long as
                     // [`quinn::EndpointConfig::grease_quic_bit`] is set to `true`.
                     buf[start] = 0u8;
-                    is_quic = false;
                 }
                 start = end;
             }
@@ -555,6 +555,8 @@ impl Inner {
                 match self.peer_map.get_quic_mapped_addr_for_ip_port(meta.addr) {
                     None => {
                         warn!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: no peer state found, skipping");
+                        // if we have no peer state for the from addr, set len to 0 to make quinn skip the buf completely.
+                        meta.len = 0;
                     }
                     Some(quic_mapped_addr) => {
                         trace!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: peer state found");
@@ -562,6 +564,10 @@ impl Inner {
                         meta.addr = quic_mapped_addr.0;
                     }
                 }
+            } else {
+                // if there is no non-stun,non-disco packet in the chunk, set len to zero to make
+                // quinn skip the buf completely.
+                meta.len = 0;
             }
             // Normalize local_ip
             meta.dst_ip = dst_ip;
