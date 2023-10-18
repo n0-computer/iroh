@@ -43,6 +43,15 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 /// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
+/// Number of addresses that are not active that we keep around per peer.
+///
+/// See [`Endpoint::prune_direct_addresses`].
+const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 5;
+
+/// Number of peers that are inactive for which we keep info about. This limit is enforced
+/// periodically via [`PeerMap::prune_inactive`].
+const MAX_INACTIVE_PEERS: usize = 30;
+
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum PingAction {
@@ -82,14 +91,14 @@ pub(super) struct Endpoint {
     /// [`EndpointState`] for this peer's direct addresses.
     direct_addr_state: HashMap<IpPort, EndpointState>,
     is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
-
     /// Any outstanding "tailscale ping" commands running
     pending_cli_pings: Vec<PendingCliPing>,
-
     sent_ping: HashMap<stun::TransactionId, SentPing>,
-
-    /// Last time this endpoint was used. If set to `None` it is inactive.
-    last_active: Option<Instant>,
+    /// Last time this peer was used.
+    ///
+    /// A peer is marked as in use when an endpoint to contact them is requested or if UDP activity
+    /// is registered.
+    last_used: Option<Instant>,
 }
 
 #[derive(derive_more::Debug)]
@@ -131,7 +140,7 @@ impl Endpoint {
             direct_addr_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
-            last_active: options.active.then(Instant::now),
+            last_used: options.active.then(Instant::now),
         }
     }
 
@@ -272,7 +281,7 @@ impl Endpoint {
         (udp_addr, udp_addr.is_some())
     }
 
-    /// Reports whether we should ping to all our peers looking for a better path.
+    /// Reports whether we should ping to all our direct addresses looking for a better path.
     fn want_full_ping(&self, now: &Instant) -> bool {
         debug!("want full ping? {:?}", now);
         if self.last_full_ping.is_none() {
@@ -496,7 +505,7 @@ impl Endpoint {
             return msgs;
         }
         self.last_full_ping.replace(now);
-        self.cleanup_endpoint_state();
+        self.prune_direct_addresses();
 
         let pings: Vec<_> = self
             .direct_addr_state
@@ -578,7 +587,7 @@ impl Endpoint {
         }
 
         // Delete outdated endpoints
-        self.cleanup_endpoint_state();
+        self.prune_direct_addresses();
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
@@ -661,40 +670,55 @@ impl Endpoint {
         };
 
         // if we landed here, a new endpoint was added
-
-        // If for some reason this gets very large, do some cleanup.
-        let size = self.direct_addr_state.len();
-        if size > 100 {
-            self.cleanup_endpoint_state();
-            let size2 = self.direct_addr_state.len();
-            info!(
-                "disco: addConfirmedEndpoint pruned candidate set from {} to {} entries",
-                size, size2
-            )
-        }
+        self.prune_direct_addresses();
 
         false
     }
 
-    fn cleanup_endpoint_state(&mut self) {
-        self.direct_addr_state.retain(|ep, st| {
-            if st.should_delete() {
-                if let Some(best_addr) = self.best_addr.take() {
-                    let ep: SocketAddr = (*ep).into();
-                    if ep == best_addr.addr {
-                        // no longer relying on a direct connection, remove conn count
-                        inc!(MagicsockMetrics, num_direct_conns_removed);
-                        if self.derp_region.is_some() {
-                            // we now rely on a relay connection, add a relay count
-                            inc!(MagicsockMetrics, num_relay_conns_added);
-                        }
+    /// Keep any direct address that is currently active. From those that aren't active, prune
+    /// first those that are not alive, then those alive but not active in order to keep at most
+    /// [`MAX_INACTIVE_DIRECT_ADDRESSES`].
+    fn prune_direct_addresses(&mut self) {
+        // prune candidates are addresses that are not active
+        let mut prune_candidates: Vec<_> = self
+            .direct_addr_state
+            .iter()
+            .filter(|(_ip_port, state)| !state.is_active())
+            .map(|(ip_port, state)| (*ip_port, state.last_alive()))
+            .collect();
+        let prune_count = prune_candidates
+            .len()
+            .saturating_sub(MAX_INACTIVE_DIRECT_ADDRESSES);
+        if prune_count == 0 {
+            // nothing to do, within limits
+            return;
+        }
+
+        // sort leaving the worst addresses first (never contacted) and better ones (most recently
+        // used ones) last
+        prune_candidates.sort_unstable_by_key(|(_ip_port, last_active)| *last_active);
+        prune_candidates.truncate(prune_count);
+        let peer = self.public_key.fmt_short();
+        for (ip_port, last_seen) in prune_candidates.into_iter() {
+            self.direct_addr_state.remove(&ip_port);
+
+            match last_seen.map(|instant| instant.elapsed()) {
+                Some(last_seen) => trace!(%peer, %ip_port, ?last_seen, "pruning address"),
+                None => trace!(%peer, %ip_port, last_seen=%"never", "pruning address"),
+            }
+
+            if let Some(addr_and_latency) = self.best_addr.as_ref() {
+                if addr_and_latency.addr == ip_port.into() {
+                    self.best_addr = None;
+                    // no longer relying on a direct connection, remove conn count
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    if self.derp_region.is_some() {
+                        // we now rely on a relay connection, add a relay count
+                        inc!(MagicsockMetrics, num_relay_conns_added);
                     }
                 }
-                false
-            } else {
-                true
             }
-        });
+        }
     }
 
     /// Called when connectivity changes enough that we should question our earlier
@@ -943,7 +967,7 @@ impl Endpoint {
 
     /// Checks if this `Endpoint` is currently actively being used.
     fn is_active(&self, now: &Instant) -> bool {
-        match self.last_active {
+        match self.last_used {
             Some(last_active) => now.duration_since(last_active) <= SESSION_ACTIVE_TIMEOUT,
             None => false,
         }
@@ -993,7 +1017,7 @@ impl Endpoint {
 
     pub(crate) fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>, Vec<PingAction>) {
         let now = Instant::now();
-        self.last_active.replace(now);
+        self.last_used.replace(now);
         let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
         let mut msgs = Vec::new();
 
@@ -1028,15 +1052,13 @@ impl Endpoint {
     }
 
     /// Get the direct addresses for this endpoint.
-    pub fn direct_addresses(&self) -> impl Iterator<Item = SocketAddr> + '_ {
-        self.direct_addr_state
-            .keys()
-            .map(|ip_port| SocketAddr::from(*ip_port))
+    pub fn direct_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
+        self.direct_addr_state.keys().copied()
     }
 
     /// Get the adressing information of this endpoint.
     pub fn peer_addr(&self) -> PeerAddr {
-        let direct_addresses = self.direct_addresses().collect();
+        let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
         PeerAddr {
             peer_id: self.public_key,
             info: AddrInfo {
@@ -1168,7 +1190,7 @@ impl PeerMap {
     ) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
-            .endpoint_for_ip_port(ipp)
+            .receive_ip(ipp)
             .map(|ep| ep.quic_mapped_addr)
     }
 
@@ -1262,6 +1284,11 @@ impl PeerMap {
             .context("failed renaming peer data file")?;
         Ok(count)
     }
+
+    /// Prunes peers without recent activity so that at most [`MAX_INACTIVE_PEERS`] are kept.
+    pub(super) fn prune_inactive(&self) {
+        self.inner.lock().prune_inactive();
+    }
 }
 
 impl PeerMapInner {
@@ -1334,11 +1361,27 @@ impl PeerMapInner {
             .and_then(|id| self.by_id.get_mut(id))
     }
 
-    /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
-    pub(super) fn endpoint_for_ip_port(&self, ipp: impl Into<IpPort>) -> Option<&Endpoint> {
-        self.by_ip_port
-            .get(&ipp.into())
-            .and_then(|id| self.by_id(id))
+    /// Marks the peer we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
+    pub(super) fn receive_ip(&mut self, ipp: impl Into<IpPort>) -> Option<&Endpoint> {
+        let ip_port = ipp.into();
+        // search by IpPort to get the Id
+        let id = *self.by_ip_port.get(&ip_port)?;
+        // search by Id to get the endpoint. This should never fail
+        let Some(endpoint) = self.by_id_mut(&id) else {
+            debug_assert!(false, "peer map inconsistency by_ip_port <-> by_id");
+            return None;
+        };
+        // the endpoint we found must have the original address among its direct udp addresses if
+        // the peer map maintains consistency
+        let Some(state) = endpoint.direct_addr_state.get_mut(&ip_port) else {
+            debug_assert!(false, "peer map inconsistency by_ip_port <-> direct addr");
+            return None;
+        };
+        // record this peer and this address being in use
+        let now = Instant::now();
+        endpoint.last_used = Some(now);
+        state.last_payload_msg = Some(now);
+        Some(endpoint)
     }
 
     pub fn endpoint_for_quic_mapped_addr_mut(
@@ -1407,18 +1450,48 @@ impl PeerMapInner {
         self.by_ip_port.insert(ipp, id);
     }
 
-    // TODO: When do we want to remove endpoints?
-    // Dead code at the moment. This was already never called before, because entries were never
-    // removed from the now-removed NetworkMap.
-    // /// Deletes the endpoint.
-    // pub(super) fn delete_endpoint(&mut self, id: usize) {
-    //     if let Some(mut ep) = self.by_id.remove(&id) {
-    //         ep.stop_and_reset();
-    //         self.by_node_key.remove(ep.public_key());
-    //     }
-    //
-    //     self.by_ip_port.retain(|_, v| *v != id);
-    // }
+    /// Prunes peers without recent activity so that at most [`MAX_INACTIVE_PEERS`] are kept.
+    fn prune_inactive(&mut self) {
+        let now = Instant::now();
+        let mut prune_candidates: Vec<_> = self
+            .by_id
+            .values()
+            .filter(|peer| !peer.is_active(&now))
+            .map(|peer| (*peer.public_key(), peer.last_used))
+            .collect();
+
+        let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_PEERS);
+        if prune_count == 0 {
+            // within limits
+            return;
+        }
+
+        prune_candidates.sort_unstable_by_key(|(_pk, last_used)| *last_used);
+        prune_candidates.truncate(prune_count);
+        for (public_key, last_used) in prune_candidates.into_iter() {
+            let peer = public_key.fmt_short();
+            match last_used.map(|instant| instant.elapsed()) {
+                Some(last_used) => trace!(%peer, ?last_used, "pruning inactive"),
+                None => trace!(%peer, last_used=%"never", "pruning inactive"),
+            }
+
+            let Some(id) = self.by_node_key.remove(&public_key) else {
+                debug_assert!(false, "missing by_node_key entry for pk in by_id");
+                continue;
+            };
+
+            let Some(ep) = self.by_id.remove(&id) else {
+                debug_assert!(false, "missing by_id entry for id in by_node_key");
+                continue;
+            };
+
+            for ip_port in ep.direct_addresses() {
+                self.by_ip_port.remove(&ip_port);
+            }
+
+            self.by_quic_mapped_addr.remove(&ep.quic_mapped_addr);
+        }
+    }
 }
 
 /// Some state and history for a specific endpoint of a endpoint.
@@ -1445,6 +1518,8 @@ struct EndpointState {
 
     /// Last [`PongReply`] received.
     recent_pong: Option<PongReply>,
+    /// When was this endpoint last used to transmit payload data (removing ping, pong, etc).
+    last_payload_msg: Option<Instant>,
 }
 
 /// The type of connection we have to the endpoint.
@@ -1484,18 +1559,34 @@ impl EndpointState {
         self.recent_pong = Some(r);
     }
 
-    /// Reports whether we should delete this endpoint.
-    fn should_delete(&self) -> bool {
-        if self.call_me_maybe_time.is_some() {
-            return false;
-        }
-        if let Some(last_got_ping) = self.last_got_ping {
-            // Receiving no pings anymore, probably gone
-            return last_got_ping.elapsed() > SESSION_ACTIVE_TIMEOUT;
-        }
+    /// Check whether this endpoint is considered active.
+    ///
+    /// An endpoint is considered alive if we have received payload messages from it within the
+    /// last [`SESSION_ACTIVE_TIMEOUT`]. Note that an endpoint might be alive but not active if
+    /// it's contactable but not in use.
+    pub fn is_active(&self) -> bool {
+        self.last_payload_msg
+            .as_ref()
+            .map(|instant| instant.elapsed() <= SESSION_ACTIVE_TIMEOUT)
+            .unwrap_or(false)
+    }
 
-        // keep by default
-        false
+    /// Reports the last instant this endpoint was considered active.
+    ///
+    /// This is the most recent instant between:
+    /// - when last pong was received.
+    /// - when the last CallMeMaybe was received.
+    /// - When the last payload transmission occurred.
+    /// - when the last ping from them was received.
+    pub fn last_alive(&self) -> Option<Instant> {
+        self.recent_pong()
+            .map(|pong| &pong.pong_at)
+            .into_iter()
+            .chain(self.last_payload_msg.as_ref())
+            .chain(self.call_me_maybe_time.as_ref())
+            .chain(self.last_got_ping.as_ref())
+            .max()
+            .copied()
     }
 
     /// Returns the most recent pong if available.
@@ -1602,16 +1693,13 @@ mod tests {
             let endpoint_state = HashMap::from([(
                 ip_port,
                 EndpointState {
-                    last_ping: None,
-                    last_got_ping: None,
-                    last_got_ping_tx_id: None,
-                    call_me_maybe_time: None,
                     recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Udp(ip_port.into()),
                         pong_src,
                     }),
+                    ..Default::default()
                 },
             )]);
             let key = SecretKey::generate();
@@ -1632,7 +1720,7 @@ mod tests {
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
-                    last_active: Some(now),
+                    last_used: Some(now),
                 },
                 ip_port.into(),
             )
@@ -1642,16 +1730,13 @@ mod tests {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
             let now = Instant::now();
             let relay_state = EndpointState {
-                last_ping: None,
-                last_got_ping: None,
-                last_got_ping_tx_id: None,
-                call_me_maybe_time: None,
                 recent_pong: Some(PongReply {
                     latency,
                     pong_at: now,
                     from: SendAddr::Derp(0),
                     pong_src,
                 }),
+                ..Default::default()
             };
             let key = SecretKey::generate();
             Endpoint {
@@ -1667,7 +1752,7 @@ mod tests {
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
-                last_active: Some(now),
+                last_used: Some(now),
             }
         };
 
@@ -1690,7 +1775,7 @@ mod tests {
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
-                last_active: Some(now),
+                last_used: Some(now),
             }
         };
 
@@ -1702,29 +1787,23 @@ mod tests {
             let endpoint_state = HashMap::from([(
                 IpPort::from(socket_addr),
                 EndpointState {
-                    last_ping: None,
-                    last_got_ping: None,
-                    last_got_ping_tx_id: None,
-                    call_me_maybe_time: None,
                     recent_pong: Some(PongReply {
                         latency,
                         pong_at: now,
                         from: SendAddr::Udp(socket_addr),
                         pong_src,
                     }),
+                    ..Default::default()
                 },
             )]);
             let relay_state = EndpointState {
-                last_ping: None,
-                last_got_ping: None,
-                last_got_ping_tx_id: None,
-                call_me_maybe_time: None,
                 recent_pong: Some(PongReply {
                     latency,
                     pong_at: now,
                     from: SendAddr::Derp(0),
                     pong_src,
                 }),
+                ..Default::default()
             };
             let key = SecretKey::generate();
             (
@@ -1744,7 +1823,7 @@ mod tests {
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
-                    last_active: Some(now),
+                    last_used: Some(now),
                 },
                 socket_addr,
             )
@@ -1863,5 +1942,90 @@ mod tests {
             .collect();
         // compare the peer maps via their known peers
         assert_eq!(og, loaded);
+    }
+
+    #[test]
+    fn test_prune_direct_addresses() {
+        let _guard = iroh_test::logging::setup();
+
+        let peer_map = PeerMap::default();
+        let public_key = SecretKey::generate().public();
+        let id = peer_map.inner.lock().insert_endpoint(Options {
+            public_key,
+            derp_region: None,
+            active: false,
+        });
+
+        const LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
+        // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
+        // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
+
+        // active adddresses
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+            let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
+            let peer_addr = PeerAddr::new(public_key).with_direct_addresses([addr]);
+            // add address
+            peer_map.add_peer_addr(peer_addr);
+            // make it active
+            peer_map.inner.lock().receive_ip(addr);
+        }
+
+        // offline adddresses
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+            let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
+            let peer_addr = PeerAddr::new(public_key).with_direct_addresses([addr]);
+            peer_map.add_peer_addr(peer_addr);
+        }
+
+        let mut peer_map_inner = peer_map.inner.lock();
+        let endpoint = peer_map_inner.by_id.get_mut(&id).unwrap();
+
+        // online but inactive addresses discovered via ping
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+            let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
+            let txid = stun::TransactionId::from([i as u8; 12]);
+            endpoint.endpoint_confirmed(addr, txid);
+        }
+
+        endpoint.prune_direct_addresses();
+
+        assert_eq!(
+            endpoint.direct_addresses().count(),
+            MAX_INACTIVE_DIRECT_ADDRESSES * 2
+        );
+
+        assert_eq!(
+            endpoint
+                .direct_addr_state
+                .values()
+                .filter(|state| !state.is_active())
+                .count(),
+            MAX_INACTIVE_DIRECT_ADDRESSES
+        )
+    }
+
+    #[test]
+    fn test_prune_inactive() {
+        let peer_map = PeerMap::default();
+        // add one active peer and more than MAX_INACTIVE_PEERS inactive peers
+        let active_peer = SecretKey::generate().public();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
+        peer_map.add_peer_addr(PeerAddr::new(active_peer).with_direct_addresses([addr]));
+        peer_map.inner.lock().receive_ip(addr).expect("registered");
+
+        for _ in 0..MAX_INACTIVE_PEERS + 1 {
+            let peer = SecretKey::generate().public();
+            peer_map.add_peer_addr(PeerAddr::new(peer));
+        }
+
+        assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 2);
+        peer_map.prune_inactive();
+        assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 1);
+        peer_map
+            .inner
+            .lock()
+            .endpoint_for_node_key(&active_peer)
+            .expect("should not be pruned");
     }
 }

@@ -642,10 +642,10 @@ impl Inner {
             return true;
         }
 
-        let unknown_sender = self.peer_map.read(|pm| {
+        let unknown_sender = self.peer_map.write(|pm| {
             if pm.endpoint_for_node_key(&sender).is_none() {
                 match src {
-                    SendAddr::Udp(addr) => pm.endpoint_for_ip_port(addr).is_none(),
+                    SendAddr::Udp(addr) => pm.receive_ip(addr).is_none(),
                     SendAddr::Derp(_) => true,
                 }
             } else {
@@ -1567,6 +1567,8 @@ impl Actor {
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.inner.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
+
+                    self.inner.peer_map.prune_inactive();
                     let msgs = self.inner.peer_map.endpoints_stayin_alive();
                     self.handle_ping_actions(msgs).await;
                 }
@@ -1579,6 +1581,8 @@ impl Actor {
                 }
                 _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
                     let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
+
+                    self.inner.peer_map.prune_inactive();
                     match self.inner.peer_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "peers persisted"),
                         Err(e) => debug!(%e, "failed to persist known peers"),
