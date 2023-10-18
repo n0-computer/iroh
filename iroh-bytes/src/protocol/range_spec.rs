@@ -322,6 +322,10 @@ impl<'a> NonEmptyRequestRangeSpecIter<'a> {
     fn new(inner: RequestRangeSpecIter<'a>) -> Self {
         Self { inner, count: 0 }
     }
+
+    pub(crate) fn offset(&self) -> u64 {
+        self.count
+    }
 }
 
 impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
