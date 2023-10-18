@@ -1080,7 +1080,10 @@ impl<D: BaoStore> RpcHandler<D> {
             let (sender, receiver) = flume::bounded(1024);
             let sender = FlumeProgressSender::new(sender);
             if let Err(cause) = self.blob_download0(msg, sender.clone()).await {
-                sender.send(DownloadProgress::Abort(cause.into())).await.unwrap();
+                sender
+                    .send(DownloadProgress::Abort(cause.into()))
+                    .await
+                    .unwrap();
             };
             receiver.into_stream()
         }

@@ -729,10 +729,10 @@ fn fmt_latency(latency: Option<Duration>) -> String {
 
 fn make_overall_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb.set_style(
         ProgressStyle::with_template(
-            "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}",
+            "{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}",
         )
         .unwrap()
         .progress_chars("#>-"),
@@ -742,9 +742,9 @@ fn make_overall_progress() -> ProgressBar {
 
 fn make_individual_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb.set_style(
-        ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        ProgressStyle::with_template("{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             .unwrap()
             .with_key(
                 "eta",
@@ -766,26 +766,29 @@ pub async fn show_download_progress(
     mp.set_draw_target(ProgressDrawTarget::stderr());
     let op = mp.add(make_overall_progress());
     let ip = mp.add(make_individual_progress());
-    op.set_message(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-
+    op.set_message(format!("{} Connecting ...\n", style("[1/3]").bold().dim()));
+    let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
             DownloadProgress::Connected => {
-                op.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+                op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
             }
             DownloadProgress::FoundHashSeq { children, .. } => {
                 op.set_message(format!(
-                    "{} Downloading {} blob(s)",
+                    "{} Downloading {} blob(s)\n",
                     style("[3/3]").bold().dim(),
-                    children,
+                    children + 1,
                 ));
                 op.set_length(children + 1);
                 op.reset();
+                seq = true;
             }
-            DownloadProgress::Found {
-                size, child, ..
-            } => {
-                op.set_position(child);
+            DownloadProgress::Found { size, child, .. } => {
+                if seq {
+                    op.set_position(child);
+                } else {
+                    op.finish_and_clear();
+                }
                 ip.set_length(size);
                 ip.reset();
             }

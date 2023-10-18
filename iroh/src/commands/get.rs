@@ -173,7 +173,9 @@ async fn get_to_stdout_single(
     let mut writer = ProgressSliceWriter::new(
         ConcatenateSliceWriter::new(tokio::io::stdout()),
         move |offset| {
-            sender2.try_send(DownloadProgress::Progress { id, offset }).ok();
+            sender2
+                .try_send(DownloadProgress::Progress { id, offset })
+                .ok();
         },
     );
     let curr = curr.write_all(&mut writer).await?;
@@ -224,7 +226,9 @@ async fn get_to_stdout_multi(
         let mut io_writer = ProgressSliceWriter::new(
             ConcatenateSliceWriter::new(tokio::io::stdout()),
             move |offset| {
-                sender2.try_send(DownloadProgress::Progress { id, offset }).ok();
+                sender2
+                    .try_send(DownloadProgress::Progress { id, offset })
+                    .ok();
             },
         );
         let curr = curr.write_all(&mut io_writer).await?;
