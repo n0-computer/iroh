@@ -181,7 +181,7 @@ async fn get_to_stdout_multi(
     curr: get::fsm::AtStartRoot,
     sender: FlumeProgressSender<GetProgress>,
 ) -> Result<get::Stats> {
-    let hash = *curr.hash();
+    let hash = curr.hash();
     let (mut next, _links, collection) = Collection::read_fsm(curr).await?;
     sender
         .send(GetProgress::FoundCollection {
