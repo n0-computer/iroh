@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -18,8 +19,11 @@ use iroh_net::{
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, DerpMode, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
-    netcheck, portmapper, MagicEndpoint, PeerAddr,
+    netcheck, portmapper,
+    util::AbortingJoinHandle,
+    MagicEndpoint, PeerAddr,
 };
+use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -152,6 +156,7 @@ enum TestStreamRequest {
     Send { bytes: u64, block_size: u32 },
 }
 
+#[derive(Debug, Clone, Copy)]
 struct TestConfig {
     size: u64,
     iterations: Option<u64>,
@@ -159,18 +164,22 @@ struct TestConfig {
 
 fn update_pb(
     task: &'static str,
-    pb: ProgressBar,
+    pb: Option<ProgressBar>,
     total_bytes: u64,
     mut updates: sync::mpsc::Receiver<u64>,
 ) -> tokio::task::JoinHandle<()> {
-    pb.set_message(task);
-    pb.set_position(0);
-    pb.set_length(total_bytes);
-    tokio::spawn(async move {
-        while let Some(position) = updates.recv().await {
-            pb.set_position(position);
-        }
-    })
+    if let Some(pb) = pb {
+        pb.set_message(task);
+        pb.set_position(0);
+        pb.set_length(total_bytes);
+        tokio::spawn(async move {
+            while let Some(position) = updates.recv().await {
+                pb.set_position(position);
+            }
+        })
+    } else {
+        tokio::spawn(futures::future::ready(()))
+    }
 }
 
 /// handle a test stream request
@@ -182,12 +191,13 @@ async fn handle_test_request(
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
     recv.read_exact(&mut buf).await?;
     let request: TestStreamRequest = postcard::from_bytes(&buf)?;
+    let pb = Some(gui.pb.clone());
     match request {
         TestStreamRequest::Echo { bytes } => {
             // copy the stream back
             let (mut send, updates) = ProgressWriter::new(&mut send);
             let t0 = Instant::now();
-            let progress = update_pb("echo", gui.pb.clone(), bytes, updates);
+            let progress = update_pb("echo", pb, bytes, updates);
             tokio::io::copy(&mut recv, &mut send).await?;
             let elapsed = t0.elapsed();
             drop(send);
@@ -197,7 +207,7 @@ async fn handle_test_request(
         TestStreamRequest::Drain { bytes } => {
             // drain the stream
             let (mut send, updates) = ProgressWriter::new(tokio::io::sink());
-            let progress = update_pb("recv", gui.pb.clone(), bytes, updates);
+            let progress = update_pb("recv", pb, bytes, updates);
             let t0 = Instant::now();
             tokio::io::copy(&mut recv, &mut send).await?;
             let elapsed = t0.elapsed();
@@ -208,7 +218,7 @@ async fn handle_test_request(
         TestStreamRequest::Send { bytes, block_size } => {
             // send the requested number of bytes, in blocks of the requested size
             let (mut send, updates) = ProgressWriter::new(&mut send);
-            let progress = update_pb("send", gui.pb.clone(), bytes, updates);
+            let progress = update_pb("send", pb, bytes, updates);
             let t0 = Instant::now();
             send_blocks(&mut send, bytes, block_size).await?;
             drop(send);
@@ -270,14 +280,14 @@ struct Gui {
     send_pb: ProgressBar,
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
-    counter_task: Option<tokio::task::JoinHandle<()>>,
+    #[allow(dead_code)]
+    counter_task: Option<AbortingJoinHandle<()>>,
 }
 
 impl Gui {
     fn new() -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
-        let pb = indicatif::ProgressBar::hidden();
         let counters = mp.add(ProgressBar::hidden());
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
@@ -289,18 +299,18 @@ impl Gui {
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
         counters.set_style(style);
-        let pb = mp.add(pb);
+        let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(indicatif::ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = tokio::spawn(async move {
+        let counter_task = AbortingJoinHandle(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        });
+        }));
         Self {
             mp,
             pb,
@@ -359,27 +369,35 @@ Ipv6:
             HumanBytes((b as f64 / d.as_secs_f64()) as u64)
         ));
     }
-}
 
-impl Drop for Gui {
-    fn drop(&mut self) {
-        if let Some(task) = self.counter_task.take() {
-            task.abort();
-        }
+    fn clear(&self) {
+        self.mp.clear().ok();
     }
 }
 
-async fn active_side(connection: quinn::Connection, config: &TestConfig) -> anyhow::Result<()> {
+async fn active_side(
+    connection: quinn::Connection,
+    config: &TestConfig,
+    gui: Option<&Gui>,
+) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
-    let gui = Gui::new();
-    let Gui { pb, .. } = &gui;
-    for _ in 0..n {
-        let d = send_test(&connection, config, pb).await?;
-        gui.set_send(config.size, d);
-        let d = recv_test(&connection, config, pb).await?;
-        gui.set_recv(config.size, d);
-        let d = echo_test(&connection, config, pb).await?;
-        gui.set_echo(config.size, d);
+    if let Some(gui) = gui {
+        let pb = Some(&gui.pb);
+        for _ in 0..n {
+            let d = send_test(&connection, config, pb).await?;
+            gui.set_send(config.size, d);
+            let d = recv_test(&connection, config, pb).await?;
+            gui.set_recv(config.size, d);
+            let d = echo_test(&connection, config, pb).await?;
+            gui.set_echo(config.size, d);
+        }
+    } else {
+        let pb = None;
+        for _ in 0..n {
+            let _d = send_test(&connection, config, pb).await?;
+            let _d = recv_test(&connection, config, pb).await?;
+            let _d = echo_test(&connection, config, pb).await?;
+        }
     }
     Ok(())
 }
@@ -397,14 +415,14 @@ async fn send_test_request(
 async fn echo_test(
     connection: &quinn::Connection,
     config: &TestConfig,
-    pb: &indicatif::ProgressBar,
+    pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
     send_test_request(&mut send, &TestStreamRequest::Echo { bytes: size }).await?;
     let (mut sink, updates) = ProgressWriter::new(tokio::io::sink());
     let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-    let progress = update_pb("echo", pb.clone(), size, updates);
+    let progress = update_pb("echo", pb.cloned(), size, updates);
     let t0 = Instant::now();
     send_blocks(&mut send, size, 1024 * 1024).await?;
     send.finish().await?;
@@ -418,7 +436,7 @@ async fn echo_test(
 async fn send_test(
     connection: &quinn::Connection,
     config: &TestConfig,
-    pb: &indicatif::ProgressBar,
+    pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -426,7 +444,7 @@ async fn send_test(
     let (mut send_with_progress, updates) = ProgressWriter::new(&mut send);
     let copying =
         tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
-    let progress = update_pb("send", pb.clone(), size, updates);
+    let progress = update_pb("send", pb.cloned(), size, updates);
     let t0 = Instant::now();
     send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
     drop(send_with_progress);
@@ -442,7 +460,7 @@ async fn send_test(
 async fn recv_test(
     connection: &quinn::Connection,
     config: &TestConfig,
-    pb: &indicatif::ProgressBar,
+    pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -457,7 +475,7 @@ async fn recv_test(
     )
     .await?;
     let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-    let progress = update_pb("recv", pb.clone(), size, updates);
+    let progress = update_pb("recv", pb.cloned(), size, updates);
     send.finish().await?;
     let received = copying.await??;
     anyhow::ensure!(received == size);
@@ -602,19 +620,36 @@ async fn accept(
             derp_region,
         );
     }
+    let connections = Arc::new(AtomicU64::default());
     while let Some(connecting) = endpoint.accept().await {
-        match connecting.await {
-            Ok(connection) => {
-                println!("\nAccepted connection. Performing test.\n");
-                let t0 = Instant::now();
-                if let Err(cause) = active_side(connection, &config).await {
-                    println!("error after {}: {cause}", t0.elapsed().as_secs_f64());
+        let connections = connections.clone();
+        tokio::task::spawn(async move {
+            let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
+            match connecting.await {
+                Ok(connection) => {
+                    if n == 0 {
+                        println!("Accepted connection. Starting test");
+                        let t0 = Instant::now();
+                        let gui = Gui::new();
+                        let res = active_side(connection, &config, Some(&gui)).await;
+                        gui.clear();
+                        let dt = t0.elapsed().as_secs_f64();
+                        if let Err(cause) = res {
+                            eprintln!("Test finished after {dt}s: {cause}",);
+                        } else {
+                            eprintln!("Test finished after {dt}s",);
+                        }
+                    } else {
+                        // silent
+                        active_side(connection, &config, None).await.ok();
+                    }
                 }
-            }
-            Err(cause) => {
-                eprintln!("error accepting connection {cause}");
-            }
-        }
+                Err(cause) => {
+                    eprintln!("error accepting connection {cause}");
+                }
+            };
+            connections.sub(1, portable_atomic::Ordering::SeqCst);
+        });
     }
 
     Ok(())

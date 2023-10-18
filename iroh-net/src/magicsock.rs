@@ -864,14 +864,6 @@ impl AsyncUdpSocket for MagicSock {
     }
 }
 
-/// Simple DropGuard for decrementing a Waitgroup.
-struct WgGuard(wg::AsyncWaitGroup);
-impl Drop for WgGuard {
-    fn drop(&mut self) {
-        self.0.done();
-    }
-}
-
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum ActorMessage {
@@ -1043,6 +1035,7 @@ impl Actor {
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
+                    self.peer_map.prune_inactive();
                     let mut msgs = Vec::new();
                     for (_, ep) in self.peer_map.endpoints_mut() {
                         msgs.extend(ep.stayin_alive());
@@ -1058,6 +1051,7 @@ impl Actor {
                 }
                 _ = save_peers_timer.tick(), if self.peers_path.is_some() => {
                     let path = self.peers_path.as_ref().expect("precondition: `is_some()`");
+                    self.peer_map.prune_inactive();
                     match self.peer_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "peers persisted"),
                         Err(e) => debug!(%e, "failed to persist known peers"),
@@ -1224,12 +1218,12 @@ impl Actor {
 
     /// This modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
     /// to those that the QUIC layer should see.  E.g. the remote address will be set to the
-    /// [`QuicMappedAddr`] instead of the actual remote.
+    /// [`QuicMappedAddr`] instead of the actual remote. It also registers activity for this peer.
     ///
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
-        match self.peer_map.endpoint_for_ip_port(meta.addr) {
+        match self.peer_map.receive_ip(meta.addr) {
             None => {
                 warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
                 return false;
@@ -1242,11 +1236,6 @@ impl Actor {
 
         // Normalize local_ip
         meta.dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-
-        // ep.noteRecvActivity();
-        // if stats := c.stats.Load(); stats != nil {
-        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
-        // }
 
         debug!("received passthrough message {}", bytes.len());
         true
