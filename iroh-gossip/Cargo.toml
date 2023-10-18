@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh-sync"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.70"
+rust-version = "1.71"
 
 [dependencies]
 # proto dependencies (required)

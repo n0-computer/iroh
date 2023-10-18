@@ -36,10 +36,13 @@ use std::{
 };
 
 use bao_tree::ChunkRanges;
-use futures::{future::LocalBoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_bytes::{protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat, TempTag};
 use iroh_net::{key::PublicKey, MagicEndpoint};
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+};
 use tokio_util::{sync::CancellationToken, time::delay_queue};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
@@ -440,8 +443,8 @@ enum PeerState {
     },
 }
 
-/// Type of future that performs a download request.
-type DownloadFut = LocalBoxFuture<'static, (DownloadKind, Result<TempTag, FailureAction>)>;
+/// Type that is returned from a download request.
+type DownloadRes = (DownloadKind, Result<TempTag, FailureAction>);
 
 #[derive(Debug)]
 struct Service<G: Getter, D: Dialer> {
@@ -463,7 +466,7 @@ struct Service<G: Getter, D: Dialer> {
     /// request. This map allows deduplication of efforts.
     current_requests: HashMap<DownloadKind, ActiveRequestInfo>,
     /// Downloads underway.
-    in_progress_downloads: FuturesUnordered<DownloadFut>,
+    in_progress_downloads: JoinSet<DownloadRes>,
     /// Requests scheduled to be downloaded at a later time.
     scheduled_requests: HashMap<DownloadKind, PendingRequestInfo>,
     /// Queue of scheduled requests.
@@ -486,7 +489,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             peers: HashMap::default(),
             goodbye_peer_queue: delay_queue::DelayQueue::default(),
             current_requests: HashMap::default(),
-            in_progress_downloads: FuturesUnordered::default(),
+            in_progress_downloads: Default::default(),
             scheduled_requests: HashMap::default(),
             scheduled_request_queue: delay_queue::DelayQueue::default(),
         }
@@ -512,9 +515,16 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                         None => return self.shutdown().await,
                     }
                 }
-                Some((kind, result)) = self.in_progress_downloads.next() => {
-                    trace!("tick: download completed");
-                    self.on_download_completed(kind, result);
+                Some(res) = self.in_progress_downloads.join_next() => {
+                    match res {
+                        Ok((kind, result)) => {
+                            trace!("tick: download completed");
+                            self.on_download_completed(kind, result);
+                        }
+                        Err(e) => {
+                            warn!("download issue: {:?}", e);
+                        }
+                    }
                 }
                 Some(expired) = self.scheduled_request_queue.next(), if !at_capacity => {
                     trace!("tick: scheduled request ready");
@@ -1001,7 +1011,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             (kind, res)
         };
 
-        self.in_progress_downloads.push(fut.boxed_local());
+        self.in_progress_downloads.spawn_local(fut);
     }
 
     /// Schedule a request for later processing.

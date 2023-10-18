@@ -1430,14 +1430,6 @@ impl AsyncUdpSocket for MagicSock {
     }
 }
 
-/// Simple DropGuard for decrementing a Waitgroup.
-struct WgGuard(wg::AsyncWaitGroup);
-impl Drop for WgGuard {
-    fn drop(&mut self) {
-        self.0.done();
-    }
-}
-
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum ActorMessage {

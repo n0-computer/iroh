@@ -4,13 +4,15 @@ use std::{collections::HashMap, io, pin::Pin, time::Instant};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::future::BoxFuture;
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    task::JoinSet,
     time::{sleep_until, Sleep},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 use crate::proto::util::TimerMap;
 
@@ -88,7 +90,7 @@ pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Conne
 #[derive(Debug)]
 pub struct Dialer {
     endpoint: MagicEndpoint,
-    pending: FuturesUnordered<DialFuture>,
+    pending: JoinSet<(PublicKey, anyhow::Result<quinn::Connection>)>,
     pending_peers: HashMap<PublicKey, CancellationToken>,
 }
 
@@ -113,16 +115,14 @@ impl Dialer {
         let cancel = CancellationToken::new();
         self.pending_peers.insert(peer_id, cancel.clone());
         let endpoint = self.endpoint.clone();
-        let fut = async move {
+        self.pending.spawn(async move {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
                 res = endpoint.connect(PeerAddr::new(peer_id), alpn_protocol) => res
             };
             (peer_id, res)
-        }
-        .boxed();
-        self.pending.push(fut.boxed());
+        });
     }
 
     /// Abort a pending dial
@@ -141,8 +141,22 @@ impl Dialer {
     pub async fn next_conn(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
         match self.pending_peers.is_empty() {
             false => {
-                let (peer_id, res) = self.pending.next().await.unwrap();
-                self.pending_peers.remove(&peer_id);
+                let (peer_id, res) = loop {
+                    match self.pending.join_next().await {
+                        Some(Ok((peer_id, res))) => {
+                            self.pending_peers.remove(&peer_id);
+                            break (peer_id, res);
+                        }
+                        Some(Err(e)) => {
+                            error!("next conn error: {:?}", e);
+                        }
+                        None => {
+                            error!("no more pending conns available");
+                            futures::future::pending().await
+                        }
+                    }
+                };
+
                 (peer_id, res)
             }
             true => futures::future::pending().await,
@@ -162,10 +176,14 @@ impl futures::Stream for Dialer {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        match self.pending.poll_next_unpin(cx) {
-            std::task::Poll::Ready(Some((peer_id, result))) => {
+        match self.pending.poll_join_next(cx) {
+            std::task::Poll::Ready(Some(Ok((peer_id, result)))) => {
                 self.pending_peers.remove(&peer_id);
                 std::task::Poll::Ready(Some((peer_id, result)))
+            }
+            std::task::Poll::Ready(Some(Err(e))) => {
+                error!("dialer error: {:?}", e);
+                std::task::Poll::Pending
             }
             _ => std::task::Poll::Pending,
         }

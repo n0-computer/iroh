@@ -17,7 +17,7 @@ fn get_resolver() -> Result<TokioAsyncResolver> {
     let resolver = AsyncResolver::tokio(
         config::ResolverConfig::default(),
         config::ResolverOpts::default(),
-    )?;
+    );
     Ok(resolver)
 }
 

@@ -283,7 +283,7 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(self) -> Result<Node<D, S>> {
+    pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
         // Initialize the metrics collection.
@@ -426,7 +426,7 @@ where
         server: MagicEndpoint,
         callbacks: Callbacks,
         mut cb_receiver: mpsc::Receiver<EventCallback>,
-        handler: RpcHandler<D, S>,
+        handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         auth_handler: Arc<dyn RequestAuthorizationHandler>,
@@ -594,12 +594,12 @@ where
 
 // TODO: Restructure this code to not take all these arguments.
 #[allow(clippy::too_many_arguments)]
-async fn handle_connection<D: BaoStore, S: DocStore>(
+async fn handle_connection<D: BaoStore>(
     connecting: quinn::Connecting,
     alpn: String,
-    node: Arc<NodeInner<D, S>>,
+    node: Arc<NodeInner<D>>,
     gossip: Gossip,
-    sync: SyncEngine<S>,
+    sync: SyncEngine,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
@@ -662,13 +662,13 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: Map, S: DocStore> {
-    inner: Arc<NodeInner<D, S>>,
+pub struct Node<D: Map> {
+    inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct NodeInner<D, S: DocStore> {
+struct NodeInner<D> {
     db: D,
     endpoint: MagicEndpoint,
     secret_key: SecretKey,
@@ -680,7 +680,7 @@ struct NodeInner<D, S: DocStore> {
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
     rt: runtime::Handle,
-    pub(crate) sync: SyncEngine<S>,
+    pub(crate) sync: SyncEngine,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -692,11 +692,11 @@ pub enum Event {
     Db(iroh_bytes::store::Event),
 }
 
-impl<D: ReadableStore, S: DocStore> Node<D, S> {
+impl<D: ReadableStore> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    pub fn builder(bao_store: D, doc_store: S) -> Builder<D, S> {
+    pub fn builder<S: DocStore>(bao_store: D, doc_store: S) -> Builder<D, S> {
         Builder::with_db_and_store(bao_store, doc_store)
     }
 
@@ -782,7 +782,7 @@ impl<D: ReadableStore, S: DocStore> Node<D, S> {
     }
 }
 
-impl<D: Map, S: DocStore> NodeInner<D, S> {
+impl<D: Map> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -803,7 +803,7 @@ impl<D: Map, S: DocStore> NodeInner<D, S> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: Map, S: DocStore> Future for Node<D, S> {
+impl<D: Map> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -812,11 +812,11 @@ impl<D: Map, S: DocStore> Future for Node<D, S> {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler<D, S: DocStore> {
-    inner: Arc<NodeInner<D, S>>,
+struct RpcHandler<D> {
+    inner: Arc<NodeInner<D>>,
 }
 
-impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
+impl<D: BaoStore> RpcHandler<D> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -1409,10 +1409,10 @@ impl<D: BaoStore, S: DocStore> RpcHandler<D, S> {
     }
 }
 
-fn handle_rpc_request<D: BaoStore, S: DocStore, E: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
-    handler: &RpcHandler<D, S>,
+    handler: &RpcHandler<D>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
