@@ -522,7 +522,11 @@ impl Inner {
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
                     trace!("UDP recv: disco packet: {:?}", meta);
-                    self.handle_disco_message(sender, sealed_box, SendAddr::Udp(meta.addr), None);
+                    self.handle_disco_message(
+                        sender,
+                        sealed_box,
+                        DiscoMessageSource::Udp(meta.addr),
+                    );
                     packet_is_quic = false;
                 }
 
@@ -634,10 +638,9 @@ impl Inner {
         &self,
         sender: PublicKey,
         sealed_box: &[u8],
-        src: SendAddr,
-        derp_node_src: Option<PublicKey>,
+        src: DiscoMessageSource,
     ) -> bool {
-        debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
+        debug!("handle_disco_message start {:?}", src);
         if self.is_closed() {
             return true;
         }
@@ -645,8 +648,8 @@ impl Inner {
         let unknown_sender = self.peer_map.write(|pm| {
             if pm.endpoint_for_node_key(&sender).is_none() {
                 match src {
-                    SendAddr::Udp(addr) => pm.receive_ip(addr).is_none(),
-                    SendAddr::Derp(_) => true,
+                    DiscoMessageSource::Udp(addr) => pm.receive_ip(addr).is_none(),
+                    DiscoMessageSource::Derp { .. } => true,
                 }
             } else {
                 false
@@ -655,7 +658,7 @@ impl Inner {
         if unknown_sender {
             // Disco Ping from unseen endpoint. We will have to add the
             // endpoint later if the message is a ping
-            debug!("disco: unknown sender {:?} - {}", sender, src);
+            debug!("disco: unknown sender {:?}", sender);
         }
 
         // We're now reasonably sure we're expecting communication from
@@ -709,11 +712,7 @@ impl Inner {
                 // if we get here we got a valid ping from an unknown sender
                 // so insert an endpoint for them
                 if unknown_sender {
-                    warn!(
-                        "unknown sender: {:?} with region id {:?}",
-                        sender,
-                        src.derp_region()
-                    );
+                    warn!("unknown sender: {:?}: {:?}", sender, src);
                     self.peer_map.write(|pm| {
                         pm.insert_endpoint(EndpointOptions {
                             public_key: sender,
@@ -723,14 +722,14 @@ impl Inner {
                     });
                 }
 
-                self.handle_ping(ping, &sender, src, derp_node_src);
+                self.handle_ping(ping, &sender, src);
                 true
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
                 self.peer_map.write(|pm| {
                     if let Some(ep) = pm.endpoint_for_node_key_mut(&sender).as_mut() {
-                        let insert = ep.handle_pong_conn(&self.public_key(), &pong, src);
+                        let insert = ep.handle_pong_conn(&self.public_key(), &pong, src.into());
                         if let Some((src, key)) = insert {
                             pm.set_node_key_for_ip_port(src, &key);
                         }
@@ -740,19 +739,18 @@ impl Inner {
             }
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
-                if !is_derp || derp_node_src.is_none() {
+                let DiscoMessageSource::Derp { key, .. } = src else {
                     // CallMeMaybe messages should only come via DERP.
                     debug!("[unexpected] CallMeMaybe packets should only come via DERP");
                     return true;
-                }
-                let node_key = derp_node_src.unwrap();
-                self.peer_map.write(
-                    |pm| match pm.endpoint_for_node_key_mut(&node_key).as_mut() {
+                };
+                self.peer_map
+                    .write(|pm| match pm.endpoint_for_node_key_mut(&key).as_mut() {
                         None => {
                             inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                             debug!(
                                 "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
-                                sender, node_key,
+                                sender, key,
                             );
                         }
                         Some(ep) => {
@@ -765,8 +763,7 @@ impl Inner {
                             );
                             ep.handle_call_me_maybe(cm);
                         }
-                    },
-                );
+                    });
                 true
             }
         }
@@ -775,22 +772,17 @@ impl Inner {
     /// di is the DiscoInfo of the source of the ping.
     /// derp_node_src is non-zero if the ping arrived via DERP.
     #[instrument(skip_all)]
-    fn handle_ping(
-        &self,
-        dm: disco::Ping,
-        sender: &PublicKey,
-        src: SendAddr,
-        derp_node_src: Option<PublicKey>,
-    ) {
+    fn handle_ping(&self, dm: disco::Ping, sender: &PublicKey, src: DiscoMessageSource) {
+        let src_addr: SendAddr = src.clone().into();
         let (node_key, likely_heart_beat) = {
             let mut disco_info = self.disco_info.lock();
             let di = get_disco_info(&mut disco_info, &self.secret_key, sender);
-            let likely_heart_beat = Some(src) == di.last_ping_from
+            let likely_heart_beat = Some(src_addr) == di.last_ping_from
                 && di
                     .last_ping_time
                     .map(|s| s.elapsed() < Duration::from_secs(5))
                     .unwrap_or_default();
-            di.last_ping_from.replace(src);
+            di.last_ping_from.replace(src_addr);
             di.last_ping_time.replace(Instant::now());
             (di.node_key, likely_heart_beat)
         };
@@ -801,28 +793,17 @@ impl Inner {
         // will be zero here, but that's fine: send_disco_message only requires
         // a dstKey if the dst ip:port is DERP.
 
-        let dst_key = match derp_node_src {
-            Some(dst_key) => {
-                if !src.is_derp() {
-                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
-                    return debug_assert!(false, "`derp_node_src` is some but `src` is not derp");
-                }
-                dst_key
-            }
-            None => {
-                if src.is_derp() {
-                    error!(%src, from=%sender.fmt_short(), "ignoring ping reported both as direct and relayed");
-                    return debug_assert!(false, "`derp_node_src` is none but `src` is derp");
-                }
-                node_key
-            }
+        let dst_key = match src {
+            DiscoMessageSource::Derp { key, .. } => key,
+            DiscoMessageSource::Udp(_) => node_key,
         };
         let is_duplicate = self.peer_map.write(|pm| {
             if let Some(ep) = pm.endpoint_for_node_key_mut(&dst_key) {
-                if ep.endpoint_confirmed(src, dm.tx_id) {
+                if ep.endpoint_confirmed(src_addr, dm.tx_id) {
                     return true;
                 }
-                if let SendAddr::Udp(addr) = src {
+
+                if let DiscoMessageSource::Udp(addr) = src {
                     pm.set_node_key_for_ip_port(addr, &dst_key);
                 }
             }
@@ -830,7 +811,10 @@ impl Inner {
         });
 
         if is_duplicate {
-            debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+            debug!(
+                "disco: ping got duplicate endpoint {:?} - {}",
+                src, dm.tx_id
+            );
             return;
         };
 
@@ -843,13 +827,12 @@ impl Inner {
             );
         }
 
-        let ip_dst = src;
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
             src: src.as_socket_addr(),
         });
         match self.actor_sender.try_send(ActorMessage::SendDiscoMessage {
-            dst: ip_dst,
+            dst: src.clone().into(),
             dst_key,
             msg: pong,
         }) {
@@ -979,6 +962,42 @@ impl Inner {
             Err(mpsc::error::TrySendError::Full(_)) => {
                 warn!("dropping message for derp actor, channel is full");
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum DiscoMessageSource {
+    Udp(SocketAddr),
+    Derp { region: u16, key: PublicKey },
+}
+
+impl From<DiscoMessageSource> for SendAddr {
+    fn from(value: DiscoMessageSource) -> Self {
+        match value {
+            DiscoMessageSource::Udp(addr) => SendAddr::Udp(addr),
+            DiscoMessageSource::Derp { region, .. } => SendAddr::Derp(region),
+        }
+    }
+}
+
+impl DiscoMessageSource {
+    fn is_derp(&self) -> bool {
+        matches!(self, DiscoMessageSource::Derp { .. })
+    }
+
+    fn derp_region(&self) -> Option<u16> {
+        match self {
+            Self::Derp { region, .. } => Some(*region),
+            Self::Udp(_) => None,
+        }
+    }
+
+    /// Returns the mapped version or the actual `SocketAddr`.
+    fn as_socket_addr(&self) -> SocketAddr {
+        match self {
+            Self::Derp { region, .. } => SocketAddr::new(DERP_MAGIC_IP, *region),
+            Self::Udp(addr) => *addr,
         }
     }
 }
@@ -1730,7 +1749,6 @@ impl Actor {
             return Vec::new();
         }
         let region_id = dm.region_id;
-        let ipp = SendAddr::Derp(region_id);
 
         let ep_quic_mapped_addr = self.inner.peer_map.write(|pm| {
             let ep_quic_mapped_addr = pm.endpoint_for_node_key_mut(&dm.src).as_mut().map(|ep| {
@@ -1768,7 +1786,10 @@ impl Actor {
         for part in parts {
             match part {
                 Ok(part) => {
-                    if self.handle_derp_disco_message(&part, ipp, dm.src).await {
+                    if self
+                        .handle_derp_disco_message(&part, region_id, dm.src)
+                        .await
+                    {
                         // Message was internal, do not bubble up.
                         debug!("processed internal disco message from {:?}", dm.src);
                         continue;
@@ -2431,14 +2452,18 @@ impl Actor {
     async fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
-        src: SendAddr,
+        region: u16,
         derp_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
-            Some((source, sealed_box)) => {
-                self.inner
-                    .handle_disco_message(source, sealed_box, src, Some(derp_node_src))
-            }
+            Some((source, sealed_box)) => self.inner.handle_disco_message(
+                source,
+                sealed_box,
+                DiscoMessageSource::Derp {
+                    region,
+                    key: derp_node_src,
+                },
+            ),
             None => false,
         }
     }
@@ -2567,13 +2592,6 @@ enum SendAddr {
 impl SendAddr {
     fn is_derp(&self) -> bool {
         matches!(self, Self::Derp(_))
-    }
-
-    fn derp_region(&self) -> Option<u16> {
-        match self {
-            Self::Derp(region) => Some(*region),
-            Self::Udp(_) => None,
-        }
     }
 
     /// Returns the mapped version or the actual `SocketAddr`.
