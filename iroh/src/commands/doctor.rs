@@ -86,7 +86,7 @@ pub enum Commands {
     /// Connect to an iroh doctor accept node.
     Connect {
         /// hex peer id of the node to connect to
-        dial: String,
+        dial: PublicKey,
 
         /// One or more remote endpoints to use when dialing
         #[clap(long)]
@@ -543,16 +543,13 @@ async fn make_endpoint(
 }
 
 async fn connect(
-    dial: String,
+    peer_id: PublicKey,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
     derp_region: Option<u16>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, derp_map).await?;
-
-    let bytes = hex::decode(dial)?;
-    let peer_id = PublicKey::try_from(&bytes[..]).context("failed to parse PublicKey")?;
 
     tracing::info!("dialing {:?}", peer_id);
     let peer_addr = PeerAddr::from_parts(peer_id, derp_region, direct_addresses);
@@ -586,19 +583,25 @@ async fn accept(
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), derp_map).await?;
-
     let endpoints = endpoint.local_endpoints().await?;
     let remote_addrs = endpoints
         .iter()
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
         .collect::<Vec<_>>()
         .join(" ");
+    println!("Connect to this node using one of the following commands to connect either directly by address or indirectly by derp region:");
     println!(
-            "Run\n\niroh doctor connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
-            hex::encode(secret_key.public().as_bytes()),
-            remote_addrs,
+        "iroh doctor connect {} {}",
+        secret_key.public(),
+        remote_addrs,
+    );
+    if let Some(derp_region) = endpoint.my_derp().await {
+        println!(
+            "iroh doctor connect {} --derp-region {}",
+            secret_key.public(),
+            derp_region,
         );
-    println!("Omit the --remote-endpoint args to connect just by key.");
+    }
     while let Some(connecting) = endpoint.accept().await {
         match connecting.await {
             Ok(connection) => {

@@ -9,10 +9,7 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    sync::{
-        atomic::{self, AtomicBool},
-        Arc,
-    },
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -22,8 +19,6 @@ use bytes::{Bytes, BytesMut};
 use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
-
-use parking_lot::RwLock;
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
@@ -53,6 +48,19 @@ pub type PeerIdBytes = [u8; 32];
 /// Value is 10 minutes.
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
+/// Callback that may be set on a replica to determine the availability status for a content hash.
+pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>;
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub enum Event {
+    Insert {
+        namespace: NamespaceId,
+        origin: InsertOrigin,
+        entry: SignedEntry,
+    },
+}
+
 /// Whether an entry was inserted locally or by a remote peer.
 #[derive(Debug, Clone)]
 pub enum InsertOrigin {
@@ -78,30 +86,49 @@ pub enum ContentStatus {
     Missing,
 }
 
+/// Outcome of a sync operation.
+#[derive(Debug, Clone, Default)]
+pub struct SyncOutcome {
+    /// Number of entries we received.
+    pub num_recv: usize,
+    /// Number of entries we sent.
+    pub num_sent: usize,
+}
+
+#[derive(Debug, Default)]
+struct Subscribers(Vec<flume::Sender<Event>>);
+impl Subscribers {
+    pub fn subscribe(&mut self, sender: flume::Sender<Event>) {
+        self.0.push(sender)
+    }
+    pub fn unsubscribe(&mut self, sender: &flume::Sender<Event>) {
+        self.0.retain(|s| !s.same_channel(sender));
+    }
+    pub fn send(&mut self, event: Event) {
+        self.0.retain(|sender| sender.send(event.clone()).is_ok())
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn send_with(&mut self, f: impl FnOnce() -> Event) {
+        if !self.0.is_empty() {
+            self.send(f())
+        }
+    }
+    pub fn clear(&mut self) {
+        self.0.clear()
+    }
+}
+
 /// Local representation of a mutable, synchronizable key-value store.
-#[derive(derive_more::Debug, Clone)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    inner: Arc<InnerReplica<S>>,
-}
-
 #[derive(derive_more::Debug)]
-struct InnerReplica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     namespace: Namespace,
-    peer: RwLock<Peer<SignedEntry, S>>,
-    #[allow(clippy::type_complexity)]
-    on_insert_sender: RwLock<Option<flume::Sender<(InsertOrigin, SignedEntry)>>>,
-
-    #[allow(clippy::type_complexity)]
+    peer: Peer<SignedEntry, S>,
+    subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
-    content_status_cb: RwLock<Option<Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>>>,
-
-    closed: AtomicBool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ReplicaData {
-    entries: Vec<SignedEntry>,
-    namespace: Namespace,
+    content_status_cb: Option<ContentStatusCallback>,
+    closed: bool,
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
@@ -109,65 +136,56 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     // TODO: make read only replicas possible
     pub fn new(namespace: Namespace, store: S) -> Self {
         Replica {
-            inner: Arc::new(InnerReplica {
-                namespace,
-                peer: RwLock::new(Peer::from_store(store)),
-                on_insert_sender: RwLock::new(None),
-                content_status_cb: RwLock::new(None),
-                closed: AtomicBool::new(false),
-            }),
+            namespace,
+            peer: Peer::from_store(store),
+            subscribers: Default::default(),
+            // on_insert_sender: RwLock::new(None),
+            content_status_cb: None,
+            closed: false,
         }
     }
 
     /// Mark the replica as closed, prohibiting any further operations.
     ///
     /// This method is not public. Use [store::Store::close_replica] instead.
-    pub(crate) fn close(&self) {
-        self.unsubscribe();
-        self.inner.closed.store(true, atomic::Ordering::Release);
+    pub(crate) fn close(&mut self) {
+        self.subscribers.clear();
+        self.closed = true;
     }
 
-    /// Subscribe to insert events.
+    /// Subcribe to insert events.
     ///
-    /// Only one subscription can be active at a time. If a previous subscription was created, this
-    /// will return `None`.
-    ///
-    /// When subscribing to a replica, you must ensure that the returned [`flume::Receiver`] is
+    /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
     /// the receiver to be received from.
-    // TODO: Allow to clear a previous subscription?
-    pub fn subscribe(&self) -> Option<flume::Receiver<(InsertOrigin, SignedEntry)>> {
-        let mut on_insert_sender = self.inner.on_insert_sender.write();
-        match &*on_insert_sender {
-            Some(_sender) => None,
-            None => {
-                let (s, r) = flume::bounded(16); // TODO: should this be configurable?
-                *on_insert_sender = Some(s);
-                Some(r)
-            }
-        }
+    pub fn subscribe(&mut self, sender: flume::Sender<Event>) {
+        self.subscribers.subscribe(sender)
     }
 
-    /// Remove the subscription.
-    pub fn unsubscribe(&self) -> bool {
-        self.inner.on_insert_sender.write().take().is_some()
+    /// Explicitly unsubscribe a sender.
+    ///
+    /// Simply dropping the receiver is fine too. If you cloned a single sender to subscribe to
+    /// multiple replicas, you can use this method to explicitly unsubscribe the sender from
+    /// this replica without having to drop the receiver.
+    pub fn unsubscribe(&mut self, sender: &flume::Sender<Event>) {
+        self.subscribers.unsubscribe(sender)
+    }
+
+    /// Get the number of current event subscribers.
+    pub fn subscribers_count(&self) -> usize {
+        self.subscribers.len()
     }
 
     /// Set the content status callback.
     ///
     /// Only one callback can be active at a time. If a previous callback was registered, this
     /// will return `false`.
-    pub fn set_content_status_callback(
-        &self,
-        cb: Box<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>,
-    ) -> bool {
-        let mut content_status_cb = self.inner.content_status_cb.write();
-        match &*content_status_cb {
-            Some(_cb) => false,
-            None => {
-                *content_status_cb = Some(cb);
-                true
-            }
+    pub fn set_content_status_callback(&mut self, cb: ContentStatusCallback) -> bool {
+        if self.content_status_cb.is_some() {
+            false
+        } else {
+            self.content_status_cb = Some(cb);
+            true
         }
     }
 
@@ -185,7 +203,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// manually, it must be closed via [`store::Store::close_replica`] or
     /// [`store::Store::remove_replica`]
     pub fn closed(&self) -> bool {
-        self.inner.closed.load(atomic::Ordering::Acquire)
+        self.closed
     }
 
     /// Insert a new record at the given key.
@@ -196,7 +214,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Returns the number of entries removed as a consequence of this insertion,
     /// or an error either if the entry failed to validate or if a store operation failed.
     pub fn insert(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         author: &Author,
         hash: Hash,
@@ -209,7 +227,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
-        let signed_entry = entry.sign(&self.inner.namespace, author);
+        let signed_entry = entry.sign(&self.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -220,14 +238,14 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// Returns the number of entries deleted.
     pub fn delete_prefix(
-        &self,
+        &mut self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
     ) -> Result<usize, InsertError<S>> {
         self.ensure_open()?;
         let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
         let entry = Entry::new_empty(id);
-        let signed_entry = entry.sign(&self.inner.namespace, author);
+        let signed_entry = entry.sign(&self.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -239,7 +257,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Returns the number of entries removed as a consequence of this insertion,
     /// or an error if the entry failed to validate or if a store operation failed.
     pub fn insert_remote_entry(
-        &self,
+        &mut self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
@@ -257,37 +275,24 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ///
     /// Returns the number of entries removed as a consequence of this insertion.
     fn insert_entry(
-        &self,
+        &mut self,
         entry: SignedEntry,
         origin: InsertOrigin,
     ) -> Result<usize, InsertError<S>> {
-        let expected_namespace = self.namespace();
+        let namespace = self.namespace();
 
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
-        let mut peer = self.inner.peer.write();
-        let store = peer.store();
-        validate_entry(
-            system_time_now(),
-            store,
-            expected_namespace,
-            &entry,
-            &origin,
-        )?;
+        let store = self.peer.store();
+        validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
-        let outcome = peer.put(entry.clone()).map_err(InsertError::Store)?;
+        let outcome = self.peer.put(entry.clone()).map_err(InsertError::Store)?;
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
             InsertOutcome::NotInserted => return Err(InsertError::NewerEntryExists),
         };
-
-        drop(peer);
-
-        if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
-            sender.send((origin.clone(), entry)).ok();
-        }
 
         #[cfg(feature = "metrics")]
         {
@@ -303,6 +308,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             }
         }
 
+        self.subscribers.send(Event::Insert {
+            namespace,
+            origin,
+            entry,
+        });
+
         Ok(removed_count)
     }
 
@@ -311,7 +322,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// This does not store the content, just the record of it.
     /// Returns the calculated hash.
     pub fn hash_and_insert(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
@@ -325,50 +336,60 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the identifier for an entry in this replica.
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        RecordIdentifier::new(self.inner.namespace.id(), author.id(), key)
+        RecordIdentifier::new(self.namespace.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(
-        &self,
-    ) -> Result<crate::ranger::Message<SignedEntry>, anyhow::Error> {
+    pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
         self.ensure_open()?;
-        self.inner.peer.read().initial_message().map_err(Into::into)
+        self.peer.initial_message().map_err(Into::into)
     }
 
     /// Process a set reconciliation message from a remote peer.
     ///
     /// Returns the next message to be sent to the peer, if any.
     pub fn sync_process_message(
-        &self,
+        &mut self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
+        state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
         self.ensure_open()?;
-        let expected_namespace = self.namespace();
+        let my_namespace = self.namespace();
         let now = system_time_now();
+
+        // update state with incoming data.
+        state.num_recv += message.value_count();
+
+        // let subscribers = std::rc::Rc::new(&mut self.subscribers);
+        // l
         let reply = self
-            .inner
             .peer
-            .write()
             .process_message(
                 message,
+                // validate callback: validate incoming entries, and send to on_insert channel
                 |store, entry, content_status| {
                     let origin = InsertOrigin::Sync {
                         from: from_peer,
                         content_status,
                     };
-                    if validate_entry(now, store, expected_namespace, entry, &origin).is_ok() {
-                        if let Some(sender) = self.inner.on_insert_sender.read().as_ref() {
-                            sender.send((origin, entry.clone())).ok();
-                        }
-                        true
-                    } else {
-                        false
-                    }
+                    validate_entry(now, store, my_namespace, entry, &origin).is_ok()
                 },
+                // on_insert callback: is called when an entry was actually inserted in the store
+                |_store, entry, content_status| {
+                    // We use `send_with` to only clone the entry if we have active subcriptions.
+                    self.subscribers.send_with(|| Event::Insert {
+                        namespace: my_namespace,
+                        origin: InsertOrigin::Sync {
+                            from: from_peer,
+                            content_status,
+                        },
+                        entry: entry.clone(),
+                    })
+                },
+                // content_status callback: get content status for outgoing entries
                 |_store, entry| {
-                    if let Some(cb) = self.inner.content_status_cb.read().as_ref() {
+                    if let Some(cb) = self.content_status_cb.as_ref() {
                         cb(entry.content_hash())
                     } else {
                         ContentStatus::Missing
@@ -377,18 +398,22 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             )
             .map_err(Into::into)?;
 
+        // update state with outgoing data.
+        if let Some(ref reply) = reply {
+            state.num_sent += reply.value_count();
+        }
+
         Ok(reply)
     }
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn namespace(&self) -> NamespaceId {
-        self.inner.namespace.id()
+        self.namespace.id()
     }
 
     /// Get the byte represenation of the [`Namespace`] key for this replica.
-    // TODO: Why return [u8; 32] and not `Namespace` here?
-    pub fn secret_key(&self) -> [u8; 32] {
-        self.inner.namespace.to_bytes()
+    pub fn secret_key(&self) -> Namespace {
+        self.namespace.clone()
     }
 }
 
@@ -962,7 +987,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        store::{self, GetFilter, Store},
+        store::{self, GetFilter, OpenError, Store},
     };
 
     use super::*;
@@ -996,7 +1021,7 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify(&()).expect("failed to verify");
 
-        let my_replica = store.new_replica(myspace)?;
+        let mut my_replica = store.new_replica(myspace)?;
         for i in 0..10 {
             my_replica.hash_and_insert(
                 format!("/{i}"),
@@ -1104,12 +1129,9 @@ mod tests {
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
-        let replica = store.open_replica(&my_replica.namespace())?.unwrap();
         // Get Range of all should return all latest
-        let entries_second: Vec<_> = replica
-            .inner
+        let entries_second: Vec<_> = my_replica
             .peer
-            .read()
             .store()
             .get_range(Range::new(
                 RecordIdentifier::default(),
@@ -1196,7 +1218,7 @@ mod tests {
         for i in 0..n_replicas {
             let namespace = Namespace::new(&mut rng);
             let author = store.new_author(&mut rng)?;
-            let replica = store.new_replica(namespace)?;
+            let mut replica = store.new_replica(namespace)?;
             for j in 0..n_entries {
                 let key = format!("{j}");
                 let data = format!("{i}:{j}");
@@ -1320,7 +1342,7 @@ mod tests {
     fn test_timestamps<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
         let author = store.new_author(&mut rng)?;
 
         let key = b"hello";
@@ -1381,17 +1403,22 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let alice = alice_store.new_replica(myspace.clone())?;
+        let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let bob = bob_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone())?;
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync::<S>(&alice, &bob)?;
+        let (alice_out, bob_out) = sync::<S>(&mut alice, &mut bob)?;
+
+        assert_eq!(alice_out.num_sent, 2);
+        assert_eq!(bob_out.num_recv, 2);
+        assert_eq!(alice_out.num_recv, 6);
+        assert_eq!(bob_out.num_sent, 6);
 
         check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
@@ -1426,8 +1453,8 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let alice = alice_store.new_replica(namespace.clone())?;
-        let bob = bob_store.new_replica(namespace.clone())?;
+        let mut alice = alice_store.new_replica(namespace.clone())?;
+        let mut bob = bob_store.new_replica(namespace.clone())?;
 
         let key = b"key";
         let alice_value = b"alice";
@@ -1435,7 +1462,7 @@ mod tests {
         let _alice_hash = alice.hash_and_insert(key, &author, alice_value)?;
         // system time increased - sync should overwrite
         let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
@@ -1449,7 +1476,7 @@ mod tests {
         // system time increased - sync should overwrite
         let _bob_hash_2 = bob.hash_and_insert(key, &author, bob_value)?;
         let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
@@ -1468,7 +1495,7 @@ mod tests {
         let store = store::memory::Store::default();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         let key = b"hi";
         let t = system_time_now();
@@ -1511,7 +1538,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let replica = store.new_replica(myspace.clone())?;
+        let mut replica = store.new_replica(myspace.clone())?;
         let hash = Hash::new(b"");
         let res = replica.insert(b"foo", &alice, hash, 0);
         assert!(matches!(res, Err(InsertError::EntryIsEmpty)));
@@ -1538,7 +1565,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let replica = store.new_replica(myspace.clone())?;
+        let mut replica = store.new_replica(myspace.clone())?;
         let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
         let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
 
@@ -1587,17 +1614,17 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let alice = alice_store.new_replica(myspace.clone())?;
+        let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let bob = bob_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone())?;
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
 
         check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
@@ -1606,7 +1633,7 @@ mod tests {
 
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
-        sync::<S>(&alice, &bob)?;
+        sync::<S>(&mut alice, &mut bob)?;
         check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
         check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
@@ -1631,7 +1658,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let namespace = Namespace::new(&mut rng);
         let author = Author::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         // insert entry
         let hash = replica.hash_and_insert(b"foo", &author, b"bar")?;
@@ -1641,26 +1668,22 @@ mod tests {
         assert_eq!(res.len(), 1);
 
         // remove replica
+        let res = store.remove_replica(&namespace.id());
+        // may not remove replica while still open;
+        assert!(res.is_err());
+        store.close_replica(replica);
         store.remove_replica(&namespace.id())?;
         let res = store
             .get_many(namespace.id(), GetFilter::All)?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 0);
 
-        // may not insert on removed replica
-        let res = replica.insert(b"foo", &author, hash, 3);
-        assert!(matches!(res, Err(InsertError::Closed)));
-        let res = store
-            .get_many(namespace.id(), GetFilter::All)?
-            .collect::<Vec<_>>();
-        assert_eq!(res.len(), 0);
-
         // may not reopen removed replica
-        let res = store.open_replica(&namespace.id())?;
-        assert!(res.is_none());
+        let res = store.open_replica(&namespace.id());
+        assert!(matches!(res, Err(OpenError::NotFound)));
 
         // may recreate replica
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(b"foo", &author, hash, 3)?;
         let res = store
             .get_many(namespace.id(), GetFilter::All)?
@@ -1687,7 +1710,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         let edgecases = [0u8, 1u8, 255u8];
         let prefixes = [0u8, 255u8];
@@ -1748,7 +1771,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = Namespace::new(&mut rng);
-        let replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         let hash = Hash::new(b"foo");
         let len = 3;
@@ -1767,6 +1790,74 @@ mod tests {
             namespace.id(),
             vec![vec![1u8, 0u8], vec![1u8, 2u8], vec![0u8, 255u8]],
         );
+        Ok(())
+    }
+
+    /// This tests that no events are emitted for entries received during sync which are obsolete
+    /// (too old) by the time they are actually inserted in the store.
+    #[test]
+    fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let store1 = store::memory::Store::default();
+        let store2 = store::memory::Store::default();
+        let peer1 = [1u8; 32];
+        let peer2 = [2u8; 32];
+        let mut state1 = SyncOutcome::default();
+        let mut state2 = SyncOutcome::default();
+
+        let author = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let mut replica1 = store1.new_replica(namespace.clone())?;
+        let mut replica2 = store2.new_replica(namespace.clone())?;
+
+        let (events1_sender, events1) = flume::bounded(32);
+        let (events2_sender, events2) = flume::bounded(32);
+
+        replica1.subscribe(events1_sender);
+        replica2.subscribe(events2_sender);
+
+        replica1.hash_and_insert(b"foo", &author, b"init")?;
+
+        let from1 = replica1.sync_initial_message()?;
+        let from2 = replica2
+            .sync_process_message(from1, peer1, &mut state2)
+            .unwrap()
+            .unwrap();
+        let from1 = replica1
+            .sync_process_message(from2, peer2, &mut state1)
+            .unwrap()
+            .unwrap();
+        // now we will receive the entry from rpelica1. we will insert a newer entry now, while the
+        // sync is already running. this means the entry from replica1 will be rejected. we make
+        // sure that no InsertRemote event is emitted for this entry.
+        replica2.hash_and_insert(b"foo", &author, b"update")?;
+        let from2 = replica2
+            .sync_process_message(from1, peer1, &mut state2)
+            .unwrap();
+        assert!(from2.is_none());
+        let events1 = events1.drain().collect::<Vec<_>>();
+        let events2 = events2.drain().collect::<Vec<_>>();
+        assert_eq!(events1.len(), 1);
+        assert_eq!(events2.len(), 1);
+        assert!(matches!(
+            events1[0],
+            Event::Insert {
+                origin: InsertOrigin::Local,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events2[0],
+            Event::Insert {
+                origin: InsertOrigin::Local,
+                ..
+            }
+        ));
+        assert_eq!(state1.num_sent, 1);
+        assert_eq!(state1.num_recv, 0);
+        assert_eq!(state2.num_sent, 0);
+        assert_eq!(state2.num_recv, 1);
+
         Ok(())
     }
 
@@ -1811,11 +1902,13 @@ mod tests {
     }
 
     fn sync<S: store::Store>(
-        alice: &Replica<S::Instance>,
-        bob: &Replica<S::Instance>,
-    ) -> Result<()> {
+        alice: &mut Replica<S::Instance>,
+        bob: &mut Replica<S::Instance>,
+    ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
+        let mut alice_state = SyncOutcome::default();
+        let mut bob_state = SyncOutcome::default();
         // Sync alice - bob
         let mut next_to_bob = Some(alice.sync_initial_message()?);
         let mut rounds = 0;
@@ -1823,11 +1916,13 @@ mod tests {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg, alice_peer_id)? {
-                next_to_bob = alice.sync_process_message(msg, bob_peer_id)?
+            if let Some(msg) = bob.sync_process_message(msg, alice_peer_id, &mut bob_state)? {
+                next_to_bob = alice.sync_process_message(msg, bob_peer_id, &mut alice_state)?
             }
         }
-        Ok(())
+        assert_eq!(alice_state.num_sent, bob_state.num_recv);
+        assert_eq!(alice_state.num_recv, bob_state.num_sent);
+        Ok((alice_state, bob_state))
     }
 
     fn check_entries<S: store::Store>(
@@ -1836,9 +1931,8 @@ mod tests {
         author: &Author,
         set: &[&str],
     ) -> Result<()> {
-        let replica = store.open_replica(namespace)?.unwrap();
         for el in set {
-            store.get_one(replica.namespace(), author.id(), el)?;
+            store.get_one(*namespace, author.id(), el)?;
         }
         Ok(())
     }

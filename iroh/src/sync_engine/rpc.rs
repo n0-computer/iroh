@@ -1,37 +1,38 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::{FutureExt, Stream};
-use iroh_bytes::{
-    store::Store as BaoStore,
-    util::{BlobFormat, RpcError},
-};
-use iroh_sync::{store::Store, sync::Namespace};
-use itertools::Itertools;
-use rand::rngs::OsRng;
+use futures::Stream;
+use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
+use iroh_sync::{sync::Namespace, Author};
+use tokio_stream::StreamExt;
 
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
-        DocCreateRequest, DocCreateResponse, DocDelRequest, DocDelResponse, DocDropRequest,
-        DocDropResponse, DocGetManyRequest, DocGetManyResponse, DocGetOneRequest,
-        DocGetOneResponse, DocImportRequest, DocImportResponse, DocInfoRequest, DocInfoResponse,
-        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocSetHashRequest,
-        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
-        DocStartSyncRequest, DocStartSyncResponse, DocSubscribeRequest, DocSubscribeResponse,
-        DocTicket, RpcResult, ShareMode,
+        DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
+        DocDelResponse, DocDropRequest, DocDropResponse, DocGetManyRequest, DocGetManyResponse,
+        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
+        DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
+        DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
+        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
+        DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
+        ShareMode,
     },
-    sync_engine::{KeepCallback, LiveStatus, SyncEngine},
+    sync_engine::SyncEngine,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
-impl<S: Store> SyncEngine<S> {
-    pub fn author_create(&self, _req: AuthorCreateRequest) -> RpcResult<AuthorCreateResponse> {
+impl SyncEngine {
+    pub async fn author_create(
+        &self,
+        _req: AuthorCreateRequest,
+    ) -> RpcResult<AuthorCreateResponse> {
         // TODO: pass rng
-        let author = self.store.new_author(&mut rand::rngs::OsRng {})?;
+        let author = Author::new(&mut rand::rngs::OsRng {});
+        self.sync.import_author(author.clone()).await?;
         Ok(AuthorCreateResponse {
             author_id: author.id(),
         })
@@ -42,73 +43,76 @@ impl<S: Store> SyncEngine<S> {
         _req: AuthorListRequest,
     ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
-        let store = self.store.clone();
-        self.rt.main().spawn_blocking(move || {
-            let ite = store.list_authors();
-            let ite = inline_result(ite).map_ok(|author| AuthorListResponse {
-                author_id: author.id(),
-            });
-            for entry in ite {
-                if let Err(_err) = tx.send(entry) {
-                    break;
-                }
+        let sync = self.sync.clone();
+        // we need to spawn a task to send our request to the sync handle, because the method
+        // itself must be sync.
+        self.rt.main().spawn(async move {
+            let tx2 = tx.clone();
+            if let Err(err) = sync.list_authors(tx).await {
+                tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream()
+        rx.into_stream().map(|r| {
+            r.map(|author_id| AuthorListResponse { author_id })
+                .map_err(Into::into)
+        })
     }
 
-    pub fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
-        let doc = self.store.new_replica(Namespace::new(&mut OsRng {}))?;
-        Ok(DocCreateResponse {
-            id: doc.namespace(),
-        })
+    pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
+        let namespace = Namespace::new(&mut rand::rngs::OsRng {});
+        self.sync.import_namespace(namespace.clone()).await?;
+        self.sync.open(namespace.id(), Default::default()).await?;
+        Ok(DocCreateResponse { id: namespace.id() })
     }
 
     pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
         let DocDropRequest { doc_id } = req;
-        let _replica = self.get_replica(&doc_id)?;
         self.leave(doc_id, true).await?;
-        self.store.remove_replica(&doc_id)?;
+        self.sync.drop_replica(doc_id).await?;
         Ok(DocDropResponse {})
     }
 
     pub fn doc_list(&self, _req: DocListRequest) -> impl Stream<Item = RpcResult<DocListResponse>> {
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
-        let store = self.store.clone();
-        self.rt.main().spawn_blocking(move || {
-            let ite = store.list_namespaces();
-            let ite = inline_result(ite).map_ok(|id| DocListResponse { id });
-            for entry in ite {
-                if let Err(_err) = tx.send(entry) {
-                    break;
-                }
+        let sync = self.sync.clone();
+        // we need to spawn a task to send our request to the sync handle, because the method
+        // itself must be sync.
+        self.rt.main().spawn(async move {
+            let tx2 = tx.clone();
+            if let Err(err) = sync.list_replicas(tx).await {
+                tx2.send_async(Err(err)).await.ok();
             }
         });
         rx.into_stream()
+            .map(|r| r.map(|id| DocListResponse { id }).map_err(Into::into))
     }
 
-    pub async fn doc_info(&self, req: DocInfoRequest) -> RpcResult<DocInfoResponse> {
-        let _replica = self.get_replica(&req.doc_id)?;
-        let status = self.live.status(req.doc_id).await?;
-        let status = status.unwrap_or(LiveStatus {
-            active: false,
-            subscriptions: 0,
-        });
-        Ok(DocInfoResponse { status })
+    pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
+        self.sync.open(req.doc_id, Default::default()).await?;
+        Ok(DocOpenResponse {})
+    }
+
+    pub async fn doc_close(&self, req: DocCloseRequest) -> RpcResult<DocCloseResponse> {
+        self.sync.close(req.doc_id).await?;
+        Ok(DocCloseResponse {})
+    }
+
+    pub async fn doc_status(&self, req: DocStatusRequest) -> RpcResult<DocStatusResponse> {
+        let status = self.sync.get_state(req.doc_id).await?;
+        Ok(DocStatusResponse { status })
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
-        self.start_sync(req.doc_id, vec![]).await?;
         let me = self.endpoint.my_addr().await?;
-        let replica = self.get_replica(&req.doc_id)?;
         let key = match req.mode {
             ShareMode::Read => {
                 // TODO: support readonly docs
                 // *replica.namespace().as_bytes()
                 return Err(anyhow!("creating read-only shares is not yet supported").into());
             }
-            ShareMode::Write => replica.secret_key(),
+            ShareMode::Write => self.sync.export_secret_key(req.doc_id).await?.to_bytes(),
         };
+        self.start_sync(req.doc_id, vec![]).await?;
         Ok(DocShareResponse(DocTicket {
             key,
             peers: vec![me],
@@ -119,42 +123,20 @@ impl<S: Store> SyncEngine<S> {
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
-        let (s, r) = flume::bounded(64);
-        let s2 = s.clone();
-        let res = self
-            .live
-            .subscribe(req.doc_id, {
-                move |event| {
-                    let s = s.clone();
-                    async move {
-                        // Send event over the channel, unsubscribe if the channel is closed.
-                        match s.send_async(Ok(DocSubscribeResponse { event })).await {
-                            Err(_err) => KeepCallback::Drop,
-                            Ok(()) => KeepCallback::Keep,
-                        }
-                    }
-                    .boxed()
-                }
-            })
-            .await;
-        match res {
-            Err(err) => {
-                s2.send_async(Err(err.into())).await.ok();
-            }
-            Ok(_token) => {}
-        };
-        r.into_stream()
+        let stream = self.subscribe(req.doc_id);
+        stream.map(|res| {
+            res.map(|event| DocSubscribeResponse { event })
+                .map_err(Into::into)
+        })
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
         let DocImportRequest(DocTicket { key, peers }) = req;
-        // TODO: support read-only docs
-        // if let Ok(namespace) = match NamespaceId::from_bytes(&key) {};
         let namespace = Namespace::from_bytes(&key);
-        let id = namespace.id();
-        let replica = self.store.new_replica(namespace)?;
-        self.start_sync(replica.namespace(), peers).await?;
-        Ok(DocImportResponse { doc_id: id })
+        let doc_id = self.sync.import_namespace(namespace).await?;
+        self.sync.open(doc_id, Default::default()).await?;
+        self.start_sync(doc_id, peers).await?;
+        Ok(DocImportResponse { doc_id })
     }
 
     pub async fn doc_start_sync(
@@ -168,7 +150,6 @@ impl<S: Store> SyncEngine<S> {
 
     pub async fn doc_leave(&self, req: DocLeaveRequest) -> RpcResult<DocLeaveResponse> {
         let DocLeaveRequest { doc_id } = req;
-        let _replica = self.get_replica(&doc_id)?;
         self.leave(doc_id, false).await?;
         Ok(DocLeaveResponse {})
     }
@@ -184,18 +165,15 @@ impl<S: Store> SyncEngine<S> {
             key,
             value,
         } = req;
-        let replica = self.get_replica(&doc_id)?;
-        let author = self.get_author(&author_id)?;
         let len = value.len();
-        let tag = bao_store
-            .import_bytes(value.into(), BlobFormat::Raw)
+        let tag = bao_store.import_bytes(value, BlobFormat::Raw).await?;
+        self.sync
+            .insert_local(doc_id, author_id, key.clone(), *tag.hash(), len as u64)
             .await?;
-        replica
-            .insert(&key, &author, *tag.hash(), len as u64)
-            .map_err(anyhow::Error::from)?;
         let entry = self
-            .store
-            .get_one(replica.namespace(), author.id(), &key)?
+            .sync
+            .get_one(doc_id, author_id, key)
+            .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
     }
@@ -206,11 +184,7 @@ impl<S: Store> SyncEngine<S> {
             author_id,
             prefix,
         } = req;
-        let replica = self.get_replica(&doc_id)?;
-        let author = self.get_author(&author_id)?;
-        let removed = replica
-            .delete_prefix(prefix, &author)
-            .map_err(anyhow::Error::from)?;
+        let removed = self.sync.delete_prefix(doc_id, author_id, prefix).await?;
         Ok(DocDelResponse { removed })
     }
 
@@ -222,11 +196,9 @@ impl<S: Store> SyncEngine<S> {
             hash,
             size,
         } = req;
-        let replica = self.get_replica(&doc_id)?;
-        let author = self.get_author(&author_id)?;
-        replica
-            .insert(key, &author, hash, size)
-            .map_err(anyhow::Error::from)?;
+        self.sync
+            .insert_local(doc_id, author_id, key.clone(), hash, size)
+            .await?;
         Ok(DocSetHashResponse {})
     }
 
@@ -236,17 +208,19 @@ impl<S: Store> SyncEngine<S> {
     ) -> impl Stream<Item = RpcResult<DocGetManyResponse>> {
         let DocGetManyRequest { doc_id, filter } = req;
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
-        let store = self.store.clone();
-        self.rt.main().spawn_blocking(move || {
-            let ite = store.get_many(doc_id, filter);
-            let ite = inline_result(ite).map_ok(|entry| DocGetManyResponse { entry });
-            for entry in ite {
-                if let Err(_err) = tx.send(entry) {
-                    break;
-                }
+        let sync = self.sync.clone();
+        // we need to spawn a task to send our request to the sync handle, because the method
+        // itself must be sync.
+        self.rt.main().spawn(async move {
+            let tx2 = tx.clone();
+            if let Err(err) = sync.get_many(doc_id, filter, tx).await {
+                tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream()
+        rx.into_stream().map(|r| {
+            r.map(|entry| DocGetManyResponse { entry })
+                .map_err(Into::into)
+        })
     }
 
     pub async fn doc_get_one(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
@@ -255,17 +229,7 @@ impl<S: Store> SyncEngine<S> {
             author,
             key,
         } = req;
-        let replica = self.get_replica(&doc_id)?;
-        let entry = self.store.get_one(replica.namespace(), author, key)?;
+        let entry = self.sync.get_one(doc_id, author, key).await?;
         Ok(DocGetOneResponse { entry })
-    }
-}
-
-fn inline_result<T>(
-    ite: Result<impl Iterator<Item = Result<T, impl Into<RpcError>>>, impl Into<RpcError>>,
-) -> impl Iterator<Item = RpcResult<T>> {
-    match ite {
-        Ok(ite) => itertools::Either::Left(ite.map(|item| item.map_err(|err| err.into()))),
-        Err(err) => itertools::Either::Right(Some(Err(err.into())).into_iter()),
     }
 }
