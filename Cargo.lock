@@ -66,6 +66,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
 
 [[package]]
+name = "alloc-track"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e92e52576ef7f7f3f977bc94c5d465e18f744f43e0dd7166e8c65c8de5bbae91"
+dependencies = [
+ "backtrace",
+ "dashmap",
+ "lazy_static",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2111,6 +2122,7 @@ checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
 name = "iroh"
 version = "0.7.0"
 dependencies = [
+ "alloc-track",
  "anyhow",
  "bao-tree",
  "bytes",

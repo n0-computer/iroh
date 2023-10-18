@@ -77,6 +77,7 @@ flat-db = ["iroh-bytes/flat-db"]
 test = []
 
 [dev-dependencies]
+alloc-track = { default-features = false, version = "0.3.0", features = ["backtrace"] }
 anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
 console-subscriber = "0.1.10"

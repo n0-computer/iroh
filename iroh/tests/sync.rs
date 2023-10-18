@@ -18,6 +18,7 @@ use iroh::{
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+use testdir::testdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -29,7 +30,7 @@ use iroh_sync::{
     AuthorId, ContentStatus, Entry, NamespaceId,
 };
 
-const TIMEOUT: Duration = Duration::from_secs(60);
+const TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
@@ -141,107 +142,151 @@ async fn sync_simple() -> Result<()> {
     Ok(())
 }
 
+use alloc_track::{AllocTrack, BacktraceMode};
+use std::alloc::System;
+
+#[global_allocator]
+static GLOBAL_ALLOC: AllocTrack<System> = AllocTrack::new(System, BacktraceMode::Short);
+
 #[ignore]
-#[tokio::test]
-async fn sync_big_values() -> Result<()> {
-    setup_logging();
-    println!("setup");
-    let mut rng = test_rng(b"sync_big_values");
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 2, &mut rng).await?;
-    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+#[test]
+fn sync_big_values() -> Result<()> {
+    let basic_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build current-thread runtime");
 
-    // create doc on node0
-    let peer0 = nodes[0].peer_id();
-    let author0 = clients[0].authors.create().await?;
-    let doc0 = clients[0].docs.create().await?;
-    let doc_id = doc0.id();
+    let dir = testdir!();
 
-    println!("creating content");
-    let dir = testdir::testdir!();
-    let num_chunks = 1024 * 512;
-    let chunk_size = 1024;
-    let size = num_chunks * chunk_size;
-    let mut chunk = vec![0u8; chunk_size];
+    basic_rt.block_on(async move {
+        let mut rng = test_rng(b"sync_big_values");
+        let rt = test_runtime();
+        let num_nodes = 2;
+        let mut nodes = Vec::new();
+        for i in 0..num_nodes {
+            let root = dir.join(format!("node-{}", i));
+            tokio::fs::create_dir_all(&root).await?;
+            let secret_key = SecretKey::generate_with_rng(&mut rng);
+            let db = iroh_bytes::store::flat::Store::load(
+                root.join("complete"),
+                root.join("partial"),
+                root.join("meta"),
+                &rt,
+            )
+            .await?;
+            let store = iroh_sync::store::fs::Store::new(root.join("docs"))?;
+            let node = Node::builder(db, store)
+                .secret_key(secret_key)
+                .derp_mode(DerpMode::Disabled)
+                .runtime(&rt)
+                .bind_addr("127.0.0.1:0".parse().unwrap());
 
-    let file_name = dir.join("data");
-    let mut file = tokio::fs::File::create(&file_name).await?;
-    for _ in 0..num_chunks {
-        rng.fill_bytes(&mut chunk);
-        file.write_all(&chunk).await?;
-    }
-    file.flush().await?;
-    drop(file);
-
-    println!("adding from path");
-    let mut progress = clients[0]
-        .blobs
-        .add_from_path(
-            file_name.to_path_buf(),
-            true,
-            iroh::rpc_protocol::SetTagOption::Auto,
-            iroh::rpc_protocol::WrapOption::NoWrap,
-        )
-        .await?;
-
-    let hash0 = loop {
-        match progress.next().await {
-            Some(e) => {
-                let e = e?;
-                if let AddProgress::AllDone { hash, .. } = e {
-                    break hash;
-                }
-            }
-            None => panic!("add never finished"),
+            let node = node.spawn().await?;
+            info!(?i, me = %node.peer_id().fmt_short(), "node spawned");
+            nodes.push(node);
         }
-    };
+        let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
-    println!("set hash");
-    doc0.set_hash(author0, b"k1".to_vec(), hash0, size as _)
-        .await?;
+        // create doc on node0
+        let peer0 = nodes[0].peer_id();
+        let author0 = clients[0].authors.create().await?;
+        let doc0 = clients[0].docs.create().await?;
+        let doc_id = doc0.id();
 
-    assert_latest_file(&doc0, b"k1", size, &file_name).await?;
+        println!("creating content");
+        let dir = testdir::testdir!();
+        let num_chunks = 1024 * 512;
+        let chunk_size = 1024;
+        let size = num_chunks * chunk_size;
+        let mut chunk = vec![0u8; chunk_size];
 
-    // TODO: check content equality
+        let file_name = dir.join("data");
+        let mut file = tokio::fs::File::create(&file_name).await?;
+        for _ in 0..num_chunks {
+            rng.fill_bytes(&mut chunk);
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+        drop(file);
 
-    println!("sharing");
-    let ticket = doc0.share(ShareMode::Write).await?;
+        println!("adding from path");
+        let mut progress = clients[0]
+            .blobs
+            .add_from_path(
+                file_name.to_path_buf(),
+                true,
+                iroh::rpc_protocol::SetTagOption::Auto,
+                iroh::rpc_protocol::WrapOption::NoWrap,
+            )
+            .await?;
 
-    let mut events0 = doc0.subscribe().await?;
+        let hash0 = loop {
+            match progress.next().await {
+                Some(e) => {
+                    let e = e?;
+                    if let AddProgress::AllDone { hash, .. } = e {
+                        break hash;
+                    }
+                }
+                None => panic!("add never finished"),
+            }
+        };
 
-    info!("node1: join");
-    let peer1 = nodes[1].peer_id();
-    let doc1 = clients[1].docs.import(ticket.clone()).await?;
-    let mut events1 = doc1.subscribe().await?;
-    info!("node1: assert 4 events");
-    assert_next_unordered(
-        &mut events1,
-        TIMEOUT,
-        vec![
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
-        ],
-    )
-    .await;
+        println!("set hash");
+        doc0.set_hash(author0, b"k1".to_vec(), hash0, size as _)
+            .await?;
 
-    assert_latest_file(&doc1, b"k1", size, &file_name).await?;
+        assert_latest_file(&doc0, b"k1", size, &file_name).await?;
 
-    info!("node0: assert 2 events");
-    assert_next_unordered(
-        &mut events0,
-        TIMEOUT,
-        vec![
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
-        ],
-    )
-    .await;
+        // TODO: check content equality
 
-    for node in nodes {
-        node.shutdown();
-    }
+        println!("sharing");
+        let ticket = doc0.share(ShareMode::Write).await?;
+
+        let mut events0 = doc0.subscribe().await?;
+
+        println!("node1: join");
+        let peer1 = nodes[1].peer_id();
+        let doc1 = clients[1].docs.import(ticket.clone()).await?;
+        let mut events1 = doc1.subscribe().await?;
+        println!("node1: assert 4 events");
+        assert_next_unordered(
+            &mut events1,
+            TIMEOUT,
+            vec![
+                Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
+                Box::new(
+                    move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 ),
+                ),
+                Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+                Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            ],
+        )
+        .await;
+
+        assert_latest_file(&doc1, b"k1", size, &file_name).await?;
+
+        println!("node0: assert 2 events");
+        assert_next_unordered(
+            &mut events0,
+            TIMEOUT,
+            vec![
+                Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+                Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            ],
+        )
+        .await;
+
+        for node in nodes {
+            node.shutdown();
+        }
+        anyhow::Ok(())
+    })?;
+
+    let report = alloc_track::backtrace_report(|_, _| true);
+    std::fs::write("report.txt", report.to_string())?;
+    println!("report written");
+
     Ok(())
 }
 
