@@ -600,6 +600,7 @@ impl Endpoint {
                 inc!(MagicsockMetrics, num_direct_conns_added);
             }
         }
+        warn!(peer = %self.public_key.fmt_short(), "best addr reset");
         self.last_full_ping = None;
         self.best_addr = None;
         self.best_addr_at = None;
@@ -709,6 +710,7 @@ impl Endpoint {
 
             if let Some(addr_and_latency) = self.best_addr.as_ref() {
                 if addr_and_latency.addr == ip_port.into() {
+                    warn!(peer=%self.public_key.fmt_short(), "pruning best addr");
                     self.best_addr = None;
                     // no longer relying on a direct connection, remove conn count
                     inc!(MagicsockMetrics, num_direct_conns_removed);
@@ -918,14 +920,20 @@ impl Endpoint {
         // Delete any prior CallMeMaybe endpoints that weren't included in this message.
         self.is_call_me_maybe_ep.retain(|ep, want| {
             if !*want {
-                if let Some(best_addr) = self.best_addr.take() {
-                    if *ep == best_addr.addr {
-                        // no longer relying on the direct connection
-                        inc!(MagicsockMetrics, num_direct_conns_removed);
-                        if self.derp_region.is_some() {
-                            // we are now relying on the relay connection, add a relay conn
-                            inc!(MagicsockMetrics, num_relay_conns_added);
-                        }
+                if Some(ep)
+                    == self
+                        .best_addr
+                        .as_ref()
+                        .map(|addr_and_latency| addr_and_latency.addr)
+                        .as_ref()
+                {
+                    warn!(peer =%self.public_key.fmt_short(),"clearning best addr in call me maybe");
+                    self.best_addr = None;
+                    // no longer relying on the direct connection
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    if self.derp_region.is_some() {
+                        // we are now relying on the relay connection, add a relay conn
+                        inc!(MagicsockMetrics, num_relay_conns_added);
                     }
                 }
                 false
