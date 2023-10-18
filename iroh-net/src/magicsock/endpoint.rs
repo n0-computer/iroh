@@ -385,7 +385,7 @@ impl Endpoint {
     pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {
             // TODO: not warn?
-            warn!(tx = hex::encode(&txid), addr = %sp.to, "pong not received in timeout");
+            warn!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
                 SendAddr::Udp(addr) => {
                     if let Some(ep_state) = self.direct_addr_state.get_mut(&addr.into()) {
@@ -411,7 +411,7 @@ impl Endpoint {
                         // we can only connect through a relay connection
                         inc!(MagicsockMetrics, num_relay_conns_added);
                     }
-                    debug!(addr = %sp.to, tx = %hex::encode(&txid), "drop best_addr (no pong received in timeout)");
+                    debug!(addr = %sp.to, tx = %hex::encode(txid), "drop best_addr (no pong received in timeout)");
                     self.best_addr = None;
                     self.trust_best_addr_until = None;
                 }
@@ -426,7 +426,7 @@ impl Endpoint {
             return None;
         }
         let tx_id = stun::TransactionId::default();
-        info!(tx = %hex::encode(&tx_id), %dst, ?purpose, "start ping");
+        info!(tx = %hex::encode(tx_id), %dst, ?purpose, "start ping");
         Some(PingAction::SendPing {
             id: self.id,
             dst,
@@ -444,7 +444,7 @@ impl Endpoint {
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender<ActorMessage>,
     ) {
-        debug!(%to, tx = %hex::encode(&tx_id), ?purpose, "ping sent");
+        debug!(%to, tx = %hex::encode(tx_id), ?purpose, "ping sent");
 
         let now = Instant::now();
         if purpose != DiscoPingPurpose::Cli {
@@ -746,7 +746,7 @@ impl Endpoint {
         let is_derp = src.is_derp();
 
         trace!(
-            tx = %hex::encode(&m.tx_id),
+            tx = %hex::encode(m.tx_id),
             pong_src = %src,
             pong_ping_src = %m.src,
             is_derp = %src.is_derp(),
@@ -755,7 +755,7 @@ impl Endpoint {
         match self.sent_ping.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
-                info!(tx = %hex::encode(&m.tx_id), "received pong with unknown transaction id");
+                info!(tx = %hex::encode(m.tx_id), "received pong with unknown transaction id");
                 None
             }
             Some(sp) => {
@@ -768,7 +768,7 @@ impl Endpoint {
 
                 // TODO: degrade to debug.
                 info!(
-                    tx = hex::encode(&m.tx_id),
+                    tx = %hex::encode(m.tx_id),
                     src = %src,
                     reported_ping_src = %m.src,
                     ping_dst = %sp.to,
@@ -1341,7 +1341,7 @@ impl PeerMapInner {
         let PeerAddr { peer_id, info } = peer_addr;
 
         if self.endpoint_for_node_key(&peer_id).is_none() {
-            info!(?info.derp_region, "inserting new peer endpoint in PeerMap");
+            info!(derp_region = ?info.derp_region, "inserting new peer endpoint in PeerMap");
             self.insert_endpoint(Options {
                 public_key: peer_id,
                 derp_region: info.derp_region,
@@ -1620,14 +1620,14 @@ impl EndpointState {
             None => true,
             Some(last_ping) => {
                 let elapsed = now.duration_since(last_ping);
-                let needs_ping = elapsed > DISCO_PING_INTERVAL;
+
                 // TODO: remove!
                 // This logs "ping is too new" for each send whenever the endpoint does *not* need
                 // a ping. Pretty sure this is not a useful log, but maybe there was a reason?
                 // if !needs_ping {
                 //     debug!("ping is too new: {}ms", elapsed.as_millis());
                 // }
-                needs_ping
+                elapsed > DISCO_PING_INTERVAL
             }
         }
     }

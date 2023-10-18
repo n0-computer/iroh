@@ -766,11 +766,11 @@ impl Inner {
         };
 
         if !likely_heart_beat {
-            debug!(%src, tx = %hex::encode(&dm.tx_id), "received ping");
+            debug!(tx = %hex::encode(dm.tx_id), "received ping");
         }
 
         let unknown_sender = self.peer_map.write(|pm| {
-            if pm.endpoint_for_node_key(&sender).is_none() {
+            if pm.endpoint_for_node_key(sender).is_none() {
                 match src {
                     DiscoMessageSource::Udp(addr) => pm.receive_ip(addr).is_none(),
                     DiscoMessageSource::Derp { .. } => true,
@@ -811,11 +811,11 @@ impl Inner {
         });
 
         if is_duplicate {
-            debug!(%src, tx = %hex::encode(&dm.tx_id), "received ping: endpoint already confirmed, skip");
+            debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
             return;
         };
 
-        debug!(tx = %hex::encode(&dm.tx_id), "queue pong");
+        debug!(tx = %hex::encode(dm.tx_id), "queue pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
             src: src.as_socket_addr(),

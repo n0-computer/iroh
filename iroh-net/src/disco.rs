@@ -293,10 +293,10 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Message::Ping(ping) => {
-                write!(f, "Ping(tx={})", hex::encode(&ping.tx_id))
+                write!(f, "Ping(tx={})", hex::encode(ping.tx_id))
             }
             Message::Pong(pong) => {
-                write!(f, "Pong(tx={})", hex::encode(&pong.tx_id))
+                write!(f, "Pong(tx={})", hex::encode(pong.tx_id))
             }
             Message::CallMeMaybe(_) => {
                 write!(f, "CallMeMaybe")
