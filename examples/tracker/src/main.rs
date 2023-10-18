@@ -28,6 +28,8 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::task::LocalPoolHandle;
 
+mod discovery;
+
 type ShortPeerId = [u8; 32];
 
 const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
@@ -415,7 +417,7 @@ impl Default for Options {
             // interval between probing peers
             probe_interval: Duration::from_secs(1),
             // max hash seq size is 1000 hashes
-            max_hash_seq_size: 1024 * 32,
+            max_hash_seq_size: 1024 * 16 * 32,
             dial_log: Some("dial.log".into()),
             probe_log: Some("probe.log".into()),
             announce_data_path: Some("announce.data".into()),

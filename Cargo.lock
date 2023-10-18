@@ -3034,6 +3034,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "pkarr"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f629fd816e7d89fe5714ebe3d045f3c2c2ddc6b50e5133cc57e2e71987b0e02"
+dependencies = [
+ "bytes",
+ "ed25519-dalek",
+ "rand",
+ "reqwest",
+ "self_cell",
+ "simple-dns",
+ "thiserror",
+ "tokio",
+ "url",
+ "zbase32",
+]
+
+[[package]]
 name = "pkcs1"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4249,6 +4267,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-dns"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cae9a3fcdadafb6d97f4c0e007e4247b114ee0f119f650c3cbf3a8b3a1479694"
+dependencies = [
+ "bitflags 2.4.0",
+]
+
+[[package]]
+name = "simple-mdns"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "253138b1b321977599543914b4658e1fdf7b966a58e2f69944da85f184ca78a8"
+dependencies = [
+ "lazy_static",
+ "log",
+ "radix_trie",
+ "simple-dns",
+ "socket2 0.5.4",
+ "tokio",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4969,16 +5010,19 @@ dependencies = [
  "iroh",
  "iroh-bytes",
  "iroh-net",
+ "pkarr",
  "postcard",
  "quinn",
  "rand",
  "serde",
+ "simple-mdns",
  "tempfile",
  "tokio",
  "tokio-util",
  "toml 0.7.8",
  "tracing",
  "tracing-subscriber",
+ "ttl_cache",
 ]
 
 [[package]]
@@ -5041,6 +5085,15 @@ name = "try-lock"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
+
+[[package]]
+name = "ttl_cache"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4189890526f0168710b6ee65ceaedf1460c48a14318ceec933cb26baa492096a"
+dependencies = [
+ "linked-hash-map",
+]
 
 [[package]]
 name = "typenum"
@@ -5598,6 +5651,12 @@ checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
 dependencies = [
  "time",
 ]
+
+[[package]]
+name = "zbase32"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f9079049688da5871a7558ddacb7f04958862c703e68258594cb7a862b5e33f"
 
 [[package]]
 name = "zeroize"
