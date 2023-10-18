@@ -437,18 +437,8 @@ pub mod fsm {
 
         /// Drain the response and throw away the result
         pub async fn drain(self) -> result::Result<AtEndBlob, DecodeError> {
-            let (mut content, _size) = self.next().await?;
-            loop {
-                match content.next().await {
-                    BlobContentNext::More((content1, Ok(_))) => {
-                        content = content1;
-                    }
-                    BlobContentNext::More((_, Err(e))) => return Err(e),
-                    BlobContentNext::Done(end) => {
-                        return Ok(end);
-                    }
-                }
-            }
+            let (content, _size) = self.next().await?;
+            content.drain().await
         }
 
         /// Concatenate the entire response into a vec
@@ -458,23 +448,8 @@ pub mod fsm {
         pub async fn concatenate_into_vec(
             self,
         ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
-            let (mut curr, size) = self.next().await?;
-            let mut res = Vec::with_capacity(size as usize);
-            let done = loop {
-                match curr.next().await {
-                    BlobContentNext::More((next, data)) => {
-                        if let BaoContentItem::Leaf(leaf) = data? {
-                            res.extend_from_slice(&leaf.data);
-                        }
-                        curr = next;
-                    }
-                    BlobContentNext::Done(done) => {
-                        // we are done with the root blob
-                        break done;
-                    }
-                }
-            };
-            Ok((done, res))
+            let (content, _size) = self.next().await?;
+            content.concatenate_into_vec().await
         }
 
         /// Write the entire blob to a slice writer.
@@ -652,6 +627,45 @@ pub mod fsm {
             self.stream.hash()
         }
 
+        /// Drain the response and throw away the result
+        pub async fn drain(self) -> result::Result<AtEndBlob, DecodeError> {
+            let mut content = self;
+            loop {
+                match content.next().await {
+                    BlobContentNext::More((content1, res)) => {
+                        let _ = res?;
+                        content = content1;
+                    }
+                    BlobContentNext::Done(end) => {
+                        break Ok(end);
+                    }
+                }
+            }
+        }
+
+        /// Concatenate the entire response into a vec
+        pub async fn concatenate_into_vec(
+            self,
+        ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
+            let mut res = Vec::with_capacity(1024);
+            let mut curr = self;
+            let done = loop {
+                match curr.next().await {
+                    BlobContentNext::More((next, data)) => {
+                        if let BaoContentItem::Leaf(leaf) = data? {
+                            res.extend_from_slice(&leaf.data);
+                        }
+                        curr = next;
+                    }
+                    BlobContentNext::Done(done) => {
+                        // we are done with the root blob
+                        break done;
+                    }
+                }
+            };
+            Ok((done, res))
+        }
+
         /// Write the entire blob to a slice writer and to an optional outboard.
         ///
         /// The outboard is only written to if the blob is larger than a single
@@ -710,6 +724,11 @@ pub mod fsm {
                     }
                 }
             }
+        }
+
+        /// Immediately finish the get response without reading further
+        pub fn finish(self) -> AtClosing {
+            AtClosing::new(self.misc, self.stream.finish())
         }
     }
 
