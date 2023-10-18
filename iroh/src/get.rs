@@ -14,7 +14,7 @@ use iroh_bytes::{
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
-    provider::GetProgress,
+    provider::DownloadProgress,
     store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     util::{
         progress::{IdGenerator, ProgressSender},
@@ -32,7 +32,7 @@ pub async fn get<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     hash_and_format: &HashAndFormat,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let HashAndFormat { hash, format } = hash_and_format;
     let res = match format {
@@ -53,7 +53,7 @@ pub async fn get_blob<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     hash: &Hash,
-    progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let end = if let Some(entry) = db.get_partial(hash) {
         trace!("got partial data for {}", hash);
@@ -132,7 +132,7 @@ pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
 async fn get_blob_inner<D: BaoStore>(
     db: &D,
     at_header: AtBlobHeader,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<AtEndBlob> {
     use iroh_io::AsyncSliceWriter;
     // read the size
@@ -151,7 +151,7 @@ async fn get_blob_inner<D: BaoStore>(
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
     sender
-        .send(GetProgress::Found {
+        .send(DownloadProgress::Found {
             id,
             hash,
             size,
@@ -163,7 +163,7 @@ async fn get_blob_inner<D: BaoStore>(
         // if try send fails it means that the receiver has been dropped.
         // in that case we want to abort the write_all_with_outboard.
         sender2
-            .try_send(GetProgress::Progress { id, offset })
+            .try_send(DownloadProgress::Progress { id, offset })
             .map_err(|e| {
                 tracing::info!("aborting download of {}", hash);
                 e
@@ -183,7 +183,7 @@ async fn get_blob_inner<D: BaoStore>(
     }
     db.insert_complete(entry).await?;
     // notify that we are done
-    sender.send(GetProgress::Done { id }).await?;
+    sender.send(DownloadProgress::Done { id }).await?;
     Ok(end)
 }
 
@@ -199,7 +199,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     db: &D,
     at_header: AtBlobHeader,
     entry: D::PartialEntry,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<AtEndBlob> {
     // TODO: the data we get is validated at this point, but we need to check
     // that it actually contains the requested ranges. Or DO WE?
@@ -219,7 +219,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     let hash = at_content.hash();
     let child_offset = at_content.offset();
     sender
-        .send(GetProgress::Found {
+        .send(DownloadProgress::Found {
             id,
             hash,
             size,
@@ -231,7 +231,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
         // if try send fails it means that the receiver has been dropped.
         // in that case we want to abort the write_all_with_outboard.
         sender2
-            .try_send(GetProgress::Progress { id, offset })
+            .try_send(DownloadProgress::Progress { id, offset })
             .map_err(|e| {
                 tracing::info!("aborting download of {}", hash);
                 e
@@ -253,7 +253,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     // rename the files or not.
     db.insert_complete(entry).await?;
     // notify that we are done
-    sender.send(GetProgress::Done { id }).await?;
+    sender.send(DownloadProgress::Done { id }).await?;
     Ok(at_end)
 }
 
@@ -294,7 +294,7 @@ pub async fn get_hash_seq<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     root_hash: &Hash,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     use tracing::info as log;
     let finishing = if let Some(entry) = db.get(root_hash) {
@@ -303,7 +303,7 @@ pub async fn get_hash_seq<D: BaoStore>(
         let reader = entry.data_reader().await?;
         let (mut hash_seq, children) = parse_hash_seq(reader).await?;
         sender
-            .send(GetProgress::FoundHashSeq {
+            .send(DownloadProgress::FoundHashSeq {
                 hash: *root_hash,
                 children,
             })
@@ -378,7 +378,7 @@ pub async fn get_hash_seq<D: BaoStore>(
         let reader = entry.data_reader().await?;
         let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
-            .send(GetProgress::FoundHashSeq {
+            .send(DownloadProgress::FoundHashSeq {
                 hash: *root_hash,
                 children: count,
             })

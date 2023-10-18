@@ -12,7 +12,7 @@ use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::util::{BlobFormat, Tag};
-pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
+pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, Hash};
 use iroh_gossip::proto::util::base32;
 use iroh_net::{
     key::PublicKey,
@@ -134,7 +134,7 @@ impl Msg<ProviderService> for BlobDownloadRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
-    type Response = GetProgress;
+    type Response = DownloadProgress;
 }
 
 /// A request to the node to validate the integrity of all provided data
@@ -930,7 +930,7 @@ pub enum ProviderResponse {
     BlobRead(RpcResult<BlobReadResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobDownload(GetProgress),
+    BlobDownload(DownloadProgress),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),

@@ -759,7 +759,7 @@ fn make_individual_progress() -> ProgressBar {
 
 pub async fn show_download_progress(
     hash: Hash,
-    mut stream: impl Stream<Item = Result<GetProgress>> + Unpin,
+    mut stream: impl Stream<Item = Result<DownloadProgress>> + Unpin,
 ) -> Result<()> {
     eprintln!("Fetching: {}", hash);
     let mp = MultiProgress::new();
@@ -770,10 +770,10 @@ pub async fn show_download_progress(
 
     while let Some(x) = stream.next().await {
         match x? {
-            GetProgress::Connected => {
+            DownloadProgress::Connected => {
                 op.set_message(format!("{} Requesting ...", style("[2/3]").bold().dim()));
             }
-            GetProgress::FoundHashSeq { children, .. } => {
+            DownloadProgress::FoundHashSeq { children, .. } => {
                 op.set_message(format!(
                     "{} Downloading {} blob(s)",
                     style("[3/3]").bold().dim(),
@@ -782,20 +782,20 @@ pub async fn show_download_progress(
                 op.set_length(children + 1);
                 op.reset();
             }
-            GetProgress::Found {
+            DownloadProgress::Found {
                 size, child, ..
             } => {
                 op.set_position(child);
                 ip.set_length(size);
                 ip.reset();
             }
-            GetProgress::Progress { offset, .. } => {
+            DownloadProgress::Progress { offset, .. } => {
                 ip.set_position(offset);
             }
-            GetProgress::Done { .. } => {
+            DownloadProgress::Done { .. } => {
                 ip.finish_and_clear();
             }
-            GetProgress::NetworkDone {
+            DownloadProgress::NetworkDone {
                 bytes_read,
                 elapsed,
                 ..
@@ -808,7 +808,7 @@ pub async fn show_download_progress(
                     HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
                 );
             }
-            GetProgress::AllDone => {
+            DownloadProgress::AllDone => {
                 break;
             }
             _ => {}
