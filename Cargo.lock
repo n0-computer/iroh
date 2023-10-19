@@ -2346,6 +2346,7 @@ dependencies = [
  "serde",
  "serde_with",
  "serdect",
+ "smallvec",
  "socket2 0.5.4",
  "ssh-key",
  "stun-rs",

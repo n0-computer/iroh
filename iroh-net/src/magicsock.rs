@@ -38,6 +38,7 @@ use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
+use smallvec::{smallvec, SmallVec};
 use tokio::{
     sync::{self, mpsc, Mutex},
     time,
@@ -178,6 +179,10 @@ impl Default for Options {
         }
     }
 }
+
+/// Contents of a DERP message. Use a SmallVec to avoid allocations for the very
+/// common case of a single packet.
+pub(crate) type DerpContents = SmallVec<[Bytes; 1]>;
 
 /// Iroh connectivity layer.
 ///
@@ -899,7 +904,7 @@ impl Inner {
                         ready!(self.poll_send_udp(addr, &[transmit], cx))?;
                     }
                     SendAddr::Derp(region) => {
-                        self.send_derp(region, dst_key, vec![pkt]);
+                        self.send_derp(region, dst_key, smallvec![pkt]);
                     }
                 }
                 let msg_sender = self.actor_sender.clone();
@@ -913,7 +918,7 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: Vec<Bytes>) {
+    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: DerpContents) {
         trace!(peer = %peer.fmt_short(), derp_region = region_id, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             region_id,
@@ -2378,7 +2383,7 @@ impl Actor {
                 self.send_raw(addr, transmits).await
             }
             SendAddr::Derp(region) => {
-                self.inner.send_derp(region, dst_key, vec![pkt]);
+                self.inner.send_derp(region, dst_key, smallvec![pkt]);
                 Ok(1)
             }
         };
@@ -2596,8 +2601,8 @@ impl Display for SendAddr {
 /// For each transmit, if it has a segment size, it will be split into
 /// multiple packets according to that segment size. If it does not have a
 /// segment size, the contents will be sent as a single packet.
-fn split_packets(transmits: &[quinn_udp::Transmit]) -> Vec<Bytes> {
-    let mut res = Vec::with_capacity(transmits.len());
+fn split_packets(transmits: &[quinn_udp::Transmit]) -> DerpContents {
+    let mut res = SmallVec::with_capacity(transmits.len());
     for transmit in transmits {
         let contents = &transmit.contents;
         if let Some(segment_size) = transmit.segment_size {
@@ -3419,14 +3424,14 @@ pub(crate) mod tests {
                 src_ip: None,
             }
         }
-        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> Vec<Bytes> {
+        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> DerpContents {
             parts
                 .into_iter()
                 .map(|p| p.as_bytes().to_vec().into())
                 .collect()
         }
         // no packets
-        assert_eq!(split_packets(&[]), Vec::<Bytes>::default());
+        assert_eq!(split_packets(&[]), SmallVec::<[Bytes; 1]>::default());
         // no split
         assert_eq!(
             split_packets(&vec![
