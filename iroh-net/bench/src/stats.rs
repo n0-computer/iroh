@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use hdrhistogram::Histogram;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Stats {
     pub total_size: u64,
     pub total_duration: Duration,
@@ -58,6 +58,7 @@ impl Stats {
     }
 }
 
+#[derive(Debug)]
 pub struct StreamStats {
     pub duration_hist: Histogram<u64>,
     pub throughput_hist: Histogram<u64>,
