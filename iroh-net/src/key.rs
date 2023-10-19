@@ -43,10 +43,15 @@ impl CryptoKeys {
 /// duration, the crypto keys will be removed from the cache and need to be
 /// re-created when they are used again.
 const KEY_CACHE_TTL: Duration = Duration::from_secs(60);
+/// Maximum number of keys in the crypto key cache. CryptoKeys are 224 bytes,
+/// keys are 32 bytes, so each entry is 256 bytes plus some overhead.
+///
+/// So that is about 4MB of max memory for the cache.
+const KEY_CACHE_CAPACITY: usize = 1024 * 16;
 static KEY_CACHE: OnceCell<Mutex<TtlCache<[u8; 32], CryptoKeys>>> = OnceCell::new();
 
 fn lock_key_cache() -> std::sync::MutexGuard<'static, TtlCache<[u8; 32], CryptoKeys>> {
-    let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(10000)));
+    let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(KEY_CACHE_CAPACITY)));
     mutex.lock().unwrap()
 }
 
@@ -68,7 +73,7 @@ fn get_or_create_crypto_keys<T>(
             let vk = VerifyingKey::from_bytes(key)?;
             let item = CryptoKeys::new(vk);
             let item = entry.insert(item, KEY_CACHE_TTL);
-            f(&item)
+            f(item)
         }
     })
 }
