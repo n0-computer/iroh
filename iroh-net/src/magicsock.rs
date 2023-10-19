@@ -72,7 +72,7 @@ mod timer;
 mod udp_actor;
 
 pub use self::endpoint::ConnectionType;
-pub use self::endpoint::{AddrState, EndpointInfo};
+pub use self::endpoint::{DirectAddrInfo, EndpointInfo};
 pub use self::metrics::Metrics;
 pub use self::timer::Timer;
 

@@ -17,14 +17,13 @@ use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
-use iroh_net::magicsock::AddrState;
+use iroh_net::magicsock::DirectAddrInfo;
 use iroh_net::PeerAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
 };
 
-use crate::commands::sync::fmt_short;
 use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::node::{RpcPort, StartOptions};
@@ -679,7 +678,7 @@ async fn fmt_connections(
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
-        vec!["node id", "region", "conn type", "latency", "last used"]
+        ["node id", "region", "conn type", "latency", "last used"]
             .into_iter()
             .map(bold_cell),
     );
@@ -693,36 +692,65 @@ async fn fmt_connections(
             Some(latency) => latency.to_human_time_string(),
             None => String::from("unknown"),
         };
-        let last_used = match conn_info.last_used {
-            Some(duration) => duration.to_human_time_string(),
-            None => "never".into(),
-        };
-        table.add_row(vec![node_id, region, conn_type, latency, last_used]);
+        let last_used = fmt_how_long_ago(conn_info.last_used);
+        table.add_row([node_id, region, conn_type, latency, last_used]);
     }
     table.to_string()
 }
 
 fn fmt_connection(info: ConnectionInfo) -> String {
-    format!(
-        "node_id: {}\nderp_region: {}\nconnection type: {}\nlatency: {}\n\n{}",
-        fmt_short(info.public_key),
-        info.derp_region
-            .map_or(String::from("unknown"), |r| r.to_string()),
-        info.conn_type,
-        fmt_latency(info.latency),
-        fmt_addrs(info.addrs)
-    )
+    let ConnectionInfo {
+        id: _,
+        public_key,
+        derp_region,
+        addrs,
+        conn_type,
+        latency,
+        last_used,
+    } = info;
+    let mut table = Table::new();
+    table.load_preset(NOTHING);
+    table.add_row([bold_cell("node id"), public_key.fmt_short().into()]);
+    let derp_region = derp_region
+        .map(|r| r.to_string())
+        .unwrap_or_else(|| String::from("unknown"));
+    table.add_row([bold_cell("derp region"), derp_region.into()]);
+    table.add_row([bold_cell("connection type"), conn_type.to_string().into()]);
+    table.add_row([bold_cell("latency"), fmt_latency(latency).into()]);
+    table.add_row([bold_cell("last used"), fmt_how_long_ago(last_used).into()]);
+    table.add_row([bold_cell("known addresses"), addrs.len().into()]);
+
+    let general_info = table.to_string();
+
+    let addrs_info = fmt_addrs(addrs);
+    format!("{general_info}\n\n{addrs_info}",)
 }
 
-fn fmt_addrs(addrs: Vec<(SocketAddr, Option<Duration>, AddrState)>) -> String {
+fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> String {
     let mut table = Table::new();
     table
         .load_preset(NOTHING)
-        .set_header(vec!["addr", "latency"].into_iter().map(bold_cell));
-    for addr in addrs {
-        table.add_row(vec![addr.0.to_string(), fmt_latency(addr.1)]);
+        .set_header(vec!["addr", "latency", "state"].into_iter().map(bold_cell));
+    for info in addrs {
+        let DirectAddrInfo {
+            addr,
+            latency,
+            active,
+        } = info;
+        let state = if active { "active" } else { "inactive" };
+        table.add_row([addr.to_string(), fmt_latency(latency), state.to_string()]);
     }
     table.to_string()
+}
+
+fn fmt_how_long_ago(latency: Option<Duration>) -> String {
+    let Some(latency) = latency else {
+        return "never".into();
+    };
+    // we want the largest two parts of precision
+    let pretty = latency.to_human_time_string();
+    let parts: Vec<&str> = pretty.split(',').take(2).collect();
+    parts.join(",")
 }
 
 fn fmt_latency(latency: Option<Duration>) -> String {

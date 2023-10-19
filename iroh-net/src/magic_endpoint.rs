@@ -691,7 +691,7 @@ mod tests {
         let endpoint = new_endpoint(secret_key, path).await;
         let ConnectionInfo { mut addrs, .. } =
             endpoint.connection_info(peer_id).await.unwrap().unwrap();
-        let conn_addr = addrs.pop().unwrap().0;
+        let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
         drop(tempdir);
     }
