@@ -38,9 +38,35 @@ impl CryptoKeys {
 }
 
 const KEY_CACHE_TTL: Duration = Duration::from_secs(60);
+static KEY_CACHE: OnceCell<Mutex<TtlCache<[u8; 32], CryptoKeys>>> = OnceCell::new();
 
-lazy_static::lazy_static! {
-    static ref KEY_CACHE: Mutex<TtlCache<[u8; 32], CryptoKeys>> = Mutex::new(TtlCache::new(100));
+fn lock_key_cache() -> std::sync::MutexGuard<'static, TtlCache<[u8; 32], CryptoKeys>> {
+    let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(10000)));
+    mutex.lock().unwrap()
+}
+
+/// Get or create the crypto keys, and project something out of them.
+///
+/// If the key has been verified before, this will not fail.
+fn get_or_create_crypto_keys<T>(
+    key: &[u8; 32],
+    f: impl Fn(&CryptoKeys) -> T,
+) -> std::result::Result<T, SignatureError> {
+    let mut state = lock_key_cache();
+    Ok(match state.get(key) {
+        Some(item) => {
+            // cache hit
+            f(item)
+        }
+        None => {
+            // cache miss, create. This might fail if the key is invalid.
+            let vk = VerifyingKey::from_bytes(key)?;
+            let item = CryptoKeys::new(vk);
+            let res = f(&item);
+            state.insert(*key, item, KEY_CACHE_TTL);
+            res
+        }
+    })
 }
 
 /// A public key.
@@ -58,7 +84,7 @@ impl Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        self.public().serialize(serializer)
+        serializer.serialize_bytes(&self.0)
     }
 }
 
@@ -67,8 +93,8 @@ impl<'de> Deserialize<'de> for PublicKey {
     where
         D: serde::Deserializer<'de>,
     {
-        let public = VerifyingKey::deserialize(deserializer)?;
-        Ok(public.into())
+        let bytes: &serde_bytes::Bytes = serde::Deserialize::deserialize(deserializer)?;
+        Self::try_from(bytes.as_ref()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -78,35 +104,12 @@ impl PublicKey {
         &self.0
     }
 
-    /// Get or create the crypto keys, and project something out of them.
-    fn with_crypto_keys<T>(
-        &self,
-        f: impl Fn(&CryptoKeys) -> T,
-    ) -> std::result::Result<T, SignatureError> {
-        let mut state = KEY_CACHE.lock().unwrap();
-        Ok(match state.get(&self.0) {
-            Some(item) => {
-                // cache hit
-                f(item)
-            }
-            None => {
-                // cache miss, but we know that they key is valid
-                let vk = VerifyingKey::from_bytes(&self.0)?;
-                let item = CryptoKeys::new(vk);
-                let res = f(&item);
-                state.insert(self.0, item, KEY_CACHE_TTL);
-                res
-            }
-        })
-    }
-
     fn public(&self) -> VerifyingKey {
-        self.with_crypto_keys(|item| item.verifying_key)
-            .expect("key has been checked")
+        get_or_create_crypto_keys(&self.0, |item| item.verifying_key).expect("key has been checked")
     }
 
     fn public_crypto_box(&self) -> crypto_box::PublicKey {
-        self.with_crypto_keys(|item| item.crypto_box.clone())
+        get_or_create_crypto_keys(&self.0, |item| item.crypto_box.clone())
             .expect("key has been checked")
     }
 
@@ -118,8 +121,8 @@ impl PublicKey {
     /// a valid `ed25519_dalek` curve point. Will never fail for bytes return from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
-        let public = VerifyingKey::from_bytes(bytes)?;
-        Ok(public.into())
+        get_or_create_crypto_keys(bytes, |item| item.verifying_key)?;
+        Ok(Self(*bytes))
     }
 
     /// Verify a signature on a message with this secret key's public key.
@@ -145,8 +148,21 @@ impl TryFrom<&[u8]> for PublicKey {
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let public = VerifyingKey::try_from(bytes)?;
-        Ok(public.into())
+        Ok(match <[u8; 32]>::try_from(bytes) {
+            Ok(bytes) => {
+                // using from_bytes is faster than going via the verifying
+                // key in case the key is already in the cache, which should
+                // be quite common.
+                Self::from_bytes(&bytes)?
+            }
+            Err(_) => {
+                // this will always fail since the size is wrong.
+                // but there is no public constructor for SignatureError,
+                // so ¯\_(ツ)_/¯...
+                let vk = VerifyingKey::try_from(bytes)?;
+                vk.into()
+            }
+        })
     }
 }
 
@@ -167,13 +183,9 @@ impl AsRef<[u8]> for PublicKey {
 
 impl From<VerifyingKey> for PublicKey {
     fn from(verifying_key: VerifyingKey) -> Self {
-        let crypto_box = public_ed_box(&verifying_key);
-        let item = CryptoKeys {
-            verifying_key,
-            crypto_box,
-        };
+        let item = CryptoKeys::new(verifying_key);
         let key = *verifying_key.as_bytes();
-        let mut table = KEY_CACHE.lock().unwrap();
+        let mut table = lock_key_cache();
         table.insert(key, item, KEY_CACHE_TTL);
         PublicKey(key)
     }

@@ -2317,7 +2317,6 @@ dependencies = [
  "igd",
  "iroh-metrics",
  "iroh-test",
- "lazy_static",
  "libc",
  "netlink-packet-core",
  "netlink-packet-route",
@@ -2344,6 +2343,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-webpki",
  "serde",
+ "serde_bytes",
  "serde_with",
  "serdect",
  "socket2 0.5.4",
@@ -4274,6 +4274,15 @@ name = "serde-error"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e988182713aeed6a619a88bca186f6d6407483485ffe44c869ee264f8eabd13f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab33ec92f677585af6d88c65593ae2375adde54efdbf16d597f2cbc7a6d368ff"
 dependencies = [
  "serde",
 ]
