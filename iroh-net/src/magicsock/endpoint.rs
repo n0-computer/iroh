@@ -1804,9 +1804,6 @@ mod tests {
         };
         let mut got = peer_map.endpoint_infos(later);
         got.sort_by_key(|p| p.id);
-        for i in got.iter() {
-            dbg!(i);
-        }
         assert_eq!(expect, got);
     }
 
