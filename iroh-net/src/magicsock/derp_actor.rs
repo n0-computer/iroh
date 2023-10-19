@@ -63,6 +63,7 @@ struct ActiveDerp {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ActiveDerpMessage {
     GetLastWrite(oneshot::Sender<Instant>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
@@ -122,7 +123,7 @@ impl ActiveDerp {
                         },
                         ReadAction::RemovePeerRoutes { peers, } => {
                             self.derp_routes.retain(|peer| {
-                                !peers.contains(&peer)
+                                !peers.contains(peer)
                             });
                         }
                     }

@@ -126,6 +126,7 @@ enum ActorMessage {
     Pong([u8; 8], oneshot::Sender<Result<(), ClientError>>),
     Send(PublicKey, Bytes, oneshot::Sender<Result<(), ClientError>>),
     Close(oneshot::Sender<Result<(), ClientError>>),
+    CloseForReconnect(oneshot::Sender<Result<(), ClientError>>),
     IsConnected(oneshot::Sender<Result<bool, ClientError>>),
     WatchConnectionChanges(oneshot::Sender<Result<(PublicKey, usize), ClientError>>),
     ClosePeer(PublicKey, oneshot::Sender<Result<(), ClientError>>),
@@ -399,7 +400,7 @@ impl Client {
     /// If there is already an active derp connection, returns the already
     /// connected [`crate::derp::client::Client`].
     pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
-        self.send_actor(|s| ActorMessage::Connect(s)).await
+        self.send_actor(ActorMessage::Connect).await
     }
 
     /// Let the server know that this client is the preferred client
@@ -413,7 +414,7 @@ impl Client {
     /// Get the local addr of the connection. If there is no current underlying derp connection
     /// or the [`Client`] is closed, returns `None`.
     pub async fn local_addr(&self) -> Option<SocketAddr> {
-        self.send_actor(|s| ActorMessage::LocalAddr(s))
+        self.send_actor(ActorMessage::LocalAddr)
             .await
             .ok()
             .flatten()
@@ -423,7 +424,7 @@ impl Client {
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<Duration, ClientError> {
-        self.send_actor(|s| ActorMessage::Ping(s)).await
+        self.send_actor(ActorMessage::Ping).await
     }
 
     /// Send a pong back to the server.
@@ -448,14 +449,19 @@ impl Client {
         self.send_actor(|s| ActorMessage::Send(dst_key, b, s)).await
     }
 
-    /// Close the http derp connection
+    /// Close the http derp connection.
     pub async fn close(self) -> Result<(), ClientError> {
-        self.send_actor(|s| ActorMessage::Close(s)).await
+        self.send_actor(ActorMessage::Close).await
+    }
+
+    /// Disconnect the http derp connection.
+    pub async fn close_for_reconnect(&self) -> Result<(), ClientError> {
+        self.send_actor(ActorMessage::CloseForReconnect).await
     }
 
     /// Returns `true` if the underyling derp connection is established.
     pub async fn is_connected(&self) -> Result<bool, ClientError> {
-        self.send_actor(|s| ActorMessage::IsConnected(s)).await
+        self.send_actor(ActorMessage::IsConnected).await
     }
 
     /// Send a request to subscribe as a "watcher" on the server.
@@ -471,8 +477,7 @@ impl Client {
     /// If there is an error sending the message, it closes the underlying derp connection before
     /// returning.
     pub async fn watch_connection_changes(&self) -> Result<(PublicKey, usize), ClientError> {
-        self.send_actor(|s| ActorMessage::WatchConnectionChanges(s))
-            .await
+        self.send_actor(ActorMessage::WatchConnectionChanges).await
     }
 
     /// Send a "close peer" request to the server.
@@ -636,6 +641,10 @@ impl Actor {
                             s.send(Ok(res)).ok();
                             // shutting down
                             break;
+                        },
+                        ActorMessage::CloseForReconnect(s) => {
+                            let res = self.close_for_reconnect().await;
+                            s.send(Ok(res)).ok();
                         },
                         ActorMessage::IsConnected(s) => {
                             let res = self.is_connected();
@@ -868,7 +877,6 @@ impl Actor {
                 Err(err) => Err(err),
             };
             s.send(res).ok();
-            ()
         });
     }
 
@@ -897,9 +905,10 @@ impl Actor {
     }
 
     async fn close(mut self) {
-        // TODO: check for already closed
-        self.is_closed = true;
-        self.close_for_reconnect().await;
+        if !self.is_closed {
+            self.is_closed = true;
+            self.close_for_reconnect().await;
+        }
     }
 
     fn is_connected(&self) -> bool {
