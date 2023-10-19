@@ -51,7 +51,6 @@ struct ActiveDerp {
     /// The time of the last request for its write
     /// channel (currently even if there was no write).
     last_write: Instant,
-    create_time: Instant,
     reader: ReaderState,
     inbox: mpsc::Receiver<ActiveDerpMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
@@ -358,7 +357,6 @@ impl DerpActor {
             let ad = ActiveDerp {
                 c: c.clone(),
                 last_write: Instant::now(),
-                create_time: Instant::now(),
                 reader: ReaderState::new(region_id, c, dc_receiver),
                 inbox: r,
                 msg_sender,
