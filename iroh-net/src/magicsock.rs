@@ -884,12 +884,12 @@ impl Inner {
             Ok(_n) => {
                 debug!(%msg, "sent disco message");
                 inc!(MagicsockMetrics, sent_disco_udp);
-                disco_message_sent(&msg);
+                disco_message_sent(msg);
                 Ok(true)
             }
             Err(err) => {
                 warn!(?msg, ?err, "failed to send disco message");
-                Err(err.into())
+                Err(err)
             }
         })
     }
