@@ -19,6 +19,8 @@ use iroh_net::{
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, DerpMode, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
+    magic_endpoint,
+    magicsock::EndpointInfo,
     netcheck, portmapper,
     util::AbortingJoinHandle,
     MagicEndpoint, PeerAddr,
@@ -285,10 +287,11 @@ struct Gui {
 }
 
 impl Gui {
-    fn new() -> Self {
+    fn new(endpoint: MagicEndpoint, peer_id: PublicKey) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
+        let conn_info = mp.add(ProgressBar::hidden());
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
@@ -298,6 +301,7 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
+        conn_info.set_style(style.clone());
         counters.set_style(style);
         let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -308,6 +312,7 @@ impl Gui {
         let counter_task = AbortingJoinHandle(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
+                Self::update_connection_info(&conn_info, &endpoint, &peer_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }));
@@ -320,6 +325,43 @@ impl Gui {
             echo_pb,
             counter_task: Some(counter_task),
         }
+    }
+
+    async fn update_connection_info(
+        target: &ProgressBar,
+        endpoint: &MagicEndpoint,
+        peer_id: &PublicKey,
+    ) {
+        let format_latency = |x: Option<Duration>| {
+            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
+                .unwrap_or_else(|| "unknown".to_string())
+        };
+        let msg = match endpoint.connection_info(*peer_id).await {
+            Ok(Some(EndpointInfo {
+                derp_region,
+                conn_type,
+                latency,
+                addrs,
+                ..
+            })) => {
+                let derp_region = derp_region
+                    .map(|x| x.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let latency = format_latency(latency);
+                let addrs = addrs
+                    .into_iter()
+                    .map(|(a, l)| format!("{} ({})", a, format_latency(l)))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "derp region: {}, latency: {}, connection type: {}, addrs: [{}]",
+                    derp_region, latency, conn_type, addrs
+                )
+            }
+            Ok(None) => "connection info unavailable".to_string(),
+            Err(cause) => format!("error getting connection info: {}", cause),
+        };
+        target.set_message(msg);
     }
 
     fn update_counters(target: &ProgressBar) {
@@ -485,8 +527,12 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
-    let gui = Gui::new();
+async fn passive_side(
+    endpoint: MagicEndpoint,
+    connection: quinn::Connection,
+) -> anyhow::Result<()> {
+    let remote_peer_id = magic_endpoint::get_peer_id(&connection).await?;
+    let gui = Gui::new(endpoint, remote_peer_id);
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -574,7 +620,7 @@ async fn connect(
     let conn = endpoint.connect(peer_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
-            if let Err(cause) = passive_side(connection).await {
+            if let Err(cause) = passive_side(endpoint.clone(), connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }
@@ -623,14 +669,19 @@ async fn accept(
     let connections = Arc::new(AtomicU64::default());
     while let Some(connecting) = endpoint.accept().await {
         let connections = connections.clone();
+        let endpoint = endpoint.clone();
         tokio::task::spawn(async move {
             let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        println!("Accepted connection. Starting test");
+                        let Ok(remote_peer_id) = magic_endpoint::get_peer_id(&connection).await
+                        else {
+                            return;
+                        };
+                        println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
-                        let gui = Gui::new();
+                        let gui = Gui::new(endpoint.clone(), remote_peer_id);
                         let res = active_side(connection, &config, Some(&gui)).await;
                         gui.clear();
                         let dt = t0.elapsed().as_secs_f64();

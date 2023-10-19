@@ -74,13 +74,16 @@ pub struct Gossip {
 
 impl Gossip {
     /// Spawn a gossip actor and get a handle for it
-    pub fn from_endpoint(endpoint: MagicEndpoint, config: proto::Config) -> Self {
+    pub fn from_endpoint(
+        endpoint: MagicEndpoint,
+        config: proto::Config,
+        my_addr: &AddrInfo,
+    ) -> Self {
         let peer_id = endpoint.peer_id();
         let dialer = Dialer::new(endpoint.clone());
-        let peer_data = Default::default();
         let state = proto::State::new(
             peer_id,
-            peer_data,
+            encode_peer_data(my_addr).unwrap(),
             config,
             rand::rngs::StdRng::from_entropy(),
         );
@@ -631,11 +634,17 @@ async fn connection_loop(
 }
 
 fn encode_peer_data(info: &AddrInfo) -> anyhow::Result<PeerData> {
-    Ok(PeerData::new(postcard::to_stdvec(info)?))
+    let bytes = postcard::to_stdvec(info)?;
+    anyhow::ensure!(!bytes.is_empty(), "encoding empty peer data: {:?}", info);
+    Ok(PeerData::new(bytes))
 }
 
 fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
-    let info = postcard::from_bytes(peer_data.as_bytes())?;
+    let bytes = peer_data.as_bytes();
+    if bytes.is_empty() {
+        return Ok(AddrInfo::default());
+    }
+    let info = postcard::from_bytes(bytes)?;
     Ok(info)
 }
 
@@ -691,10 +700,22 @@ mod test {
         let ep1 = create_endpoint(derp_map.clone()).await.unwrap();
         let ep2 = create_endpoint(derp_map.clone()).await.unwrap();
         let ep3 = create_endpoint(derp_map.clone()).await.unwrap();
+        let addr1 = AddrInfo {
+            derp_region: Some(derp_region),
+            direct_addresses: Default::default(),
+        };
+        let addr2 = AddrInfo {
+            derp_region: Some(derp_region),
+            direct_addresses: Default::default(),
+        };
+        let addr3 = AddrInfo {
+            derp_region: Some(derp_region),
+            direct_addresses: Default::default(),
+        };
 
-        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default());
-        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default());
-        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default());
+        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default(), &addr1);
+        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default(), &addr2);
+        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default(), &addr3);
         debug!("peer1 {:?}", ep1.peer_id());
         debug!("peer2 {:?}", ep2.peer_id());
         debug!("peer3 {:?}", ep3.peer_id());
@@ -707,11 +728,14 @@ mod test {
             spawn(endpoint_loop(ep3.clone(), go2.clone(), cancel.clone())),
         ];
 
+        debug!("----- adding peers  ----- ");
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
         let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
         ep2.add_peer_addr(addr1.clone()).await.unwrap();
         ep3.add_peer_addr(addr1).await.unwrap();
+
+        debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed
         go1.join(topic, vec![]).await.unwrap();
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();

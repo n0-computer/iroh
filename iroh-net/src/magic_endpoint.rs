@@ -1,6 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
@@ -81,7 +81,7 @@ pub struct AddrInfo {
     /// The peer's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: HashSet<SocketAddr>,
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl AddrInfo {
@@ -309,8 +309,16 @@ impl MagicEndpoint {
         let msock = magicsock::MagicSock::new(msock_opts).await?;
         trace!("created magicsock");
 
+        let mut endpoint_config = quinn::EndpointConfig::default();
+        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // the packet if grease_quic_bit is set to false.
+        endpoint_config.grease_quic_bit(false);
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
+            endpoint_config,
             server_config,
             msock.clone(),
             Arc::new(quinn::TokioRuntime),
@@ -469,8 +477,9 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
+    // TODO: Make sync
     pub async fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
-        self.msock.add_peer_addr(peer_addr).await?;
+        self.msock.add_peer_addr(peer_addr);
         Ok(())
     }
 
