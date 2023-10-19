@@ -19,7 +19,7 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
-use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, info, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
@@ -389,7 +389,7 @@ impl Client {
             trace!("got connection, conn num {conn_gen}");
             Ok((derp_client, conn_gen))
         }
-        .instrument(info_span!("client-connect", %key))
+        .instrument(info_span!("client-connect", key = %key.fmt_short()))
         .await
     }
 
@@ -459,7 +459,6 @@ impl Client {
         true
     }
 
-    #[instrument(level = "debug", skip_all)]
     async fn connect_0(&self) -> Result<DerpClient, ClientError> {
         let url = self.url();
         let is_test_url = url
@@ -865,10 +864,9 @@ impl Client {
 
     /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
     /// re-connections this Client has ever made
-    #[instrument(skip(self))]
     pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
         loop {
-            debug!("recv_detail tick");
+            trace!("recv_detail tick");
             let (client, conn_gen) = self.connect().await?;
             match client.recv().await {
                 Ok(msg) => {
