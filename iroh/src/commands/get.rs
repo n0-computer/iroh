@@ -17,7 +17,7 @@ use iroh_bytes::{
     Hash,
 };
 use iroh_bytes::{
-    provider::GetProgress,
+    provider::DownloadProgress,
     util::{
         progress::{FlumeProgressSender, IdGenerator, ProgressSender},
         BlobFormat,
@@ -130,7 +130,7 @@ impl GetInteractive {
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         // we are connected
-        sender.send(GetProgress::Connected).await?;
+        sender.send(DownloadProgress::Connected).await?;
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
             anyhow::bail!("expected root to be present");
         };
@@ -140,13 +140,13 @@ impl GetInteractive {
             get_to_stdout_multi(curr, sender.clone()).await?
         };
         sender
-            .send(GetProgress::NetworkDone {
+            .send(DownloadProgress::NetworkDone {
                 bytes_written: stats.bytes_written,
                 bytes_read: stats.bytes_read,
                 elapsed: stats.elapsed,
             })
             .await?;
-        sender.send(GetProgress::AllDone).await?;
+        sender.send(DownloadProgress::AllDone).await?;
         display_task.await??;
 
         Ok(())
@@ -155,22 +155,31 @@ impl GetInteractive {
 
 async fn get_to_stdout_single(
     curr: get::fsm::AtStartRoot,
-    sender: FlumeProgressSender<GetProgress>,
+    sender: FlumeProgressSender<DownloadProgress>,
 ) -> Result<get::Stats> {
     let curr = curr.next();
     let id = sender.new_id();
     let hash = curr.hash();
     let (curr, size) = curr.next().await?;
-    sender.send(GetProgress::Found { id, hash, size }).await?;
+    sender
+        .send(DownloadProgress::Found {
+            id,
+            hash,
+            size,
+            child: 0,
+        })
+        .await?;
     let sender2 = sender.clone();
     let mut writer = ProgressSliceWriter::new(
         ConcatenateSliceWriter::new(tokio::io::stdout()),
         move |offset| {
-            sender2.try_send(GetProgress::Progress { id, offset }).ok();
+            sender2
+                .try_send(DownloadProgress::Progress { id, offset })
+                .ok();
         },
     );
     let curr = curr.write_all(&mut writer).await?;
-    sender.send(GetProgress::Done { id }).await?;
+    sender.send(DownloadProgress::Done { id }).await?;
     let EndBlobNext::Closing(curr) = curr.next() else {
         anyhow::bail!("expected end of stream")
     };
@@ -179,15 +188,14 @@ async fn get_to_stdout_single(
 
 async fn get_to_stdout_multi(
     curr: get::fsm::AtStartRoot,
-    sender: FlumeProgressSender<GetProgress>,
+    sender: FlumeProgressSender<DownloadProgress>,
 ) -> Result<get::Stats> {
     let hash = curr.hash();
-    let (mut next, _links, collection) = Collection::read_fsm(curr).await?;
+    let (mut next, links, collection) = Collection::read_fsm(curr).await?;
     sender
-        .send(GetProgress::FoundCollection {
+        .send(DownloadProgress::FoundHashSeq {
             hash,
-            num_blobs: Some(collection.total_entries()),
-            total_blobs_size: Some(collection.total_blobs_size()),
+            children: links.len() as u64,
         })
         .await?;
     let collection = collection.into_inner();
@@ -207,21 +215,24 @@ async fn get_to_stdout_multi(
         let id = sender.new_id();
         let (curr, size) = header.next().await?;
         sender
-            .send(GetProgress::Found {
+            .send(DownloadProgress::Found {
                 id,
                 hash: blob.hash,
                 size,
+                child: curr.offset(),
             })
             .await?;
         let sender2 = sender.clone();
         let mut io_writer = ProgressSliceWriter::new(
             ConcatenateSliceWriter::new(tokio::io::stdout()),
             move |offset| {
-                sender2.try_send(GetProgress::Progress { id, offset }).ok();
+                sender2
+                    .try_send(DownloadProgress::Progress { id, offset })
+                    .ok();
             },
         );
         let curr = curr.write_all(&mut io_writer).await?;
-        sender.send(GetProgress::Done { id }).await?;
+        sender.send(DownloadProgress::Done { id }).await?;
         // wait for the progress task to finish, only after dropping the writer
         next = curr.next();
     };

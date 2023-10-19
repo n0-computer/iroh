@@ -19,7 +19,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::provider::GetProgress;
+use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
@@ -959,7 +959,7 @@ impl<D: BaoStore> RpcHandler<D> {
         hash: Hash,
         recursive: bool,
         stable: bool,
-        progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
@@ -983,7 +983,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 let id = progress.new_id();
                 let progress1 = progress.clone();
                 db.export(*hash, path, mode, move |offset| {
-                    Ok(progress1.try_send(GetProgress::ExportProgress { id, offset })?)
+                    Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
             }
@@ -992,7 +992,7 @@ impl<D: BaoStore> RpcHandler<D> {
             let id = progress.new_id();
             let entry = db.get(&hash).context("entry not there")?;
             progress
-                .send(GetProgress::Export {
+                .send(DownloadProgress::Export {
                     id,
                     hash,
                     target: out,
@@ -1001,7 +1001,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 .await?;
             let progress1 = progress.clone();
             db.export(hash, path, mode, move |offset| {
-                Ok(progress1.try_send(GetProgress::ExportProgress { id, offset })?)
+                Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
             })
             .await?;
         }
@@ -1011,11 +1011,10 @@ impl<D: BaoStore> RpcHandler<D> {
     async fn blob_download0(
         self,
         msg: BlobDownloadRequest,
-        progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
-        debug!("share: {:?}", msg);
         let format = msg.format;
         let db = self.inner.db.clone();
         let haf = HashAndFormat { hash, format };
@@ -1025,7 +1024,7 @@ impl<D: BaoStore> RpcHandler<D> {
             .endpoint
             .connect(msg.peer, &iroh_bytes::protocol::ALPN)
             .await?;
-        progress.send(GetProgress::Connected).await?;
+        progress.send(DownloadProgress::Connected).await?;
         let progress2 = progress.clone();
         let progress3 = progress.clone();
         let db = self.inner.db.clone();
@@ -1047,7 +1046,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let _export = local.spawn_pinned(move || async move {
             let stats = download.await.unwrap()?;
             progress
-                .send(GetProgress::NetworkDone {
+                .send(DownloadProgress::NetworkDone {
                     bytes_written: stats.bytes_written,
                     bytes_read: stats.bytes_read,
                     elapsed: stats.elapsed,
@@ -1058,7 +1057,7 @@ impl<D: BaoStore> RpcHandler<D> {
                     .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
                     .await
                 {
-                    progress.send(GetProgress::Abort(cause.into())).await?;
+                    progress.send(DownloadProgress::Abort(cause.into())).await?;
                 }
             }
             match msg.tag {
@@ -1070,18 +1069,21 @@ impl<D: BaoStore> RpcHandler<D> {
                 }
             }
             drop(temp_pin);
-            progress.send(GetProgress::AllDone).await?;
+            progress.send(DownloadProgress::AllDone).await?;
             anyhow::Ok(())
         });
         Ok(())
     }
 
-    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = GetProgress> {
+    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadProgress> {
         async move {
             let (sender, receiver) = flume::bounded(1024);
             let sender = FlumeProgressSender::new(sender);
             if let Err(cause) = self.blob_download0(msg, sender.clone()).await {
-                sender.send(GetProgress::Abort(cause.into())).await.unwrap();
+                sender
+                    .send(DownloadProgress::Abort(cause.into()))
+                    .await
+                    .unwrap();
             };
             receiver.into_stream()
         }

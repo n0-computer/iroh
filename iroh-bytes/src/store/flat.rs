@@ -1197,7 +1197,7 @@ impl Store {
         meta_path: PathBuf,
         rt: crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
-        tracing::debug!(
+        tracing::info!(
             "loading database from {} {}",
             complete_path.display(),
             partial_path.display()

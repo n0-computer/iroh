@@ -37,7 +37,7 @@ use crate::rpc_protocol::{
     DocDelResponse, DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
     DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetHashRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
-    GetProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
     NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
     NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
@@ -333,7 +333,7 @@ where
     pub async fn download(
         &self,
         req: BlobDownloadRequest,
-    ) -> Result<impl Stream<Item = Result<GetProgress>>> {
+    ) -> Result<impl Stream<Item = Result<DownloadProgress>>> {
         let stream = self.rpc.server_streaming(req).await?;
         Ok(stream.map_err(anyhow::Error::from))
     }
