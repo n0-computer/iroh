@@ -37,6 +37,11 @@ impl CryptoKeys {
     }
 }
 
+/// Expiry time for the crypto key cache.
+///
+/// Basically, if no crypto operations have been performed with a key for this
+/// duration, the crypto keys will be removed from the cache and need to be
+/// re-created when they are used again.
 const KEY_CACHE_TTL: Duration = Duration::from_secs(60);
 static KEY_CACHE: OnceCell<Mutex<TtlCache<[u8; 32], CryptoKeys>>> = OnceCell::new();
 
@@ -70,6 +75,15 @@ fn get_or_create_crypto_keys<T>(
 }
 
 /// A public key.
+///
+/// The key itself is just a 32 byte array, but a key has associated crypto
+/// information that is cached for performance reasons.
+///
+/// The cache item will be refreshed every time a crypto operation is performed,
+/// or when a key is deserialised or created from a byte array.
+///
+/// Serialisation or creation from a byte array is cheap if the key is already
+/// in the cache, but expensive if it is not.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PublicKey([u8; 32]);
 
