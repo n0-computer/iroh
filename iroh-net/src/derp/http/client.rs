@@ -1046,7 +1046,7 @@ impl Actor {
     /// Creates the uri string from a [`DerpNode`]
     ///
     /// Return a TCP stream to the provided region, trying each node in order
-    /// (using [`Client::dial_node`]) until one connects
+    /// (using [`dial_node`]) until one connects
     async fn dial_region(
         &self,
         reg: DerpRegion,
