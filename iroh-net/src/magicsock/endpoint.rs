@@ -125,9 +125,6 @@ impl Endpoint {
             // we potentially have a relay connection to the peer
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
-        if options.active {
-            tracing::error!(peer=%options.public_key.fmt_short(), "creating active peer");
-        }
 
         Endpoint {
             id,
@@ -1022,7 +1019,6 @@ impl Endpoint {
 
     pub(crate) fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>, Vec<PingAction>) {
         let now = Instant::now();
-        tracing::error!(peer=%self.public_key.fmt_short(), "active peer via send addr");
         self.last_used.replace(now);
         let (udp_addr, derp_region, should_ping) = self.addr_for_send(&now);
         let mut msgs = Vec::new();
@@ -1234,8 +1230,6 @@ impl PeerMap {
         };
         // record this peer and this address being in use
         let now = Instant::now();
-
-        tracing::error!(peer=%endpoint.public_key.fmt_short(), "active peer and addr via receive_ip");
         endpoint.last_used = Some(now);
         state.last_payload_msg = Some(now);
         Some(endpoint)
@@ -1583,7 +1577,6 @@ mod tests {
     use super::*;
     use crate::key::SecretKey;
 
-    /*
     #[test]
     fn test_endpoint_infos() {
         let new_relay_and_state = |region_id: Option<u16>| {
@@ -1742,10 +1735,14 @@ mod tests {
                 id: a_endpoint.id,
                 public_key: a_endpoint.public_key,
                 derp_region: a_endpoint.derp_region(),
-                addrs: Vec::from([(a_socket_addr, Some(latency), AddrState::Inactive)]),
+                addrs: Vec::from([DirectAddrInfo {
+                    addr: a_socket_addr,
+                    latency: Some(latency),
+                    active: false,
+                }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
-                last_used: None,
+                last_used: Some(elapsed),
             },
             EndpointInfo {
                 id: b_endpoint.id,
@@ -1754,7 +1751,7 @@ mod tests {
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
-                last_used: None,
+                last_used: Some(elapsed),
             },
             EndpointInfo {
                 id: c_endpoint.id,
@@ -1769,7 +1766,11 @@ mod tests {
                 id: d_endpoint.id,
                 public_key: d_endpoint.public_key,
                 derp_region: d_endpoint.derp_region(),
-                addrs: Vec::from([(d_socket_addr, Some(latency), AddrState::Inactive)]),
+                addrs: Vec::from([DirectAddrInfo {
+                    addr: d_socket_addr,
+                    latency: Some(latency),
+                    active: false,
+                }]),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
                 last_used: Some(elapsed),
@@ -1803,9 +1804,11 @@ mod tests {
         };
         let mut got = peer_map.endpoint_infos(later);
         got.sort_by_key(|p| p.id);
+        for i in got.iter() {
+            dbg!(i);
+        }
         assert_eq!(expect, got);
     }
-    */
 
     /// Test persisting and loading of known peers.
     #[tokio::test]
