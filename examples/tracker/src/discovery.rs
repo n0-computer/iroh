@@ -1,5 +1,6 @@
 // copied from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
 use anyhow::Result;
+use futures::FutureExt;
 use iroh_net::key::PublicKey as PeerId;
 use iroh_net::{AddrInfo, PeerAddr};
 use pkarr::dns::rdata::{RData, A, AAAA, TXT};
@@ -68,9 +69,9 @@ fn packet_to_peer_addr(peer_id: &PeerId, packet: &SignedPacket) -> PeerAddr {
     }
 }
 
-fn peer_addr_to_packet(keypair: &Keypair, addr: &PeerAddr, ttl: u32) -> Result<SignedPacket> {
+fn peer_addr_to_packet(keypair: &Keypair, info: &AddrInfo, ttl: u32) -> Result<SignedPacket> {
     let mut packet = Packet::new_reply(0);
-    for addr in &addr.info.direct_addresses {
+    for addr in &info.direct_addresses {
         let addr = addr.to_string();
         packet.answers.push(ResourceRecord::new(
             Name::new("@").unwrap(),
@@ -79,7 +80,7 @@ fn peer_addr_to_packet(keypair: &Keypair, addr: &PeerAddr, ttl: u32) -> Result<S
             RData::TXT(TXT::try_from(addr.as_str())?.into_owned()),
         ));
     }
-    if let Some(derp_region) = addr.info.derp_region {
+    if let Some(derp_region) = info.derp_region {
         packet.answers.push(ResourceRecord::new(
             Name::new(DERP_REGION_KEY).unwrap(),
             CLASS::IN,
@@ -108,6 +109,70 @@ fn instance_info_to_peer_addr(peer_id: &PeerId, instance_info: &InstanceInformat
             derp_region: None,
             direct_addresses: instance_info.get_socket_addresses().collect(),
         },
+    }
+}
+
+#[derive(Debug)]
+pub struct PkarrRelayDiscovery {
+    keypair: pkarr::Keypair,
+    relay: Url,
+    client: PkarrClient,
+}
+
+impl PkarrRelayDiscovery {
+    pub fn new(secret_key: iroh_net::key::SecretKey, relay: Url) -> Self {
+        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
+        Self {
+            keypair,
+            relay,
+            client: PkarrClient::new(),
+        }
+    }
+}
+
+impl iroh_net::magicsock::Discovery for PkarrRelayDiscovery {
+    fn publish(&self, info: &AddrInfo) {
+        println!("publishing {:?} via {}", info, self.relay);
+        let signed_packet = peer_addr_to_packet(&self.keypair, info, 0).unwrap();
+        let client = self.client.clone();
+        let relay = self.relay.clone();
+        tokio::spawn(async move {
+            let res = client.relay_put(&relay, signed_packet).await;
+            println!("done publishing, ok:{}", res.is_ok());
+        });
+    }
+
+    fn resolve<'a>(&'a self, peer_id: &'a PeerId) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
+        async move {
+            println!("resolving {} via {}", peer_id, self.relay);
+            let pkarr_public_key = pkarr::PublicKey::try_from(*peer_id.as_bytes()).unwrap();
+            let packet = self.client.relay_get(&self.relay, pkarr_public_key).await?;
+            let addr = packet_to_peer_addr(&peer_id, &packet);
+            println!("resolved: {} to {:?}", peer_id, addr);
+            Ok(addr.info)
+        }.boxed()
+    }
+}
+
+#[derive(Debug)]
+pub struct HardcodedRegionDiscovery {
+    region: u16,
+}
+
+impl HardcodedRegionDiscovery {
+    pub fn new(region: u16) -> Self {
+        Self { region }
+    }
+}
+
+impl iroh_net::magicsock::Discovery for HardcodedRegionDiscovery {
+    fn publish(&self, info: &AddrInfo) {}
+
+    fn resolve<'a>(&'a self, peer_id: &'a PeerId) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
+        futures::future::ok(AddrInfo { 
+            derp_region: Some(self.region),
+            direct_addresses: Default::default(),
+        }).boxed()
     }
 }
 
@@ -188,7 +253,7 @@ impl Discovery {
             mdns.add_service_info(instance_info).await?;
         }
         if let (Some(pkarr), Some(url)) = (self.pkarr.as_ref(), self.relay.as_ref()) {
-            let packet = peer_addr_to_packet(&self.keypair, addr, self.ttl)?;
+            let packet = peer_addr_to_packet(&self.keypair, &addr.info, self.ttl)?;
             pkarr.relay_put(url, packet).await?;
         }
         Ok(())

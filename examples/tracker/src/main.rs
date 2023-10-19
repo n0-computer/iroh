@@ -33,97 +33,7 @@ mod discovery;
 type ShortPeerId = [u8; 32];
 
 const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
-
-/// Interface for an ideal magic endpoint that can dial by peer.
-trait DialByPeer: Clone {
-    fn dial_by_peer<'a>(
-        &'a self,
-        peer: &'a PublicKey,
-        alpn: &'a [u8],
-    ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>>;
-    fn accept(&self) -> quinn::Accept<'_>;
-}
-
-#[derive(Debug, Clone)]
-struct Dialer {
-    endpoint: MagicEndpoint,
-}
-
-impl DialByPeer for Dialer {
-    fn dial_by_peer<'a>(
-        &'a self,
-        peer: &'a PublicKey,
-        alpn: &'a [u8],
-    ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>> {
-        let peer_addr = PeerAddr {
-            peer_id: *peer,
-            info: AddrInfo {
-                derp_region: Some(2),
-                direct_addresses: Default::default(),
-            },
-        };
-        self.endpoint.connect(peer_addr, alpn).boxed()
-    }
-
-    fn accept(&self) -> quinn::Accept<'_> {
-        self.endpoint.accept()
-    }
-}
-
-#[derive(Debug, Clone)]
-struct MultiDialer {
-    endpoint: MagicEndpoint,
-    regions: Vec<u16>,
-}
-
-impl DialByPeer for MultiDialer {
-    fn dial_by_peer<'a>(
-        &'a self,
-        peer: &'a PublicKey,
-        alpn: &'a [u8],
-    ) -> BoxFuture<'a, anyhow::Result<quinn::Connection>> {
-        println!("dialing {} in regions {:?}", peer, self.regions);
-        async move {
-            use futures::stream::StreamExt;
-            let mut attempts = futures::stream::iter(self.regions.iter().cloned())
-                .map(|region| async move {
-                    println!("dialing {} in region {}", peer, region);
-                    let addr = PeerAddr {
-                        peer_id: *peer,
-                        info: AddrInfo {
-                            derp_region: Some(region),
-                            direct_addresses: Default::default(),
-                        },
-                    };
-                    let res = self.endpoint.connect(addr, alpn).await;
-                    println!("ok = {}", res.is_ok());
-                    res
-                })
-                .buffer_unordered(4)
-                .boxed();
-            // tried concurrent dialing. There is a bug. See https://github.com/n0-computer/iroh/issues/1650
-            let mut err = None;
-            while let Some(conn) = attempts.next().await {
-                match conn {
-                    Ok(conn) => return Ok(conn),
-                    Err(e) => err = Some(e),
-                }
-            }
-            Err(match err {
-                Some(err) => err,
-                None => anyhow::anyhow!("no regions to connect to"),
-            })
-        }
-        .inspect(|res| {
-            println!("dial result {:?}", res.as_ref().map(|_| ()));
-        })
-        .boxed()
-    }
-
-    fn accept(&self) -> quinn::Accept<'_> {
-        self.endpoint.accept()
-    }
-}
+const PKARR_RELAY_URL: &str = "https://iroh-discovery.rklaehn.workers.dev/";
 
 /// Announce kind
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -415,7 +325,7 @@ impl Default for Options {
             probe_timeout: Duration::from_secs(60 * 60 * 24),
             size_probe_timeout: Duration::from_secs(60 * 60 * 24),
             // interval between probing peers
-            probe_interval: Duration::from_secs(1),
+            probe_interval: Duration::from_secs(10),
             // max hash seq size is 1000 hashes
             max_hash_seq_size: 1024 * 16 * 32,
             dial_log: Some("dial.log".into()),
@@ -900,7 +810,7 @@ impl Tracker {
         Ok(())
     }
 
-    async fn probe_loop(self, dialer: impl DialByPeer) -> anyhow::Result<()> {
+    async fn probe_loop(self, endpoint: MagicEndpoint) -> anyhow::Result<()> {
         loop {
             let content_by_peers = self.get_content_by_peers();
             let mut results = BTreeMap::<HashAndFormat, Vec<(ShortPeerId, ProbeKind)>>::new();
@@ -908,8 +818,8 @@ impl Tracker {
             for (short_peer, content) in content_by_peers {
                 let peer = PublicKey::from_bytes(&short_peer)?;
                 let t0 = Instant::now();
-                let res = dialer
-                    .dial_by_peer(&peer, &iroh_bytes::protocol::ALPN)
+                let res = endpoint
+                    .connect_by_peer(&peer, &iroh_bytes::protocol::ALPN)
                     .await;
                 self.log_connection_attempt(&peer, t0, &res)?;
                 let connection = match res {
@@ -1002,11 +912,23 @@ pub fn tracker_path(file_name: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
     Ok(tracker_home()?.join(file_name))
 }
 
+async fn create_endpoint(key: iroh_net::key::SecretKey, port: u16) -> anyhow::Result<MagicEndpoint> {
+    let pkarr_relay_discovery = discovery::PkarrRelayDiscovery::new(key.clone(), PKARR_RELAY_URL.parse().unwrap());
+    let region_discover = discovery::HardcodedRegionDiscovery::new(2);
+    iroh_net::MagicEndpoint::builder()
+        .secret_key(key)
+        .discovery(Box::new(region_discover))
+        .alpns(vec![TRACKER_ALPN.to_vec()])
+        .bind(port)
+        .await
+}
+
 async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyhow::Result<()> {
     let home = tracker_home()?;
     println!("tracker starting using {}", tracker_home()?.display());
     let key_path = tracker_path("server.key")?;
     let key = load_secret_key(key_path).await?;
+    let endpoint = create_endpoint(key, args.port).await?;
     let config_path = tracker_path("server.config")?;
     let mut options = if config_path.exists() {
         let config = std::fs::read_to_string(config_path)?;
@@ -1016,20 +938,15 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     };
     options.make_paths_relative(&home);
     let db = Tracker::new(options)?;
-    let endpoint = iroh_net::MagicEndpoint::builder()
-        .secret_key(key)
-        .alpns(vec![TRACKER_ALPN.to_vec()])
-        .bind(args.port)
-        .await?;
     await_derp_region(&endpoint).await?;
     let addr = endpoint.my_addr().await?;
     println!("listening on {:?}", addr);
     println!("peer addr: {}", addr.peer_id);
-    let dialer = Dialer {
-        endpoint: endpoint.clone(),
-    };
     let db2 = db.clone();
-    let _task = rt.local_pool().spawn_pinned(move || db2.probe_loop(dialer));
+    let endpoint2 = endpoint.clone();
+    let _task = rt
+        .local_pool()
+        .spawn_pinned(move || db2.probe_loop(endpoint2));
     while let Some(connecting) = endpoint.accept().await {
         println!("got connecting");
         if let Err(cause) = db.handle_connecting(connecting).await {
@@ -1041,21 +958,10 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
 
 async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     let key = load_secret_key(tracker_path("client.key")?).await?;
-    let endpoint = iroh_net::MagicEndpoint::builder()
-        .secret_key(key)
-        .alpns(vec![TRACKER_ALPN.to_vec()])
-        .bind(0)
-        .await?;
-    let peer_addr = PeerAddr {
-        peer_id: args.host,
-        info: AddrInfo {
-            derp_region: Some(2),
-            direct_addresses: Default::default(),
-        },
-    };
+    let endpoint = create_endpoint(key, 0).await?;
     println!("announce {:?}", args);
-    println!("trying to connect to {:?}", peer_addr);
-    let connection = endpoint.connect(peer_addr, TRACKER_ALPN).await?;
+    println!("trying to connect to {:?}", args.host);
+    let connection = endpoint.connect_by_peer(&args.host, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");
@@ -1089,12 +995,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
 
 async fn query(args: QueryArgs) -> anyhow::Result<()> {
     let key = load_secret_key(tracker_path("client.key")?).await?;
-    let endpoint = iroh_net::MagicEndpoint::builder()
-        .secret_key(key)
-        .alpns(vec![TRACKER_ALPN.to_vec()])
-        .bind(0)
-        .await?;
-    let dialer = Dialer { endpoint };
+    let endpoint = create_endpoint(key, 0).await?;
     let query = Query {
         content: args.content.hash_and_format(),
         flags: QueryFlags {
@@ -1104,7 +1005,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
     };
     let peer_addr = args.host;
     println!("trying to connect to tracker at {:?}", peer_addr);
-    let connection = dialer.dial_by_peer(&peer_addr, TRACKER_ALPN).await?;
+    let connection = endpoint.connect_by_peer(&peer_addr, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");

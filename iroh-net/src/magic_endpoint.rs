@@ -414,6 +414,39 @@ impl MagicEndpoint {
         self.msock.tracked_endpoint(node_id).await
     }
 
+    async fn resolve(&self, peer_id: &PublicKey) -> Result<AddrInfo> {
+        if let Some(discovery) = self.msock.discovery() {
+            discovery.resolve(peer_id).await
+        } else {
+            anyhow::bail!("no discovery mechanism configured");
+        }
+    }
+
+    /// Connect to a remote endpoint, using just the peer's [`PublicKey`].
+    pub async fn connect_by_peer(
+        &self,
+        peer_id: &PublicKey,
+        alpn: &[u8],
+    ) -> Result<quinn::Connection> {
+        let addr = match self.msock.get_mapping_addr(peer_id).await {
+            Some(addr) => addr,
+            None => {
+                let info = self.resolve(&peer_id).await?;
+                let peer_addr = PeerAddr {
+                    peer_id: *peer_id,
+                    info,
+                };
+                self.add_peer_addr(peer_addr).await?;
+                self.msock.get_mapping_addr(peer_id).await.ok_or_else(|| {
+                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {peer_id:?}")
+                })?
+            }
+        };
+
+        debug!("connecting to {}: (via {})", peer_id, addr);
+        self.connect_inner(peer_id, alpn, addr).await
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
@@ -441,11 +474,25 @@ impl MagicEndpoint {
             });
         };
 
+        debug!(
+            "connecting to {}: (via {} - {:?})",
+            peer_id, addr, info.direct_addresses
+        );
+
+        self.connect_inner(&peer_id, alpn, addr).await
+    }
+
+    async fn connect_inner(
+        &self,
+        peer_id: &PublicKey,
+        alpn: &[u8],
+        addr: SocketAddr,
+    ) -> Result<quinn::Connection> {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
                 &self.secret_key,
-                Some(peer_id),
+                Some(*peer_id),
                 alpn_protocols,
                 self.keylog,
             )?;
@@ -455,11 +502,6 @@ impl MagicEndpoint {
             client_config.transport_config(Arc::new(transport_config));
             client_config
         };
-
-        debug!(
-            "connecting to {}: (via {} - {:?})",
-            peer_id, addr, info.direct_addresses
-        );
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self

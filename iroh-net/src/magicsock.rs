@@ -159,10 +159,10 @@ pub struct Options {
 /// Discovery trait for [`MagicEndpoint`].
 pub trait Discovery: Debug + Send + Sync {
     /// Publish the given [`AddrInfo`] to the discovery mechanisms.
-    fn publish(&self, info: AddrInfo);
+    fn publish(&self, info: &AddrInfo);
 
     /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
-    fn resolve(&self, peer_id: &PublicKey) -> BoxFuture<'static, Result<AddrInfo>>;
+    fn resolve<'a>(&'a self, peer_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
 }
 
 /// Contains options for `MagicSock::listen`.
@@ -673,6 +673,10 @@ impl MagicSock {
             .await
             .unwrap();
         r.await.unwrap();
+    }
+
+    pub(crate) fn discovery(&self) -> &Option<Box<dyn Discovery>> {
+        &self.inner.discovery
     }
 }
 
@@ -1486,7 +1490,7 @@ impl Actor {
                 direct_addresses: self.last_endpoints.iter().map(|x| x.addr).collect(),
                 derp_region: Some(self.inner.my_derp()).filter(|x| *x != 0),
             };
-            discovery.publish(info);
+            discovery.publish(&info);
         }
     }
 
