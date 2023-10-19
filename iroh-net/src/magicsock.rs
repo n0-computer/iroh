@@ -2429,11 +2429,11 @@ impl Actor {
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
-                warn!(%dst, ?msg, "failed to send disco message");
+                warn!(?msg, "failed to send disco message");
                 Ok(false)
             }
             Ok(_n) => {
-                debug!(%dst, %msg, "sent disco message");
+                debug!(%msg, "sent disco message");
                 if is_derp {
                     inc!(MagicsockMetrics, sent_disco_derp);
                 } else {
@@ -2453,7 +2453,7 @@ impl Actor {
                 Ok(true)
             }
             Err(err) => {
-                warn!(%dst, ?msg, ?err, "failed to send disco message");
+                warn!(?msg, ?err, "failed to send disco message");
                 Err(err.into())
             }
         }
