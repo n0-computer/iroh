@@ -1,6 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use quinn_proto::VarInt;
@@ -81,7 +81,7 @@ pub struct AddrInfo {
     /// The peer's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: HashSet<SocketAddr>,
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl AddrInfo {
