@@ -590,6 +590,9 @@ impl Inner {
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
         for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
+            if self.is_closed() {
+                break;
+            }
             match self.derp_recv_receiver.try_recv() {
                 Err(flume::TryRecvError::Empty) => {
                     self.network_recv_wakers
@@ -604,30 +607,12 @@ impl Inner {
                         "connection closed",
                     )));
                 }
-                Ok(dm) => {
-                    if self.is_closed() {
-                        break;
-                    }
-
-                    match dm {
-                        DerpRecvResult::Error(err) => {
-                            return Poll::Ready(Err(err));
-                        }
-                        DerpRecvResult::Ok { bytes, meta } => {
-                            buf_out[..bytes.len()].copy_from_slice(&bytes);
-                            *meta_out = meta;
-
-                            inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
-                            trace!(
-                                "[QUINN] <- {} ({}b) ({}) ({:?}, DERP)",
-                                meta_out.addr,
-                                meta_out.len,
-                                self.me,
-                                meta_out.dst_ip,
-                            );
-                        }
-                    }
-
+                Ok(Err(err)) => return Poll::Ready(Err(err)),
+                Ok(Ok((meta, bytes))) => {
+                    inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
+                    trace!(src = %meta.addr, len = %meta.len, "recv packet from derp");
+                    buf_out[..bytes.len()].copy_from_slice(&bytes);
+                    *meta_out = meta;
                     num_msgs += 1;
                 }
             }
@@ -636,27 +621,19 @@ impl Inner {
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
             inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
-            trace!("received {} datagrams", num_msgs);
+            trace!("derp recv: {} packets", num_msgs);
             return Poll::Ready(Ok(num_msgs));
         }
 
         Poll::Pending
     }
 
-    /// Handles a discovery message and reports whether `msg` was a Tailscale inter-node discovery message.
-    ///
-    /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
-    /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
+    /// Handles a discovery message.
     #[instrument("disco_in", skip_all, fields(peer = %sender.fmt_short(), %src))]
-    fn handle_disco_message(
-        &self,
-        sender: PublicKey,
-        sealed_box: &[u8],
-        src: DiscoMessageSource,
-    ) -> bool {
+    fn handle_disco_message(&self, sender: PublicKey, sealed_box: &[u8], src: DiscoMessageSource) {
         trace!("handle_disco_message start");
         if self.is_closed() {
-            return true;
+            return;
         }
 
         // We're now reasonably sure we're expecting communication from
@@ -674,7 +651,7 @@ impl Inner {
             // This could happen if we changed the key between restarts.
             warn!("disco: failed to open box (wrong rcpt?) {:?}", payload,);
             inc!(MagicsockMetrics, recv_disco_bad_key);
-            return true;
+            return;
         }
         let dm = disco::Message::from_bytes(&sealed_box);
 
@@ -689,7 +666,7 @@ impl Inner {
 
                 inc!(MagicsockMetrics, recv_disco_bad_parse);
                 debug!(?err, "failed to parse disco message");
-                return true;
+                return;
             }
         };
 
@@ -705,7 +682,6 @@ impl Inner {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics, recv_disco_ping);
                 self.handle_ping(ping, &sender, src);
-                true
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
@@ -720,14 +696,13 @@ impl Inner {
                         warn!("received pong: peer unknown, ignore")
                     }
                 });
-                true
             }
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
                 let DiscoMessageSource::Derp { key, .. } = src else {
                     // CallMeMaybe messages should only come via DERP.
                     debug!("[unexpected] call-me-maybe packets should only come via DERP");
-                    return true;
+                    return;
                 };
                 self.peer_map
                     .write(|pm| match pm.endpoint_for_node_key_mut(&key).as_mut() {
@@ -740,13 +715,11 @@ impl Inner {
                             ep.handle_call_me_maybe(cm);
                         }
                     });
-                true
             }
         }
     }
 
-    /// di is the DiscoInfo of the source of the ping.
-    /// derp_node_src is non-zero if the ping arrived via DERP.
+    /// Handle a ping message.
     fn handle_ping(&self, dm: disco::Ping, sender: &PublicKey, src: DiscoMessageSource) {
         let src_addr: SendAddr = src.clone().into();
         let (node_key, likely_heart_beat) = {
@@ -762,12 +735,6 @@ impl Inner {
             (di.node_key, likely_heart_beat)
         };
         debug_assert_eq!(sender, &node_key);
-
-        // If we got a ping over DERP, then derp_node_src is non-zero and we reply
-        // over DERP (in which case ip_dst is also a DERP address).
-        // But if the ping was over UDP (ip_dst is not a DERP address), then dst_key
-        // will be zero here, but that's fine: send_disco_message only requires
-        // a dstKey if the dst ip:port is DERP.
 
         let dst_key = match src {
             DiscoMessageSource::Derp { key, .. } => key,
@@ -1387,14 +1354,7 @@ struct DiscoInfo {
     last_ping_time: Option<Instant>,
 }
 
-#[derive(Debug)]
-enum DerpRecvResult {
-    Error(io::Error),
-    Ok {
-        meta: quinn_udp::RecvMeta,
-        bytes: Bytes,
-    },
-}
+type DerpRecvResult = Result<(quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
 fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool {
@@ -1796,12 +1756,9 @@ impl Actor {
         for part in parts {
             match part {
                 Ok(part) => {
-                    if self
-                        .handle_derp_disco_message(&part, region_id, dm.src)
-                        .await
-                    {
+                    if self.handle_derp_disco_message(&part, region_id, dm.src) {
                         // Message was internal, do not bubble up.
-                        debug!("processed internal disco message from {:?}", dm.src);
+                        debug!(peer = %dm.src, "processed internal disco message");
                         continue;
                     }
 
@@ -1812,10 +1769,10 @@ impl Actor {
                         dst_ip,
                         ecn: None,
                     };
-                    out.push(DerpRecvResult::Ok { bytes: part, meta });
+                    out.push(Ok((meta, part)));
                 }
                 Err(e) => {
-                    out.push(DerpRecvResult::Error(e));
+                    out.push(Err(e));
                 }
             }
         }
@@ -2459,21 +2416,24 @@ impl Actor {
         }
     }
 
-    async fn handle_derp_disco_message(
+    fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
         region: u16,
         derp_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
-            Some((source, sealed_box)) => self.inner.handle_disco_message(
-                source,
-                sealed_box,
-                DiscoMessageSource::Derp {
-                    region,
-                    key: derp_node_src,
-                },
-            ),
+            Some((source, sealed_box)) => {
+                self.inner.handle_disco_message(
+                    source,
+                    sealed_box,
+                    DiscoMessageSource::Derp {
+                        region,
+                        key: derp_node_src,
+                    },
+                );
+                true
+            }
             None => false,
         }
     }

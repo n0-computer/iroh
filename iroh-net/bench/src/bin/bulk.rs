@@ -9,7 +9,7 @@ use iroh_net::{MagicEndpoint, PeerAddr};
 use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
-use bench::{
+use iroh_net_bench::{
     configure_tracing_subscriber, connect_client, drain_stream, rt, send_data_on_stream,
     server_endpoint,
     stats::{Stats, TransferResult},
