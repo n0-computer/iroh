@@ -692,15 +692,18 @@ mod tests {
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8758u16).into();
         let peer_addr = PeerAddr::new(peer_id).with_direct_addresses([direct_addr]);
 
+        info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add adressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
         endpoint.add_peer_addr(peer_addr).await.unwrap();
 
+        info!("closing endpoint");
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();
 
+        info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, path).await;
         let ConnectionInfo { mut addrs, .. } =

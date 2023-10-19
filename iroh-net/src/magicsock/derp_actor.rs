@@ -511,7 +511,7 @@ impl DerpActor {
             debug!("closing connection to derp-{} ({:?})", region_id, why,);
 
             s.send(ActiveDerpMessage::Shutdown).await.ok();
-            t.await.ok(); // ensure the task is shutdown
+            t.abort(); // ensure the task is shutdown
 
             inc!(MagicsockMetrics, num_derp_conns_removed);
         }
