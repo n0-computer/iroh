@@ -23,6 +23,9 @@ use crate::{
 
 use super::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr, SendAddr};
 
+mod best_addr;
+use best_addr::{BestAddr, BestAddrClearReason, BestAddrSource, BestAddrState};
+
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
@@ -86,11 +89,7 @@ pub(super) struct Endpoint {
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     derp_region: Option<(u16, EndpointState)>,
     /// Best non-DERP path.
-    best_addr: Option<AddrLatency>,
-    /// Time best address re-confirmed.
-    best_addr_at: Option<Instant>,
-    /// Time when best_addr expires.
-    trust_best_addr_until: Option<Instant>,
+    best_addr: BestAddr,
     /// [`EndpointState`] for this peer's direct addresses.
     direct_addr_state: HashMap<IpPort, EndpointState>,
     is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
@@ -136,9 +135,7 @@ impl Endpoint {
             derp_region: options
                 .derp_region
                 .map(|region| (region, EndpointState::default())),
-            best_addr: None,
-            best_addr_at: None,
-            trust_best_addr_until: None,
+            best_addr: Default::default(),
             sent_ping: HashMap::new(),
             direct_addr_state: HashMap::new(),
             is_call_me_maybe_ep: HashMap::new(),
@@ -153,8 +150,9 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub fn info(&self) -> EndpointInfo {
-        let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
-            let addr_info = self.best_addr.as_ref().expect("checked");
+        // TODO: I think we should return direct here for outdated.
+        let (conn_type, latency) = if self.best_addr.is_valid(Instant::now()) {
+            let addr_info = self.best_addr.addr_info().expect("checked");
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
         } else if let Some((region_id, relay_state)) = self.derp_region.as_ref() {
             let latency = relay_state.recent_pong().map(|pong| pong.latency);
@@ -203,36 +201,40 @@ impl Endpoint {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
             return (None, self.derp_region(), false);
         }
-        match self.best_addr {
-            Some(ref best_addr) => {
-                if !self.is_best_addr_valid(*now) {
-                    // We had a best_addr but it expired so send both to it and DERP.
-                    trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set but outdated, use best_addr and derp");
-                    (Some(best_addr.addr), self.derp_region(), true)
-                } else {
-                    trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set and valid, use best_addr only");
-                    // Address is current and can be used
-                    (Some(best_addr.addr), None, false)
-                }
+        // Update our best addr from candidate addresses (only if it is empty and if we have recent
+        // pongs).
+        self.update_best_addr_from_candidates();
+        match self.best_addr.state(*now) {
+            // we have a valid address: use it!
+            BestAddrState::Valid(best_addr) => {
+                trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set and valid, use best_addr only");
+                (Some(best_addr.addr), None, false)
             }
-            None => {
-                let (addr, should_ping) = self.get_candidate_udp_addr();
-
-                // Provide backup derp region if no known latency or no addr.
-                let derp_region = if should_ping || addr.is_none() {
-                    self.derp_region()
-                } else {
-                    None
-                };
-
-                trace!(udp_addr = ?addr, derp_region = ?derp_region, ?should_ping, "best_addr is unset, use candidate addr and derp");
-                (addr, derp_region, should_ping)
+            // we have an outdated address: use it, but use derp as well.
+            BestAddrState::Outdated(best_addr) => {
+                trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set but outdated, use best_addr and derp");
+                (Some(best_addr.addr), self.derp_region(), true)
+            }
+            // we have no best address: use a random canidate if available, and derp as backup.
+            BestAddrState::Empty => {
+                let addr = self
+                    .direct_addr_state
+                    .keys()
+                    .choose_stable(&mut rand::thread_rng())
+                    .map(|ipp| SocketAddr::from(*ipp));
+                trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and derp");
+                (addr, self.derp_region(), addr.is_some())
             }
         }
     }
 
-    /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
-    fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
+    /// Update our best_addr (if empty) with the candidate udp addr with the lowest latency.
+    ///
+    /// Returns true if the address was updated.
+    fn update_best_addr_from_candidates(&mut self) -> bool {
+        if !self.best_addr.is_empty() {
+            return false;
+        }
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
         for (ipp, state) in self.direct_addr_state.iter() {
@@ -249,45 +251,17 @@ impl Endpoint {
 
         // If we found a candidate, set to best addr
         if let Some(pong) = last_pong {
-            if self.best_addr.is_none() {
-                // we now have a direct connection, adjust direct connection count
-                inc!(MagicsockMetrics, num_direct_conns_added);
-                if self.derp_region.is_some() {
-                    // we no longer rely on the relay connection, decrease the relay connection
-                    // count
-                    inc!(MagicsockMetrics, num_relay_conns_removed);
-                }
-            }
-
-            let addr = pong.from.as_socket_addr();
-            let trust_best_addr_until = pong.pong_at + Duration::from_secs(60 * 60);
-
-            info!(
-               %addr,
-               latency = ?lowest_latency,
-               trust_for = ?trust_best_addr_until.duration_since(Instant::now()),
-               "new best_addr (candidate address with most recent pong)"
+            self.best_addr.insert(
+                pong.from.as_socket_addr(),
+                Some(lowest_latency),
+                BestAddrSource::BestCandidate,
+                pong.pong_at,
+                self.derp_region.is_some(),
             );
-
-            self.best_addr = Some(AddrLatency {
-                addr,
-                latency: Some(lowest_latency),
-            });
-            self.trust_best_addr_until.replace(trust_best_addr_until);
-
-            // No need to ping, we already have a latency.
-            return (Some(pong.from.as_socket_addr()), false);
+            true
+        } else {
+            false
         }
-
-        // Randomly select an address to use until we retrieve latency information.
-        let udp_addr = self
-            .direct_addr_state
-            .keys()
-            .choose_stable(&mut rand::thread_rng())
-            .copied()
-            .map(SocketAddr::from);
-
-        (udp_addr, udp_addr.is_some())
     }
 
     /// Reports whether we should ping to all our direct addresses looking for a better path.
@@ -297,15 +271,14 @@ impl Endpoint {
             debug!("full ping: no full ping done");
             return true;
         }
-        if !self.is_best_addr_valid(*now) {
+        if !self.best_addr.is_valid(*now) {
             debug!("full ping: best addr expired");
             return true;
         }
 
         if self
             .best_addr
-            .as_ref()
-            .and_then(|addr| addr.latency)
+            .latency()
             .map(|l| l > GOOD_ENOUGH_LATENCY)
             .unwrap_or(true)
             && *now - *self.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL
@@ -313,9 +286,7 @@ impl Endpoint {
             debug!(
                 "full ping: full ping interval expired and latency is only {}ms",
                 self.best_addr
-                    .as_ref()
-                    .unwrap()
-                    .latency
+                    .latency()
                     .map(|l| l.as_millis())
                     .unwrap_or_default()
             );
@@ -347,7 +318,7 @@ impl Endpoint {
             }
         }
         if let Some(udp_addr) = udp_addr {
-            if self.is_best_addr_valid(now) {
+            if self.best_addr.is_valid(now) {
                 // Already have an active session, so just ping the address we're using.
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
@@ -391,6 +362,13 @@ impl Endpoint {
                     if let Some(ep_state) = self.direct_addr_state.get_mut(&addr.into()) {
                         ep_state.last_ping = None;
                     }
+
+                    // If we fail to ping our current best addr, it is not that good anymore.
+                    self.best_addr.clear_if_equals(
+                        addr,
+                        BestAddrClearReason::PongTimeout,
+                        self.derp_region.is_some(),
+                    );
                 }
                 SendAddr::Derp(region) => {
                     if let Some((home_derp, relay_state)) = self.derp_region.as_mut() {
@@ -399,21 +377,6 @@ impl Endpoint {
                             relay_state.last_ping = None;
                         }
                     }
-                }
-            }
-
-            // If we fail to ping our current best addr, it is not that good anymore.
-            if let Some(ref addr) = self.best_addr {
-                if sp.to == addr.addr {
-                    // we had a direct connection that is no longer valid
-                    inc!(MagicsockMetrics, num_direct_conns_removed);
-                    if self.derp_region.is_some() {
-                        // we can only connect through a relay connection
-                        inc!(MagicsockMetrics, num_relay_conns_added);
-                    }
-                    debug!(addr = %sp.to, tx = %hex::encode(txid), "drop best_addr (no pong received in timeout)");
-                    self.best_addr = None;
-                    self.trust_best_addr_until = None;
                 }
             }
         }
@@ -565,7 +528,7 @@ impl Endpoint {
     }
 
     pub fn update_from_node_addr(&mut self, n: &AddrInfo) {
-        if self.best_addr.is_none() {
+        if self.best_addr.is_empty() {
             // we do not have a direct connection, so changing the derp information may
             // have an effect on our connection status
             if self.derp_region.is_none() && n.derp_region.is_some() {
@@ -598,19 +561,9 @@ impl Endpoint {
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
     #[instrument(skip_all, fields(peer = %self.public_key.fmt_short()))]
     fn reset(&mut self) {
-        if self.best_addr.is_some() {
-            // we no longer rely on a direct connection
-            inc!(MagicsockMetrics, num_relay_conns_removed);
-            if self.derp_region.is_some() {
-                // we are now relying on a relay connection
-                inc!(MagicsockMetrics, num_direct_conns_added);
-            }
-        }
-        warn!("drop best_addr (reset state)");
         self.last_full_ping = None;
-        self.best_addr = None;
-        self.best_addr_at = None;
-        self.trust_best_addr_until = None;
+        self.best_addr
+            .clear(BestAddrClearReason::Reset, self.derp_region.is_some());
 
         for es in self.direct_addr_state.values_mut() {
             es.last_ping = None;
@@ -712,18 +665,11 @@ impl Endpoint {
                 None => trace!(%peer, %ip_port, last_seen=%"never", "pruning address"),
             }
 
-            if let Some(addr_and_latency) = self.best_addr.as_ref() {
-                if addr_and_latency.addr == ip_port.into() {
-                    warn!(addr = %addr_and_latency.addr, "drop best_addr (prune for inactivity)");
-                    self.best_addr = None;
-                    // no longer relying on a direct connection, remove conn count
-                    inc!(MagicsockMetrics, num_direct_conns_removed);
-                    if self.derp_region.is_some() {
-                        // we now rely on a relay connection, add a relay count
-                        inc!(MagicsockMetrics, num_relay_conns_added);
-                    }
-                }
-            }
+            self.best_addr.clear_if_equals(
+                ip_port.into(),
+                BestAddrClearReason::Inactive,
+                self.derp_region.is_some(),
+            );
         }
     }
 
@@ -732,7 +678,7 @@ impl Endpoint {
     #[instrument("disco", skip_all, fields(peer = %self.public_key.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self) {
         trace!("connectivity changed");
-        self.trust_best_addr_until = None;
+        self.best_addr.clear_trust();
     }
 
     /// Handles a Pong message (a reply to an earlier ping).
@@ -842,33 +788,13 @@ impl Endpoint {
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
                     debug_assert!(!is_derp, "missmatching derp & udp");
-                    let this_pong = AddrLatency {
-                        addr: to,
-                        latency: Some(latency),
-                    };
-                    let is_better = self.best_addr.is_none()
-                        || this_pong.is_better_than(self.best_addr.as_ref().unwrap());
-
-                    if is_better {
-                        if self.best_addr.is_none() {
-                            // we now have direct connection!
-                            inc!(MagicsockMetrics, num_direct_conns_added);
-                            if self.derp_region.is_some() {
-                                // no long relying on a relay connection, remove a relay conn
-                                inc!(MagicsockMetrics, num_relay_conns_removed);
-                            }
-                        }
-                        info!(addr = %sp.to, "new best_addr (from pong)");
-                        self.best_addr.replace(this_pong.clone());
-                    }
-                    let best_addr = self.best_addr.as_mut().expect("just set");
-                    if best_addr.addr == this_pong.addr {
-                        trace!(addr = %best_addr.addr, trust_for = ?TRUST_UDP_ADDR_DURATION, "best_addr: update trust time");
-                        best_addr.latency.replace(latency);
-                        self.best_addr_at.replace(now);
-                        self.trust_best_addr_until
-                            .replace(now + TRUST_UDP_ADDR_DURATION);
-                    }
+                    self.best_addr.insert_if_better_or_reconfirm(
+                        to,
+                        Some(latency),
+                        BestAddrSource::ReceivedPong,
+                        now,
+                        self.derp_region.is_some(),
+                    );
                 }
 
                 peer_map_insert
@@ -920,22 +846,11 @@ impl Endpoint {
         // Delete any prior CallMeMaybe endpoints that weren't included in this message.
         self.is_call_me_maybe_ep.retain(|ep, want| {
             if !*want {
-                if Some(ep)
-                    == self
-                        .best_addr
-                        .as_ref()
-                        .map(|addr_and_latency| addr_and_latency.addr)
-                        .as_ref()
-                {
-                    warn!("drop best_addr (received call-me-maybe)");
-                    self.best_addr = None;
-                    // no longer relying on the direct connection
-                    inc!(MagicsockMetrics, num_direct_conns_removed);
-                    if self.derp_region.is_some() {
-                        // we are now relying on the relay connection, add a relay conn
-                        inc!(MagicsockMetrics, num_relay_conns_added);
-                    }
-                }
+                self.best_addr.clear_if_equals(
+                    *ep,
+                    BestAddrClearReason::PruneCallMeMaybe,
+                    self.derp_region.is_some(),
+                );
                 false
             } else {
                 true
@@ -999,7 +914,7 @@ impl Endpoint {
         }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
-        let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
+        let udp_addr = self.best_addr.addr();
         if let Some(udp_addr) = udp_addr {
             let elapsed = self.last_ping(&SendAddr::Udp(udp_addr)).map(|l| now - l);
             // Send a ping if the last ping is older than 2 seconds.
@@ -1045,30 +960,6 @@ impl Endpoint {
         );
 
         (udp_addr, derp_region, msgs)
-    }
-
-    fn is_best_addr_valid(&self, now: Instant) -> bool {
-        match &self.best_addr {
-            None => {
-                trace!("best_addr invalid: not set");
-                false
-            }
-            Some(addr) => match self.trust_best_addr_until {
-                Some(expiry) => {
-                    if now < expiry {
-                        trace!(addr = %addr.addr, remaining=?expiry.duration_since(now), "best_addr valid");
-                        true
-                    } else {
-                        trace!(addr = %addr.addr, since=?expiry.duration_since(now), "best_addr invalid: expired");
-                        false
-                    }
-                }
-                None => {
-                    trace!(addr = %addr.addr, "best_addr invalid: trust_best_addr_until not set");
-                    false
-                }
-            },
-        }
     }
 
     /// Get the direct addresses for this endpoint.
@@ -1734,12 +1625,12 @@ mod tests {
                     public_key: key.public(),
                     last_full_ping: None,
                     derp_region: new_relay_and_state(Some(0)),
-                    best_addr: Some(AddrLatency {
-                        addr: ip_port.into(),
-                        latency: Some(latency),
-                    }),
-                    best_addr_at: Some(now),
-                    trust_best_addr_until: now.checked_add(Duration::from_secs(100)),
+                    best_addr: BestAddr::from_parts(
+                        ip_port.into(),
+                        Some(latency),
+                        now,
+                        now + Duration::from_secs(100),
+                    ),
                     direct_addr_state: endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
@@ -1769,9 +1660,7 @@ mod tests {
                 public_key: key.public(),
                 last_full_ping: None,
                 derp_region: Some((0, relay_state)),
-                best_addr: None,
-                best_addr_at: None,
-                trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
+                best_addr: BestAddr::default(),
                 direct_addr_state: HashMap::default(),
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
@@ -1792,9 +1681,7 @@ mod tests {
                 public_key: key.public(),
                 last_full_ping: None,
                 derp_region: new_relay_and_state(Some(0)),
-                best_addr: None,
-                best_addr_at: None,
-                trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
+                best_addr: BestAddr::default(),
                 direct_addr_state: endpoint_state,
                 is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
@@ -1837,12 +1724,12 @@ mod tests {
                     public_key: key.public(),
                     last_full_ping: None,
                     derp_region: Some((0, relay_state)),
-                    best_addr: Some(AddrLatency {
-                        addr: socket_addr,
-                        latency: Some(Duration::from_millis(80)),
-                    }),
-                    best_addr_at: Some(now),
-                    trust_best_addr_until: Some(expired),
+                    best_addr: BestAddr::from_parts(
+                        socket_addr,
+                        Some(Duration::from_millis(80)),
+                        now,
+                        expired,
+                    ),
                     direct_addr_state: endpoint_state,
                     is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
