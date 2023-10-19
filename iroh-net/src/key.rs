@@ -58,18 +58,17 @@ fn get_or_create_crypto_keys<T>(
     f: impl Fn(&CryptoKeys) -> T,
 ) -> std::result::Result<T, SignatureError> {
     let mut state = lock_key_cache();
-    Ok(match state.get(key) {
-        Some(item) => {
+    Ok(match state.entry(*key) {
+        ttl_cache::Entry::Occupied(entry) => {
             // cache hit
-            f(item)
+            f(entry.get())
         }
-        None => {
+        ttl_cache::Entry::Vacant(entry) => {
             // cache miss, create. This might fail if the key is invalid.
             let vk = VerifyingKey::from_bytes(key)?;
             let item = CryptoKeys::new(vk);
-            let res = f(&item);
-            state.insert(*key, item, KEY_CACHE_TTL);
-            res
+            let item = entry.insert(item, KEY_CACHE_TTL);
+            f(&item)
         }
     })
 }
@@ -200,6 +199,8 @@ impl From<VerifyingKey> for PublicKey {
         let item = CryptoKeys::new(verifying_key);
         let key = *verifying_key.as_bytes();
         let mut table = lock_key_cache();
+        // we already have performed the crypto operation, so no need for
+        // get_or_create_crypto_keys. Just insert in any case.
         table.insert(key, item, KEY_CACHE_TTL);
         PublicKey(key)
     }
