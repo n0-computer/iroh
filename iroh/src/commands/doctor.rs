@@ -350,7 +350,9 @@ impl Gui {
                 let latency = format_latency(latency);
                 let addrs = addrs
                     .into_iter()
-                    .map(|(a, l)| format!("{} ({})", a, format_latency(l)))
+                    .map(|addr_info| {
+                        format!("{} ({})", addr_info.addr, format_latency(addr_info.latency))
+                    })
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!(
