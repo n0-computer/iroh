@@ -35,6 +35,7 @@ libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
 os_info = "3.6.0"
+parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8"
 rand_core = "0.6.4"

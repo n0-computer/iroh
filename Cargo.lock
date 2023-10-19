@@ -2325,6 +2325,7 @@ dependencies = [
  "num_enum",
  "once_cell",
  "os_info",
+ "parking_lot",
  "postcard",
  "pretty_assertions",
  "proptest",
@@ -2369,6 +2370,23 @@ dependencies = [
  "wmi",
  "x509-parser",
  "zeroize",
+]
+
+[[package]]
+name = "iroh-net-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "hdrhistogram",
+ "iroh-net",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2907,6 +2925,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.38",
+]
+
+[[package]]
+name = "num_threads"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2819ce041d2ee131036f4fc9d6ae7ae125a3a40e97ba64d04fe799ad9dabbb44"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -4898,6 +4925,8 @@ checksum = "c4a34ab300f2dee6e562c10a046fc05e358b29f9bf92277f30c3c8d82275f6f5"
 dependencies = [
  "deranged",
  "itoa",
+ "libc",
+ "num_threads",
  "powerfmt",
  "serde",
  "time-core",
@@ -5246,6 +5275,7 @@ dependencies = [
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "time",
  "tracing",
  "tracing-core",
  "tracing-log",
