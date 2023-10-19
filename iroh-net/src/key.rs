@@ -415,4 +415,35 @@ mod tests {
             key.public()
         );
     }
+
+    /// Test the different ways a key can come into existence, and that they
+    /// all populate the key cache.
+    #[test]
+    fn test_key_creation_cache() {
+        let random_verifying_key = || {
+            let sk = SigningKey::generate(&mut rand::thread_rng());
+            sk.verifying_key()
+        };
+        let random_public_key = || random_verifying_key().to_bytes();
+        let k1 = random_public_key();
+        let _key = PublicKey::from_bytes(&k1).unwrap();
+        assert!(lock_key_cache().contains_key(&k1));
+
+        let k2 = random_public_key();
+        let _key = PublicKey::try_from(&k2).unwrap();
+        assert!(lock_key_cache().contains_key(&k2));
+
+        let k3 = random_public_key();
+        let _key = PublicKey::try_from(k3.as_slice()).unwrap();
+        assert!(lock_key_cache().contains_key(&k3));
+
+        let k4 = random_verifying_key();
+        let _key = PublicKey::from(k4);
+        assert!(lock_key_cache().contains_key(k4.as_bytes()));
+
+        let k5 = random_verifying_key();
+        let bytes = postcard::to_stdvec(&k5).unwrap();
+        let _key: PublicKey = postcard::from_bytes(&bytes).unwrap();
+        assert!(lock_key_cache().contains_key(k5.as_bytes()));
+    }
 }
