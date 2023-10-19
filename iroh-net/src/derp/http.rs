@@ -9,7 +9,7 @@ mod client;
 mod mesh_clients;
 mod server;
 
-pub use self::client::{Client, ClientBuilder, ClientError};
+pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
 pub use self::mesh_clients::MeshAddrs;
 pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
@@ -127,9 +127,9 @@ mod tests {
         assert_eq!(msg, got_msg);
 
         server.shutdown().await;
-        client_a.close().await;
+        client_a.close().await?;
         client_a_task.abort();
-        client_b.close().await;
+        client_b.close().await?;
         client_b_task.abort();
         Ok(())
     }
@@ -148,7 +148,7 @@ mod tests {
         if let Some(url) = server_url {
             client = client.server_url(url);
         }
-        let client = client
+        let (client, mut client_reader) = client
             .get_region(move || {
                 let region = region.clone();
                 Box::pin(async move { Some(region) })
@@ -157,17 +157,20 @@ mod tests {
             .expect("won't fail if you supply a `get_region`");
         let public_key = key.public();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
-        let client_reader = client.clone();
         let client_reader_task = tokio::spawn(
             async move {
                 loop {
                     println!("waiting for message on {:?}", key.public());
-                    match client_reader.recv_detail().await {
-                        Err(e) => {
+                    match client_reader.recv().await {
+                        None => {
+                            println!("client received nothing");
+                            return;
+                        }
+                        Some(Err(e)) => {
                             println!("client {:?} `recv_detail` error {e}", key.public());
                             return;
                         }
-                        Ok((msg, _)) => {
+                        Some(Ok((msg, _))) => {
                             println!("got message on {:?}: {msg:?}", key.public());
                             if let ReceivedMessage::ReceivedPacket { source, data } = msg {
                                 received_msg_s
@@ -268,9 +271,9 @@ mod tests {
         assert_eq!(msg, got_msg);
 
         server.shutdown().await;
-        client_a.close().await;
+        client_a.close().await?;
         client_a_task.abort();
-        client_b.close().await;
+        client_b.close().await?;
         client_b_task.abort();
         Ok(())
     }

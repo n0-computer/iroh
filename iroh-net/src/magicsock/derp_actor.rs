@@ -110,7 +110,7 @@ impl ActiveDerp {
                             r.send(res).ok();
                         }
                         ActiveDerpMessage::Shutdown => {
-                            self.c.close().await;
+                            self.c.close().await.ok();
                             break;
                         }
                     }
@@ -129,7 +129,7 @@ impl ActiveDerp {
                     }
                     match read_result {
                         ReadResult::Break => {
-                            self.c.close().await;
+                            self.c.close().await.ok();
                             break;
                         }
                         ReadResult::Continue => {},
@@ -330,7 +330,7 @@ impl DerpActor {
         let ipv6_reported = self.conn.ipv6_reported.clone();
 
         // building a client does not dial
-        let dc = derp::http::ClientBuilder::new()
+        let (dc, dc_receiver) = derp::http::ClientBuilder::new()
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
@@ -359,7 +359,7 @@ impl DerpActor {
                 c: c.clone(),
                 last_write: Instant::now(),
                 create_time: Instant::now(),
-                reader: ReaderState::new(region_id, c),
+                reader: ReaderState::new(region_id, c, dc_receiver),
                 inbox: r,
                 msg_sender,
                 derp_routes: Default::default(),
@@ -553,6 +553,7 @@ pub(super) struct DerpReadResult {
 struct ReaderState {
     region: u16,
     derp_client: derp::http::Client,
+    derp_client_receiver: derp::http::ClientReceiver,
     /// The set of senders we know are present on this connection, based on
     /// messages we've received from the server.
     peer_present: HashSet<PublicKey>,
@@ -576,10 +577,15 @@ pub(super) enum ReadAction {
 }
 
 impl ReaderState {
-    fn new(region: u16, derp_client: derp::http::Client) -> Self {
+    fn new(
+        region: u16,
+        derp_client: derp::http::Client,
+        derp_client_receiver: derp::http::ClientReceiver,
+    ) -> Self {
         ReaderState {
             region,
             derp_client,
+            derp_client_receiver,
             peer_present: HashSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
                 .with_initial_interval(Duration::from_millis(10))
@@ -591,11 +597,12 @@ impl ReaderState {
     }
 
     async fn recv(&mut self) -> (ReadResult, ReadAction) {
-        let msg = self.derp_client.recv_detail().await;
+        let msg = self.derp_client_receiver.recv().await;
         trace!(region_id=%self.region, ?msg, "derp.recv received");
 
         match msg {
-            Err(err) => {
+            None => (ReadResult::Continue, ReadAction::None),
+            Some(Err(err)) => {
                 debug!(
                     "[{:?}] derp.recv(derp-{}): {:?}",
                     self.derp_client, self.region, err
@@ -628,7 +635,7 @@ impl ReaderState {
                     None => (ReadResult::Break, action),
                 }
             }
-            Ok((msg, conn_gen)) => {
+            Some(Ok((msg, conn_gen))) => {
                 // reset
                 self.backoff.reset();
                 let now = Instant::now();

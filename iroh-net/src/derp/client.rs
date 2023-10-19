@@ -144,7 +144,7 @@ impl Client {
     }
 
     /// The local address that the [`Client`] is listening on.
-    pub async fn local_addr(&self) -> Result<SocketAddr> {
+    pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr)
     }
 
