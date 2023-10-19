@@ -16,7 +16,7 @@ use rustls::client::Resumption;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 use url::Url;
@@ -158,6 +158,7 @@ struct Actor {
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
+    ping_tasks: JoinSet<()>,
 }
 
 #[derive(Default, Debug)]
@@ -176,7 +177,8 @@ impl PingTracker {
     /// Remove the associated [`oneshot::Sender`] for `data` & return it.
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    fn unregister(&mut self, data: [u8; 8]) -> Option<oneshot::Sender<()>> {
+    fn unregister(&mut self, data: [u8; 8], why: &'static str) -> Option<oneshot::Sender<()>> {
+        trace!("removing ping {}: {}", hex::encode(data), why);
         self.0.remove(&data)
     }
 }
@@ -321,6 +323,7 @@ impl ClientBuilder {
             address_family_selector: self.address_family_selector,
             conn_gen: 0,
             pings: PingTracker::default(),
+            ping_tasks: Default::default(),
             mesh_key: self.mesh_key,
             is_prober: self.is_prober,
             server_public_key: self.server_public_key,
@@ -330,7 +333,10 @@ impl ClientBuilder {
 
         let (msg_sender, inbox) = mpsc::channel(64);
         let (s, r) = mpsc::channel(64);
-        let recv_loop = tokio::task::spawn(async move { inner.run(inbox, s).await });
+        let recv_loop = tokio::task::spawn(
+            async move { inner.run(inbox, s).await }
+                .instrument(info_span!("http:client:actor", key = %public_key.fmt_short())),
+        );
 
         Ok((
             Client {
@@ -615,8 +621,7 @@ impl Actor {
                             s.send(Ok(res)).ok();
                         },
                         ActorMessage::Ping(s) => {
-                            let res = self.ping().await;
-                            s.send(res).ok();
+                            self.ping(s).await;
                         },
                         ActorMessage::Pong(data, s) => {
                             let res = self.send_pong(data).await;
@@ -840,28 +845,31 @@ impl Actor {
         None
     }
 
-    async fn ping(&mut self) -> Result<Duration, ClientError> {
-        debug!("ping");
-        let (client, _) = self.connect().await?;
-
-        let start = Instant::now();
+    async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
+        let connect_res = self.connect().await;
         let (ping, recv) = self.pings.register();
-        if client.send_ping(ping).await.is_err() {
-            self.close_for_reconnect().await;
-            let _ = self.pings.unregister(ping);
-            return Err(ClientError::Send);
-        }
-        match tokio::time::timeout(PING_TIMEOUT, recv).await {
-            Ok(Ok(())) => Ok(start.elapsed()),
-            Err(_) => {
-                self.pings.unregister(ping);
-                Err(ClientError::PingTimeout)
-            }
-            Ok(Err(_)) => {
-                self.pings.unregister(ping);
-                Err(ClientError::PingAborted)
-            }
-        }
+        trace!("ping: {}", hex::encode(ping));
+
+        self.ping_tasks.spawn(async move {
+            let res = match connect_res {
+                Ok((client, _)) => {
+                    let start = Instant::now();
+                    if let Err(err) = client.send_ping(ping).await {
+                        warn!("failed to send ping: {:?}", err);
+                        Err(ClientError::Send)
+                    } else {
+                        match tokio::time::timeout(PING_TIMEOUT, recv).await {
+                            Ok(Ok(())) => Ok(start.elapsed()),
+                            Err(_) => Err(ClientError::PingTimeout),
+                            Ok(Err(_)) => Err(ClientError::PingAborted),
+                        }
+                    }
+                }
+                Err(err) => Err(err),
+            };
+            s.send(res).ok();
+            ()
+        });
     }
 
     async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
@@ -1099,13 +1107,17 @@ impl Actor {
             match client.recv().await {
                 Ok(msg) => {
                     if let ReceivedMessage::Pong(ping) = msg {
-                        trace!("got pong: {}", hex::encode(ping));
-                        if let Some(chan) = self.pings.unregister(ping) {
-                            if chan.send(()).is_err() {
-                                warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                        match self.pings.unregister(ping, "pong") {
+                            Some(chan) => {
+                                if chan.send(()).is_err() {
+                                    warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                                }
                             }
-                            continue;
+                            None => {
+                                warn!("pong received for ping {ping:?}, but not registered");
+                            }
                         }
+                        continue;
                     }
                     return Ok((msg, conn_gen));
                 }
