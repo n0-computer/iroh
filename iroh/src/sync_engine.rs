@@ -257,7 +257,6 @@ pub(crate) fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
 
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
-#[allow(clippy::large_enum_variant)]
 pub enum LiveEvent {
     /// A local insertion.
     InsertLocal {

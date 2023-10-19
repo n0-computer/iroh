@@ -1420,7 +1420,6 @@ impl AsyncUdpSocket for MagicSock {
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     TrackedEndpoint(PublicKey, sync::oneshot::Sender<Option<EndpointInfo>>),
