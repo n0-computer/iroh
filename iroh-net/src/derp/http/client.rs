@@ -599,7 +599,7 @@ impl Actor {
         loop {
             tokio::select! {
                 res = self.recv_detail() => {
-                    msg_sender.send(dbg!(res)).await.ok();
+                    msg_sender.send(res).await.ok();
                 }
                 Some(msg) = inbox.recv() => {
                     match msg {
@@ -1508,25 +1508,13 @@ mod tests {
             let _ = normal_client.connect().await?;
 
             // wait for "add packet forwarder" message
-            let mut seen_mesh_key = false;
-            let mut seen_normal_key = false;
-            match server_channel_r.recv().await {
-                Some(msg) => match msg {
-                    ServerMessage::AddPacketForwarder { key, .. } => {
-                        debug!("received `ServerMessage::AddPacketForwarder` for {key:?}");
-                        if key == mesh_client_key {
-                            seen_mesh_key = true;
-                        } else if key == normal_client_key {
-                            seen_normal_key = true;
-                        } else {
-                            panic!("unexpected forwarder key {key:?}");
-                        }
-                    }
-                    _ => bail!("expected `ServerMessage::AddPacketForwarder`, got {msg:?}"),
-                },
-                None => bail!("no messages received off of the server_channel"),
+            let msg = server_channel_r.recv().await.unwrap();
+            match msg {
+                ServerMessage::AddPacketForwarder { key, .. } => {
+                    assert_eq!(key, normal_client_key);
+                }
+                _ => panic!("unexpected message {:?}", msg),
             }
-            assert!(seen_mesh_key || seen_normal_key);
 
             // close normal client (by drop)
             normal_client_key
@@ -1537,26 +1525,18 @@ mod tests {
         // wait for "remove packet forwarder" message
         // potentially may get another `PeerPresent` message about ourselves, this is
         // non deterministic
-        loop {
-            match server_channel_r.recv().await {
-                Some(ref msg) => match dbg!(msg) {
-                    ServerMessage::RemovePacketForwarder(key) => {
-                        debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
-                        break;
-                    }
-                    ServerMessage::AddPacketForwarder { key, .. } => {
-                        debug!("received `ServerMessage::AddPacketForwarder` for {key:?}");
-                        assert!(key == &mesh_client_key || key == &normal_client_key);
-                    }
-                    _ => bail!("expected `ServerMessage::RemovePacketForwarder`, got {msg:?}"),
-                },
-                None => bail!("no messages received off of the server_channel"),
+        match server_channel_r.recv().await.unwrap() {
+            ServerMessage::RemovePacketForwarder(key) => {
+                debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
+                assert_eq!(key, normal_client_key);
             }
+            _ => panic!("unexpected message {:?}", msg),
         }
 
         // clean up `run_mesh_client`
         mesh_task.abort();
         http_server.shutdown().await;
+
         Ok(())
     }
 }
