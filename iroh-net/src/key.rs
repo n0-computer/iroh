@@ -6,6 +6,8 @@ use std::{
     fmt::{Debug, Display},
     hash::Hash,
     str::FromStr,
+    sync::Mutex,
+    time::Duration,
 };
 
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
@@ -14,22 +16,40 @@ use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
+use ttl_cache::TtlCache;
 
 pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
 
+#[derive(Debug)]
+struct CryptoKeys {
+    verifying_key: VerifyingKey,
+    crypto_box: crypto_box::PublicKey,
+}
+
+impl CryptoKeys {
+    fn new(verifying_key: VerifyingKey) -> Self {
+        let crypto_box = public_ed_box(&verifying_key);
+        Self {
+            verifying_key,
+            crypto_box,
+        }
+    }
+}
+
+const KEY_CACHE_TTL: Duration = Duration::from_secs(60);
+
+lazy_static::lazy_static! {
+    static ref KEY_CACHE: Mutex<TtlCache<[u8; 32], CryptoKeys>> = Mutex::new(TtlCache::new(100));
+}
+
 /// A public key.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct PublicKey {
-    public: VerifyingKey,
-    /// Cached version of `crypto_box::PublicKey` matching `public`.
-    /// Stored as raw array, as `crypto_box::PublicKey` is not `Copy`.
-    public_crypto_box: [u8; 32],
-}
+pub struct PublicKey([u8; 32]);
 
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.public.hash(state);
+        self.0.hash(state);
     }
 }
 
@@ -38,7 +58,7 @@ impl Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        self.public.serialize(serializer)
+        self.public().serialize(serializer)
     }
 }
 
@@ -55,7 +75,39 @@ impl<'de> Deserialize<'de> for PublicKey {
 impl PublicKey {
     /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
-        self.public.as_bytes()
+        &self.0
+    }
+
+    /// Get or create the crypto keys, and project something out of them.
+    fn with_crypto_keys<T>(
+        &self,
+        f: impl Fn(&CryptoKeys) -> T,
+    ) -> std::result::Result<T, SignatureError> {
+        let mut state = KEY_CACHE.lock().unwrap();
+        Ok(match state.get(&self.0) {
+            Some(item) => {
+                // cache hit
+                f(item)
+            }
+            None => {
+                // cache miss, but we know that they key is valid
+                let vk = VerifyingKey::from_bytes(&self.0)?;
+                let item = CryptoKeys::new(vk);
+                let res = f(&item);
+                state.insert(self.0, item, KEY_CACHE_TTL);
+                res
+            }
+        })
+    }
+
+    fn public(&self) -> VerifyingKey {
+        self.with_crypto_keys(|item| item.verifying_key)
+            .expect("key has been checked")
+    }
+
+    fn public_crypto_box(&self) -> crypto_box::PublicKey {
+        self.with_crypto_keys(|item| item.crypto_box.clone())
+            .expect("key has been checked")
     }
 
     /// Construct a `PublicKey` from a slice of bytes.
@@ -70,17 +122,13 @@ impl PublicKey {
         Ok(public.into())
     }
 
-    fn public_crypto_box(&self) -> crypto_box::PublicKey {
-        crypto_box::PublicKey::from_bytes(self.public_crypto_box)
-    }
-
     /// Verify a signature on a message with this secret key's public key.
     ///
     /// # Return
     ///
     /// Returns `Ok(())` if the signature is valid, and `Err` otherwise.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.public.verify_strict(message, signature)
+        self.public().verify_strict(message, signature)
     }
 
     /// Convert to a base32 string limited to the first 10 bytes for a friendly string
@@ -118,12 +166,16 @@ impl AsRef<[u8]> for PublicKey {
 }
 
 impl From<VerifyingKey> for PublicKey {
-    fn from(public: VerifyingKey) -> Self {
-        let public_crypto_box = public_ed_box(&public).to_bytes();
-        PublicKey {
-            public,
-            public_crypto_box,
-        }
+    fn from(verifying_key: VerifyingKey) -> Self {
+        let crypto_box = public_ed_box(&verifying_key);
+        let item = CryptoKeys {
+            verifying_key,
+            crypto_box,
+        };
+        let key = *verifying_key.as_bytes();
+        let mut table = KEY_CACHE.lock().unwrap();
+        table.insert(key, item, KEY_CACHE_TTL);
+        PublicKey(key)
     }
 }
 
