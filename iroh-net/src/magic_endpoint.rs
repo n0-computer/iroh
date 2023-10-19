@@ -668,9 +668,8 @@ mod tests {
             .ok();
 
         let secret_key = SecretKey::generate();
-        let tempdir = tempfile::tempdir().unwrap();
-        let path: PathBuf = tempdir.path().into();
-        let path = path.join("peers");
+        let root = testdir::testdir!();
+        let path = root.join("peers");
 
         /// Create an endpoint for the test.
         async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> MagicEndpoint {
@@ -708,7 +707,6 @@ mod tests {
             endpoint.connection_info(peer_id).await.unwrap().unwrap();
         let conn_addr = addrs.pop().unwrap().0;
         assert_eq!(conn_addr, direct_addr);
-        drop(tempdir);
     }
 
     // #[tokio::test]

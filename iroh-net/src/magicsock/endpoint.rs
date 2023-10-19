@@ -1950,7 +1950,8 @@ mod tests {
         peer_map.add_peer_addr(peer_addr_c);
         peer_map.add_peer_addr(peer_addr_d);
 
-        let path = temp_dir().join("peers.postcard");
+        let root = testdir::testdir!();
+        let path = root.join("peers.postcard");
         peer_map.save_to_file(&path).await.unwrap();
 
         let loaded_peer_map = PeerMap::load_from_file(&path).unwrap();
