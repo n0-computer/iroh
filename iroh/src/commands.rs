@@ -17,6 +17,7 @@ use iroh::client::quic::Iroh;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
+use iroh_net::magicsock::AddrState;
 use iroh_net::PeerAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},
@@ -678,7 +679,7 @@ async fn fmt_connections(
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
-        vec!["node id", "region", "conn type", "latency"]
+        vec!["node id", "region", "conn type", "latency", "last used"]
             .into_iter()
             .map(bold_cell),
     );
@@ -692,7 +693,11 @@ async fn fmt_connections(
             Some(latency) => latency.to_human_time_string(),
             None => String::from("unknown"),
         };
-        table.add_row(vec![node_id, region, conn_type, latency]);
+        let last_used = match conn_info.last_used {
+            Some(duration) => duration.to_human_time_string(),
+            None => "never".into(),
+        };
+        table.add_row(vec![node_id, region, conn_type, latency, last_used]);
     }
     table.to_string()
 }
@@ -709,7 +714,7 @@ fn fmt_connection(info: ConnectionInfo) -> String {
     )
 }
 
-fn fmt_addrs(addrs: Vec<(SocketAddr, Option<Duration>)>) -> String {
+fn fmt_addrs(addrs: Vec<(SocketAddr, Option<Duration>, AddrState)>) -> String {
     let mut table = Table::new();
     table
         .load_preset(NOTHING)

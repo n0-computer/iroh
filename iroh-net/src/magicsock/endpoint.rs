@@ -150,7 +150,7 @@ impl Endpoint {
     }
 
     /// Returns info about this endpoint
-    pub fn info(&self) -> EndpointInfo {
+    pub fn info(&self, now: Instant) -> EndpointInfo {
         let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
             let addr_info = self.best_addr.as_ref().expect("checked");
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
@@ -167,6 +167,7 @@ impl Endpoint {
                 (
                     SocketAddr::from(*addr),
                     endpoint_state.recent_pong().map(|pong| pong.latency),
+                    endpoint_state.addr_state(now),
                 )
             })
             .collect();
@@ -178,6 +179,7 @@ impl Endpoint {
             addrs,
             conn_type,
             latency,
+            last_used: self.last_used.map(|instant| instant.duration_since(now)),
         }
     }
 
@@ -1259,13 +1261,14 @@ impl PeerMap {
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub(super) fn endpoint_infos(&self) -> Vec<EndpointInfo> {
-        self.endpoints().map(|(_, ep)| ep.info()).collect()
+    pub(super) fn endpoint_infos(&self, now: Instant) -> Vec<EndpointInfo> {
+        self.endpoints().map(|(_, ep)| ep.info(now)).collect()
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
     pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
-        self.endpoint_for_node_key(public_key).map(|ep| ep.info())
+        self.endpoint_for_node_key(public_key)
+            .map(|ep| ep.info(Instant::now()))
     }
 
     /// Inserts a new endpoint into the [`PeerMap`].
@@ -1424,6 +1427,18 @@ pub enum ConnectionType {
     None,
 }
 
+/// Perceived state of the address.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum AddrState {
+    /// This address has never been contacted.
+    Offline,
+    /// Address is reachable. It carries how long ago was it last seen
+    Online(Duration),
+    /// Address is in use, actively transmitting payload messages. It carries how long ago was it
+    /// last used.
+    Active(Duration),
+}
+
 /// Details about an Endpoint
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointInfo {
@@ -1434,12 +1449,14 @@ pub struct EndpointInfo {
     /// Derp region, if available.
     pub derp_region: Option<u16>,
     /// List of addresses at which this node might be reachable, plus any latency information we
-    /// have about that address.
-    pub addrs: Vec<(SocketAddr, Option<Duration>)>,
+    /// have about that address and the last time the address was used.
+    pub addrs: Vec<(SocketAddr, Option<Duration>, AddrState)>,
     /// The type of connection we have to the peer, either direct or over relay.
     pub conn_type: ConnectionType,
     /// The latency of the `conn_type`.
     pub latency: Option<Duration>,
+    /// Duration since the last time this peer was used.
+    pub last_used: Option<Duration>,
 }
 
 impl EndpointState {
@@ -1493,6 +1510,20 @@ impl EndpointState {
                 }
                 needs_ping
             }
+        }
+    }
+
+    pub fn addr_state(&self, now: Instant) -> AddrState {
+        if self.is_active() {
+            AddrState::Active(
+                self.last_payload_msg
+                    .expect("is active")
+                    .duration_since(now),
+            )
+        } else if let Some(last_alive) = self.last_alive() {
+            AddrState::Online(last_alive.duration_since(now))
+        } else {
+            AddrState::Offline
         }
     }
 }
@@ -1569,6 +1600,10 @@ mod tests {
             region_id.map(|region_id| (region_id, EndpointState::default()))
         };
 
+        let now = Instant::now();
+        let elapsed = Duration::from_secs(3);
+        let later = now + elapsed;
+
         // endpoint with a `best_addr` that has a latency
         let pong_src = "0.0.0.0:1".parse().unwrap();
         let latency = Duration::from_millis(50);
@@ -1577,7 +1612,6 @@ mod tests {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
                 port: 10,
             };
-            let now = Instant::now();
             let endpoint_state = HashMap::from([(
                 ip_port,
                 EndpointState {
@@ -1616,7 +1650,6 @@ mod tests {
         // endpoint w/ no best addr but a derp  w/ latency
         let b_endpoint = {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
-            let now = Instant::now();
             let relay_state = EndpointState {
                 recent_pong: Some(PongReply {
                     latency,
@@ -1647,7 +1680,6 @@ mod tests {
         // endpoint w/ no best addr but a derp  w/ no latency
         let c_endpoint = {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
-            let now = Instant::now();
             let endpoint_state = HashMap::new();
             let key = SecretKey::generate();
             Endpoint {
@@ -1670,7 +1702,6 @@ mod tests {
         // endpoint w/ expired best addr
         let (d_endpoint, d_socket_addr) = {
             let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
-            let now = Instant::now();
             let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
             let endpoint_state = HashMap::from([(
                 IpPort::from(socket_addr),
@@ -1721,9 +1752,10 @@ mod tests {
                 id: a_endpoint.id,
                 public_key: a_endpoint.public_key,
                 derp_region: a_endpoint.derp_region(),
-                addrs: Vec::from([(a_socket_addr, Some(latency))]),
+                addrs: Vec::from([(a_socket_addr, Some(latency), AddrState::Offline)]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
+                last_used: None,
             },
             EndpointInfo {
                 id: b_endpoint.id,
@@ -1732,6 +1764,7 @@ mod tests {
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
+                last_used: None,
             },
             EndpointInfo {
                 id: c_endpoint.id,
@@ -1740,14 +1773,16 @@ mod tests {
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(0),
                 latency: None,
+                last_used: Some(elapsed),
             },
             EndpointInfo {
                 id: d_endpoint.id,
                 public_key: d_endpoint.public_key,
                 derp_region: d_endpoint.derp_region(),
-                addrs: Vec::from([(d_socket_addr, Some(latency))]),
+                addrs: Vec::from([(d_socket_addr, Some(latency), AddrState::Offline)]),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),
+                last_used: Some(elapsed),
             },
         ]);
 
@@ -1776,7 +1811,7 @@ mod tests {
             ]),
             next_id: 5,
         };
-        let mut got = peer_map.endpoint_infos();
+        let mut got = peer_map.endpoint_infos(later);
         got.sort_by_key(|p| p.id);
         assert_eq!(expect, got);
     }
