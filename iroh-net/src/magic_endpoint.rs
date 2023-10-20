@@ -661,10 +661,10 @@ mod tests {
     #[tokio::test]
     async fn save_load_peers() {
         let _guard = iroh_test::logging::setup();
+
         let secret_key = SecretKey::generate();
-        let tempdir = tempfile::tempdir().unwrap();
-        let path: PathBuf = tempdir.path().into();
-        let path = path.join("peers");
+        let root = testdir::testdir!();
+        let path = root.join("peers");
 
         /// Create an endpoint for the test.
         async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> MagicEndpoint {
@@ -687,22 +687,24 @@ mod tests {
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8758u16).into();
         let peer_addr = PeerAddr::new(peer_id).with_direct_addresses([direct_addr]);
 
+        info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add adressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
         endpoint.add_peer_addr(peer_addr).await.unwrap();
 
+        info!("closing endpoint");
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();
 
+        info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, path).await;
         let ConnectionInfo { mut addrs, .. } =
             endpoint.connection_info(peer_id).await.unwrap().unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
-        drop(tempdir);
     }
 
     // #[tokio::test]

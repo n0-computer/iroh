@@ -1514,7 +1514,6 @@ enum ActorMessage {
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
-    CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     EnqueueCallMeMaybe {
         derp_region: u16,
@@ -1729,9 +1728,6 @@ impl Actor {
 
                 debug!("shutdown complete");
                 return true;
-            }
-            ActorMessage::CloseOrReconnect(region_id, reason) => {
-                self.send_derp_actor(DerpActorMessage::CloseOrReconnect { region_id, reason });
             }
             ActorMessage::ReStun(reason) => {
                 self.re_stun(reason).await;

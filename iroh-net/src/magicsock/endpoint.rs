@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::{ensure, Context};
 use futures::future::BoxFuture;
 use iroh_metrics::inc;
 use parking_lot::Mutex;
@@ -1269,7 +1269,8 @@ impl PeerMap {
 
     /// Saves the known peer info to the given path, returning the number of peers persisted.
     pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
-        // TODO: No allocation. But also cannot hold inner across await point.
+        ensure!(!path.is_dir(), "{} must be a file", path.display());
+
         // So, not sure what to do here.
         let mut known_peers = self
             .inner
@@ -1282,11 +1283,22 @@ impl PeerMap {
             // prevent file handling if unnecesary
             return Ok(0);
         }
-        let (tmp_file, tmp_path) = tempfile::NamedTempFile::new()
-            .context("cannot create temp file to save peer data")?
-            .into_parts();
 
-        let mut tmp = tokio::fs::File::from_std(tmp_file);
+        let mut ext = path.extension().map(|s| s.to_owned()).unwrap_or_default();
+        ext.push(".tmp");
+        let tmp_path = path.with_extension(ext);
+
+        if tokio::fs::try_exists(&tmp_path).await.unwrap_or(false) {
+            tokio::fs::remove_file(&tmp_path)
+                .await
+                .context("failed deleting existing tmp file")?;
+        }
+        if let Some(parent) = tmp_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let mut tmp = tokio::fs::File::create(&tmp_path)
+            .await
+            .context("failed creating tmp file")?;
 
         let mut count = 0;
         for peer_addr in known_peers {
@@ -1324,6 +1336,8 @@ impl PeerMapInner {
 
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        ensure!(path.is_file(), "{} is not a file", path.display());
         let mut me = PeerMapInner::default();
         let contents = std::fs::read(path)?;
         let mut slice: &[u8] = &contents;
@@ -1709,7 +1723,7 @@ impl AddrLatency {
 
 #[cfg(test)]
 mod tests {
-    use std::{env::temp_dir, net::Ipv4Addr};
+    use std::net::Ipv4Addr;
 
     use super::*;
     use crate::key::SecretKey;
@@ -1947,6 +1961,8 @@ mod tests {
     /// Test persisting and loading of known peers.
     #[tokio::test]
     async fn load_save_peer_data() {
+        let _guard = iroh_test::logging::setup();
+
         let peer_map = PeerMap::default();
 
         let peer_a = SecretKey::generate().public();
@@ -1976,7 +1992,8 @@ mod tests {
         peer_map.add_peer_addr(peer_addr_c);
         peer_map.add_peer_addr(peer_addr_d);
 
-        let path = temp_dir().join("peers.postcard");
+        let root = testdir::testdir!();
+        let path = root.join("peers.postcard");
         peer_map.save_to_file(&path).await.unwrap();
 
         let loaded_peer_map = PeerMap::load_from_file(&path).unwrap();
