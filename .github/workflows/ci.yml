@@ -238,13 +238,14 @@ jobs:
 
     - name: Install cross
       # See https://github.com/cross-rs/cross/issues/1222
-      run: cargo install cross --git https://github.com/cross-rs/cross
+      run: cargo install cross --git https://github.com/cross-rs/cross#
 
     - name: check
       env:
         RUST_BACKTRACE: full
         HOME: /root
         CARGO_HOME: /root/.cargo
+        RUSTC: /root/.cargo/bin/rustc
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
