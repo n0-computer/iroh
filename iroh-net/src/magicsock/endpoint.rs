@@ -24,7 +24,7 @@ use crate::{
 use super::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr, SendAddr};
 
 mod best_addr;
-use best_addr::{BestAddr, BestAddrClearReason, BestAddrSource, BestAddrState};
+use best_addr::{BestAddr, ClearReason};
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -206,17 +206,17 @@ impl Endpoint {
         self.update_best_addr_from_candidates();
         match self.best_addr.state(*now) {
             // we have a valid address: use it!
-            BestAddrState::Valid(best_addr) => {
+            best_addr::State::Valid(best_addr) => {
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set and valid, use best_addr only");
                 (Some(best_addr.addr), None, false)
             }
             // we have an outdated address: use it, but use derp as well.
-            BestAddrState::Outdated(best_addr) => {
+            best_addr::State::Outdated(best_addr) => {
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set but outdated, use best_addr and derp");
                 (Some(best_addr.addr), self.derp_region(), true)
             }
             // we have no best address: use a random canidate if available, and derp as backup.
-            BestAddrState::Empty => {
+            best_addr::State::Empty => {
                 let addr = self
                     .direct_addr_state
                     .keys()
@@ -254,7 +254,7 @@ impl Endpoint {
             self.best_addr.insert(
                 pong.from.as_socket_addr(),
                 Some(lowest_latency),
-                BestAddrSource::BestCandidate,
+                best_addr::Source::BestCandidate,
                 pong.pong_at,
                 self.derp_region.is_some(),
             );
@@ -366,7 +366,7 @@ impl Endpoint {
                     // If we fail to ping our current best addr, it is not that good anymore.
                     self.best_addr.clear_if_equals(
                         addr,
-                        BestAddrClearReason::PongTimeout,
+                        ClearReason::PongTimeout,
                         self.derp_region.is_some(),
                     );
                 }
@@ -563,7 +563,7 @@ impl Endpoint {
     fn reset(&mut self) {
         self.last_full_ping = None;
         self.best_addr
-            .clear(BestAddrClearReason::Reset, self.derp_region.is_some());
+            .clear(ClearReason::Reset, self.derp_region.is_some());
 
         for es in self.direct_addr_state.values_mut() {
             es.last_ping = None;
@@ -667,7 +667,7 @@ impl Endpoint {
 
             self.best_addr.clear_if_equals(
                 ip_port.into(),
-                BestAddrClearReason::Inactive,
+                ClearReason::Inactive,
                 self.derp_region.is_some(),
             );
         }
@@ -791,7 +791,7 @@ impl Endpoint {
                     self.best_addr.insert_if_better_or_reconfirm(
                         to,
                         Some(latency),
-                        BestAddrSource::ReceivedPong,
+                        best_addr::Source::ReceivedPong,
                         now,
                         self.derp_region.is_some(),
                     );
@@ -848,7 +848,7 @@ impl Endpoint {
             if !*want {
                 self.best_addr.clear_if_equals(
                     *ep,
-                    BestAddrClearReason::PruneCallMeMaybe,
+                    ClearReason::PruneCallMeMaybe,
                     self.derp_region.is_some(),
                 );
                 false

@@ -22,30 +22,30 @@ struct BestAddrInner {
 }
 
 #[derive(Debug)]
-pub(super) enum BestAddrSource {
+pub(super) enum Source {
     ReceivedPong,
     BestCandidate,
 }
 
-impl BestAddrSource {
+impl Source {
     fn trust_until(&self, from: Instant) -> Instant {
         match self {
-            BestAddrSource::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
+            Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
             // TODO: Fix time
-            BestAddrSource::BestCandidate => from + Duration::from_secs(60 * 60),
+            Source::BestCandidate => from + Duration::from_secs(60 * 60),
         }
     }
 }
 
 #[derive(Debug)]
-pub(super) enum BestAddrState<'a> {
+pub(super) enum State<'a> {
     Valid(&'a AddrLatency),
     Outdated(&'a AddrLatency),
     Empty,
 }
 
 #[derive(Debug)]
-pub enum BestAddrClearReason {
+pub enum ClearReason {
     Reset,
     Inactive,
     PruneCallMeMaybe,
@@ -72,10 +72,10 @@ impl BestAddr {
     }
 
     pub fn is_valid(&self, now: Instant) -> bool {
-        matches!(self.state(now), BestAddrState::Valid(_))
+        matches!(self.state(now), State::Valid(_))
     }
 
-    pub fn clear(&mut self, reason: BestAddrClearReason, has_derp: bool) -> bool {
+    pub fn clear(&mut self, reason: ClearReason, has_derp: bool) -> bool {
         if let Some(addr) = self.addr() {
             self.0 = None;
             debug!(?reason, ?has_derp, old_addr = %addr, "remove best_addr");
@@ -94,7 +94,7 @@ impl BestAddr {
     pub fn clear_if_equals(
         &mut self,
         addr: SocketAddr,
-        reason: BestAddrClearReason,
+        reason: ClearReason,
         has_derp: bool,
     ) -> bool {
         match &self.addr() {
@@ -113,7 +113,7 @@ impl BestAddr {
         &mut self,
         addr: SocketAddr,
         latency: Option<Duration>,
-        source: BestAddrSource,
+        source: Source,
         confirmed_at: Instant,
         has_derp: bool,
     ) {
@@ -135,7 +135,7 @@ impl BestAddr {
         &mut self,
         addr: SocketAddr,
         latency: Option<Duration>,
-        source: BestAddrSource,
+        source: Source,
         confirmed_at: Instant,
         has_derp: bool,
     ) {
@@ -165,24 +165,24 @@ impl BestAddr {
         }
     }
 
-    pub fn state(&self, now: Instant) -> BestAddrState {
+    pub fn state(&self, now: Instant) -> State {
         match &self.0 {
             None => {
                 trace!("best_addr invalid: not set");
-                BestAddrState::Empty
+                State::Empty
             }
             Some(state) => match state.trust_until {
                 Some(expiry) if now < expiry => {
                     trace!(addr = %state.addr.addr, remaining=?expiry.duration_since(now), "best_addr valid");
-                    BestAddrState::Valid(&state.addr)
+                    State::Valid(&state.addr)
                 }
                 Some(expiry) => {
                     trace!(addr = %state.addr.addr, since=?expiry.duration_since(now), "best_addr invalid: expired");
-                    BestAddrState::Outdated(&state.addr)
+                    State::Outdated(&state.addr)
                 }
                 None => {
                     trace!(addr = %state.addr.addr, "best_addr invalid: trust_best_addr_until not set");
-                    BestAddrState::Outdated(&state.addr)
+                    State::Outdated(&state.addr)
                 }
             },
         }
