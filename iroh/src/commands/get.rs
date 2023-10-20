@@ -28,7 +28,6 @@ use iroh_net::derp::DerpMode;
 
 use crate::commands::show_download_progress;
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub struct GetInteractive {
     pub rt: iroh_bytes::util::runtime::Handle,

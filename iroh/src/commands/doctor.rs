@@ -59,7 +59,6 @@ impl std::str::FromStr for SecretKeyOption {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
     /// or the settings from the config file.
@@ -786,10 +785,13 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                 hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
             };
 
-            let client = clients.get(&region.region_id).cloned().unwrap();
+            let client = clients
+                .get(&region.region_id)
+                .map(|(c, _)| c.clone())
+                .unwrap();
 
             let start = std::time::Instant::now();
-            assert!(!client.is_connected().await);
+            assert!(!client.is_connected().await?);
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
@@ -800,22 +802,8 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                     region_details.error = Some(e.to_string());
                 }
                 Ok(_) => {
-                    assert!(client.is_connected().await);
+                    assert!(client.is_connected().await?);
                     region_details.connect = Some(start.elapsed());
-
-                    let c = client.clone();
-                    let t = tokio::task::spawn(async move {
-                        loop {
-                            match c.recv_detail().await {
-                                Ok(msg) => {
-                                    tracing::debug!("derp: {:?}", msg);
-                                }
-                                Err(err) => {
-                                    tracing::warn!("derp: {:?}", err);
-                                }
-                            }
-                        }
-                    });
 
                     match client.ping().await {
                         Ok(latency) => {
@@ -826,12 +814,11 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                             region_details.error = Some(e.to_string());
                         }
                     }
-                    t.abort();
                 }
             }
             // disconnect, to be able to measure reconnects
-            client.close_for_reconnect().await;
-            assert!(!client.is_connected().await);
+            client.close_for_reconnect().await?;
+            assert!(!client.is_connected().await?);
             if region_details.error.is_none() {
                 success.push(region_details);
             } else {

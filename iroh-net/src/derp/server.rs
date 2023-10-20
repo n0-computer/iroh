@@ -976,6 +976,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_basic() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         // create the server!
         let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);
@@ -988,7 +990,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
-        let client_a = client_a_builder.build().await?;
+        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
         handler_task.await??;
 
         // create client b and connect it to the server
@@ -998,7 +1000,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
-        let client_b = client_b_builder.build().await?;
+        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
 
         // create a packet forwarder for client c and add it to the server
@@ -1010,7 +1012,7 @@ mod tests {
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
-        match client_b.recv().await? {
+        match client_receiver_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
                 assert_eq!(&msg[..], data);
@@ -1023,7 +1025,7 @@ mod tests {
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
-        match client_a.recv().await? {
+        match client_receiver_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
                 assert_eq!(&msg[..], data);
@@ -1053,10 +1055,11 @@ mod tests {
         server.close().await;
 
         // client connections have been shutdown
-        client_a
+        let res = client_a
             .send(public_key_b, Bytes::from_static(b"try to send"))
-            .await?;
-        assert!(client_b.recv().await.is_err());
+            .await;
+        assert!(res.is_err());
+        assert!(client_receiver_b.recv().await.is_err());
         Ok(())
     }
 
@@ -1080,7 +1083,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
-        let client_a = client_a_builder.build().await?;
+        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
         handler_task.await??;
 
         // create client b and connect it to the server
@@ -1090,13 +1093,13 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
-        let client_b = client_b_builder.build().await?;
+        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
-        match client_b.recv().await? {
+        match client_receiver_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
                 assert_eq!(&msg[..], data);
@@ -1109,7 +1112,7 @@ mod tests {
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
-        match client_a.recv().await? {
+        match client_receiver_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
                 assert_eq!(&msg[..], data);
@@ -1124,7 +1127,7 @@ mod tests {
         let handler = server.client_conn_handler(Default::default());
         let handler_task =
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(new_rw_b)).await });
-        let new_client_b = new_client_b_builder.build().await?;
+        let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
         handler_task.await??;
 
         // assert!(client_b.recv().await.is_err());
@@ -1132,7 +1135,7 @@ mod tests {
         // send message from a to b!
         let msg = Bytes::from_static(b"are you still there, b?!");
         client_a.send(public_key_b, msg.clone()).await?;
-        match new_client_b.recv().await? {
+        match new_client_receiver_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
                 assert_eq!(&msg[..], data);
@@ -1145,7 +1148,7 @@ mod tests {
         // send message from b to a!
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b.send(public_key_a, msg.clone()).await?;
-        match client_a.recv().await? {
+        match client_receiver_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
                 assert_eq!(&msg[..], data);
@@ -1159,10 +1162,11 @@ mod tests {
         server.close().await;
 
         // client connections have been shutdown
-        client_a
+        let res = client_a
             .send(public_key_b, Bytes::from_static(b"try to send"))
-            .await?;
-        assert!(new_client_b.recv().await.is_err());
+            .await;
+        assert!(res.is_err());
+        assert!(new_client_receiver_b.recv().await.is_err());
         Ok(())
     }
 }

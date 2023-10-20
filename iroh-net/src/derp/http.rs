@@ -9,7 +9,7 @@ mod client;
 mod mesh_clients;
 mod server;
 
-pub use self::client::{Client, ClientBuilder, ClientError};
+pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
 pub use self::mesh_clients::MeshAddrs;
 pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
@@ -46,7 +46,7 @@ mod tests {
     use reqwest::Url;
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
-    use tracing::{info_span, Instrument};
+    use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
@@ -81,7 +81,7 @@ mod tests {
                 anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
             }
         };
-        println!("addr: {addr}:{port}");
+        info!("addr: {addr}:{port}");
         let region = DerpRegion {
             region_id: 1,
             avoid: false,
@@ -102,34 +102,37 @@ mod tests {
         let derp_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
         let (a_key, mut a_recv, client_a_task, client_a) =
             create_test_client(a_key, region.clone(), Some(derp_addr.clone()));
-        println!("created client {a_key:?}");
+        info!("created client {a_key:?}");
         let (b_key, mut b_recv, client_b_task, client_b) =
             create_test_client(b_key, region, Some(derp_addr));
-        println!("created client {b_key:?}");
+        info!("created client {b_key:?}");
 
+        info!("ping a");
         client_a.ping().await?;
+
+        info!("ping b");
         client_b.ping().await?;
 
-        println!("sending message from a to b");
+        info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
         client_a.send(b_key, msg.clone()).await?;
-        println!("waiting for message from a on b");
+        info!("waiting for message from a on b");
         let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
-        println!("sending message from b to a");
+        info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b.send(a_key, msg.clone()).await?;
-        println!("waiting for message b on a");
+        info!("waiting for message b on a");
         let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         server.shutdown().await;
-        client_a.close().await;
+        client_a.close().await?;
         client_a_task.abort();
-        client_b.close().await;
+        client_b.close().await?;
         client_b_task.abort();
         Ok(())
     }
@@ -148,7 +151,7 @@ mod tests {
         if let Some(url) = server_url {
             client = client.server_url(url);
         }
-        let client = client
+        let (client, mut client_reader) = client
             .get_region(move || {
                 let region = region.clone();
                 Box::pin(async move { Some(region) })
@@ -157,18 +160,21 @@ mod tests {
             .expect("won't fail if you supply a `get_region`");
         let public_key = key.public();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
-        let client_reader = client.clone();
         let client_reader_task = tokio::spawn(
             async move {
                 loop {
-                    println!("waiting for message on {:?}", key.public());
-                    match client_reader.recv_detail().await {
-                        Err(e) => {
-                            println!("client {:?} `recv_detail` error {e}", key.public());
+                    info!("waiting for message on {:?}", key.public());
+                    match client_reader.recv().await {
+                        None => {
+                            info!("client received nothing");
                             return;
                         }
-                        Ok((msg, _)) => {
-                            println!("got message on {:?}: {msg:?}", key.public());
+                        Some(Err(e)) => {
+                            info!("client {:?} `recv` error {e}", key.public());
+                            return;
+                        }
+                        Some(Ok((msg, _))) => {
+                            info!("got message on {:?}: {msg:?}", key.public());
                             if let ReceivedMessage::ReceivedPacket { source, data } = msg {
                                 received_msg_s
                                     .send((source, data))
@@ -223,7 +229,7 @@ mod tests {
                 anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
             }
         };
-        println!("DERP listening on: {addr}:{port}");
+        info!("DERP listening on: {addr}:{port}");
 
         let region = DerpRegion {
             region_id: 1,
@@ -244,33 +250,33 @@ mod tests {
         // create clients
         let (a_key, mut a_recv, client_a_task, client_a) =
             create_test_client(a_key, region.clone(), None);
-        println!("created client {a_key:?}");
+        info!("created client {a_key:?}");
         let (b_key, mut b_recv, client_b_task, client_b) = create_test_client(b_key, region, None);
-        println!("created client {b_key:?}");
+        info!("created client {b_key:?}");
 
         client_a.ping().await?;
         client_b.ping().await?;
 
-        println!("sending message from a to b");
+        info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
         client_a.send(b_key, msg.clone()).await?;
-        println!("waiting for message from a on b");
+        info!("waiting for message from a on b");
         let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
-        println!("sending message from b to a");
+        info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b.send(a_key, msg.clone()).await?;
-        println!("waiting for message b on a");
+        info!("waiting for message b on a");
         let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         server.shutdown().await;
-        client_a.close().await;
+        client_a.close().await?;
         client_a_task.abort();
-        client_b.close().await;
+        client_b.close().await?;
         client_b_task.abort();
         Ok(())
     }
