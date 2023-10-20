@@ -1,9 +1,6 @@
 #![allow(missing_docs)]
 
-use std::{
-    collections::HashMap,
-    time::{SystemTime},
-};
+use std::{collections::HashMap, time::SystemTime};
 
 use crate::downloader::{DownloadKind, Downloader, PeerRole};
 use anyhow::{Context, Result};
