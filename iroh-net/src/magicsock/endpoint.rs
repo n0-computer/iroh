@@ -492,6 +492,7 @@ impl Endpoint {
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
         let mut msgs = Vec::new();
 
+        // queue a ping to our derper, if needed.
         if let Some((region, state)) = self.derp_region.as_ref() {
             if state.needs_ping(&now) {
                 debug!(?region, "peer's derp region needs ping");
@@ -511,6 +512,7 @@ impl Endpoint {
             );
             return msgs;
         }
+
         self.last_full_ping.replace(now);
         self.prune_direct_addresses();
 
