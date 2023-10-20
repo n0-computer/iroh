@@ -1921,6 +1921,8 @@ mod tests {
     /// Test persisting and loading of known peers.
     #[tokio::test]
     async fn load_save_peer_data() {
+        let _guard = iroh_test::logging::setup();
+
         let peer_map = PeerMap::default();
 
         let peer_a = SecretKey::generate().public();

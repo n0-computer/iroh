@@ -660,12 +660,7 @@ mod tests {
     /// Test that peers saved on shutdown are correctly loaded
     #[tokio::test]
     async fn save_load_peers() {
-        use tracing_subscriber::{prelude::*, EnvFilter};
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = iroh_test::logging::setup();
 
         let secret_key = SecretKey::generate();
         let root = testdir::testdir!();
