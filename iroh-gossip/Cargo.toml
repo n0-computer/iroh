@@ -24,7 +24,7 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
-tracing = "0.1.37"
+tracing = "0.1"
 iroh-metrics = { path = "../iroh-metrics", version = "0.7.0" }
 
 # net dependencies (optional)
