@@ -22,9 +22,9 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
-    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, metrics::Metrics,
-    server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey, PacketForwarder,
-    ReceivedMessage, UseIpv4, UseIpv6,
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
+    client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
+    DerpNode, DerpRegion, MeshKey, PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
 use crate::key::{PublicKey, SecretKey};
@@ -146,7 +146,7 @@ struct Actor {
         Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
     is_preferred: bool,
-    derp_client: Option<DerpClient>,
+    derp_client: Option<(DerpClient, DerpClientReceiver)>,
     is_closed: bool,
     #[debug("address family selector callback")]
     address_family_selector:
@@ -615,7 +615,7 @@ impl Actor {
                 Some(msg) = inbox.recv() => {
                     match msg {
                         ActorMessage::Connect(s) => {
-                            let res = self.connect().await;
+                            let res = self.connect().await.map(|(client, _, count)| (client, count));
                             s.send(res).ok();
                         },
                         ActorMessage::NotePreferred(is_preferred) => {
@@ -669,34 +669,39 @@ impl Actor {
         }
     }
 
-    async fn connect(&mut self) -> Result<(DerpClient, usize), ClientError> {
+    async fn connect(
+        &mut self,
+    ) -> Result<(DerpClient, &'_ mut DerpClientReceiver, usize), ClientError> {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
         let key = self.secret_key.public();
         async move {
-            if let Some(ref derp_client) = self.derp_client {
-                trace!("already had connection");
-                return Ok((derp_client.clone(), self.current_conn()));
+            if self.derp_client.is_none() {
+                trace!("no connection, trying to connect");
+                let (derp_client, receiver) =
+                    tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+                        .await
+                        .map_err(|_| ClientError::ConnectTimeout)??;
+
+                self.derp_client = Some((derp_client, receiver));
+                self.next_conn();
             }
 
-            trace!("no connection, trying to connect");
-            let derp_client = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-                .await
-                .map_err(|_| ClientError::ConnectTimeout)??;
-
-            let derp_client_clone = derp_client.clone();
-            self.derp_client = Some(derp_client_clone);
-            let conn_gen = self.next_conn();
-
-            trace!("got connection, conn num {conn_gen}");
-            Ok((derp_client, conn_gen))
+            let count = self.current_conn();
+            let (derp_client, receiver) = self
+                .derp_client
+                .as_mut()
+                .map(|(c, r)| (c.clone(), r))
+                .expect("just inserted");
+            trace!("already had connection");
+            Ok((derp_client, receiver, count))
         }
         .instrument(info_span!("client-connect", key = %key.fmt_short()))
         .await
     }
 
-    async fn connect_0(&self) -> Result<DerpClient, ClientError> {
+    async fn connect_0(&self) -> Result<(DerpClient, DerpClientReceiver), ClientError> {
         let url = self.url();
         let is_test_url = url
             .as_ref()
@@ -800,7 +805,7 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let derp_client =
+        let (derp_client, receiver) =
             DerpClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
                 .mesh_key(self.mesh_key)
                 .can_ack_pings(self.can_ack_pings)
@@ -816,7 +821,7 @@ impl Actor {
         }
 
         trace!("connect_0 done");
-        Ok(derp_client)
+        Ok((derp_client, receiver))
     }
 
     async fn note_preferred(&mut self, is_preferred: bool) {
@@ -828,7 +833,7 @@ impl Actor {
 
         // only send the preference if we already have a connection
         let res = {
-            if let Some(ref client) = self.derp_client {
+            if let Some((ref client, _)) = self.derp_client {
                 client.note_preferred(is_preferred).await
             } else {
                 return;
@@ -845,7 +850,7 @@ impl Actor {
         if self.is_closed {
             return None;
         }
-        if let Some(ref client) = self.derp_client {
+        if let Some((ref client, _)) = self.derp_client {
             match client.local_addr() {
                 Ok(addr) => return Some(addr),
                 _ => return None,
@@ -855,13 +860,13 @@ impl Actor {
     }
 
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
-        let connect_res = self.connect().await;
+        let connect_res = self.connect().await.map(|(c, _, _)| c);
         let (ping, recv) = self.pings.register();
         trace!("ping: {}", hex::encode(ping));
 
         self.ping_tasks.spawn(async move {
             let res = match connect_res {
-                Ok((client, _)) => {
+                Ok(client) => {
                     let start = Instant::now();
                     if let Err(err) = client.send_ping(ping).await {
                         warn!("failed to send ping: {:?}", err);
@@ -882,7 +887,7 @@ impl Actor {
 
     async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
         debug!("send");
-        let (client, _) = self.connect().await?;
+        let (client, _, _) = self.connect().await?;
         if client.send(dst_key, b).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -893,7 +898,7 @@ impl Actor {
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
         if self.can_ack_pings {
-            let (client, _) = self.connect().await?;
+            let (client, _, _) = self.connect().await?;
             if client.send_pong(data).await.is_err() {
                 self.close_for_reconnect().await;
                 return Err(ClientError::Send);
@@ -920,7 +925,7 @@ impl Actor {
 
     async fn watch_connection_changes(&mut self) -> Result<(PublicKey, usize), ClientError> {
         debug!("watch_connection_changes");
-        let (client, conn_gen) = self.connect().await?;
+        let (client, _, conn_gen) = self.connect().await?;
         if client.watch_connection_changes().await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -930,7 +935,7 @@ impl Actor {
 
     async fn close_peer(&mut self, target: PublicKey) -> Result<(), ClientError> {
         debug!("close_peer");
-        let (client, _) = self.connect().await?;
+        let (client, _, _) = self.connect().await?;
         if client.close_peer(target).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -1112,8 +1117,8 @@ impl Actor {
     async fn recv_detail(&mut self) -> Result<(ReceivedMessage, usize), ClientError> {
         loop {
             trace!("recv_detail tick");
-            let (client, conn_gen) = self.connect().await?;
-            match client.recv().await {
+            let (_client, client_receiver, conn_gen) = self.connect().await?;
+            match client_receiver.recv().await {
                 Ok(msg) => {
                     if let ReceivedMessage::Pong(ping) = msg {
                         match self.pings.unregister(ping, "pong") {
@@ -1146,7 +1151,7 @@ impl Actor {
     /// requires a connection, it will call `connect`.
     async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
-        if let Some(client) = self.derp_client.take() {
+        if let Some((client, _)) = self.derp_client.take() {
             client.close().await
         }
     }
