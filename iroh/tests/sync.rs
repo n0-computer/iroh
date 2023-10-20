@@ -12,7 +12,7 @@ use iroh::{
     client::mem::Doc,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync_engine::{LiveEvent, SyncEvent},
+    sync_engine::LiveEvent,
 };
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -968,11 +968,5 @@ fn match_sync_finished(event: &LiveEvent, peer: PublicKey, namespace: NamespaceI
     let LiveEvent::SyncFinished(e) = event else {
         return false;
     };
-    e == &SyncEvent {
-        peer,
-        namespace,
-        result: Ok(()),
-        origin: e.origin.clone(),
-        finished: e.finished,
-    }
+    e.peer == peer && e.namespace == namespace && e.result == Ok(())
 }

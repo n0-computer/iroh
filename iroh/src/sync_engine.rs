@@ -25,11 +25,13 @@ use crate::downloader::Downloader;
 mod gossip;
 mod live;
 pub mod rpc;
+mod state;
 
 use gossip::GossipActor;
 use live::{LiveActor, ToLiveActor};
 
-pub use self::live::{Origin, SyncEvent};
+pub use self::live::SyncEvent;
+pub use self::state::Origin;
 pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
