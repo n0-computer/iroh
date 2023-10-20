@@ -167,7 +167,11 @@ impl Endpoint {
             .map(|(addr, endpoint_state)| DirectAddrInfo {
                 addr: SocketAddr::from(*addr),
                 latency: endpoint_state.recent_pong().map(|pong| pong.latency),
-                active: endpoint_state.is_active(),
+                last_control: endpoint_state.last_control_msg(now),
+                last_payload: endpoint_state
+                    .last_payload_msg
+                    .as_ref()
+                    .map(|instant| now.duration_since(*instant)),
             })
             .collect();
 
@@ -1573,6 +1577,19 @@ pub enum ConnectionType {
     None,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
+pub enum ControlMsg {
+    /// We received a Ping from the peer.
+    #[display("ping←")]
+    Ping,
+    /// We received a Pong from the peer.
+    #[display("pong←")]
+    Pong,
+    /// We received a CallMeMaybe.
+    #[display("call me")]
+    CallMeMaybe,
+}
+
 /// Information about a direct address.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DirectAddrInfo {
@@ -1580,8 +1597,10 @@ pub struct DirectAddrInfo {
     pub addr: SocketAddr,
     /// The latency to the address, if any.
     pub latency: Option<Duration>,
-    /// Whether this address is transferring payload messages in this moment.
-    pub active: bool,
+    /// Last control message received by this peer.
+    pub last_control: Option<(Duration, ControlMsg)>,
+    /// How long ago was the last payload message for this peer.
+    pub last_payload: Option<Duration>,
 }
 
 /// Details about an Endpoint
@@ -1637,6 +1656,28 @@ impl EndpointState {
             .chain(self.last_got_ping.as_ref())
             .max()
             .copied()
+    }
+
+    pub fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
+        // get every control message and assign it its kind
+        let last_pong = self
+            .recent_pong()
+            .map(|pong| (pong.pong_at, ControlMsg::Pong));
+        let last_call_me_maybe = self
+            .call_me_maybe_time
+            .as_ref()
+            .map(|call_me| (*call_me, ControlMsg::CallMeMaybe));
+        let last_ping = self
+            .last_got_ping
+            .as_ref()
+            .map(|ping| (*ping, ControlMsg::Ping));
+
+        last_pong
+            .into_iter()
+            .chain(last_call_me_maybe)
+            .chain(last_ping)
+            .max_by_key(|(instant, _kind)| *instant)
+            .map(|(instant, kind)| (now.duration_since(instant), kind))
     }
 
     /// Returns the most recent pong if available.
@@ -1889,7 +1930,8 @@ mod tests {
                 addrs: Vec::from([DirectAddrInfo {
                     addr: a_socket_addr,
                     latency: Some(latency),
-                    active: false,
+                    last_control: Some((elapsed, ControlMsg::Pong)),
+                    last_payload: None,
                 }]),
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
@@ -1920,7 +1962,8 @@ mod tests {
                 addrs: Vec::from([DirectAddrInfo {
                     addr: d_socket_addr,
                     latency: Some(latency),
-                    active: false,
+                    last_control: Some((elapsed, ControlMsg::Pong)),
+                    last_payload: None,
                 }]),
                 conn_type: ConnectionType::Relay(0),
                 latency: Some(latency),

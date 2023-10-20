@@ -4,6 +4,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use anyhow::Result;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
+use colored::Colorize;
 use comfy_table::presets::NOTHING;
 use comfy_table::{Cell, Table};
 use console::style;
@@ -367,7 +368,16 @@ impl NodeCommands {
         match self {
             Self::Connections => {
                 let connections = iroh.node.connections().await?;
-                println!("{}", fmt_connections(connections).await);
+                let timestamp = time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc2822)
+                    .unwrap_or_else(|_| String::from("failed to get current time"));
+
+                println!(
+                    " {}: {}\n\n{}",
+                    "current time".bold(),
+                    timestamp,
+                    fmt_connections(connections).await
+                );
             }
             Self::Connection { node_id } => {
                 let conn_info = iroh.node.connection_info(node_id).await?;
@@ -683,16 +693,22 @@ async fn fmt_connections(
             .map(bold_cell),
     );
     while let Some(Ok(conn_info)) = infos.next().await {
-        let node_id = conn_info.public_key.to_string();
+        let node_id: Cell = conn_info.public_key.to_string().into();
         let region = conn_info
             .derp_region
-            .map_or(String::new(), |region| region.to_string());
-        let conn_type = conn_info.conn_type.to_string();
+            .map_or(String::new(), |region| region.to_string())
+            .into();
+        let conn_type = conn_info.conn_type.to_string().into();
         let latency = match conn_info.latency {
             Some(latency) => latency.to_human_time_string(),
             None => String::from("unknown"),
-        };
-        let last_used = fmt_how_long_ago(conn_info.last_used);
+        }
+        .into();
+        let last_used = conn_info
+            .last_used
+            .map(fmt_how_long_ago)
+            .map(Cell::new)
+            .unwrap_or_else(never);
         table.add_row([node_id, region, conn_type, latency, last_used]);
     }
     table.to_string()
@@ -708,16 +724,26 @@ fn fmt_connection(info: ConnectionInfo) -> String {
         latency,
         last_used,
     } = info;
+    let timestamp = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc2822)
+        .unwrap_or_else(|_| String::from("failed to get current time"));
     let mut table = Table::new();
     table.load_preset(NOTHING);
-    table.add_row([bold_cell("node id"), public_key.fmt_short().into()]);
+    table.add_row([bold_cell("current time"), timestamp.into()]);
+    table.add_row([bold_cell("node id"), public_key.to_string().into()]);
     let derp_region = derp_region
         .map(|r| r.to_string())
         .unwrap_or_else(|| String::from("unknown"));
     table.add_row([bold_cell("derp region"), derp_region.into()]);
     table.add_row([bold_cell("connection type"), conn_type.to_string().into()]);
     table.add_row([bold_cell("latency"), fmt_latency(latency).into()]);
-    table.add_row([bold_cell("last used"), fmt_how_long_ago(last_used).into()]);
+    table.add_row([
+        bold_cell("last used"),
+        last_used
+            .map(fmt_how_long_ago)
+            .map(Cell::new)
+            .unwrap_or_else(never),
+    ]);
     table.add_row([bold_cell("known addresses"), addrs.len().into()]);
 
     let general_info = table.to_string();
@@ -726,31 +752,56 @@ fn fmt_connection(info: ConnectionInfo) -> String {
     format!("{general_info}\n\n{addrs_info}",)
 }
 
-fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> String {
-    let mut table = Table::new();
-    table
-        .load_preset(NOTHING)
-        .set_header(vec!["addr", "latency", "state"].into_iter().map(bold_cell));
-    for info in addrs {
-        let DirectAddrInfo {
-            addr,
-            latency,
-            active,
-        } = info;
-        let state = if active { "active" } else { "inactive" };
-        table.add_row([addr.to_string(), fmt_latency(latency), state.to_string()]);
-    }
-    table.to_string()
+fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
+    let DirectAddrInfo {
+        addr,
+        latency,
+        last_control,
+        last_payload,
+    } = info;
+
+    let last_control = match last_control {
+        None => never(),
+        Some((how_long_ago, kind)) => {
+            format!("{kind} ( {} )", fmt_how_long_ago(how_long_ago)).into()
+        }
+    };
+    let last_payload = last_payload
+        .map(fmt_how_long_ago)
+        .map(Cell::new)
+        .unwrap_or_else(never);
+
+    [
+        addr.into(),
+        fmt_latency(latency).into(),
+        last_control,
+        last_payload,
+    ]
+    .into()
 }
 
-fn fmt_how_long_ago(latency: Option<Duration>) -> String {
-    let Some(latency) = latency else {
-        return "never".into();
-    };
-    // we want the largest two parts of precision
-    let pretty = latency.to_human_time_string();
-    let parts: Vec<&str> = pretty.split(',').take(2).collect();
-    parts.join(",")
+fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
+    let mut table = Table::new();
+    table.load_preset(NOTHING).set_header(
+        vec!["addr", "latency", "last control", "last data"]
+            .into_iter()
+            .map(bold_cell),
+    );
+    table.add_rows(addrs.into_iter().map(direct_addr_row));
+    table
+}
+
+fn never() -> Cell {
+    Cell::new("never").add_attribute(comfy_table::Attribute::Dim)
+}
+
+fn fmt_how_long_ago(duration: Duration) -> String {
+    duration
+        .to_human_time_string()
+        .split_once(',')
+        .map(|(first, _rest)| first)
+        .unwrap_or("-")
+        .to_string()
 }
 
 fn fmt_latency(latency: Option<Duration>) -> String {

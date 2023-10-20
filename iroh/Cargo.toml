@@ -61,6 +61,7 @@ multibase = { version = "0.9.1", optional = true }
 rustyline = { version = "12.0.0", optional = true }
 shell-words = { version = "1.1.0", optional = true }
 shellexpand = { version = "3.1.0", optional = true }
+time = { version = "0.3", optional = true, features = ["formatting"] }
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 url = { version = "2.4", features = ["serde"] }
@@ -71,7 +72,7 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer", "time"]
 metrics = ["iroh-metrics"]
 flat-db = ["iroh-bytes/flat-db"]
 test = []
