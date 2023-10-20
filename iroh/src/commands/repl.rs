@@ -65,8 +65,8 @@ impl Repl {
                         Some(ReplCmd::Rpc(cmd)) => self.cmd_tx.blocking_send((cmd, reply_tx))?,
                     }
                 }
-                Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
-                Err(ReadlineError::WindowResized) => continue,
+                Err(ReadlineError::Eof) => break,
+                Err(ReadlineError::Interrupted | ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }
             // wait for reply from main thread
