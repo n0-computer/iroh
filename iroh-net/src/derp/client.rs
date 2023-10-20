@@ -266,7 +266,6 @@ impl Client {
 
 /// The kinds of messages we can send to the [`super::server::Server`]
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),
@@ -502,7 +501,7 @@ pub enum ReceivedMessage {
     ReceivedPacket {
         /// The [`PublicKey`] of the packet sender.
         source: PublicKey,
-        /// The received packet bytes. It aliases the memory passed to [`Client::recv`].
+        /// The received packet bytes.
         #[debug(skip)]
         data: Bytes, // TODO: ref
     },

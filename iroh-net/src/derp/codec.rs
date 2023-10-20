@@ -207,7 +207,6 @@ pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 pub(crate) struct DerpCodec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)] // TODO: reevaluate
 pub(crate) enum Frame {
     ServerKey {
         key: PublicKey,

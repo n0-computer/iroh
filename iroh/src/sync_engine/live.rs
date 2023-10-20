@@ -98,7 +98,6 @@ pub enum ToLiveActor {
 
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
-#[allow(clippy::large_enum_variant)]
 pub enum Event {
     /// The content of an entry was downloaded and is now available at the local node
     ContentReady {

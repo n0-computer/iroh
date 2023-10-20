@@ -12,14 +12,15 @@ repository = "https://github.com/n0-computer/iroh"
 rust-version = "1.71"
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
 aead = { version = "0.5.2", features = ["bytes"] }
+anyhow = { version = "1", features = ["backtrace"] }
 backoff = "0.4.0"
+bounded_join_set = "0.1.0"
 bytes = "1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 curve25519-dalek = "4.0.0"
-default-net = "0.18"
 data-encoding = "2.3.3"
+default-net = "0.18"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "deref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
@@ -37,6 +38,9 @@ once_cell = "1.18.0"
 os_info = "3.6.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+quinn = "0.10"
+quinn-proto = "0.10.5"
+quinn-udp = "0.4"
 rand = "0.8"
 rand_core = "0.6.4"
 rcgen = "0.11"
@@ -44,27 +48,27 @@ reqwest = { version = "0.11.19", default-features = false, features = ["rustls-t
 ring = "0.16.20"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive", "rc"] }
-ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"] }
+serde_bytes = "0.11.12"
 serdect = "0.2.0"
+smallvec = "1.11.1"
 socket2 = "0.5.3"
+ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
 surge-ping = "0.8.0"
-thiserror = "1"
-tracing = "0.1"
-trust-dns-resolver = "0.23.0"
 tempfile = "3.4"
+thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
-tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
 tokio-rustls = { version = "0.24" }
 tokio-rustls-acme = { version = "0.2" }
 tokio-stream = { version = "0.1", features = ["sync"]}
+tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
+tracing = "0.1"
+trust-dns-resolver = "0.23.0"
+ttl_cache = "0.5.1"
 url = { version = "2.4", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.101.4", features = ["std"] }
 webpki-roots = "0.25"
-quinn = "0.10"
-quinn-proto = "0.10.5"
-quinn-udp = "0.4"
 x509-parser = "0.15"
 zeroize = "1.5"
 
@@ -78,7 +82,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # metrics
 iroh-metrics = { version = "0.7.0", path = "../iroh-metrics", default-features = false }
-bounded_join_set = "0.1.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"

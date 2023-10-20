@@ -65,7 +65,10 @@ impl Repl {
                         Some(ReplCmd::Rpc(cmd)) => self.cmd_tx.blocking_send((cmd, reply_tx))?,
                     }
                 }
-                Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
+                Err(ReadlineError::Interrupted) => {
+                    println!("KeyboardInterrupt (press Ctrl-D to exit)");
+                    continue;
+                }
                 Err(ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }

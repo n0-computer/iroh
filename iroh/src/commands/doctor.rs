@@ -59,7 +59,6 @@ impl std::str::FromStr for SecretKeyOption {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
     /// or the settings from the config file.
