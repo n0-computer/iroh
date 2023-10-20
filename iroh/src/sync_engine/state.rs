@@ -9,8 +9,6 @@ use std::collections::HashMap;
 use std::time::{Instant, SystemTime};
 use tracing::{debug, warn};
 
-use super::live::RESYNC_INTERVAL;
-
 /// Why we started a sync request
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Copy)]
 pub enum SyncReason {
@@ -80,11 +78,12 @@ impl NamespaceStates {
             debug!("abort connect: namespace is not in sync set");
             return false;
         };
-        if !state.start_connect(Instant::now(), reason) {
-            debug!("abort connect: may not connect to peer at this time");
-            return false;
+        if state.start_connect(reason) {
+            true
+        } else {
+            debug!("abort connect: already syncing");
+            false
         }
-        true
     }
 
     /// Accept a sync request.
@@ -170,8 +169,8 @@ impl PeerState {
         start.map(|s| (s, self.resync_requested))
     }
 
-    fn start_connect(&mut self, now: Instant, reason: SyncReason) -> bool {
-        let start_sync = match self.state {
+    fn start_connect(&mut self, reason: SyncReason) -> bool {
+        match self.state {
             // never run two syncs at the same time
             SyncState::Running { .. } => {
                 debug!("abort connect: sync already running");
@@ -181,26 +180,11 @@ impl PeerState {
                 }
                 false
             }
-            SyncState::Idle => match (reason, &self.last_sync) {
-                (_, None) => true,
-                (_, Some((_, Err(_)))) => true,
-                (SyncReason::NewNeighbor, Some((time, Ok(_)))) => {
-                    let do_sync = now
-                        .checked_duration_since(*time)
-                        .map(|duration| duration > RESYNC_INTERVAL)
-                        .unwrap_or(true);
-                    if !do_sync {
-                        debug!("abort connect: last sync too recent for new neighbor syn");
-                    }
-                    do_sync
-                }
-                (_, _) => true,
-            },
-        };
-        if start_sync {
-            self.set_sync_running(Origin::Connect(reason));
+            SyncState::Idle => {
+                self.set_sync_running(Origin::Connect(reason));
+                true
+            }
         }
-        start_sync
     }
 
     fn accept_request(&mut self, me: &PublicKey, peer: &PublicKey) -> AcceptOutcome {

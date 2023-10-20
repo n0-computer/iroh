@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    time::{Duration, SystemTime},
+    time::{SystemTime},
 };
 
 use crate::downloader::{DownloadKind, Downloader, PeerRole};
@@ -28,9 +28,6 @@ use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 
 use super::gossip::ToGossipActor;
 use super::state::{NamespaceStates, Origin, SyncReason};
-
-/// Minimium time to pass to do a new sync on a `NeighborUp` event.
-pub const RESYNC_INTERVAL: Duration = Duration::from_secs(60);
 
 /// An iroh-sync operation
 ///
