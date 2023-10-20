@@ -24,7 +24,7 @@ use iroh_bytes::{util::runtime, Hash};
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
     store::{self, GetFilter},
-    AuthorId, ContentStatus, Entry, NamespaceId,
+    AuthorId, ContentStatus, Entry,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -95,7 +95,6 @@ async fn sync_simple() -> Result<()> {
     let peer0 = nodes[0].peer_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
-    let doc_id = doc0.id();
     let hash0 = doc0
         .set_bytes(author0, b"k1".to_vec(), b"v1".to_vec())
         .await?;
@@ -115,7 +114,7 @@ async fn sync_simple() -> Result<()> {
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
     )
@@ -128,7 +127,7 @@ async fn sync_simple() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
         ],
     )
     .await;
@@ -262,7 +261,6 @@ async fn sync_full_basic() -> Result<()> {
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let mut events0 = doc0.subscribe().await?;
-    let doc_id = doc0.id();
     let key0 = b"k1";
     let value0 = b"v1";
     let hash0 = doc0
@@ -292,7 +290,7 @@ async fn sync_full_basic() -> Result<()> {
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
     )
@@ -304,7 +302,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
         ],
     )
     .await;
@@ -359,8 +357,8 @@ async fn sync_full_basic() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
             // 2 SyncFinished events
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
             // 2 InsertRemote events
             Box::new(
                 move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
@@ -378,8 +376,8 @@ async fn sync_full_basic() -> Result<()> {
         // before the peer shows up as a neighbor, we run sync again for the NeighborUp event.
         vec![
             // 2 SyncFinished events
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
         ]
     ).await;
     assert_latest(&doc2, b"k1", b"v1").await;
@@ -391,7 +389,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
-            Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer2)),
         ],
     )
     .await;
@@ -402,7 +400,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
-            Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer2)),
         ],
     )
     .await;
@@ -483,10 +481,8 @@ async fn sync_subscribe_stop_close() -> Result<()> {
 /// Test sync between many nodes with propagation through sync reports.
 #[tokio::test(flavor = "multi_thread")]
 async fn sync_big() -> Result<()> {
-    // #[cfg(tokio_unstable)]
-    // console_subscriber::init();
-    let mut rng = test_rng(b"sync_big");
     setup_logging();
+    let mut rng = test_rng(b"sync_big");
     let rt = test_runtime();
     let n_nodes = std::env::var("NODES")
         .map(|v| v.parse().expect("NODES must be a number"))
@@ -930,9 +926,9 @@ async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
 
 /// Asserts that the event is a [`LiveEvent::SyncFinished`] and that the contained [`SyncEvent`]
 /// has no error and matches `peer` and `namespace`.
-fn match_sync_finished(event: &LiveEvent, peer: PublicKey, namespace: NamespaceId) -> bool {
+fn match_sync_finished(event: &LiveEvent, peer: PublicKey) -> bool {
     let LiveEvent::SyncFinished(e) = event else {
         return false;
     };
-    e.peer == peer && e.namespace == namespace && e.result == Ok(())
+    e.peer == peer && e.result == Ok(())
 }

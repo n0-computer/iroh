@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use crate::downloader::{DownloadKind, Downloader, PeerRole};
@@ -35,7 +35,7 @@ pub const RESYNC_INTERVAL: Duration = Duration::from_secs(60);
 /// An iroh-sync operation
 ///
 /// This is the message that is broadcast over iroh-gossip.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, strum::Display)]
 pub enum Op {
     /// A new entry was inserted into the document.
     Put(SignedEntry),
@@ -225,13 +225,13 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     }
                 }
                 Some(res) = self.running_sync_connect.join_next(), if !self.running_sync_connect.is_empty() => {
-                    trace!(?i, "tick: on_sync_via_connect_finished");
+                    trace!(?i, "tick: running_sync_connect");
                     let (namespace, peer, reason, res) = res.context("running_sync_connect closed")?;
                     self.on_sync_via_connect_finished(namespace, peer, reason, res).await;
 
                 }
                 Some(res) = self.running_sync_accept.join_next(), if !self.running_sync_accept.is_empty() => {
-                    trace!(?i, "tick: on_sync_via_accept_finished");
+                    trace!(?i, "tick: running_sync_accept");
                     let res = res.context("running_sync_accept closed")?;
                     self.on_sync_via_accept_finished(res).await;
                 }
@@ -240,13 +240,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     let res = res.context("pending_downloads closed")?;
                     if let Some((namespace, hash)) = res {
                         self.subscribers.send(&namespace, Event::ContentReady { hash }).await;
-
                         // Inform our neighbors that we have new content ready.
-                        let op = Op::ContentReady(hash);
-                        let message = postcard::to_stdvec(&op)?.into();
-                        if self.is_syncing(&namespace) {
-                            self.gossip.broadcast_neighbors(namespace.into(), message).await?;
-                        }
+                        self.broadcast_neighbors(namespace, &Op::ContentReady(hash)).await;
                     }
 
                 }
@@ -326,12 +321,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
 
     #[instrument("connect", skip_all, fields(peer = %peer.fmt_short(), namespace = %namespace.fmt_short()))]
     fn sync_with_peer(&mut self, namespace: NamespaceId, peer: PublicKey, reason: SyncReason) {
-        let Some(state) = self.state.entry(&namespace, peer) else {
-            debug!("abort connect: namespace is not in sync set");
-            return;
-        };
-        if !state.start_connect(Instant::now(), reason) {
-            debug!("abort connect: may not connect to peer at this time");
+        if !self.state.start_connect(&namespace, peer, reason) {
             return;
         }
         let endpoint = self.endpoint.clone();
@@ -359,7 +349,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
 
     async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<PeerAddr>) -> Result<()> {
         // update state to allow sync
-        if !self.is_syncing(&namespace) {
+        if !self.state.is_syncing(&namespace) {
             let opts = OpenOpts::default()
                 .sync()
                 .subscribe(self.replica_events_tx.clone());
@@ -505,13 +495,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         origin: Origin,
         result: Result<SyncFinished>,
     ) {
-        // if state returns none the replica is not syncing anymore, so drop all results.
-        let Some(state) = self.state.entry(&namespace, peer) else {
-            return;
-        };
-
-        // debug log the result, warn in case of errors
         match &result {
+            Err(ref err) => {
+                warn!(?origin, ?err, "sync failed");
+            }
             Ok(ref details) => {
                 info!(
                     sent = %details.outcome.num_sent,
@@ -529,55 +516,33 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 {
                     debug!(%e, "failed to register peer for document")
                 }
-            }
-            Err(ref err) => {
-                warn!(?origin, ?err, "sync failed");
+
+                // broadcast a sync report to our neighbors, but only if we received new entries.
+                if details.outcome.num_recv > 0 {
+                    info!("broadcast sync report to neighbors");
+                    let report = SyncReport {
+                        namespace,
+                        heads: details.outcome.heads_received.clone(),
+                    };
+                    self.broadcast_neighbors(namespace, &Op::SyncReport(report))
+                        .await;
+                }
             }
         };
 
-        // Broadcast a sync report to our neighbors, but only if we received new entries.
-        if let Ok(state) = &result {
-            if state.outcome.num_recv > 0 {
-                let report = SyncReport {
-                    namespace,
-                    heads: state.outcome.heads_received.clone(),
-                };
-                let op = Op::SyncReport(report);
-                info!(
-                    namespace = %namespace.fmt_short(),
-                    from_peer = %peer.fmt_short(),
-                    "broadcast sync report to neighbors"
-                );
-                let msg = postcard::to_stdvec(&op).expect("serialization may not fail");
-                // TODO: We should debounce and merge these neighbor announcements likely.
-                if let Err(err) = self
-                    .gossip
-                    .broadcast_neighbors(namespace.into(), msg.into())
-                    .await
-                {
-                    error!(
-                        namespace = %namespace.fmt_short(),
-                        from_peer = %peer.fmt_short(),
-                        ?err,
-                        "Failed to broadcast SyncReport to neighbors"
-                    );
-                }
-            }
-        }
-        let result2 = result
-            .as_ref()
-            .map(|_| ())
-            .map_err(|err| format!("{err:?}"));
+        let result_for_event = match &result {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err.to_string()),
+        };
 
-        let Some((started, resync)) = state.finish(&origin, result) else {
+        let Some((started, resync)) = self.state.finish(&namespace, peer, &origin, result) else {
             return;
         };
 
         let ev = SyncEvent {
-            namespace,
             peer,
             origin,
-            result: result2,
+            result: result_for_event,
             finished: SystemTime::now(),
             started,
         };
@@ -590,10 +555,37 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         }
     }
 
+    async fn broadcast_neighbors(&self, namespace: NamespaceId, op: &Op) {
+        if !self.state.is_syncing(&namespace) {
+            return;
+        }
+
+        let msg = match postcard::to_stdvec(op) {
+            Ok(msg) => msg,
+            Err(err) => {
+                error!(?err, ?op, "Failed to serialize message:");
+                return;
+            }
+        };
+        // TODO: We should debounce and merge these neighbor announcements likely.
+        if let Err(err) = self
+            .gossip
+            .broadcast_neighbors(namespace.into(), msg.into())
+            .await
+        {
+            error!(
+                namespace = %namespace.fmt_short(),
+                %op,
+                ?err,
+                "Failed to broadcast to neighbors"
+            );
+        }
+    }
+
     #[instrument("on_sync_report", skip_all, fields(peer = %from.fmt_short(), namespace = %report.namespace.fmt_short()))]
     async fn on_sync_report(&mut self, from: PublicKey, report: SyncReport) {
         let namespace = report.namespace;
-        if !self.is_syncing(&namespace) {
+        if !self.state.is_syncing(&namespace) {
             return;
         }
         let has_news = match self
@@ -615,10 +607,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         }
     }
 
-    fn is_syncing(&self, namespace: &NamespaceId) -> bool {
-        self.state.is_syncing(namespace)
-    }
-
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
         let iroh_sync::Event::Insert {
             namespace,
@@ -629,26 +617,23 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         match origin {
             InsertOrigin::Local => {
                 // A new entry was inserted locally. Broadcast a gossip message.
-                if self.is_syncing(&namespace) {
+                if self.state.is_syncing(&namespace) {
                     let op = Op::Put(signed_entry.clone());
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(topic, message).await?;
                 }
             }
             InsertOrigin::Sync {
-                from: peer_id,
+                from,
                 content_status,
             } => {
-                let from = PublicKey::from_bytes(&peer_id)?;
-                let entry = signed_entry.entry();
-                let hash = entry.record().content_hash();
-
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
+                let hash = signed_entry.content_hash();
                 let entry_status = self.bao_store.contains(&hash);
-
                 // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
+                    let from = PublicKey::from_bytes(&from)?;
                     let role = match content_status {
                         ContentStatus::Complete => PeerRole::Provider,
                         _ => PeerRole::Candidate,
@@ -708,18 +693,14 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         namespace: NamespaceId,
         peer: PublicKey,
     ) -> AcceptOutcome {
-        let Some(state) = self.state.entry(&namespace, peer) else {
-            return AcceptOutcome::Reject(AbortReason::NotFound);
-        };
-        state.accept_request(&self.endpoint.peer_id(), &peer)
+        self.state
+            .accept_request(&self.endpoint.peer_id(), &namespace, peer)
     }
 }
 
 /// Event emitted when a sync operation completes
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct SyncEvent {
-    /// Namespace that was synced
-    pub namespace: NamespaceId,
     /// Peer we synced with
     pub peer: PublicKey,
     /// Origin of the sync exchange
@@ -730,8 +711,6 @@ pub struct SyncEvent {
     pub started: SystemTime,
     /// Result of the sync operation
     pub result: std::result::Result<(), String>,
-    // TODO: Track time a sync took
-    // duration: Duration,
 }
 
 #[derive(Debug, Default)]

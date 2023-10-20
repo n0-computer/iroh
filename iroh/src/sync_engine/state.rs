@@ -67,31 +67,84 @@ impl NamespaceStates {
         self.0.entry(namespace).or_default();
     }
 
-    /// Get the [`PeerState`] for a namespace and peer.
-    /// If the namespace is syncing and the peer so far unknown, initialize and return a default [`PeerState`].
-    /// If the namespace is not syncing return None.
-    pub fn entry(&mut self, namespace: &NamespaceId, peer: PublicKey) -> Option<&mut PeerState> {
-        self.0
-            .get_mut(namespace)
-            .map(|n| n.peers.entry(peer).or_default())
+    /// Start a sync request.
+    ///
+    /// Returns true if the request should be performed, and false if it should be aborted.
+    pub fn start_connect(
+        &mut self,
+        namespace: &NamespaceId,
+        peer: PublicKey,
+        reason: SyncReason,
+    ) -> bool {
+        let Some(state) = self.entry(namespace, peer) else {
+            debug!("abort connect: namespace is not in sync set");
+            return false;
+        };
+        if !state.start_connect(Instant::now(), reason) {
+            debug!("abort connect: may not connect to peer at this time");
+            return false;
+        }
+        true
+    }
+
+    /// Accept a sync request.
+    ///
+    /// Returns the [`AcceptOutcome`] to be perfomed.
+    pub fn accept_request(
+        &mut self,
+        me: &PublicKey,
+        namespace: &NamespaceId,
+        peer: PublicKey,
+    ) -> AcceptOutcome {
+        let Some(state) = self.entry(namespace, peer) else {
+            return AcceptOutcome::Reject(AbortReason::NotFound);
+        };
+        state.accept_request(me, &peer)
+    }
+
+    /// Insert a finished sync operation into the state.
+    ///
+    /// Returns the time when the operation was started, and a `bool` that is true if another sync
+    /// request should be triggered right afterwards.
+    ///
+    /// Returns `None` if the namespace is not syncing or the sync state doesn't expect a finish
+    /// event.
+    pub fn finish(
+        &mut self,
+        namespace: &NamespaceId,
+        peer: PublicKey,
+        origin: &Origin,
+        result: Result<SyncFinished>,
+    ) -> Option<(SystemTime, bool)> {
+        let state = self.entry(namespace, peer)?;
+        state.finish(origin, result)
     }
 
     /// Remove a namespace from the set of syncing namespaces.
     pub fn remove(&mut self, namespace: &NamespaceId) -> bool {
         self.0.remove(namespace).is_some()
     }
+
+    /// Get the [`PeerState`] for a namespace and peer.
+    /// If the namespace is syncing and the peer so far unknown, initialize and return a default [`PeerState`].
+    /// If the namespace is not syncing return None.
+    fn entry(&mut self, namespace: &NamespaceId, peer: PublicKey) -> Option<&mut PeerState> {
+        self.0
+            .get_mut(namespace)
+            .map(|n| n.peers.entry(peer).or_default())
+    }
 }
 
 /// State of a peer with regard to a namespace.
 #[derive(Default)]
-pub struct PeerState {
+struct PeerState {
     state: SyncState,
     resync_requested: bool,
     last_sync: Option<(Instant, Result<SyncFinished>)>,
 }
 
 impl PeerState {
-    pub fn finish(
+    fn finish(
         &mut self,
         origin: &Origin,
         result: Result<SyncFinished>,
@@ -117,7 +170,7 @@ impl PeerState {
         start.map(|s| (s, self.resync_requested))
     }
 
-    pub fn start_connect(&mut self, now: Instant, reason: SyncReason) -> bool {
+    fn start_connect(&mut self, now: Instant, reason: SyncReason) -> bool {
         let start_sync = match self.state {
             // never run two syncs at the same time
             SyncState::Running { .. } => {
@@ -149,7 +202,8 @@ impl PeerState {
         }
         start_sync
     }
-    pub fn accept_request(&mut self, me: &PublicKey, peer: &PublicKey) -> AcceptOutcome {
+
+    fn accept_request(&mut self, me: &PublicKey, peer: &PublicKey) -> AcceptOutcome {
         let outcome = match &self.state {
             SyncState::Idle => AcceptOutcome::Allow,
             SyncState::Running { origin, .. } => match origin {
