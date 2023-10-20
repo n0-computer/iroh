@@ -14,7 +14,7 @@ use tokio::{
     task::{JoinHandle, JoinSet},
     time,
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
     derp::{self, http::ClientError, ReceivedMessage, MAX_PACKET_SIZE},
@@ -146,7 +146,6 @@ impl ActiveDerp {
                     }
                 }
                 msg = self.derp_client_receiver.recv() => {
-                    trace!(region_id=%self.region, ?msg, "derp.recv received");
                     if let Some(msg) = msg {
                         if self.handle_derp_msg(msg).await == ReadResult::Break {
                             // fatal error
@@ -170,10 +169,7 @@ impl ActiveDerp {
     ) -> ReadResult {
         match msg {
             Err(err) => {
-                debug!(
-                    "[{:?}] derp.recv(derp-{}): {:?}",
-                    self.derp_client, self.region, err
-                );
+                warn!("recv error {:?}", err);
 
                 // Forget that all these peers have routes.
                 let peers: Vec<_> = self.peer_present.drain().collect();
@@ -214,11 +210,11 @@ impl ActiveDerp {
 
                 match msg {
                     derp::ReceivedMessage::ServerInfo { .. } => {
-                        info!("derp-{} connected; connGen={}", self.region, conn_gen);
+                        info!(%conn_gen, "connected");
                         ReadResult::Continue
                     }
                     derp::ReceivedMessage::ReceivedPacket { source, data } => {
-                        trace!("[DERP] <- {} ({}b)", self.region, data.len());
+                        trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
                         if self.last_packet_src.is_none()
@@ -246,10 +242,9 @@ impl ActiveDerp {
                     derp::ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.derp_client.clone();
-                        let region = self.region;
                         tokio::task::spawn(async move {
                             if let Err(err) = dc.send_pong(data).await {
-                                info!("derp-{} send_pong error: {:?}", region, err);
+                                warn!("pong error: {:?}", err);
                             }
                         });
                         ReadResult::Continue
@@ -358,7 +353,7 @@ impl DerpActor {
         // Derp Send
         let derp_client = self.connect_derp(region_id, Some(&peer)).await;
         for content in &contents {
-            trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
+            trace!(region_id, ?peer, "sending {}B", content.len());
         }
         let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
 
@@ -374,7 +369,7 @@ impl DerpActor {
                     inc_by!(MagicsockMetrics, send_derp, total_bytes);
                 }
                 Err(err) => {
-                    warn!("derp.send: failed {:?}", err);
+                    warn!(region_id, "send: failed {:?}", err);
                     inc!(MagicsockMetrics, send_derp_error);
                 }
             }
@@ -485,13 +480,16 @@ impl DerpActor {
 
         let c = dc.clone();
         let msg_sender = self.msg_sender.clone();
-        let handle = tokio::task::spawn(async move {
-            let ad = ActiveDerp::new(region_id, c, dc_receiver, msg_sender);
+        let handle = tokio::task::spawn(
+            async move {
+                let ad = ActiveDerp::new(region_id, c, dc_receiver, msg_sender);
 
-            if let Err(err) = ad.run(r).await {
-                warn!("derp: {} connection error: {:?}", region_id, err);
+                if let Err(err) = ad.run(r).await {
+                    warn!("connection error: {:?}", err);
+                }
             }
-        });
+            .instrument(info_span!("active-derp", %region_id)),
+        );
 
         // Insert, to make sure we do not attempt to double connect.
         self.active_derp.insert(region_id, (s, handle));
@@ -559,7 +557,6 @@ impl DerpActor {
 
                 (region_id, ping_success)
             });
-            debug!("post-rebind ping of DERP region {} okay", region_id);
         }
 
         for (region_id, why) in tasks {
@@ -579,7 +576,7 @@ impl DerpActor {
     }
 
     async fn clean_stale_derp(&mut self) {
-        debug!("cleanup {} derps", self.active_derp.len());
+        trace!("checking {} derps for staleness", self.active_derp.len());
         let now = Instant::now();
 
         let mut to_close = Vec::new();
@@ -606,8 +603,8 @@ impl DerpActor {
         }
 
         let dirty = !to_close.is_empty();
-        debug!(
-            "closing {}/{} derps",
+        trace!(
+            "closing {} of {} derps",
             to_close.len(),
             self.active_derp.len()
         );
@@ -633,7 +630,7 @@ impl DerpActor {
 
     async fn close_derp(&mut self, region_id: u16, why: &'static str) {
         if let Some((s, t)) = self.active_derp.remove(&region_id) {
-            debug!("closing connection to derp-{} ({:?})", region_id, why,);
+            debug!(region_id, "closing connection: {}", why);
 
             s.send(ActiveDerpMessage::Shutdown).await.ok();
             t.abort(); // ensure the task is shutdown
