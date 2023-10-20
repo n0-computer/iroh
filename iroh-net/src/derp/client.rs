@@ -502,7 +502,7 @@ pub enum ReceivedMessage {
     ReceivedPacket {
         /// The [`PublicKey`] of the packet sender.
         source: PublicKey,
-        /// The received packet bytes. It aliases the memory passed to [`Client::recv`].
+        /// The received packet bytes.
         #[debug(skip)]
         data: Bytes, // TODO: ref
     },
