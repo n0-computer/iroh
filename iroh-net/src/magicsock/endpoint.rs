@@ -56,7 +56,6 @@ const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 5;
 const MAX_INACTIVE_PEERS: usize = 30;
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 pub(super) enum PingAction {
     EnqueueCallMeMaybe {
         derp_region: u16,
