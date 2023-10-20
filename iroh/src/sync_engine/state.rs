@@ -18,9 +18,9 @@ pub enum SyncReason {
     DirectJoin,
     /// Peer showed up as new neighbor in the gossip swarm
     NewNeighbor,
-    /// We synced after receiving a [`SyncReport`] that indicated news for us
+    /// We synced after receiving a sync report that indicated news for us
     SyncReport,
-    /// We received a [`SyncReport`] while a sync was running, so run again afterwars
+    /// We received a sync report while a sync was running, so run again afterwars
     Resync,
 }
 
@@ -157,7 +157,7 @@ impl PeerState {
                 // Incoming sync request while we are dialing ourselves.
                 // In this case, compare the binary representations of our and the other node's peer id
                 // to deterministically decide which of the two concurrent connections will succeed.
-                Origin::Connect(_reason) => match expected_sync_direction(&me, &peer) {
+                Origin::Connect(_reason) => match expected_sync_direction(me, peer) {
                     SyncDirection::Accept => AcceptOutcome::Allow,
                     SyncDirection::Connect => AcceptOutcome::Reject(AbortReason::AlreadySyncing),
                 },
