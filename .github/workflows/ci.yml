@@ -37,7 +37,7 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
-            runner: [self-hosted, linux, X64]
+            runner: [self-hosted, linux, X64, T4]
           # - name: macOS-latest
           #   os: macOS-latest
           #   release-os: darwin
@@ -135,7 +135,7 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
-            runner: [self-hosted, linux, X64]
+            runner: [self-hosted, linux, X64, T4]
           - name: macOS-latest
             os: macOS-latest
             release-os: darwin
@@ -214,7 +214,7 @@ jobs:
   cross:
     timeout-minutes: 30
     name: Cross compile
-    runs-on: [self-hosted, linux, X64]
+    runs-on: [self-hosted, linux, X64, T4]
     strategy:
       fail-fast: false
       matrix:
@@ -316,7 +316,7 @@ jobs:
   netsim-integration-tests:
     timeout-minutes: 30
     name: Run network simulations/benchmarks
-    runs-on: [self-hosted, linux, X64]
+    runs-on: [self-hosted, linux, X64, T4]
     steps:
     - name: Checkout
       uses: actions/checkout@master
