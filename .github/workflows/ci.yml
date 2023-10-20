@@ -222,7 +222,6 @@ jobs:
           - i686-unknown-linux-gnu
           - armv7-linux-androideabi
           - aarch64-linux-android
-
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -242,7 +241,11 @@ jobs:
       run: cargo install cross --git https://github.com/cross-rs/cross
 
     - name: check
-      run: RUST_BACKTRACE=full cross -vv check --all --target ${{ matrix.target }}
+      env:
+        RUST_BACKTRACE: full
+        HOME: /root
+        CARGO_HOME: /root/.cargo
+      run: cross check --all --target ${{ matrix.target }}
 
     - name: test
       # cross tests are currently broken vor armv7 and aarch64
