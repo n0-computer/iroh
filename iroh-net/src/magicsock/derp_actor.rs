@@ -17,8 +17,8 @@ use crate::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
-use super::Metrics as MagicsockMetrics;
 use super::{ActorMessage, Inner};
+use super::{DerpContents, Metrics as MagicsockMetrics};
 
 /// How long a non-home DERP connection needs to be idle (last written to) before we close it.
 const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -29,7 +29,7 @@ const DERP_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 pub(super) enum DerpActorMessage {
     Send {
         region_id: u16,
-        contents: Vec<Bytes>,
+        contents: DerpContents,
         peer: PublicKey,
     },
     Connect {
@@ -180,7 +180,7 @@ impl DerpActor {
         .await;
     }
 
-    async fn send_derp(&mut self, region_id: u16, contents: Vec<Bytes>, peer: PublicKey) {
+    async fn send_derp(&mut self, region_id: u16, contents: DerpContents, peer: PublicKey) {
         debug!(region_id, ?peer, "sending derp");
         if !self.conn.derp_map.contains_region(region_id) {
             warn!("unknown region id {}", region_id);

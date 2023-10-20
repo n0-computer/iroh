@@ -46,6 +46,7 @@ rustls = { version = "0.21", default-features = false, features = ["dangerous_co
 serde = { version = "1", features = ["derive", "rc"] }
 ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"] }
 serdect = "0.2.0"
+smallvec = "1.11.1"
 socket2 = "0.5.3"
 stun-rs = "0.1.4"
 surge-ping = "0.8.0"
