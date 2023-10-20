@@ -3124,8 +3124,8 @@ pub(crate) mod tests {
             Ok(quic_ep)
         };
 
-        let m1 = make_conn("127.0.0.1:8770".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:8771".parse().unwrap())?;
+        let m1 = make_conn("127.0.0.1:0".parse().unwrap())?;
+        let m2 = make_conn("127.0.0.1:0".parse().unwrap())?;
 
         // msg from  a -> b
         macro_rules! roundtrip {
@@ -3385,7 +3385,7 @@ pub(crate) mod tests {
     #[test]
     fn test_split_packets() {
         fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit {
-            let destination = "127.0.0.1:12345".parse().unwrap();
+            let destination = "127.0.0.1:0".parse().unwrap();
             quinn_udp::Transmit {
                 destination,
                 ecn: None,
