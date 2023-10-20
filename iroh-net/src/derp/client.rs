@@ -3,17 +3,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
 use futures::stream::Stream;
 use futures::{Sink, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, Instrument};
 
+use super::codec::PER_CLIENT_READ_QUEUE_DEPTH;
 use super::{
     codec::{
         recv_frame, write_frame, DerpCodec, Frame, FrameType, MAX_PACKET_SIZE,
@@ -23,6 +22,7 @@ use super::{
 };
 
 use crate::key::{PublicKey, SecretKey};
+use crate::util::AbortingJoinHandle;
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -42,21 +42,38 @@ pub struct Client {
     inner: Arc<InnerClient>,
 }
 
+#[derive(Debug)]
+pub struct ClientReceiver {
+    /// The reader channel, receiving incoming messages.
+    reader_channel: mpsc::Receiver<Result<ReceivedMessage>>,
+}
+
+impl ClientReceiver {
+    /// Reads a messages from a DERP server.
+    ///
+    /// Once it returns an error, the [`Client`] is dead forever.
+    pub async fn recv(&mut self) -> Result<ReceivedMessage> {
+        let msg = self
+            .reader_channel
+            .recv()
+            .await
+            .ok_or(anyhow!("shut down"))??;
+        Ok(msg)
+    }
+}
+
 type DerpReader = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>, DerpCodec>;
 
 #[derive(derive_more::Debug)]
 pub struct InnerClient {
     // our local addrs
     local_addr: SocketAddr,
-
     /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
     /// if there is ever an error writing to the server.
     writer_channel: mpsc::Sender<ClientWriterMessage>,
     /// JoinHandle for the [`ClientWriter`] task
-    writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
-    /// The reader connected to the server
-    #[debug("Mutex<DerpReader>")]
-    reader: Mutex<DerpReader>,
+    writer_task: AbortingJoinHandle<Result<()>>,
+    reader_task: AbortingJoinHandle<()>,
     /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
 }
@@ -144,89 +161,15 @@ impl Client {
     }
 
     /// The local address that the [`Client`] is listening on.
-    pub async fn local_addr(&self) -> Result<SocketAddr> {
+    pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr)
     }
 
     /// Whether or not this [`Client`] is closed.
     ///
     /// The [`Client`] is considered closed if the write side of the client is no longer running.
-    pub async fn is_closed(&self) -> bool {
-        self.inner.writer_task.lock().await.is_none()
-    }
-
-    /// Reads a messages from a DERP server.
-    ///
-    /// The returned message may alias memory owned by the [`Client`]; it
-    /// should only be accessed until the next call to [`Client`].
-    ///
-    /// Once it returns an error, the [`Client`] is dead forever.
-    pub async fn recv(&self) -> Result<ReceivedMessage> {
-        if self.is_closed().await {
-            bail!("client is closed");
-        }
-        match tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.recv_0()).await {
-            Err(e) => {
-                self.close().await;
-                Err(e.into())
-            }
-            Ok(Err(e)) => {
-                self.close().await;
-                Err(e)
-            }
-            Ok(Ok(msg)) => Ok(msg),
-        }
-    }
-
-    async fn recv_0(&self) -> Result<ReceivedMessage> {
-        let mut reader = self.inner.reader.lock().await;
-        let frame = match reader.next().await {
-            Some(Ok(frame)) => frame,
-            Some(Err(err)) => {
-                self.close().await;
-                bail!(err);
-            }
-            None => {
-                self.close().await;
-                bail!("EOF: reader stream ended");
-            }
-        };
-
-        match frame {
-            Frame::KeepAlive => {
-                // A one-way keep-alive message that doesn't require an ack.
-                // This predated FrameType::Ping/FrameType::Pong.
-                Ok(ReceivedMessage::KeepAlive)
-            }
-            Frame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
-            Frame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
-            Frame::RecvPacket { src_key, content } => {
-                let packet = ReceivedMessage::ReceivedPacket {
-                    source: src_key,
-                    data: content,
-                };
-                Ok(packet)
-            }
-            Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
-            Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
-            Frame::Health { problem } => {
-                let problem = std::str::from_utf8(&problem)?.to_owned();
-                let problem = Some(problem);
-                Ok(ReceivedMessage::Health { problem })
-            }
-            Frame::Restarting {
-                reconnect_in,
-                try_for,
-            } => {
-                let reconnect_in = Duration::from_millis(reconnect_in as u64);
-                let try_for = Duration::from_millis(try_for as u64);
-                Ok(ReceivedMessage::ServerRestarting {
-                    reconnect_in,
-                    try_for,
-                })
-            }
-            _ => bail!("unexpected packet: {:?}", frame.typ()),
-        }
+    pub fn is_closed(&self) -> bool {
+        self.inner.writer_task.is_finished()
     }
 
     /// Close the client
@@ -234,33 +177,59 @@ impl Client {
     /// Shuts down the write loop directly and marks the client as closed. The [`Client`] will
     /// check if the client is closed before attempting to read from it.
     pub async fn close(&self) {
-        let mut writer_task = self.inner.writer_task.lock().await;
-        let task = writer_task.take();
-        match task {
-            None => {}
-            Some(task) => {
-                // only error would be that the writer_channel receiver is closed
-                let _ = self
-                    .inner
-                    .writer_channel
-                    .send(ClientWriterMessage::Shutdown)
-                    .await;
-                match task.await {
-                    Ok(Err(e)) => {
-                        tracing::warn!("error closing down the client: {e:?}");
-                    }
-                    Err(e) => {
-                        tracing::warn!("error closing down the client: {e:?}");
-                    }
-                    _ => {}
-                }
-            }
+        if self.inner.writer_task.is_finished() && self.inner.reader_task.is_finished() {
+            return;
         }
+
+        self.inner
+            .writer_channel
+            .send(ClientWriterMessage::Shutdown)
+            .await
+            .ok();
+        self.inner.reader_task.abort();
     }
 
     /// The [`PublicKey`] of the [`super::server::Server`] this [`Client`] is connected with.
     pub fn server_public_key(self) -> PublicKey {
         self.inner.server_public_key
+    }
+}
+
+fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
+    match frame {
+        Frame::KeepAlive => {
+            // A one-way keep-alive message that doesn't require an ack.
+            // This predated FrameType::Ping/FrameType::Pong.
+            Ok(ReceivedMessage::KeepAlive)
+        }
+        Frame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
+        Frame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
+        Frame::RecvPacket { src_key, content } => {
+            let packet = ReceivedMessage::ReceivedPacket {
+                source: src_key,
+                data: content,
+            };
+            Ok(packet)
+        }
+        Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+        Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+        Frame::Health { problem } => {
+            let problem = std::str::from_utf8(&problem)?.to_owned();
+            let problem = Some(problem);
+            Ok(ReceivedMessage::Health { problem })
+        }
+        Frame::Restarting {
+            reconnect_in,
+            try_for,
+        } => {
+            let reconnect_in = Duration::from_millis(reconnect_in as u64);
+            let try_for = Duration::from_millis(try_for as u64);
+            Ok(ReceivedMessage::ServerRestarting {
+                reconnect_in,
+                try_for,
+            })
+        }
+        _ => bail!("unexpected packet: {:?}", frame.typ()),
     }
 }
 
@@ -451,13 +420,13 @@ impl ClientBuilder {
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self) -> Result<Client> {
+    pub async fn build(mut self) -> Result<(Client, ClientReceiver)> {
         // exchange information with the server
         let (server_public_key, rate_limiter) = self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
-        let writer_task = tokio::spawn(
+        let writer_task = tokio::task::spawn(
             async move {
                 let client_writer = ClientWriter {
                     rate_limiter,
@@ -470,17 +439,60 @@ impl ClientBuilder {
             .instrument(info_span!("client.writer")),
         );
 
+        let (reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
+        let writer_sender2 = writer_sender.clone();
+        let reader_task = tokio::task::spawn(async move {
+            loop {
+                let frame = tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.reader.next()).await;
+                let res = match frame {
+                    Ok(Some(Ok(frame))) => process_incoming_frame(frame),
+                    Ok(Some(Err(err))) => {
+                        // Error processing incoming messages
+                        Err(err)
+                    }
+                    Ok(None) => {
+                        // EOF
+                        Err(anyhow::anyhow!("EOF: reader stream ended"))
+                    }
+                    Err(err) => {
+                        // Timeout
+                        Err(err.into())
+                    }
+                };
+                if res.is_err() {
+                    // shutdown
+                    writer_sender2
+                        .send(ClientWriterMessage::Shutdown)
+                        .await
+                        .ok();
+                    break;
+                }
+                if reader_sender.send(res).await.is_err() {
+                    // shutdown, as the reader is gone
+                    writer_sender2
+                        .send(ClientWriterMessage::Shutdown)
+                        .await
+                        .ok();
+                    break;
+                }
+            }
+        });
+
         let client = Client {
             inner: Arc::new(InnerClient {
                 local_addr: self.local_addr,
                 writer_channel: writer_sender,
-                writer_task: Mutex::new(Some(writer_task)),
-                reader: Mutex::new(self.reader),
+                writer_task: writer_task.into(),
+                reader_task: reader_task.into(),
                 server_public_key,
             }),
         };
 
-        Ok(client)
+        let client_receiver = ClientReceiver {
+            reader_channel: reader_recv,
+        };
+
+        Ok((client, client_receiver))
     }
 }
 
