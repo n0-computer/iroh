@@ -69,6 +69,7 @@ impl Repl {
                     println!("KeyboardInterrupt (press Ctrl-D to exit)");
                     continue;
                 }
+                Err(ReadlineError::Eof) => break,
                 Err(ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }
