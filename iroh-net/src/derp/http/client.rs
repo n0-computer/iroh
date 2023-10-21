@@ -1473,6 +1473,20 @@ mod tests {
         Ok(())
     }
 
+    /// In the real world, when we create a local server, that server spawn a [`MeshClient`] for every remote server it was instructed to mesh with (we give it a list of derp servers to connect to via a config file). The connection with the local server and its [`MeshClient`] is managed by the [`PacketForwarderHandler`].
+    ///
+    /// The [`MeshClient`] receives a message from the remote server every time that server connects to a new iroh node. This message includes the [`PublicKey`] of the node it has just connected to.
+    /// `test_run_mesh_client` tests the interactions between a remote server and a [`MeshClient`], using the [`PacketForwardHandler`] to inspect that we are getting the expected [`AddPacketForwarder`] messages from the remote.
+    /// to test this we:
+    /// - set up a remote server
+    /// - create a mesh client (by adding the same mesh key that the server has) and give it the url of the server
+    /// - create a `PacketForwardHandler` by hand (usually done by the local server as a bridge between the MeshClient and the local server)
+    /// - mesh the mesh client with the server
+    /// - ensure it's meshed when we received a `MeshClientEvent::Meshed` message
+    /// - create a normal client and connect it to the server
+    /// - test we receive an `AddPacketForwarder` message from the server. This translates to "Add me as a packet forwarder for the given key"
+    /// - close the normal client
+    /// - tet that we receive a `RemovePacketForwarder` message from the server
     #[tokio::test]
     async fn test_run_mesh_client() -> Result<()> {
         tracing_subscriber::registry()
@@ -1549,8 +1563,6 @@ mod tests {
         info!("dropped normal client, waiting for packet forwarder to be removed");
 
         // wait for "remove packet forwarder" message
-        // potentially may get another `PeerPresent` message about ourselves, this is
-        // non deterministic
         match server_channel_r.recv().await.unwrap() {
             ServerMessage::RemovePacketForwarder(key) => {
                 debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
