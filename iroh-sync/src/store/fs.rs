@@ -248,8 +248,8 @@ impl super::Store for Store {
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorMatcher,
-        key: KeyMatcher,
+        author: impl Into<AuthorMatcher>,
+        key: impl Into<KeyMatcher>,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;

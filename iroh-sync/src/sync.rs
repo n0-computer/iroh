@@ -1916,7 +1916,7 @@ mod tests {
 
     fn get_keys_sorted<S: store::Store>(store: &S, namespace: NamespaceId) -> Vec<Vec<u8>> {
         let mut res = store
-            .get_many(namespace, Query::all())
+            .get_many(namespace, Query::all(), View::LatestByKey)
             .unwrap()
             .map(|e| e.map(|e| e.key().to_vec()))
             .collect::<Result<Vec<_>>>()

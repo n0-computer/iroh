@@ -131,8 +131,8 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorMatcher,
-        key: KeyMatcher,
+        author: impl Into<AuthorMatcher>,
+        key: impl Into<KeyMatcher>,
     ) -> Result<Option<SignedEntry>>;
 
     /// Get all content hashes of all replicas in the store.
@@ -279,6 +279,12 @@ impl Default for KeyMatcher {
     }
 }
 
+impl<T: AsRef<[u8]>> From<T> for KeyMatcher {
+    fn from(value: T) -> Self {
+        KeyMatcher::Exact(Bytes::copy_from_slice(value.as_ref()))
+    }
+}
+
 /// Author matching.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum AuthorMatcher {
@@ -291,6 +297,12 @@ pub enum AuthorMatcher {
 impl Default for AuthorMatcher {
     fn default() -> Self {
         AuthorMatcher::Any
+    }
+}
+
+impl From<AuthorId> for AuthorMatcher {
+    fn from(value: AuthorId) -> Self {
+        AuthorMatcher::Exact(value)
     }
 }
 

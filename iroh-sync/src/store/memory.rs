@@ -135,8 +135,8 @@ impl super::Store for Store {
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorMatcher,
-        key: KeyMatcher,
+        author: impl Into<AuthorMatcher>,
+        key: impl Into<KeyMatcher>,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
 
@@ -144,7 +144,7 @@ impl super::Store for Store {
             return Ok(None);
         };
 
-        let res = match (author, key) {
+        let res = match (author.into(), key.into()) {
             (AuthorMatcher::Any, KeyMatcher::Any) => records.iter().next(),
             (AuthorMatcher::Any, KeyMatcher::Exact(key)) => {
                 records.iter().find(|((_, k), _)| k == &key)
