@@ -3,6 +3,7 @@
 use std::num::NonZeroUsize;
 
 use anyhow::Result;
+use bytes::Bytes;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -119,14 +120,19 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Get an iterator over entries of a replica.
     ///
     /// The [`GetFilter`] has several methods of filtering the returned entries.
-    fn get_many(&self, namespace: NamespaceId, filter: GetFilter) -> Result<Self::GetIter<'_>>;
+    fn get_many(
+        &self,
+        namespace: NamespaceId,
+        query: Query,
+        view: View,
+    ) -> Result<Self::GetIter<'_>>;
 
     /// Get an entry by key and author.
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorId,
-        key: impl AsRef<[u8]>,
+        author: AuthorMatcher,
+        key: KeyMatcher,
     ) -> Result<Option<SignedEntry>>;
 
     /// Get all content hashes of all replicas in the store.
@@ -139,35 +145,169 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
 }
 
-/// Filter a get query onto a namespace
-#[derive(Debug, Serialize, Deserialize)]
-pub enum GetFilter {
-    /// No filter, list all entries
-    All,
-    /// Filter for exact key match
-    Key(Vec<u8>),
-    /// Filter for key prefix
-    Prefix(Vec<u8>),
-    /// Filter by author
-    Author(AuthorId),
-    /// Filter by key prefix and author
-    AuthorAndPrefix(AuthorId, Vec<u8>),
+/// Returns the first matching result.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct Query {
+    author: AuthorMatcher,
+    key: KeyMatcher,
+    range: Range,
 }
 
-impl Default for GetFilter {
-    fn default() -> Self {
-        Self::All
+impl Query {
+    /// Returns a query that will match everything.
+    pub fn all() -> Self {
+        Query::default()
+    }
+
+    /// Creates a query restricted to matching an author.
+    pub fn author(author: AuthorId) -> Self {
+        Query {
+            author: AuthorMatcher::Exact(author),
+            ..Default::default()
+        }
+    }
+
+    /// Creates a query restricted to matching a key prefix.
+    pub fn prefix(prefix: impl AsRef<[u8]>) -> Self {
+        Query {
+            key: KeyMatcher::Prefix(Bytes::copy_from_slice(prefix.as_ref())),
+            ..Default::default()
+        }
+    }
+
+    /// Creates a query restricted to matching an exact key.
+    pub fn key(key: impl AsRef<[u8]>) -> Self {
+        Query {
+            key: KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref())),
+            ..Default::default()
+        }
+    }
+
+    /// Creates a query restricted to matching an author.
+    pub fn with_author(mut self, author: AuthorId) -> Self {
+        self.author = AuthorMatcher::Exact(author);
+        self
+    }
+
+    /// Creates a query restricted to matching a key prefix.
+    pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
+        self.key = KeyMatcher::Prefix(Bytes::copy_from_slice(prefix.as_ref()));
+        self
+    }
+
+    /// Creates a query restricted to matching an exact key.
+    pub fn with_key(mut self, key: impl AsRef<[u8]>) -> Self {
+        self.key = KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref()));
+        self
     }
 }
 
-impl GetFilter {
-    /// Create a [`GetFilter`] from author and prefix options.
-    pub fn author_prefix(author: Option<AuthorId>, prefix: Option<impl AsRef<[u8]>>) -> Self {
-        match (author, prefix) {
-            (None, None) => Self::All,
-            (Some(author), None) => Self::Author(author),
-            (None, Some(prefix)) => Self::Prefix(prefix.as_ref().to_vec()),
-            (Some(author), Some(prefix)) => Self::AuthorAndPrefix(author, prefix.as_ref().to_vec()),
-        }
+/// A range.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Range {
+    /// ..
+    All,
+    /// x..
+    From(u64),
+    /// ..=x
+    ToInclusive(u64),
+    /// x..=y
+    Inclusive(u64, u64),
+    /// ..x
+    To(u64),
+    /// x..y
+    Exclusive(u64, u64),
+}
+
+impl Default for Range {
+    fn default() -> Self {
+        Range::All
+    }
+}
+
+impl From<std::ops::Range<u64>> for Range {
+    fn from(value: std::ops::Range<u64>) -> Self {
+        Range::Exclusive(value.start, value.end)
+    }
+}
+
+impl From<std::ops::RangeFrom<u64>> for Range {
+    fn from(value: std::ops::RangeFrom<u64>) -> Self {
+        Range::From(value.start)
+    }
+}
+
+impl From<std::ops::RangeFull> for Range {
+    fn from(_: std::ops::RangeFull) -> Self {
+        Range::All
+    }
+}
+
+impl From<std::ops::RangeInclusive<u64>> for Range {
+    fn from(value: std::ops::RangeInclusive<u64>) -> Self {
+        let (start, end) = value.into_inner();
+        Range::Inclusive(start, end)
+    }
+}
+
+impl From<std::ops::RangeToInclusive<u64>> for Range {
+    fn from(value: std::ops::RangeToInclusive<u64>) -> Self {
+        Range::ToInclusive(value.end)
+    }
+}
+
+impl From<std::ops::RangeTo<u64>> for Range {
+    fn from(value: std::ops::RangeTo<u64>) -> Self {
+        Range::To(value.end)
+    }
+}
+
+/// Key matching.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum KeyMatcher {
+    /// Matches any key
+    Any,
+    /// Only keys that are exactly the provided value.
+    Exact(Bytes),
+    /// All keys matching the provided value.
+    Prefix(Bytes),
+}
+
+impl Default for KeyMatcher {
+    fn default() -> Self {
+        KeyMatcher::Any
+    }
+}
+
+/// Author matching.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum AuthorMatcher {
+    /// Matches any author
+    Any,
+    /// Matches exactly the provided author
+    Exact(AuthorId),
+}
+
+impl Default for AuthorMatcher {
+    fn default() -> Self {
+        AuthorMatcher::Any
+    }
+}
+
+/// Virtual representation of the data.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum View {
+    /// Returns for each key and author the latest version
+    ///
+    /// This is how data is stored under the hood and matches
+    /// what is currently the "default" view
+    LatestByKey,
+    /// Returns for each key, the lastest version, independent of the author.
+    LatestByKeyAndAuthor,
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self::LatestByKey
     }
 }

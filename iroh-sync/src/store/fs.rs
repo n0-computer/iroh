@@ -3,6 +3,7 @@
 use std::{cmp::Ordering, collections::HashSet, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
@@ -22,7 +23,9 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{
+    pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query, View,
+};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -227,28 +230,31 @@ impl super::Store for Store {
     fn get_many(
         &self,
         namespace: NamespaceId,
-        filter: super::GetFilter,
+        query: Query,
+        view: View,
     ) -> Result<Self::GetIter<'_>> {
-        match filter {
-            super::GetFilter::All => self.get_all(namespace),
-            super::GetFilter::Key(key) => self.get_by_key(namespace, key),
-            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, prefix),
-            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
-            super::GetFilter::AuthorAndPrefix(author, prefix) => {
-                self.get_by_author_and_prefix(namespace, author, prefix)
-            }
-        }
+        todo!()
+        // match filter {
+        //     super::GetFilter::All => self.get_all(namespace),
+        //     super::GetFilter::Key(key) => self.get_by_key(namespace, key),
+        //     super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, prefix),
+        //     super::GetFilter::Author(author) => self.get_by_author(namespace, author),
+        //     super::GetFilter::AuthorAndPrefix(author, prefix) => {
+        //         self.get_by_author_and_prefix(namespace, author, prefix)
+        //     }
+        // }
     }
 
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorId,
-        key: impl AsRef<[u8]>,
+        author: AuthorMatcher,
+        key: KeyMatcher,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
-        get_one(&record_table, namespace, author, key)
+        // get_one(&record_table, namespace, author, key)
+        todo!()
     }
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
@@ -517,7 +523,11 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        self.store.get_one(id.namespace(), id.author(), id.key())
+        self.store.get_one(
+            id.namespace(),
+            AuthorMatcher::Exact(id.author()),
+            KeyMatcher::Exact(Bytes::copy_from_slice(id.key())),
+        )
     }
 
     fn len(&self) -> Result<usize> {
@@ -908,7 +918,7 @@ impl Iterator for RangeIterator<'_> {
 #[cfg(test)]
 mod tests {
     use crate::ranger::Store as _;
-    use crate::store::{GetFilter, Store as _};
+    use crate::store::Store as _;
 
     use super::*;
 
@@ -929,7 +939,8 @@ mod tests {
         let res = store
             .get_many(
                 replica.namespace(),
-                GetFilter::AuthorAndPrefix(author.id(), vec![255]),
+                Query::author(author.id()).with_prefix([255]),
+                View::LatestByKey,
             )?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(res.len(), 2);

@@ -295,7 +295,7 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, GetFilter, Store},
+        store::{self, Query, Store, View},
         sync::Namespace,
         AuthorId,
     };
@@ -331,7 +331,11 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(bob_replica.namespace(), GetFilter::All)
+                .get_many(
+                    bob_replica.namespace(),
+                    Query::all(),
+                    store::View::LatestByKey
+                )
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -340,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(alice_replica.namespace(), GetFilter::All)
+                .get_many(alice_replica.namespace(), Query::all(), View::LatestByKey)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -397,7 +401,7 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(namespace.id(), GetFilter::All)
+                .get_many(namespace.id(), Query::all(), View::LatestByKey)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -406,7 +410,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(namespace.id(), GetFilter::All)
+                .get_many(namespace.id(), Query::all(), View::LatestByKey)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -462,7 +466,7 @@ mod tests {
 
     fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
-            .get_many(namespace, GetFilter::All)
+            .get_many(namespace, Query::all(), View::LatestByKey)
             .unwrap()
             .map(|entry| {
                 entry.map(|entry| {

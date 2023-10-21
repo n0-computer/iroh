@@ -17,7 +17,9 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes, Record,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{
+    pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query, View,
+};
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
@@ -117,35 +119,53 @@ impl super::Store for Store {
     fn get_many(
         &self,
         namespace: NamespaceId,
-        filter: super::GetFilter,
+        query: Query,
+        view: View,
     ) -> Result<Self::GetIter<'_>> {
-        match filter {
-            super::GetFilter::All => self.get_all(namespace),
-            super::GetFilter::Key(key) => self.get_by_key(namespace, key),
-            super::GetFilter::Prefix(prefix) => self.get_by_prefix(namespace, prefix),
-            super::GetFilter::Author(author) => self.get_by_author(namespace, author),
-            super::GetFilter::AuthorAndPrefix(author, prefix) => {
-                self.get_by_author_and_prefix(namespace, author, prefix)
-            }
-        }
+        let records = self.replica_records.read();
+        Ok(RangeIterator {
+            records,
+            namespace,
+            query,
+            view,
+            index: 0,
+        })
     }
 
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorId,
-        key: impl AsRef<[u8]>,
+        author: AuthorMatcher,
+        key: KeyMatcher,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
 
-        let value = inner
-            .get(&namespace)
-            .and_then(|records| records.get(&(author, key.as_ref().to_vec())));
-        Ok(match value {
-            None => None,
-            Some(value) if value.is_empty() => None,
-            Some(value) => Some(value.clone()),
-        })
+        let Some(records) = inner.get(&namespace) else {
+            return Ok(None);
+        };
+
+        let res = match (author, key) {
+            (AuthorMatcher::Any, KeyMatcher::Any) => records.iter().next(),
+            (AuthorMatcher::Any, KeyMatcher::Exact(key)) => {
+                records.iter().find(|((_, k), _)| k == &key)
+            }
+            (AuthorMatcher::Any, KeyMatcher::Prefix(key)) => {
+                records.iter().find(|((_, k), _)| k.starts_with(&key))
+            }
+
+            (AuthorMatcher::Exact(author), KeyMatcher::Any) => {
+                records.iter().find(|((a, _), _)| &author == a)
+            }
+            (AuthorMatcher::Exact(author), KeyMatcher::Exact(key)) => {
+                records.iter().find(|((a, k), _)| a == &author && k == &key)
+            }
+
+            (AuthorMatcher::Exact(author), KeyMatcher::Prefix(key)) => records
+                .iter()
+                .find(|((a, k), _)| a == &author && k.starts_with(&key)),
+        };
+
+        Ok(res.map(|(_, e)| e.clone()))
     }
 
     /// Get all content hashes of all replicas in the store.
@@ -176,121 +196,6 @@ impl super::Store for Store {
 
         let peers: Vec<PeerIdBytes> = cache.iter().map(|(peer_id, _empty_val)| *peer_id).collect();
         Ok(Some(peers.into_iter()))
-    }
-}
-
-impl Store {
-    fn get_by_key(
-        &self,
-        namespace: NamespaceId,
-        key: impl AsRef<[u8]>,
-    ) -> Result<RangeIterator<'_>> {
-        let records = self.replica_records.read();
-        let key = key.as_ref().to_vec();
-        let filter = GetFilter::Key { namespace, key };
-
-        Ok(RangeIterator {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-
-    fn get_by_prefix(
-        &self,
-        namespace: NamespaceId,
-        prefix: impl AsRef<[u8]>,
-    ) -> Result<RangeIterator<'_>> {
-        let records = self.replica_records.read();
-        let prefix = prefix.as_ref().to_vec();
-        let filter = GetFilter::Prefix { namespace, prefix };
-
-        Ok(RangeIterator {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-
-    fn get_by_author(&self, namespace: NamespaceId, author: AuthorId) -> Result<RangeIterator<'_>> {
-        let records = self.replica_records.read();
-        let filter = GetFilter::Author { namespace, author };
-
-        Ok(RangeIterator {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-
-    fn get_by_author_and_prefix(
-        &self,
-        namespace: NamespaceId,
-        author: AuthorId,
-        prefix: Vec<u8>,
-    ) -> Result<RangeIterator<'_>> {
-        let records = self.replica_records.read();
-        let filter = GetFilter::AuthorAndPrefix {
-            namespace,
-            author,
-            prefix,
-        };
-
-        Ok(RangeIterator {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-
-    fn get_all(&self, namespace: NamespaceId) -> Result<RangeIterator<'_>> {
-        let records = self.replica_records.read();
-        let filter = GetFilter::All { namespace };
-
-        Ok(RangeIterator {
-            records,
-            filter,
-            index: 0,
-        })
-    }
-}
-
-#[derive(Debug)]
-enum GetFilter {
-    /// All entries.
-    All { namespace: NamespaceId },
-    /// Filter by author.
-    Author {
-        namespace: NamespaceId,
-        author: AuthorId,
-    },
-    /// Filter by key only.
-    Key {
-        namespace: NamespaceId,
-        key: Vec<u8>,
-    },
-    /// Filter by prefix only.
-    Prefix {
-        namespace: NamespaceId,
-        prefix: Vec<u8>,
-    },
-    /// Filter by author and prefix.
-    AuthorAndPrefix {
-        namespace: NamespaceId,
-        prefix: Vec<u8>,
-        author: AuthorId,
-    },
-}
-
-impl GetFilter {
-    fn namespace(&self) -> NamespaceId {
-        match self {
-            GetFilter::All { namespace } => *namespace,
-            GetFilter::Key { namespace, .. } => *namespace,
-            GetFilter::Prefix { namespace, .. } => *namespace,
-            GetFilter::Author { namespace, .. } => *namespace,
-            GetFilter::AuthorAndPrefix { namespace, .. } => *namespace,
-        }
     }
 }
 
@@ -325,7 +230,9 @@ impl<'a> Iterator for ContentHashesIterator<'a> {
 #[derive(Debug)]
 pub struct RangeIterator<'a> {
     records: ReplicaRecords<'a>,
-    filter: GetFilter,
+    namespace: NamespaceId,
+    query: Query,
+    view: View,
     /// Current iteration index.
     index: usize,
 }
@@ -334,38 +241,41 @@ impl<'a> Iterator for RangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let records = self.records.get(&self.filter.namespace())?;
-            let entry = match self.filter {
-                GetFilter::All { .. } => records.iter().nth(self.index)?,
-                GetFilter::Key { ref key, .. } => records
-                    .iter()
-                    .filter(|((_, k), _)| k == key)
-                    .nth(self.index)?,
-                GetFilter::Prefix { ref prefix, .. } => records
-                    .iter()
-                    .filter(|((_, k), _)| k.starts_with(prefix))
-                    .nth(self.index)?,
-                GetFilter::Author { ref author, .. } => records
-                    .iter()
-                    .filter(|((a, _), _)| a == author)
-                    .nth(self.index)?,
-                GetFilter::AuthorAndPrefix {
-                    ref prefix,
-                    ref author,
-                    ..
-                } => records
-                    .iter()
-                    .filter(|((a, k), _)| a == author && k.starts_with(prefix))
-                    .nth(self.index)?,
-            };
-            self.index += 1;
-            if entry.1.is_empty() {
-                continue;
-            } else {
-                return Some(Ok(entry.1.clone()));
-            }
-        }
+        todo!()
+        /////////////////////////////////////////////////////////////////////////////
+        // loop {                                                                  //
+        //     let records = self.records.get(&self.filter.namespace())?;          //
+        //     let entry = match self.filter {                                     //
+        //         GetFilter::All { .. } => records.iter().nth(self.index)?,       //
+        //         GetFilter::Key { ref key, .. } => records                       //
+        //             .iter()                                                     //
+        //             .filter(|((_, k), _)| k == key)                             //
+        //             .nth(self.index)?,                                          //
+        //         GetFilter::Prefix { ref prefix, .. } => records                 //
+        //             .iter()                                                     //
+        //             .filter(|((_, k), _)| k.starts_with(prefix))                //
+        //             .nth(self.index)?,                                          //
+        //         GetFilter::Author { ref author, .. } => records                 //
+        //             .iter()                                                     //
+        //             .filter(|((a, _), _)| a == author)                          //
+        //             .nth(self.index)?,                                          //
+        //         GetFilter::AuthorAndPrefix {                                    //
+        //             ref prefix,                                                 //
+        //             ref author,                                                 //
+        //             ..                                                          //
+        //         } => records                                                    //
+        //             .iter()                                                     //
+        //             .filter(|((a, k), _)| a == author && k.starts_with(prefix)) //
+        //             .nth(self.index)?,                                          //
+        //     };                                                                  //
+        //     self.index += 1;                                                    //
+        //     if entry.1.is_empty() {                                             //
+        //         continue;                                                       //
+        //     } else {                                                            //
+        //         return Some(Ok(entry.1.clone()));                               //
+        //     }                                                                   //
+        // }                                                                       //
+        /////////////////////////////////////////////////////////////////////////////
     }
 }
 
