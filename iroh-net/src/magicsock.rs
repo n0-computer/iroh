@@ -71,7 +71,7 @@ mod rebinding_conn;
 mod timer;
 
 pub use self::endpoint::ConnectionType;
-pub use self::endpoint::EndpointInfo;
+pub use self::endpoint::{DirectAddrInfo, EndpointInfo};
 pub use self::metrics::Metrics;
 pub use self::timer::Timer;
 
@@ -1683,7 +1683,7 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
             ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self.inner.peer_map.endpoint_infos();
+                let eps: Vec<_> = self.inner.peer_map.endpoint_infos(Instant::now());
                 let _ = s.send(eps);
             }
             ActorMessage::TrackedEndpoint(node_key, s) => {
