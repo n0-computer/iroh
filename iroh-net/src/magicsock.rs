@@ -528,26 +528,28 @@ impl Inner {
             // find disco and stun packets and forward them to the actor
             loop {
                 let end = start + meta.stride;
-                if end > buf.len() {
+                if end > meta.len {
                     break;
                 }
                 let packet = &buf[start..end];
-                let mut packet_is_quic = true;
-                if stun::is(packet) {
-                    trace!(src = %meta.addr, len = %meta.len, "UDP recv: stun packet");
+                let packet_is_quic = if stun::is(packet) {
+                    trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
                     self.net_checker.receive_stun_packet(packet2, meta.addr);
-                    packet_is_quic = false;
+                    false
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
-                    trace!(src = %meta.addr, len = %meta.len, "UDP recv: disco packet");
+                    trace!(src = %meta.addr, len = %meta.stride, "UDP recv: disco packet");
                     self.handle_disco_message(
                         sender,
                         sealed_box,
                         DiscoMessageSource::Udp(meta.addr),
                     );
-                    packet_is_quic = false;
-                }
+                    false
+                } else {
+                    trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
+                    true
+                };
 
                 if packet_is_quic {
                     quic_packets_count += 1;
