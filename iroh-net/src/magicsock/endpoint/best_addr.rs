@@ -58,7 +58,7 @@ impl BestAddr {
     #[cfg(test)]
     pub fn from_parts(
         addr: SocketAddr,
-        latency: Option<Duration>,
+        latency: Duration,
         confirmed_at: Instant,
         trust_until: Instant,
     ) -> Self {

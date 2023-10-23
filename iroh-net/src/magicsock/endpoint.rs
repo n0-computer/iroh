@@ -1663,7 +1663,7 @@ mod tests {
                     derp_region: new_relay_and_state(Some(0)),
                     best_addr: BestAddr::from_parts(
                         ip_port.into(),
-                        Some(latency),
+                        latency,
                         now,
                         now + Duration::from_secs(100),
                     ),
@@ -1759,7 +1759,7 @@ mod tests {
                     derp_region: Some((0, relay_state)),
                     best_addr: BestAddr::from_parts(
                         socket_addr,
-                        Some(Duration::from_millis(80)),
+                        Duration::from_millis(80),
                         now,
                         expired,
                     ),
@@ -1815,8 +1815,8 @@ mod tests {
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
                 }]),
-                conn_type: ConnectionType::Relay(0),
-                latency: Some(latency),
+                conn_type: ConnectionType::Direct(d_socket_addr),
+                latency: Some(Duration::from_millis(80)),
                 last_used: Some(elapsed),
             },
         ]);
