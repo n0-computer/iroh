@@ -35,7 +35,6 @@ igd = { version = "0.12.1", features = ["aio"] }
 libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
-os_info = "3.6.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.10"
@@ -55,13 +54,11 @@ socket2 = "0.5.3"
 ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
 surge-ping = "0.8.0"
-tempfile = "3.4"
 thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
 tokio-rustls = { version = "0.24" }
 tokio-rustls-acme = { version = "0.2" }
-tokio-stream = { version = "0.1", features = ["sync"]}
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
 tracing = "0.1"
 trust-dns-resolver = "0.23.0"

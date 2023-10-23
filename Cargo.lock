@@ -843,20 +843,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2801af0d36612ae591caa9568261fddce32ce6e08a7275ea334a06a4ad021a2c"
-dependencies = [
- "cfg-if",
- "crossbeam-channel",
- "crossbeam-deque",
- "crossbeam-epoch",
- "crossbeam-queue",
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -888,16 +874,6 @@ dependencies = [
  "crossbeam-utils",
  "memoffset 0.9.0",
  "scopeguard",
-]
-
-[[package]]
-name = "crossbeam-queue"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
 ]
 
 [[package]]
@@ -2145,7 +2121,6 @@ dependencies = [
  "iroh-net",
  "iroh-sync",
  "iroh-test",
- "itertools 0.11.0",
  "multibase",
  "nix",
  "num_cpus",
@@ -2168,6 +2143,7 @@ dependencies = [
  "tempfile",
  "testdir",
  "thiserror",
+ "time",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2222,7 +2198,6 @@ dependencies = [
  "serde-error",
  "serde_test",
  "smallvec",
- "subtle",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2281,7 +2256,6 @@ dependencies = [
  "erased_set",
  "hyper",
  "once_cell",
- "paste",
  "prometheus-client",
  "struct_iterable",
  "tokio",
@@ -2324,7 +2298,6 @@ dependencies = [
  "ntest",
  "num_enum",
  "once_cell",
- "os_info",
  "parking_lot",
  "postcard",
  "pretty_assertions",
@@ -2352,14 +2325,12 @@ dependencies = [
  "ssh-key",
  "stun-rs",
  "surge-ping",
- "tempfile",
  "testdir",
  "thiserror",
  "time",
  "tokio",
  "tokio-rustls",
  "tokio-rustls-acme",
- "tokio-stream",
  "tokio-util",
  "toml 0.8.2",
  "tracing",
@@ -2397,7 +2368,6 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "bytes",
- "crossbeam",
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
@@ -2991,17 +2961,6 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
-
-[[package]]
-name = "os_info"
-version = "3.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "006e42d5b888366f1880eda20371fedde764ed2213dc8496f49622fa0c99cd5e"
-dependencies = [
- "log",
- "serde",
- "winapi",
-]
 
 [[package]]
 name = "os_pipe"
