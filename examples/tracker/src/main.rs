@@ -1034,7 +1034,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     let args = Args::parse();
