@@ -32,12 +32,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
+use smallvec::{smallvec, SmallVec};
 use tokio::{
     sync::{self, mpsc, Mutex},
     time,
@@ -70,7 +71,7 @@ mod rebinding_conn;
 mod timer;
 
 pub use self::endpoint::ConnectionType;
-pub use self::endpoint::EndpointInfo;
+pub use self::endpoint::{DirectAddrInfo, EndpointInfo};
 pub use self::metrics::Metrics;
 pub use self::timer::Timer;
 
@@ -179,6 +180,10 @@ impl Default for Options {
     }
 }
 
+/// Contents of a DERP message. Use a SmallVec to avoid allocations for the very
+/// common case of a single packet.
+pub(crate) type DerpContents = SmallVec<[Bytes; 1]>;
+
 /// Iroh connectivity layer.
 ///
 /// This is responsible for routing packets to peers based on peer IDs, it will initially
@@ -252,6 +257,8 @@ struct Inner {
 
     // Send buffer used in `poll_send_udp`
     send_buffer: parking_lot::Mutex<Vec<quinn_udp::Transmit>>,
+    // UDP disco (ping) queue
+    udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 }
 
 impl Inner {
@@ -406,13 +413,6 @@ impl Inner {
                             transmits.truncate(n);
                             udp_sent = true;
                             // record metrics.
-                            let total_bytes: u64 =
-                                transmits.iter().map(|x| x.contents.len() as u64).sum();
-                            if addr.is_ipv6() {
-                                inc_by!(MagicsockMetrics, send_ipv6, total_bytes);
-                            } else {
-                                inc_by!(MagicsockMetrics, send_ipv4, total_bytes);
-                            }
                         }
                         Err(err) => {
                             error!(peer = %public_key.fmt_short(), ?addr, "failed to send udp: {err:?}");
@@ -459,7 +459,18 @@ impl Inner {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<usize>> {
         let conn = self.conn_for_addr(addr)?;
-        conn.poll_send(&self.udp_state, cx, transmits)
+        let n = ready!(conn.poll_send(&self.udp_state, cx, transmits))?;
+        let total_bytes: u64 = transmits
+            .iter()
+            .take(n)
+            .map(|x| x.contents.len() as u64)
+            .sum();
+        if addr.is_ipv6() {
+            inc_by!(MagicsockMetrics, send_ipv6, total_bytes);
+        } else {
+            inc_by!(MagicsockMetrics, send_ipv4, total_bytes);
+        }
+        Poll::Ready(Ok(n))
     }
 
     fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&RebindingUdpConn> {
@@ -517,26 +528,28 @@ impl Inner {
             // find disco and stun packets and forward them to the actor
             loop {
                 let end = start + meta.stride;
-                if end > buf.len() {
+                if end > meta.len {
                     break;
                 }
                 let packet = &buf[start..end];
-                let mut packet_is_quic = true;
-                if stun::is(packet) {
-                    trace!(src = %meta.addr, len = %meta.len, "UDP recv: stun packet");
+                let packet_is_quic = if stun::is(packet) {
+                    trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
                     self.net_checker.receive_stun_packet(packet2, meta.addr);
-                    packet_is_quic = false;
+                    false
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
-                    trace!(src = %meta.addr, len = %meta.len, "UDP recv: disco packet");
+                    trace!(src = %meta.addr, len = %meta.stride, "UDP recv: disco packet");
                     self.handle_disco_message(
                         sender,
                         sealed_box,
                         DiscoMessageSource::Udp(meta.addr),
                     );
-                    packet_is_quic = false;
-                }
+                    false
+                } else {
+                    trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
+                    true
+                };
 
                 if packet_is_quic {
                     quic_packets_count += 1;
@@ -771,8 +784,6 @@ impl Inner {
 
         // Insert the ping into the peer map, and return whether a ping with this tx_id was already
         // received.
-        //
-        // TODO: Why does this logic not live in `Endpoint::handle_ping`
         let is_duplicate = self.peer_map.write(|pm| {
             if let Some(ep) = pm.endpoint_for_node_key_mut(&dst_key) {
                 if ep.endpoint_confirmed(src_addr, dm.tx_id) {
@@ -791,21 +802,21 @@ impl Inner {
             return;
         };
 
-        debug!(tx = %hex::encode(dm.tx_id), "queue pong");
+        // Send a pong.
+        debug!(tx = %hex::encode(dm.tx_id), "send pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
             src: src.as_socket_addr(),
         });
-        match self.actor_sender.try_send(ActorMessage::SendDiscoMessage {
-            dst: src.clone().into(),
-            dst_key,
-            msg: pong,
-        }) {
-            Err(mpsc::error::TrySendError::Closed(_)) => error!("actor sender gone"),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("actor_sender full - cannot reply to ping from {src:?}",)
+        match src {
+            DiscoMessageSource::Udp(addr) => {
+                if let Err(err) = self.udp_disco_sender.try_send((addr, dst_key, pong)) {
+                    warn!(%addr, %err, "failed to queue pong");
+                }
             }
-            Ok(()) => {}
+            DiscoMessageSource::Derp { region, .. } => {
+                self.send_disco_message_derp(region, dst_key, pong);
+            }
         }
     }
 
@@ -819,6 +830,70 @@ impl Inner {
         };
 
         disco::encode_message(&self.public_key(), seal).into()
+    }
+
+    fn send_disco_message_derp(&self, region: u16, dst_key: PublicKey, msg: disco::Message) {
+        trace!(peer = %dst_key.fmt_short(), %region, %msg, "send disco message (derp)");
+        let pkt = self.encode_disco_message(dst_key, &msg);
+        inc!(MagicsockMetrics, send_disco_derp);
+        self.send_derp(region, dst_key, smallvec![pkt]);
+        inc!(MagicsockMetrics, sent_disco_derp);
+        disco_message_sent(&msg);
+    }
+
+    async fn send_disco_message_udp(
+        &self,
+        dst: SocketAddr,
+        dst_key: PublicKey,
+        msg: &disco::Message,
+    ) -> io::Result<bool> {
+        futures::future::poll_fn(move |cx| self.poll_send_disco_message_udp(dst, dst_key, msg, cx))
+            .await
+    }
+
+    fn poll_send_disco_message_udp(
+        &self,
+        dst: SocketAddr,
+        dst_key: PublicKey,
+        msg: &disco::Message,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<bool>> {
+        trace!(%dst, %msg, "send disco message (UDP)");
+        if self.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            )));
+        }
+        let pkt = self.encode_disco_message(dst_key, msg);
+        // TODO: These metrics will be wrong with the poll impl
+        // Also - do we need it? I'd say the `sent_disco_udp` below is enough.
+        inc!(MagicsockMetrics, send_disco_udp);
+        let transmits = [quinn_udp::Transmit {
+            destination: dst,
+            contents: pkt,
+            ecn: None,
+            segment_size: None,
+            src_ip: None, // TODO
+        }];
+        let sent = ready!(self.poll_send_udp(dst, &transmits, cx));
+        Poll::Ready(match sent {
+            Ok(0) => {
+                // Can't send. (e.g. no IPv6 locally)
+                warn!(?msg, "failed to send disco message");
+                Ok(false)
+            }
+            Ok(_n) => {
+                debug!(%msg, "sent disco message");
+                inc!(MagicsockMetrics, sent_disco_udp);
+                disco_message_sent(msg);
+                Ok(true)
+            }
+            Err(err) => {
+                warn!(?msg, ?err, "failed to send disco message");
+                Err(err)
+            }
+        })
     }
 
     fn poll_handle_ping_actions(
@@ -879,28 +954,11 @@ impl Inner {
                     tx_id,
                     node_key: self.public_key(),
                 });
-                let pkt = self.encode_disco_message(dst_key, &msg);
-                let is_derp = dst.is_derp();
-                if is_derp {
-                    inc!(MagicsockMetrics, send_disco_derp);
-                } else {
-                    inc!(MagicsockMetrics, send_disco_udp);
-                }
-
                 match dst {
                     SendAddr::Udp(addr) => {
-                        let transmit = quinn_udp::Transmit {
-                            destination: addr,
-                            contents: pkt,
-                            ecn: None,
-                            segment_size: None,
-                            src_ip: None, // TODO
-                        };
-                        ready!(self.poll_send_udp(addr, &[transmit], cx))?;
+                        ready!(self.poll_send_disco_message_udp(addr, dst_key, &msg, cx))?;
                     }
-                    SendAddr::Derp(region) => {
-                        self.send_derp(region, dst_key, vec![pkt]);
-                    }
+                    SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
                 }
                 let msg_sender = self.actor_sender.clone();
                 self.peer_map.write(move |pm| {
@@ -913,7 +971,7 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: Vec<Bytes>) {
+    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: DerpContents) {
         trace!(peer = %peer.fmt_short(), derp_region = region_id, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             region_id,
@@ -931,6 +989,23 @@ impl Inner {
                 warn!(peer = %peer.fmt_short(), derp_region = region_id, "send derp: message dropped, channel to actor is full");
             }
         }
+    }
+
+    #[instrument(skip_all)]
+    async fn send_raw(
+        &self,
+        addr: SocketAddr,
+        mut transmits: Vec<quinn_udp::Transmit>,
+    ) -> io::Result<usize> {
+        trace!(dst = %addr, "send {} packets", transmits.len());
+
+        if transmits.iter().any(|t| t.destination != addr) {
+            for t in &mut transmits {
+                t.destination = addr;
+            }
+        }
+
+        futures::future::poll_fn(|cx| self.poll_send_udp(addr, &transmits, cx)).await
     }
 }
 
@@ -1068,7 +1143,10 @@ impl MagicSock {
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
         let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
+
         let (actor_sender, actor_receiver) = mpsc::channel(128);
+        let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
+        let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
         // load the peer data
         let peer_map = match peers_path.as_ref() {
@@ -1086,7 +1164,6 @@ impl MagicSock {
             _ => PeerMap::default(),
         };
 
-        let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
         let udp_state = quinn_udp::UdpState::default();
 
         let inner = Arc::new(Inner {
@@ -1114,6 +1191,7 @@ impl MagicSock {
             derp_actor_sender: derp_actor_sender.clone(),
             udp_state,
             send_buffer: Default::default(),
+            udp_disco_sender,
         });
 
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -1123,6 +1201,15 @@ impl MagicSock {
             }
             .instrument(info_span!("derp.actor")),
         );
+
+        let inner2 = inner.clone();
+        let udp_disco_sender_task = tokio::task::spawn(async move {
+            while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
+                if let Err(err) = inner2.send_disco_message_udp(dst, dst_key, &msg).await {
+                    warn!(%dst, peer = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
+                }
+            }
+        });
 
         let inner2 = inner.clone();
         let main_actor_task = tokio::task::spawn(
@@ -1145,6 +1232,7 @@ impl MagicSock {
                     pconn6,
                     no_v4_send: false,
                     net_checker,
+                    udp_disco_sender_task,
                 };
 
                 if let Err(err) = actor.run().await {
@@ -1420,7 +1508,6 @@ impl AsyncUdpSocket for MagicSock {
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     TrackedEndpoint(PublicKey, sync::oneshot::Sender<Option<EndpointInfo>>),
@@ -1429,16 +1516,10 @@ enum ActorMessage {
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
-    CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     EnqueueCallMeMaybe {
         derp_region: u16,
         endpoint_id: usize,
-    },
-    SendDiscoMessage {
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
     },
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
@@ -1484,6 +1565,9 @@ struct Actor {
 
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
+
+    /// Task that sends disco messages over UDP.
+    udp_disco_sender_task: tokio::task::JoinHandle<()>,
 }
 
 impl Actor {
@@ -1601,7 +1685,7 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
             ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self.inner.peer_map.endpoint_infos();
+                let eps: Vec<_> = self.inner.peer_map.endpoint_infos(Instant::now());
                 let _ = s.send(eps);
             }
             ActorMessage::TrackedEndpoint(node_key, s) => {
@@ -1620,6 +1704,7 @@ impl Actor {
             }
             ActorMessage::Shutdown => {
                 debug!("shutting down");
+                self.udp_disco_sender_task.abort();
                 self.inner.peer_map.notify_shutdown();
                 if let Some(path) = self.peers_path.as_ref() {
                     match self.inner.peer_map.save_to_file(path).await {
@@ -1646,9 +1731,6 @@ impl Actor {
                 debug!("shutdown complete");
                 return true;
             }
-            ActorMessage::CloseOrReconnect(region_id, reason) => {
-                self.send_derp_actor(DerpActorMessage::CloseOrReconnect { region_id, reason });
-            }
             ActorMessage::ReStun(reason) => {
                 self.re_stun(reason).await;
             }
@@ -1665,9 +1747,6 @@ impl Actor {
             ActorMessage::SetPreferredPort(port, s) => {
                 self.set_preferred_port(port).await;
                 let _ = s.send(());
-            }
-            ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
-                let _res = self.send_disco_message(dst, dst_key, msg).await;
             }
             ActorMessage::ReceiveDerp(read_result) => {
                 let passthroughs = self.process_derp_read_result(read_result).await;
@@ -2240,21 +2319,11 @@ impl Actor {
         } else {
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::CallMeMaybe { my_number: eps };
-
-            let msg_sender = self.msg_sender.clone();
-            tokio::task::spawn(async move {
-                debug!("sending call me maybe to {public_key:?}");
-                if let Err(err) = msg_sender
-                    .send(ActorMessage::SendDiscoMessage {
-                        dst: SendAddr::Derp(derp_region),
-                        dst_key: public_key,
-                        msg: disco::Message::CallMeMaybe(msg),
-                    })
-                    .await
-                {
-                    warn!("failed to send disco message to {}: {:?}", derp_region, err);
-                }
-            });
+            self.inner.send_disco_message_derp(
+                derp_region,
+                public_key,
+                disco::Message::CallMeMaybe(msg),
+            )
         }
     }
 
@@ -2346,76 +2415,6 @@ impl Actor {
         }
     }
 
-    #[instrument("disco_out", skip_all, fields(peer = %dst_key.fmt_short(), %dst))]
-    async fn send_disco_message(
-        &mut self,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> Result<bool> {
-        trace!(%dst, %msg, "send disco message");
-        if self.inner.is_closed() {
-            bail!("connection closed");
-        }
-
-        let pkt = self.inner.encode_disco_message(dst_key, &msg);
-        let is_derp = dst.is_derp();
-        if is_derp {
-            inc!(MagicsockMetrics, send_disco_derp);
-        } else {
-            inc!(MagicsockMetrics, send_disco_udp);
-        }
-
-        let sent = match dst {
-            SendAddr::Udp(addr) => {
-                let transmits = vec![quinn_udp::Transmit {
-                    destination: addr,
-                    contents: pkt,
-                    ecn: None,
-                    segment_size: None,
-                    src_ip: None, // TODO
-                }];
-                self.send_raw(addr, transmits).await
-            }
-            SendAddr::Derp(region) => {
-                self.inner.send_derp(region, dst_key, vec![pkt]);
-                Ok(1)
-            }
-        };
-
-        match sent {
-            Ok(0) => {
-                // Can't send. (e.g. no IPv6 locally)
-                warn!(?msg, "failed to send disco message");
-                Ok(false)
-            }
-            Ok(_n) => {
-                debug!(%msg, "sent disco message");
-                if is_derp {
-                    inc!(MagicsockMetrics, sent_disco_derp);
-                } else {
-                    inc!(MagicsockMetrics, sent_disco_udp);
-                }
-                match msg {
-                    disco::Message::Ping(_) => {
-                        inc!(MagicsockMetrics, sent_disco_ping);
-                    }
-                    disco::Message::Pong(_) => {
-                        inc!(MagicsockMetrics, sent_disco_pong);
-                    }
-                    disco::Message::CallMeMaybe(_) => {
-                        inc!(MagicsockMetrics, sent_disco_call_me_maybe);
-                    }
-                }
-                Ok(true)
-            }
-            Err(err) => {
-                warn!(?msg, ?err, "failed to send disco message");
-                Err(err.into())
-            }
-        }
-    }
-
     fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
@@ -2441,46 +2440,6 @@ impl Actor {
     /// Returns the current IPv4 listener's port number.
     fn local_port_v4(&self) -> u16 {
         self.pconn4.port()
-    }
-
-    #[instrument(skip_all)]
-    async fn send_raw(
-        &self,
-        addr: SocketAddr,
-        mut transmits: Vec<quinn_udp::Transmit>,
-    ) -> io::Result<usize> {
-        trace!(dst = %addr, "send {} packets", transmits.len());
-
-        let conn = self.inner.conn_for_addr(addr)?;
-
-        if transmits.iter().any(|t| t.destination != addr) {
-            for t in &mut transmits {
-                t.destination = addr;
-            }
-        }
-        let sum =
-            futures::future::poll_fn(|cx| conn.poll_send(&self.inner.udp_state, cx, &transmits))
-                .await?;
-        let total_bytes: u64 = transmits
-            .iter()
-            .take(sum)
-            .map(|x| x.contents.len() as u64)
-            .sum();
-        if addr.is_ipv6() {
-            inc_by!(MagicsockMetrics, send_ipv6, total_bytes);
-        } else {
-            inc_by!(MagicsockMetrics, send_ipv4, total_bytes);
-        }
-
-        trace!(dst = %addr, "sent {} packets", transmits.len());
-        debug_assert!(
-            sum <= transmits.len(),
-            "too many msgs {} > {}",
-            sum,
-            transmits.len()
-        );
-
-        Ok(sum)
     }
 }
 
@@ -2596,8 +2555,8 @@ impl Display for SendAddr {
 /// For each transmit, if it has a segment size, it will be split into
 /// multiple packets according to that segment size. If it does not have a
 /// segment size, the contents will be sent as a single packet.
-fn split_packets(transmits: &[quinn_udp::Transmit]) -> Vec<Bytes> {
-    let mut res = Vec::with_capacity(transmits.len());
+fn split_packets(transmits: &[quinn_udp::Transmit]) -> DerpContents {
+    let mut res = SmallVec::with_capacity(transmits.len());
     for transmit in transmits {
         let contents = &transmit.contents;
         if let Some(segment_size) = transmit.segment_size {
@@ -2701,6 +2660,19 @@ impl QuicMappedAddr {
 impl std::fmt::Display for QuicMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "QuicMappedAddr({})", self.0)
+    }
+}
+fn disco_message_sent(msg: &disco::Message) {
+    match msg {
+        disco::Message::Ping(_) => {
+            inc!(MagicsockMetrics, sent_disco_ping);
+        }
+        disco::Message::Pong(_) => {
+            inc!(MagicsockMetrics, sent_disco_pong);
+        }
+        disco::Message::CallMeMaybe(_) => {
+            inc!(MagicsockMetrics, sent_disco_call_me_maybe);
+        }
     }
 }
 
@@ -3149,8 +3121,8 @@ pub(crate) mod tests {
             Ok(quic_ep)
         };
 
-        let m1 = make_conn("127.0.0.1:8770".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:8771".parse().unwrap())?;
+        let m1 = make_conn("127.0.0.1:0".parse().unwrap())?;
+        let m2 = make_conn("127.0.0.1:0".parse().unwrap())?;
 
         // msg from  a -> b
         macro_rules! roundtrip {
@@ -3410,7 +3382,7 @@ pub(crate) mod tests {
     #[test]
     fn test_split_packets() {
         fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit {
-            let destination = "127.0.0.1:12345".parse().unwrap();
+            let destination = "127.0.0.1:0".parse().unwrap();
             quinn_udp::Transmit {
                 destination,
                 ecn: None,
@@ -3419,14 +3391,14 @@ pub(crate) mod tests {
                 src_ip: None,
             }
         }
-        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> Vec<Bytes> {
+        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> DerpContents {
             parts
                 .into_iter()
                 .map(|p| p.as_bytes().to_vec().into())
                 .collect()
         }
         // no packets
-        assert_eq!(split_packets(&[]), Vec::<Bytes>::default());
+        assert_eq!(split_packets(&[]), SmallVec::<[Bytes; 1]>::default());
         // no split
         assert_eq!(
             split_packets(&vec![

@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn test_same_public_key_api() {
         let key = crate::key::SecretKey::generate();
-        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public);
+        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public());
         let public_key2: crypto_box::PublicKey = secret_ed_box(&key.secret).public_key();
 
         assert_eq!(public_key1, public_key2);
