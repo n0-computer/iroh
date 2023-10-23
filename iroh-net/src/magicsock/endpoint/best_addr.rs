@@ -6,10 +6,12 @@ use std::{
 };
 
 use iroh_metrics::inc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
-use super::{AddrLatency, TRUST_UDP_ADDR_DURATION};
 use crate::magicsock::metrics::Metrics as MagicsockMetrics;
+
+/// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
+const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
 #[derive(Debug, Default)]
 pub(super) struct BestAddr(Option<BestAddrInner>);
@@ -67,12 +69,9 @@ impl BestAddr {
         };
         Self(Some(inner))
     }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_none()
-    }
-
-    pub fn is_valid(&self, now: Instant) -> bool {
-        matches!(self.state(now), State::Valid(_))
     }
 
     pub fn clear(&mut self, reason: ClearReason, has_derp: bool) -> bool {
@@ -167,23 +166,10 @@ impl BestAddr {
 
     pub fn state(&self, now: Instant) -> State {
         match &self.0 {
-            None => {
-                trace!("best_addr invalid: not set");
-                State::Empty
-            }
+            None => State::Empty,
             Some(state) => match state.trust_until {
-                Some(expiry) if now < expiry => {
-                    trace!(addr = %state.addr.addr, remaining=?expiry.duration_since(now), "best_addr valid");
-                    State::Valid(&state.addr)
-                }
-                Some(expiry) => {
-                    trace!(addr = %state.addr.addr, since=?expiry.duration_since(now), "best_addr invalid: expired");
-                    State::Outdated(&state.addr)
-                }
-                None => {
-                    trace!(addr = %state.addr.addr, "best_addr invalid: trust_best_addr_until not set");
-                    State::Outdated(&state.addr)
-                }
+                Some(expiry) if now < expiry => State::Valid(&state.addr),
+                Some(_) | None => State::Outdated(&state.addr),
             },
         }
     }
@@ -191,12 +177,39 @@ impl BestAddr {
     pub fn addr(&self) -> Option<SocketAddr> {
         self.0.as_ref().map(|a| a.addr.addr)
     }
+}
 
-    pub fn addr_info(&self) -> Option<&AddrLatency> {
-        self.0.as_ref().map(|a| &a.addr)
-    }
+/// A `SocketAddr` with an associated latency.
+#[derive(Debug, Clone)]
+pub struct AddrLatency {
+    pub addr: SocketAddr,
+    pub latency: Option<Duration>,
+}
 
-    pub fn latency(&self) -> Option<Duration> {
-        self.addr_info().and_then(|a| a.latency)
+impl AddrLatency {
+    /// Reports whether `self` is a better addr to use than `other`.
+    fn is_better_than(&self, other: &Self) -> bool {
+        if self.addr == other.addr {
+            return false;
+        }
+        if self.addr.is_ipv6() && other.addr.is_ipv4() {
+            // Prefer IPv6 for being a bit more robust, as long as
+            // the latencies are roughly equivalent.
+            match (self.latency, other.latency) {
+                (Some(latency), Some(other_latency)) => {
+                    if latency / 10 * 9 < other_latency {
+                        return true;
+                    }
+                }
+                (Some(_), None) => {
+                    // If we have latency and the other doesn't prefer us
+                    return true;
+                }
+                _ => {}
+            }
+        } else if self.addr.is_ipv4() && other.addr.is_ipv6() && other.is_better_than(self) {
+            return false;
+        }
+        self.latency < other.latency
     }
 }

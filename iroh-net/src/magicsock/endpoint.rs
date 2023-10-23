@@ -43,9 +43,6 @@ const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 /// How often we try to upgrade to a better patheven if we have some non-DERP route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
-const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
-
 /// How long until we send a stayin alive ping
 const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 
@@ -150,9 +147,14 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub fn info(&self) -> EndpointInfo {
-        // TODO: I think we should return direct here for outdated.
-        let (conn_type, latency) = if self.best_addr.is_valid(Instant::now()) {
-            let addr_info = self.best_addr.addr_info().expect("checked");
+        // If the best address is valid or outdated, report that the address is in use.
+        // Actually, if the best_addr is outdated, we are using *both* the direct address and derp
+        // in parallel. We don't have a way to report that in [`EndpointInfo`] at the moment though.
+        let direct = match self.best_addr.state(Instant::now()) {
+            best_addr::State::Valid(addr) | best_addr::State::Outdated(addr) => Some(addr),
+            best_addr::State::Empty => None,
+        };
+        let (conn_type, latency) = if let Some(addr_info) = direct {
             (ConnectionType::Direct(addr_info.addr), addr_info.latency)
         } else if let Some((region_id, relay_state)) = self.derp_region.as_ref() {
             let latency = relay_state.recent_pong().map(|pong| pong.latency);
@@ -203,7 +205,7 @@ impl Endpoint {
         }
         // Update our best addr from candidate addresses (only if it is empty and if we have recent
         // pongs).
-        self.update_best_addr_from_candidates();
+        self.assign_best_addr_from_candidates_if_empty();
         match self.best_addr.state(*now) {
             // we have a valid address: use it!
             best_addr::State::Valid(best_addr) => {
@@ -229,11 +231,9 @@ impl Endpoint {
     }
 
     /// Update our best_addr (if empty) with the candidate udp addr with the lowest latency.
-    ///
-    /// Returns true if the address was updated.
-    fn update_best_addr_from_candidates(&mut self) -> bool {
+    fn assign_best_addr_from_candidates_if_empty(&mut self) {
         if !self.best_addr.is_empty() {
-            return false;
+            return;
         }
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
@@ -253,48 +253,48 @@ impl Endpoint {
         if let Some(pong) = last_pong {
             self.best_addr.insert(
                 pong.from.as_socket_addr(),
-                Some(lowest_latency),
+                Some(pong.latency),
                 best_addr::Source::BestCandidate,
                 pong.pong_at,
                 self.derp_region.is_some(),
             );
-            true
-        } else {
-            false
         }
     }
 
     /// Reports whether we should ping to all our direct addresses looking for a better path.
     fn want_full_ping(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
-        if self.last_full_ping.is_none() {
+        let Some(last_full_ping) = self.last_full_ping else {
             debug!("full ping: no full ping done");
             return true;
+        };
+        match self.best_addr.state(*now) {
+            best_addr::State::Empty => {
+                debug!("full ping: best addr not set");
+                true
+            }
+            best_addr::State::Outdated(_) => {
+                debug!("full ping: best addr expired");
+                true
+            }
+            best_addr::State::Valid(addr) => {
+                if addr
+                    .latency
+                    .map(|l| l > GOOD_ENOUGH_LATENCY)
+                    .unwrap_or(true)
+                    && *now - last_full_ping >= UPGRADE_INTERVAL
+                {
+                    debug!(
+                        "full ping: full ping interval expired and latency is only {}ms",
+                        addr.latency.map(|l| l.as_millis()).unwrap_or_default()
+                    );
+                    true
+                } else {
+                    trace!(?now, "full ping: not needed");
+                    false
+                }
+            }
         }
-        if !self.best_addr.is_valid(*now) {
-            debug!("full ping: best addr expired");
-            return true;
-        }
-
-        if self
-            .best_addr
-            .latency()
-            .map(|l| l > GOOD_ENOUGH_LATENCY)
-            .unwrap_or(true)
-            && *now - *self.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL
-        {
-            debug!(
-                "full ping: full ping interval expired and latency is only {}ms",
-                self.best_addr
-                    .latency()
-                    .map(|l| l.as_millis())
-                    .unwrap_or_default()
-            );
-            return true;
-        }
-        trace!(?now, "full ping: not needed");
-
-        false
     }
 
     /// Starts a ping for the "ping" command.
@@ -318,7 +318,7 @@ impl Endpoint {
             }
         }
         if let Some(udp_addr) = udp_addr {
-            if self.best_addr.is_valid(now) {
+            if let best_addr::State::Valid(_) = self.best_addr.state(now) {
                 // Already have an active session, so just ping the address we're using.
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
@@ -980,13 +980,6 @@ impl Endpoint {
     }
 }
 
-/// A `SocketAddr` with an associated latency.
-#[derive(Debug, Clone)]
-pub struct AddrLatency {
-    pub addr: SocketAddr,
-    pub latency: Option<Duration>,
-}
-
 /// An (Ip, Port) pair.
 ///
 /// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
@@ -1553,34 +1546,6 @@ pub enum DiscoPingPurpose {
     Cli,
     /// Ping to ensure the current route is still valid.
     StayinAlive,
-}
-
-impl AddrLatency {
-    /// Reports whether `self` is a better addr to use than `other`.
-    fn is_better_than(&self, other: &Self) -> bool {
-        if self.addr == other.addr {
-            return false;
-        }
-        if self.addr.is_ipv6() && other.addr.is_ipv4() {
-            // Prefer IPv6 for being a bit more robust, as long as
-            // the latencies are roughly equivalent.
-            match (self.latency, other.latency) {
-                (Some(latency), Some(other_latency)) => {
-                    if latency / 10 * 9 < other_latency {
-                        return true;
-                    }
-                }
-                (Some(_), None) => {
-                    // If we have latency and the other doesn't prefer us
-                    return true;
-                }
-                _ => {}
-            }
-        } else if self.addr.is_ipv4() && other.addr.is_ipv6() && other.is_better_than(self) {
-            return false;
-        }
-        self.latency < other.latency
-    }
 }
 
 #[cfg(test)]
