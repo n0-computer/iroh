@@ -111,7 +111,7 @@ impl BestAddr {
     pub fn insert_if_better_or_reconfirm(
         &mut self,
         addr: SocketAddr,
-        latency: Option<Duration>,
+        latency: Duration,
         source: Source,
         confirmed_at: Instant,
         has_derp: bool,
@@ -133,7 +133,7 @@ impl BestAddr {
     pub fn insert(
         &mut self,
         addr: SocketAddr,
-        latency: Option<Duration>,
+        latency: Duration,
         source: Source,
         confirmed_at: Instant,
         has_derp: bool,
@@ -183,7 +183,7 @@ impl BestAddr {
 #[derive(Debug, Clone)]
 pub struct AddrLatency {
     pub addr: SocketAddr,
-    pub latency: Option<Duration>,
+    pub latency: Duration,
 }
 
 impl AddrLatency {
@@ -195,17 +195,8 @@ impl AddrLatency {
         if self.addr.is_ipv6() && other.addr.is_ipv4() {
             // Prefer IPv6 for being a bit more robust, as long as
             // the latencies are roughly equivalent.
-            match (self.latency, other.latency) {
-                (Some(latency), Some(other_latency)) => {
-                    if latency / 10 * 9 < other_latency {
-                        return true;
-                    }
-                }
-                (Some(_), None) => {
-                    // If we have latency and the other doesn't prefer us
-                    return true;
-                }
-                _ => {}
+            if self.latency / 10 * 9 < other.latency {
+                return true;
             }
         } else if self.addr.is_ipv4() && other.addr.is_ipv6() && other.is_better_than(self) {
             return false;

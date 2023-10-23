@@ -154,7 +154,10 @@ impl Endpoint {
             best_addr::State::Empty => None,
         };
         let (conn_type, latency) = if let Some(addr_info) = direct {
-            (ConnectionType::Direct(addr_info.addr), addr_info.latency)
+            (
+                ConnectionType::Direct(addr_info.addr),
+                Some(addr_info.latency),
+            )
         } else if let Some((region_id, relay_state)) = self.derp_region.as_ref() {
             let latency = relay_state.recent_pong().map(|pong| pong.latency);
             (ConnectionType::Relay(*region_id), latency)
@@ -256,7 +259,7 @@ impl Endpoint {
         if let Some(pong) = last_pong {
             self.best_addr.insert(
                 pong.from.as_socket_addr(),
-                Some(pong.latency),
+                pong.latency,
                 best_addr::Source::BestCandidate,
                 pong.pong_at,
                 self.derp_region.is_some(),
@@ -281,15 +284,10 @@ impl Endpoint {
                 true
             }
             best_addr::State::Valid(addr) => {
-                if addr
-                    .latency
-                    .map(|l| l > GOOD_ENOUGH_LATENCY)
-                    .unwrap_or(true)
-                    && *now - last_full_ping >= UPGRADE_INTERVAL
-                {
+                if addr.latency > GOOD_ENOUGH_LATENCY && *now - last_full_ping >= UPGRADE_INTERVAL {
                     debug!(
                         "full ping: full ping interval expired and latency is only {}ms",
-                        addr.latency.map(|l| l.as_millis()).unwrap_or_default()
+                        addr.latency.as_millis()
                     );
                     true
                 } else {
@@ -795,7 +793,7 @@ impl Endpoint {
                     debug_assert!(!is_derp, "missmatching derp & udp");
                     self.best_addr.insert_if_better_or_reconfirm(
                         to,
-                        Some(latency),
+                        latency,
                         best_addr::Source::ReceivedPong,
                         now,
                         self.derp_region.is_some(),
