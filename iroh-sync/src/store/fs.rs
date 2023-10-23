@@ -375,8 +375,9 @@ fn get_one(
             let (key_range_start, key_range_end) = match key {
                 KeyMatcher::Any => (&[][..], &[][..]),
                 KeyMatcher::Exact(ref key) => (key.as_ref(), key.as_ref()),
-                KeyMatcher::Prefix(prefix) => {
-                    todo!()
+                KeyMatcher::Prefix(ref prefix) => {
+                    // TODO: this does not do what it should do
+                    (prefix.as_ref(), prefix.as_ref())
                 }
             };
 
@@ -803,6 +804,7 @@ pub struct RangeIterator<'a> {
     records: RecordsRange<'this>,
     query: Query,
     view: View,
+    index: usize,
 }
 
 impl<'a> RangeIterator<'a> {
@@ -812,6 +814,7 @@ impl<'a> RangeIterator<'a> {
         query: Query,
         view: View,
     ) -> anyhow::Result<Self> {
+        let index = usize::try_from(query.range.start())?;
         let iter = RangeIterator::try_new(
             db.begin_read()?,
             |read_tx| {
@@ -822,6 +825,7 @@ impl<'a> RangeIterator<'a> {
             |record_table| range(record_table).map_err(anyhow::Error::from),
             query,
             view,
+            index,
         )?;
         Ok(iter)
     }
@@ -855,6 +859,11 @@ impl Iterator for RangeIterator<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         self.with_mut(|fields| {
             for next in fields.records.by_ref() {
+                if let Some(end) = fields.query.range.end() {
+                    if *fields.index as u64 > end {
+                        return None;
+                    }
+                }
                 let next = match next {
                     Ok(next) => next,
                     Err(err) => return Some(Err(err.into())),
@@ -865,19 +874,44 @@ impl Iterator for RangeIterator<'_> {
                 if hash == Hash::EMPTY.as_bytes() {
                     continue;
                 }
-                let id = RecordIdentifier::new(namespace, author, key);
-                todo!()
-                // if fields.filter.matches(&id) {
-                //     let record = Record::new(hash.into(), len, timestamp);
-                //     let entry = Entry::new(id, record);
-                //     let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-                //     let signed_entry = SignedEntry::new(entry_signature, entry);
 
-                //     return Some(Ok(signed_entry));
-                // }
+                if query_match(&fields.query, author, key) && view_match(&fields.view, author, key)
+                {
+                    let id = RecordIdentifier::new(namespace, author, key);
+                    let record = Record::new(hash.into(), len, timestamp);
+                    let entry = Entry::new(id, record);
+                    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+                    let signed_entry = SignedEntry::new(entry_signature, entry);
+
+                    *fields.index += 1;
+                    return Some(Ok(signed_entry));
+                }
             }
             None
         })
+    }
+}
+
+fn query_match(query: &Query, author: &[u8; 32], key: &[u8]) -> bool {
+    match (&query.author, &query.key) {
+        (AuthorMatcher::Any, KeyMatcher::Any) => true,
+        (AuthorMatcher::Exact(a), KeyMatcher::Any) => author == a.as_bytes(),
+        (AuthorMatcher::Any, KeyMatcher::Exact(k)) => key == k,
+        (AuthorMatcher::Exact(a), KeyMatcher::Exact(k)) => author == a.as_bytes() && key == k,
+        (AuthorMatcher::Any, KeyMatcher::Prefix(prefix)) => key.starts_with(&prefix),
+        (AuthorMatcher::Exact(a), KeyMatcher::Prefix(prefix)) => {
+            author == a.as_bytes() && key.starts_with(&prefix)
+        }
+    }
+}
+
+fn view_match(view: &View, _author: &[u8; 32], _key: &[u8]) -> bool {
+    match view {
+        View::LatestByKey => true,
+        View::LatestByKeyAndAuthor => {
+            // TODO: this is actually more complex and requires storing some kind of index
+            true
+        }
     }
 }
 
