@@ -1,6 +1,6 @@
 //! Storage trait and implementation for iroh-sync documents
 
-use std::num::{NonZeroUsize, NonZeroU64};
+use std::num::{NonZeroU64, NonZeroUsize};
 
 use anyhow::Result;
 use iroh_bytes::Hash;
@@ -146,7 +146,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Check if a [`AuthorHeads`] contains entry timestamps that we do not have locally.
     ///
     /// Returns the number of authors that the other peer has updates for.
-    fn has_news_for_us(&self, namespace: NamespaceId, heads: &AuthorHeads) -> Result<Option<NonZeroU64>> {
+    fn has_news_for_us(
+        &self,
+        namespace: NamespaceId,
+        heads: &AuthorHeads,
+    ) -> Result<Option<NonZeroU64>> {
         let our_heads = {
             let latest = self.get_latest_for_each_author(namespace)?;
             let mut heads = AuthorHeads::default();

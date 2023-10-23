@@ -28,9 +28,14 @@ impl AuthorHeads {
         self.heads.len()
     }
 
+    /// Whether this [`AuthorHeads`] is emty.
+    pub fn is_empty(&self) -> bool {
+        self.heads.is_empty()
+    }
+
     /// Get the timestamp for an author.
     pub fn get(&self, author: &AuthorId) -> Option<Timestamp> {
-        self.heads.get(author).map(|t| *t)
+        self.heads.get(author).copied()
     }
 
     /// Can this state offer newer stuff to `other`?
@@ -38,7 +43,7 @@ impl AuthorHeads {
         let mut updates = 0;
         for (author, ts_ours) in self.iter() {
             if other
-                .get(&author)
+                .get(author)
                 .map(|ts_theirs| *ts_ours > ts_theirs)
                 .unwrap_or(true)
             {
@@ -127,7 +132,7 @@ mod tests {
         let decoded = AuthorHeads::decode(&encoded)?;
         assert_eq!(decoded.len(), 6);
         let expected: AuthorHeads = (0u64..6)
-            .map(|n| (AuthorId::from(&[9 - n as u8; 32]), start + (9 - n as u64)))
+            .map(|n| (AuthorId::from(&[9 - n as u8; 32]), start + (9 - n)))
             .collect();
         assert_eq!(expected, decoded);
         Ok(())
@@ -135,13 +140,19 @@ mod tests {
 
     #[test]
     fn author_heads_compare() -> Result<()> {
-        let a = [(AuthorId::from(&[0u8; 32]), 5), (AuthorId::from(&[1u8; 32]), 7)];
-        let b = [(AuthorId::from(&[0u8; 32]), 4), (AuthorId::from(&[1u8; 32]), 6), (AuthorId::from(&[2u8; 32]), 7)];
+        let a = [
+            (AuthorId::from(&[0u8; 32]), 5),
+            (AuthorId::from(&[1u8; 32]), 7),
+        ];
+        let b = [
+            (AuthorId::from(&[0u8; 32]), 4),
+            (AuthorId::from(&[1u8; 32]), 6),
+            (AuthorId::from(&[2u8; 32]), 7),
+        ];
         let a: AuthorHeads = a.into_iter().collect();
         let b: AuthorHeads = b.into_iter().collect();
         assert_eq!(a.has_news_for(&b), NonZeroU64::new(2));
         assert_eq!(b.has_news_for(&a), NonZeroU64::new(1));
         Ok(())
-
     }
 }

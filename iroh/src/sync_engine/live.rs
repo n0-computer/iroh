@@ -605,9 +605,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             }
             Err(err) => {
                 warn!("sync actor error: {err:?}");
-                return;
             }
-        };
+        }
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
