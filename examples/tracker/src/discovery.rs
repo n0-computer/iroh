@@ -9,7 +9,7 @@ use pkarr::url::Url;
 use pkarr::{Keypair, PkarrClient, SignedPacket};
 use simple_mdns::async_discovery::ServiceDiscovery;
 use simple_mdns::{InstanceInformation, NetworkScope};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use ttl_cache::TtlCache;

@@ -9,7 +9,6 @@
 use anyhow::Context;
 use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
 use bytes::Bytes;
-use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh::util::fs::load_secret_key;
 use iroh_bytes::get::fsm::{BlobContentNext, EndBlobNext};
@@ -626,6 +625,7 @@ impl Tracker {
             }
 
             Request::Query(query) => {
+                println!("handle query: {:?}", query);
                 let response = self.handle_query(query).await?;
                 let response = Response::QueryResponse(response);
                 let response = postcard::to_stdvec(&response)?;
@@ -952,10 +952,13 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
         .local_pool()
         .spawn_pinned(move || db2.probe_loop(endpoint2));
     while let Some(connecting) = endpoint.accept().await {
-        println!("got connecting");
-        if let Err(cause) = db.handle_connecting(connecting).await {
-            tracing::error!("error handling connection: {}", cause);
-        }
+        let db = db.clone();
+        tokio::task::spawn(async move {
+            println!("got connecting");
+            if let Err(cause) = db.handle_connecting(connecting).await {
+                tracing::error!("error handling connection: {}", cause);
+            }
+        });
     }
     Ok(())
 }
