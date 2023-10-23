@@ -1087,7 +1087,7 @@ impl Actor {
                     return Ok((conn, node));
                 }
                 Err(e) => {
-                    warn!("dial join error: {:?}", e);
+                    errs.push(ClientError::DialTask(e));
                 }
                 Ok(Err(e)) => {
                     errs.push(e);
