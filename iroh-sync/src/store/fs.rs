@@ -1,6 +1,11 @@
 //! On disk storage for replicas.
 
-use std::{cmp::Ordering, collections::HashSet, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
 use derive_more::From;
@@ -10,7 +15,7 @@ use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
     Database, MultimapTableDefinition, Range as TableRange, ReadOnlyTable, ReadTransaction,
-    ReadableMultimapTable, ReadableTable, StorageError, TableDefinition,
+    ReadableMultimapTable, ReadableTable, StorageError, Table, TableDefinition,
 };
 
 use crate::{
@@ -55,6 +60,17 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
 //  # (timestamp, signature_namespace, signature_author, len, hash)
 const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 
+// Latest by author
+// Table
+// Key: ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
+// Value: (u64, Vec<u8>) # (Timestamp, Key)
+const LATEST_TABLE: TableDefinition<LatestKey, LatestValue> =
+    TableDefinition::new("latest-by-author-1");
+type LatestKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
+type LatestValue<'a> = (u64, &'a [u8]);
+type LatestTable<'a> = ReadOnlyTable<'a, LatestKey<'static>, LatestValue<'static>>;
+type LatestRange<'a> = TableRange<'a, LatestKey<'static>, LatestValue<'static>>;
+
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
@@ -72,6 +88,37 @@ type Nanos = u64;
 const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
     MultimapTableDefinition::new("sync-peers-1");
 
+/// migration 001: populate the latest table (which did not exist before)
+fn migration_001_populate_latest_table(
+    records_table: &Table<RecordsId<'static>, RecordsValue<'static>>,
+    latest_table: &mut Table<LatestKey<'static>, LatestValue<'static>>,
+) -> Result<()> {
+    tracing::info!("Starting migration: 001_populate_latest_table");
+    #[allow(clippy::type_complexity)]
+    let mut heads: HashMap<([u8; 32], [u8; 32]), (u64, Vec<u8>)> = HashMap::new();
+    let iter = records_table.iter()?;
+
+    for next in iter {
+        let next = next?;
+        let (namespace, author, key) = next.0.value();
+        let (timestamp, _namespace_sig, _author_sig, _len, _hash) = next.1.value();
+        heads
+            .entry((*namespace, *author))
+            .and_modify(|e| {
+                if timestamp >= e.0 {
+                    *e = (timestamp, key.to_vec());
+                }
+            })
+            .or_insert_with(|| (timestamp, key.to_vec()));
+    }
+    let len = heads.len();
+    for ((namespace, author), (timestamp, key)) in heads {
+        latest_table.insert((&namespace, &author), (timestamp, key.as_slice()))?;
+    }
+    tracing::info!("Migration finished (inserted {} entries)", len);
+    Ok(())
+}
+
 impl Store {
     /// Create or open a store from a `path` to a database file.
     ///
@@ -82,10 +129,16 @@ impl Store {
         // Setup all tables
         let write_tx = db.begin_write()?;
         {
-            let _table = write_tx.open_table(RECORDS_TABLE)?;
+            let records_table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
+            let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+
+            // migration 001: populate latest table if it was empty before
+            if latest_table.is_empty()? && !records_table.is_empty()? {
+                migration_001_populate_latest_table(&records_table, &mut latest_table)?;
+            }
         }
         write_tx.commit()?;
 
@@ -124,6 +177,7 @@ impl super::Store for Store {
     type Instance = StoreInstance;
     type GetIter<'a> = RangeIterator<'a>;
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
+    type LatestIter<'a> = LatestIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
@@ -253,6 +307,10 @@ impl super::Store for Store {
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
         ContentHashesIterator::create(&self.db)
+    }
+
+    fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
+        LatestIterator::create(&self.db, namespace)
     }
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
@@ -567,6 +625,12 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 hash.as_bytes(),
             );
             record_table.insert(key, value)?;
+
+            // insert into latest table
+            let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
+            let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
+            let value = (e.timestamp(), e.id().key());
+            latest_table.insert(key, value)?;
         }
         write_tx.commit()?;
         Ok(())
@@ -803,6 +867,52 @@ impl Iterator for ContentHashesIterator<'_> {
     }
 }
 
+/// Iterator over the latest entry per author.
+#[self_referencing]
+pub struct LatestIterator<'a> {
+    read_tx: ReadTransaction<'a>,
+    #[borrows(read_tx)]
+    #[covariant]
+    record_table: LatestTable<'this>,
+    #[covariant]
+    #[borrows(record_table)]
+    records: LatestRange<'this>,
+}
+impl<'a> LatestIterator<'a> {
+    fn create(db: &'a Arc<Database>, namespace: NamespaceId) -> anyhow::Result<Self> {
+        let iter = Self::try_new(
+            db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_table(LATEST_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            |table| {
+                let start = (namespace.as_bytes(), &[u8::MIN; 32]);
+                let end = (namespace.as_bytes(), &[u8::MAX; 32]);
+                table.range(start..=end).map_err(anyhow::Error::from)
+            },
+        )?;
+        Ok(iter)
+    }
+}
+
+impl Iterator for LatestIterator<'_> {
+    type Item = Result<(AuthorId, u64, Vec<u8>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.with_mut(|fields| match fields.records.next() {
+            None => None,
+            Some(Err(err)) => Some(Err(err.into())),
+            Some(Ok((key, value))) => {
+                let (_namespace, author) = key.value();
+                let (timestamp, key) = value.value();
+                Some(Ok((author.into(), timestamp, key.to_vec())))
+            }
+        })
+    }
+}
+
 #[self_referencing]
 pub struct RangeIterator<'a> {
     read_tx: ReadTransaction<'a>,
@@ -1005,6 +1115,62 @@ mod tests {
         // get latest
         let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 0);
+
+        Ok(())
+    }
+
+    fn copy_and_modify(
+        source: &Path,
+        modify: impl Fn(&redb::WriteTransaction) -> Result<()>,
+    ) -> Result<tempfile::NamedTempFile> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        std::fs::copy(source, dbfile.path())?;
+        let db = Database::create(dbfile.path())?;
+        let write_tx = db.begin_write()?;
+        modify(&write_tx)?;
+        write_tx.commit()?;
+        drop(db);
+        Ok(dbfile)
+    }
+
+    #[test]
+    fn test_migration_001_populate_latest_table() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let namespace = Namespace::new(&mut rand::thread_rng());
+
+        // create a store and add some data
+        let expected = {
+            let store = Store::new(dbfile.path())?;
+            let author1 = store.new_author(&mut rand::thread_rng())?;
+            let author2 = store.new_author(&mut rand::thread_rng())?;
+            let mut replica = store.new_replica(namespace.clone())?;
+            replica.hash_and_insert(b"k1", &author1, b"v1")?;
+            replica.hash_and_insert(b"k2", &author2, b"v1")?;
+            replica.hash_and_insert(b"k3", &author1, b"v1")?;
+
+            let expected = store
+                .get_latest_for_each_author(namespace.id())?
+                .collect::<Result<Vec<_>>>()?;
+            // drop everything to clear file locks.
+            store.close_replica(replica);
+            drop(store);
+            expected
+        };
+        assert_eq!(expected.len(), 2);
+
+        // create a copy of our db file with the latest table deleted.
+        let dbfile_before_migration = copy_and_modify(dbfile.path(), |tx| {
+            tx.delete_table(LATEST_TABLE)?;
+            Ok(())
+        })?;
+
+        // open the copied db file, which will run the migration.
+        let store = Store::new(dbfile_before_migration.path())?;
+        let actual = store
+            .get_latest_for_each_author(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+
+        assert_eq!(expected, actual);
 
         Ok(())
     }

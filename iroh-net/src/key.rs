@@ -88,7 +88,7 @@ fn get_or_create_crypto_keys<T>(
 ///
 /// Serialisation or creation from a byte array is cheap if the key is already
 /// in the cache, but expensive if it is not.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct PublicKey([u8; 32]);
 
 impl Hash for PublicKey {
