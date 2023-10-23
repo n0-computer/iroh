@@ -591,23 +591,23 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         let heads = match AuthorHeads::decode(&report.heads) {
             Ok(heads) => heads,
             Err(err) => {
-                warn!(?err, "Failed to decode AuthorHeads");
+                warn!(?err, "failed to decode AuthorHeads");
                 return;
             }
         };
-        let has_news = match self.sync.has_news_for_us(report.namespace, heads).await {
-            Ok(has_news) => has_news,
+        match self.sync.has_news_for_us(report.namespace, heads).await {
+            Ok(Some(updated_authors)) => {
+                info!(%updated_authors, "news reported: sync now");
+                self.sync_with_peer(report.namespace, from, SyncReason::SyncReport);
+            }
+            Ok(None) => {
+                debug!("no news reported: nothing to do");
+            }
             Err(err) => {
                 warn!("sync actor error: {err:?}");
                 return;
             }
         };
-        if has_news {
-            info!("news reported: sync now");
-            self.sync_with_peer(report.namespace, from, SyncReason::SyncReport);
-        } else {
-            debug!("no news reported: nothing to do");
-        }
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {

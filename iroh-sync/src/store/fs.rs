@@ -309,7 +309,7 @@ impl super::Store for Store {
         ContentHashesIterator::create(&self.db)
     }
 
-    fn get_latest(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
+    fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
         LatestIterator::create(&self.db, namespace)
     }
 
@@ -1149,7 +1149,7 @@ mod tests {
             replica.hash_and_insert(b"k3", &author1, b"v1")?;
 
             let expected = store
-                .get_latest(namespace.id())?
+                .get_latest_for_each_author(namespace.id())?
                 .collect::<Result<Vec<_>>>()?;
             // drop everything to clear file locks.
             store.close_replica(replica);
@@ -1167,7 +1167,7 @@ mod tests {
         // open the copied db file, which will run the migration.
         let store = Store::new(dbfile_before_migration.path())?;
         let actual = store
-            .get_latest(namespace.id())?
+            .get_latest_for_each_author(namespace.id())?
             .collect::<Result<Vec<_>>>()?;
 
         assert_eq!(expected, actual);

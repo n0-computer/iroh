@@ -2,6 +2,7 @@
 
 use std::{
     collections::{hash_map, HashMap},
+    num::NonZeroU64,
     sync::Arc,
 };
 
@@ -138,7 +139,7 @@ enum ReplicaAction {
     HasNewsForUs {
         heads: AuthorHeads,
         #[debug("reply")]
-        reply: oneshot::Sender<Result<bool>>,
+        reply: oneshot::Sender<Result<Option<NonZeroU64>>>,
     },
 }
 
@@ -357,7 +358,7 @@ impl SyncHandle {
         &self,
         namespace: NamespaceId,
         heads: AuthorHeads,
-    ) -> Result<bool> {
+    ) -> Result<Option<NonZeroU64>> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::HasNewsForUs { reply, heads };
         self.send_replica(namespace, action).await?;

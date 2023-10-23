@@ -1,6 +1,6 @@
 //! Author heads
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroU64};
 
 use anyhow::Result;
 
@@ -28,19 +28,24 @@ impl AuthorHeads {
         self.heads.len()
     }
 
+    /// Get the timestamp for an author.
+    pub fn get(&self, author: &AuthorId) -> Option<Timestamp> {
+        self.heads.get(author).map(|t| *t)
+    }
+
     /// Can this state offer newer stuff to `other`?
-    pub fn has_news_for(&self, other: &Self) -> bool {
-        for (author, ts_theirs) in other.iter() {
-            match self.heads.get(&author) {
-                None => return true,
-                Some(ts_ours) => {
-                    if ts_theirs > ts_ours {
-                        return true;
-                    }
-                }
+    pub fn has_news_for(&self, other: &Self) -> Option<NonZeroU64> {
+        let mut updates = 0;
+        for (author, ts_ours) in self.iter() {
+            if other
+                .get(&author)
+                .map(|ts_theirs| *ts_ours > ts_theirs)
+                .unwrap_or(true)
+            {
+                updates += 1;
             }
         }
-        false
+        NonZeroU64::new(updates)
     }
 
     /// Merge another author head state into this one.
@@ -126,5 +131,17 @@ mod tests {
             .collect();
         assert_eq!(expected, decoded);
         Ok(())
+    }
+
+    #[test]
+    fn author_heads_compare() -> Result<()> {
+        let a = [(AuthorId::from(&[0u8; 32]), 5), (AuthorId::from(&[1u8; 32]), 7)];
+        let b = [(AuthorId::from(&[0u8; 32]), 4), (AuthorId::from(&[1u8; 32]), 6), (AuthorId::from(&[2u8; 32]), 7)];
+        let a: AuthorHeads = a.into_iter().collect();
+        let b: AuthorHeads = b.into_iter().collect();
+        assert_eq!(a.has_news_for(&b), NonZeroU64::new(2));
+        assert_eq!(b.has_news_for(&a), NonZeroU64::new(1));
+        Ok(())
+
     }
 }

@@ -165,7 +165,7 @@ impl super::Store for Store {
         })
     }
 
-    fn get_latest(&self, namespace: NamespaceId) -> Result<LatestIterator<'_>> {
+    fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIterator<'_>> {
         let records =
             RwLockReadGuard::try_map(self.latest.read(), move |map| map.get(&namespace)).ok();
         Ok(LatestIterator {
