@@ -52,7 +52,7 @@ serdect = "0.2.0"
 smallvec = "1.11.1"
 socket2 = "0.5.3"
 ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"] }
-stun-rs = "0.1.4"
+stun-rs = "0.1.5"
 surge-ping = "0.8.0"
 thiserror = "1"
 time = "0.3.20"
