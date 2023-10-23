@@ -912,8 +912,12 @@ pub fn tracker_path(file_name: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
     Ok(tracker_home()?.join(file_name))
 }
 
-async fn create_endpoint(key: iroh_net::key::SecretKey, port: u16) -> anyhow::Result<MagicEndpoint> {
-    let pkarr_relay_discovery = discovery::PkarrRelayDiscovery::new(key.clone(), PKARR_RELAY_URL.parse().unwrap());
+async fn create_endpoint(
+    key: iroh_net::key::SecretKey,
+    port: u16,
+) -> anyhow::Result<MagicEndpoint> {
+    let pkarr_relay_discovery =
+        discovery::PkarrRelayDiscovery::new(key.clone(), PKARR_RELAY_URL.parse().unwrap());
     let region_discover = discovery::HardcodedRegionDiscovery::new(2);
     iroh_net::MagicEndpoint::builder()
         .secret_key(key)

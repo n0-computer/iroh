@@ -1,7 +1,7 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
+
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,20 +15,20 @@ use rand::Rng;
 use rustls::client::Resumption;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
-use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, info, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
-    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, metrics::Metrics,
-    server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey, PacketForwarder,
-    ReceivedMessage, UseIpv4, UseIpv6,
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
+    client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
+    DerpNode, DerpRegion, MeshKey, PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
 use crate::key::{PublicKey, SecretKey};
+use crate::util::AbortingJoinHandle;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -101,47 +101,87 @@ pub enum ClientError {
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
+    /// The inner actor is gone, likely means things are shutdown.
+    #[error("actor gone")]
+    ActorGone,
 }
 
 /// An HTTP DERP client.
 ///
 /// Cheaply clonable.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Client {
-    inner: Arc<InnerClient>,
+    inner: mpsc::Sender<ActorMessage>,
+    public_key: PublicKey,
+    #[allow(dead_code)]
+    recv_loop: Arc<AbortingJoinHandle<()>>,
 }
 
-impl PartialEq for Client {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
+#[derive(Debug)]
+enum ActorMessage {
+    Connect(oneshot::Sender<Result<(DerpClient, usize), ClientError>>),
+    NotePreferred(bool),
+    LocalAddr(oneshot::Sender<Result<Option<SocketAddr>, ClientError>>),
+    Ping(oneshot::Sender<Result<Duration, ClientError>>),
+    Pong([u8; 8], oneshot::Sender<Result<(), ClientError>>),
+    Send(PublicKey, Bytes, oneshot::Sender<Result<(), ClientError>>),
+    Close(oneshot::Sender<Result<(), ClientError>>),
+    CloseForReconnect(oneshot::Sender<Result<(), ClientError>>),
+    IsConnected(oneshot::Sender<Result<bool, ClientError>>),
+    WatchConnectionChanges(oneshot::Sender<Result<(PublicKey, usize), ClientError>>),
+    ClosePeer(PublicKey, oneshot::Sender<Result<(), ClientError>>),
 }
 
-impl Eq for Client {}
-
-impl std::fmt::Debug for Client {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Client {{}}")
-    }
+/// Receiving end of a [`Client`].
+#[derive(Debug)]
+pub struct ClientReceiver {
+    msg_receiver: mpsc::Receiver<Result<(ReceivedMessage, usize), ClientError>>,
 }
 
-struct InnerClient {
+#[derive(derive_more::Debug)]
+struct Actor {
     secret_key: SecretKey,
+    #[debug("get_region callback")]
     get_region:
         Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
-    is_preferred: Mutex<bool>,
-    derp_client: Mutex<Option<DerpClient>>,
-    is_closed: AtomicBool,
+    is_preferred: bool,
+    derp_client: Option<(DerpClient, DerpClientReceiver)>,
+    is_closed: bool,
+    #[debug("address family selector callback")]
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
-    conn_gen: AtomicUsize,
-    ping_tracker: Mutex<HashMap<[u8; 8], oneshot::Sender<()>>>,
+    conn_gen: usize,
     mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     url: Option<Url>,
+    #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
+    pings: PingTracker,
+    ping_tasks: JoinSet<()>,
+}
+
+#[derive(Default, Debug)]
+struct PingTracker(HashMap<[u8; 8], oneshot::Sender<()>>);
+
+impl PingTracker {
+    /// Note that we have sent a ping, and store the [`oneshot::Sender`] we
+    /// must notify when the pong returns
+    fn register(&mut self) -> ([u8; 8], oneshot::Receiver<()>) {
+        let data = rand::thread_rng().gen::<[u8; 8]>();
+        let (send, recv) = oneshot::channel();
+        self.0.insert(data, send);
+        (data, recv)
+    }
+
+    /// Remove the associated [`oneshot::Sender`] for `data` & return it.
+    ///
+    /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
+    fn unregister(&mut self, data: [u8; 8], why: &'static str) -> Option<oneshot::Sender<()>> {
+        trace!("removing ping {}: {}", hex::encode(data), why);
+        self.0.remove(&data)
+    }
 }
 
 /// Build a Client.
@@ -248,7 +288,7 @@ impl ClientBuilder {
     /// Build the [`Client`]
     ///
     /// Will error if there is no region or no url set.
-    pub fn build(self, key: SecretKey) -> anyhow::Result<Client> {
+    pub fn build(self, key: SecretKey) -> anyhow::Result<(Client, ClientReceiver)> {
         anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
 
         // TODO: review TLS config
@@ -272,25 +312,41 @@ impl ClientBuilder {
         config.resumption = Resumption::default();
 
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
+        let public_key = key.public();
 
-        Ok(Client {
-            inner: Arc::new(InnerClient {
-                secret_key: key,
-                get_region: self.get_region,
-                can_ack_pings: self.can_ack_pings,
-                is_preferred: Mutex::new(self.is_preferred),
-                derp_client: Mutex::new(None),
-                is_closed: AtomicBool::new(false),
-                address_family_selector: self.address_family_selector,
-                conn_gen: AtomicUsize::new(0),
-                ping_tracker: Mutex::new(HashMap::default()),
-                mesh_key: self.mesh_key,
-                is_prober: self.is_prober,
-                server_public_key: self.server_public_key,
-                url: self.url,
-                tls_connector,
-            }),
-        })
+        let inner = Actor {
+            secret_key: key,
+            get_region: self.get_region,
+            can_ack_pings: self.can_ack_pings,
+            is_preferred: self.is_preferred,
+            derp_client: None,
+            is_closed: false,
+            address_family_selector: self.address_family_selector,
+            conn_gen: 0,
+            pings: PingTracker::default(),
+            ping_tasks: Default::default(),
+            mesh_key: self.mesh_key,
+            is_prober: self.is_prober,
+            server_public_key: self.server_public_key,
+            url: self.url,
+            tls_connector,
+        };
+
+        let (msg_sender, inbox) = mpsc::channel(64);
+        let (s, r) = mpsc::channel(64);
+        let recv_loop = tokio::task::spawn(
+            async move { inner.run(inbox, s).await }
+                .instrument(info_span!("http:client:actor", key = %public_key.fmt_short())),
+        );
+
+        Ok((
+            Client {
+                public_key,
+                inner: msg_sender,
+                recv_loop: Arc::new(recv_loop.into()),
+            },
+            ClientReceiver { msg_receiver: r },
+        ))
     }
 
     /// The expected [`PublicKey`] of the [`super::server::Server`] we are connecting to.
@@ -308,51 +364,33 @@ pub(crate) enum MeshClientEvent {
     PeerGone { peer: PublicKey },
 }
 
+impl ClientReceiver {
+    /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
+    /// re-connections this Client has ever made
+    pub async fn recv(&mut self) -> Option<Result<(ReceivedMessage, usize), ClientError>> {
+        self.msg_receiver.recv().await
+    }
+}
+
 impl Client {
     /// The public key for this client
     pub fn public_key(&self) -> PublicKey {
-        self.inner.secret_key.public()
+        self.public_key
     }
 
-    /// Let the server know that this client is the preferred client
-    pub async fn note_preferred(&self, is_preferred: bool) {
-        {
-            let mut old = self.inner.is_preferred.lock().await;
-            if *old == is_preferred {
-                return;
+    async fn send_actor<F, T>(&self, msg_create: F) -> Result<T, ClientError>
+    where
+        F: FnOnce(oneshot::Sender<Result<T, ClientError>>) -> ActorMessage,
+    {
+        let (s, r) = oneshot::channel();
+        let msg = msg_create(s);
+        match self.inner.send(msg).await {
+            Ok(_) => {
+                let res = r.await.map_err(|_| ClientError::ActorGone)??;
+                Ok(res)
             }
-            *old = is_preferred;
+            Err(_) => Err(ClientError::ActorGone),
         }
-        // only send the preference if we already have a connection
-        let res = {
-            let client = self.inner.derp_client.lock().await;
-            if let Some(client) = &*client {
-                client.note_preferred(is_preferred).await
-            } else {
-                return;
-            }
-        };
-        // need to do this outside the above closure because they rely on the same lock
-        // if there was an error sending, close the underlying derp connection
-        if res.is_err() {
-            self.close_for_reconnect().await;
-        }
-    }
-
-    /// Get the local addr of the connection. If there is no current underlying derp connection
-    /// or the [`Client`] is closed, returns `None`.
-    pub async fn local_addr(&self) -> Option<SocketAddr> {
-        if self.inner.is_closed.load(Ordering::SeqCst) {
-            return None;
-        }
-        let client = self.inner.derp_client.lock().await;
-        if let Some(client) = &*client {
-            match client.local_addr().await {
-                Ok(addr) => return Some(addr),
-                _ => return None,
-            }
-        }
-        None
     }
 
     /// Connect to a Derp Server and returns the underlying Derp Client.
@@ -362,105 +400,308 @@ impl Client {
     /// If there is already an active derp connection, returns the already
     /// connected [`crate::derp::client::Client`].
     pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
-        if self.inner.is_closed.load(Ordering::Relaxed) {
-            return Err(ClientError::Closed);
-        }
-        let key = self.inner.secret_key.public();
-        async move {
-            // acquire lock on the derp client
-            // we must hold onto the lock until we are sure we have a connection
-            // or other calls to `connect` will attempt to start a connection
-            // as well
-            let mut derp_client_lock = self.inner.derp_client.lock().await;
-            if let Some(derp_client) = &*derp_client_lock {
-                trace!("already had connection");
-                return Ok((derp_client.clone(), self.current_conn()));
+        self.send_actor(ActorMessage::Connect).await
+    }
+
+    /// Let the server know that this client is the preferred client
+    pub async fn note_preferred(&self, is_preferred: bool) {
+        self.inner
+            .send(ActorMessage::NotePreferred(is_preferred))
+            .await
+            .ok();
+    }
+
+    /// Get the local addr of the connection. If there is no current underlying derp connection
+    /// or the [`Client`] is closed, returns `None`.
+    pub async fn local_addr(&self) -> Option<SocketAddr> {
+        self.send_actor(ActorMessage::LocalAddr)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Send a ping to the server. Return once we get an expected pong.
+    ///
+    /// There must be a task polling `recv_detail` to process the `pong` response.
+    pub async fn ping(&self) -> Result<Duration, ClientError> {
+        self.send_actor(ActorMessage::Ping).await
+    }
+
+    /// Send a pong back to the server.
+    ///
+    /// If there is no underlying active derp connection, it creates one before attempting to
+    /// send the pong message.
+    ///
+    /// If there is an error sending pong, it closes the underlying derp connection before
+    /// returning.
+    pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
+        self.send_actor(|s| ActorMessage::Pong(data, s)).await
+    }
+
+    /// Send a packet to the server.
+    ///
+    /// If there is no underlying active derp connection, it creates one before attempting to
+    /// send the message.
+    ///
+    /// If there is an error sending the packet, it closes the underlying derp connection before
+    /// returning.
+    pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
+        self.send_actor(|s| ActorMessage::Send(dst_key, b, s)).await
+    }
+
+    /// Close the http derp connection.
+    pub async fn close(self) -> Result<(), ClientError> {
+        self.send_actor(ActorMessage::Close).await
+    }
+
+    /// Disconnect the http derp connection.
+    pub async fn close_for_reconnect(&self) -> Result<(), ClientError> {
+        self.send_actor(ActorMessage::CloseForReconnect).await
+    }
+
+    /// Returns `true` if the underyling derp connection is established.
+    pub async fn is_connected(&self) -> Result<bool, ClientError> {
+        self.send_actor(ActorMessage::IsConnected).await
+    }
+
+    /// Send a request to subscribe as a "watcher" on the server.
+    ///
+    /// This returns the public key of the remote derp server that we have meshed to,
+    /// as well as the `conn_gen` of the latest connection.  The `conn_gen` is the
+    /// number of times we have successfully re-established a connection to that derp
+    /// server.
+    ///
+    /// If there is no underlying active derp connection, it creates one before attempting to
+    /// send the "watch connection changes" message.
+    ///
+    /// If there is an error sending the message, it closes the underlying derp connection before
+    /// returning.
+    pub async fn watch_connection_changes(&self) -> Result<(PublicKey, usize), ClientError> {
+        self.send_actor(ActorMessage::WatchConnectionChanges).await
+    }
+
+    /// Send a "close peer" request to the server.
+    ///
+    /// If there is no underlying active derp connection, it creates one before attempting to
+    /// send the request.
+    ///
+    /// If there is an error sending, it closes the underlying derp connection before
+    /// returning.
+    pub async fn close_peer(&self, target: PublicKey) -> Result<(), ClientError> {
+        self.send_actor(|s| ActorMessage::ClosePeer(target, s))
+            .await
+    }
+
+    /// Run this client as a mesh client.
+    ///
+    /// This method will error if you do not have a `mesh_key`.
+    ///
+    /// It will establish a connection to the derp server & subscribe to the
+    /// network changes of that derp server. As peers connect to and disconnect
+    /// from that server, we will get `PeerPresent` and `PeerGone` messages. We
+    /// then and and remove that derp server as a `PacketForwarder` respectfully.
+    ///
+    /// If you pass in a `mesh_events` sender, it will send events about the mesh
+    /// activities.
+    /// [`MeshClientEvent::Meshed`] is sent the when we return successfully from `watch_connection_changes`,
+    /// indicating that the given server is aware that this client exists and wants to
+    /// track network changes.
+    /// When peers connect and disconnect, [`MeshClientEvent::PeerPresent`] and  [`MeshClientEvent::PeerGone`]
+    /// are sent respectively.
+    ///
+    /// This sender is typically used for aligning the mesh network during tests.
+    pub(crate) async fn run_mesh_client(
+        self,
+        packet_forwarder_handler: PacketForwarderHandler<Client>,
+        mesh_events: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
+        mut client_receiver: ClientReceiver,
+    ) -> anyhow::Result<()> {
+        // connect to the remote server & request to watching the remote's state changes
+        let own_key = self.public_key();
+        loop {
+            let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
+                Ok(key) => {
+                    if let Some(ref sender) = mesh_events {
+                        if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
+                            bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
+                        }
+                    }
+                    key
+                }
+                Err(e) => {
+                    warn!("error connecting to derp server {e}");
+                    tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
+                    continue;
+                }
+            };
+
+            if server_public_key == own_key {
+                bail!("detected self-connect; closing this client");
             }
 
-            trace!("no connection, trying to connect");
-            let derp_client = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-                .await
-                .map_err(|_| ClientError::ConnectTimeout)??;
+            let peers_present = PeersPresent::new(server_public_key);
+            info!("Connected to mesh derp server {server_public_key:?}");
 
-            let derp_client_clone = derp_client.clone();
-            *derp_client_lock = Some(derp_client_clone);
-            let conn_gen = self.next_conn();
-
-            trace!("got connection, conn num {conn_gen}");
-            Ok((derp_client, conn_gen))
+            // receive detail loop
+            loop {
+                let (msg, conn_gen) = match client_receiver.recv().await {
+                    Some(Ok(res)) => res,
+                    Some(Err(e)) => {
+                        warn!("recv error: {e:?}");
+                        tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
+                        break;
+                    }
+                    None => {
+                        warn!("recv nothing");
+                        tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
+                        break;
+                    }
+                };
+                if conn_gen != last_conn_gen {
+                    // TODO: In the current set up, once we know that this current
+                    // connection is a new connection, we must re-establish to the
+                    // server that we want to watch connection changes.
+                    // In the future, depending on how we handle multiple connections
+                    // for the same peer key in the derp server in the future, we may
+                    // be okay to just listen for future peer present
+                    // messages without re establishing this connection as a "watcher"
+                    trace!("new connection: {} != {}", conn_gen, last_conn_gen);
+                    break;
+                }
+                match msg {
+                    ReceivedMessage::PeerPresent(key) => {
+                        // ignore notifications about ourself
+                        if key == own_key {
+                            continue;
+                        }
+                        peers_present.insert(key).await?;
+                        packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
+                        if let Some(ref chan) = mesh_events {
+                            chan.send(MeshClientEvent::PeerPresent { peer: key })
+                                .await?;
+                        }
+                    }
+                    ReceivedMessage::PeerGone(key) => {
+                        // ignore notifications about ourself
+                        if key == own_key {
+                            continue;
+                        }
+                        peers_present.remove(key).await?;
+                        packet_forwarder_handler.remove_packet_forwarder(key)?;
+                        if let Some(ref chan) = mesh_events {
+                            chan.send(MeshClientEvent::PeerGone { peer: key }).await?;
+                        }
+                    }
+                    other => {
+                        warn!("mesh: received unexpected message: {:?}", other);
+                    }
+                }
+            }
         }
-        .instrument(info_span!("client-connect", %key))
+    }
+}
+
+impl Actor {
+    async fn run(
+        mut self,
+        mut inbox: mpsc::Receiver<ActorMessage>,
+        msg_sender: mpsc::Sender<Result<(ReceivedMessage, usize), ClientError>>,
+    ) {
+        loop {
+            tokio::select! {
+                res = self.recv_detail() => {
+                    msg_sender.send(res).await.ok();
+                }
+                Some(msg) = inbox.recv() => {
+                    match msg {
+                        ActorMessage::Connect(s) => {
+                            let res = self.connect().await.map(|(client, _, count)| (client, count));
+                            s.send(res).ok();
+                        },
+                        ActorMessage::NotePreferred(is_preferred) => {
+                            self.note_preferred(is_preferred).await;
+                        },
+                        ActorMessage::LocalAddr(s) => {
+                            let res = self.local_addr();
+                            s.send(Ok(res)).ok();
+                        },
+                        ActorMessage::Ping(s) => {
+                            self.ping(s).await;
+                        },
+                        ActorMessage::Pong(data, s) => {
+                            let res = self.send_pong(data).await;
+                            s.send(res).ok();
+                        },
+                        ActorMessage::Send(key, data, s) => {
+                            let res = self.send(key, data).await;
+                            s.send(res).ok();
+                        },
+                        ActorMessage::Close(s) => {
+                            let res = self.close().await;
+                            s.send(Ok(res)).ok();
+                            // shutting down
+                            break;
+                        },
+                        ActorMessage::CloseForReconnect(s) => {
+                            let res = self.close_for_reconnect().await;
+                            s.send(Ok(res)).ok();
+                        },
+                        ActorMessage::IsConnected(s) => {
+                            let res = self.is_connected();
+                            s.send(Ok(res)).ok();
+                        },
+                        ActorMessage::WatchConnectionChanges(s) => {
+                            let res = self.watch_connection_changes().await;
+                            s.send(res).ok();
+                        },
+                        ActorMessage::ClosePeer(peer, s) => {
+                            let res = self.close_peer(peer).await;
+                            s.send(res).ok();
+                        },
+                    }
+                }
+                else => {
+                    // Shutting down
+                    self.close().await;
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn connect(
+        &mut self,
+    ) -> Result<(DerpClient, &'_ mut DerpClientReceiver, usize), ClientError> {
+        if self.is_closed {
+            return Err(ClientError::Closed);
+        }
+        let key = self.secret_key.public();
+        async move {
+            if self.derp_client.is_none() {
+                trace!("no connection, trying to connect");
+                let (derp_client, receiver) =
+                    tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+                        .await
+                        .map_err(|_| ClientError::ConnectTimeout)??;
+
+                self.derp_client = Some((derp_client, receiver));
+                self.next_conn();
+            }
+
+            let count = self.current_conn();
+            let (derp_client, receiver) = self
+                .derp_client
+                .as_mut()
+                .map(|(c, r)| (c.clone(), r))
+                .expect("just inserted");
+            trace!("already had connection");
+            Ok((derp_client, receiver, count))
+        }
+        .instrument(info_span!("client-connect", key = %key.fmt_short()))
         .await
     }
 
-    fn current_conn(&self) -> usize {
-        self.inner.conn_gen.load(Ordering::SeqCst)
-    }
-
-    fn next_conn(&self) -> usize {
-        self.inner.conn_gen.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    async fn current_region(&self) -> Result<DerpRegion, ClientError> {
-        if let Some(get_region) = &self.inner.get_region {
-            let region = get_region()
-                .await
-                .ok_or_else(|| ClientError::DerpRegionNotAvail)?;
-
-            return Ok(region);
-        }
-        Err(ClientError::DerpRegionNotAvail)
-    }
-
-    fn url(&self) -> Option<&Url> {
-        self.inner.url.as_ref()
-    }
-
-    fn tls_servername(&self, node: Option<&DerpNode>) -> Option<rustls::ServerName> {
-        if let Some(url) = self.url() {
-            return url
-                .host_str()
-                .and_then(|s| rustls::ServerName::try_from(s).ok());
-        }
-        if let Some(node) = node {
-            if let Some(host) = node.url.host_str() {
-                return rustls::ServerName::try_from(host).ok();
-            }
-        }
-
-        None
-    }
-
-    fn url_port(&self) -> Option<u16> {
-        if let Some(port) = self.inner.url.as_ref().and_then(|url| url.port()) {
-            return Some(port);
-        }
-        if let Some(ref url) = self.inner.url {
-            match url.scheme() {
-                "http" => return Some(80),
-                "https" => return Some(443),
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    fn use_https(&self, node: Option<&DerpNode>) -> bool {
-        // only disable https if we are explicitly dialing a http url
-        if let Some(true) = self.inner.url.as_ref().map(|url| url.scheme() == "http") {
-            return false;
-        }
-        if let Some(node) = node {
-            if node.url.scheme() == "http" {
-                return false;
-            }
-        }
-        true
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    async fn connect_0(&self) -> Result<DerpClient, ClientError> {
+    async fn connect_0(&self) -> Result<(DerpClient, DerpClientReceiver), ClientError> {
         let url = self.url();
         let is_test_url = url
             .as_ref()
@@ -493,11 +734,7 @@ impl Client {
             let hostname = self
                 .tls_servername(derp_node.as_deref())
                 .ok_or_else(|| ClientError::InvalidUrl("no tls servername".into()))?;
-            let tls_stream = self
-                .inner
-                .tls_connector
-                .connect(hostname, tcp_stream)
-                .await?;
+            let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tls_stream)
@@ -568,24 +805,209 @@ impl Client {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let derp_client =
-            DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
-                .mesh_key(self.inner.mesh_key)
-                .can_ack_pings(self.inner.can_ack_pings)
-                .prober(self.inner.is_prober)
-                .server_public_key(self.inner.server_public_key)
+        let (derp_client, receiver) =
+            DerpClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
+                .mesh_key(self.mesh_key)
+                .can_ack_pings(self.can_ack_pings)
+                .prober(self.is_prober)
+                .server_public_key(self.server_public_key)
                 .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        if *self.inner.is_preferred.lock().await && derp_client.note_preferred(true).await.is_err()
-        {
+        if self.is_preferred && derp_client.note_preferred(true).await.is_err() {
             derp_client.close().await;
             return Err(ClientError::Send);
         }
 
         trace!("connect_0 done");
-        Ok(derp_client)
+        Ok((derp_client, receiver))
+    }
+
+    async fn note_preferred(&mut self, is_preferred: bool) {
+        let old = &mut self.is_preferred;
+        if *old == is_preferred {
+            return;
+        }
+        *old = is_preferred;
+
+        // only send the preference if we already have a connection
+        let res = {
+            if let Some((ref client, _)) = self.derp_client {
+                client.note_preferred(is_preferred).await
+            } else {
+                return;
+            }
+        };
+        // need to do this outside the above closure because they rely on the same lock
+        // if there was an error sending, close the underlying derp connection
+        if res.is_err() {
+            self.close_for_reconnect().await;
+        }
+    }
+
+    fn local_addr(&self) -> Option<SocketAddr> {
+        if self.is_closed {
+            return None;
+        }
+        if let Some((ref client, _)) = self.derp_client {
+            match client.local_addr() {
+                Ok(addr) => return Some(addr),
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
+        let connect_res = self.connect().await.map(|(c, _, _)| c);
+        let (ping, recv) = self.pings.register();
+        trace!("ping: {}", hex::encode(ping));
+
+        self.ping_tasks.spawn(async move {
+            let res = match connect_res {
+                Ok(client) => {
+                    let start = Instant::now();
+                    if let Err(err) = client.send_ping(ping).await {
+                        warn!("failed to send ping: {:?}", err);
+                        Err(ClientError::Send)
+                    } else {
+                        match tokio::time::timeout(PING_TIMEOUT, recv).await {
+                            Ok(Ok(())) => Ok(start.elapsed()),
+                            Err(_) => Err(ClientError::PingTimeout),
+                            Ok(Err(_)) => Err(ClientError::PingAborted),
+                        }
+                    }
+                }
+                Err(err) => Err(err),
+            };
+            s.send(res).ok();
+        });
+    }
+
+    async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
+        debug!("send");
+        let (client, _, _) = self.connect().await?;
+        if client.send(dst_key, b).await.is_err() {
+            self.close_for_reconnect().await;
+            return Err(ClientError::Send);
+        }
+        Ok(())
+    }
+
+    async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
+        debug!("send_pong");
+        if self.can_ack_pings {
+            let (client, _, _) = self.connect().await?;
+            if client.send_pong(data).await.is_err() {
+                self.close_for_reconnect().await;
+                return Err(ClientError::Send);
+            }
+            Ok(())
+        } else {
+            Err(ClientError::CannotAckPings)
+        }
+    }
+
+    async fn close(mut self) {
+        if !self.is_closed {
+            self.is_closed = true;
+            self.close_for_reconnect().await;
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        if self.is_closed {
+            return false;
+        }
+        self.derp_client.is_some()
+    }
+
+    async fn watch_connection_changes(&mut self) -> Result<(PublicKey, usize), ClientError> {
+        debug!("watch_connection_changes");
+        let (client, _, conn_gen) = self.connect().await?;
+        if client.watch_connection_changes().await.is_err() {
+            self.close_for_reconnect().await;
+            return Err(ClientError::Send);
+        }
+        Ok((client.server_public_key(), conn_gen))
+    }
+
+    async fn close_peer(&mut self, target: PublicKey) -> Result<(), ClientError> {
+        debug!("close_peer");
+        let (client, _, _) = self.connect().await?;
+        if client.close_peer(target).await.is_err() {
+            self.close_for_reconnect().await;
+            return Err(ClientError::Send);
+        }
+        Ok(())
+    }
+
+    fn current_conn(&self) -> usize {
+        self.conn_gen
+    }
+
+    fn next_conn(&mut self) -> usize {
+        self.conn_gen = self.conn_gen.wrapping_add(1);
+        self.conn_gen
+    }
+
+    async fn current_region(&self) -> Result<DerpRegion, ClientError> {
+        if let Some(get_region) = &self.get_region {
+            let region = get_region()
+                .await
+                .ok_or_else(|| ClientError::DerpRegionNotAvail)?;
+
+            return Ok(region);
+        }
+        Err(ClientError::DerpRegionNotAvail)
+    }
+
+    fn url(&self) -> Option<&Url> {
+        self.url.as_ref()
+    }
+
+    fn tls_servername(&self, node: Option<&DerpNode>) -> Option<rustls::ServerName> {
+        if let Some(url) = self.url() {
+            return url
+                .host_str()
+                .and_then(|s| rustls::ServerName::try_from(s).ok());
+        }
+        if let Some(node) = node {
+            if let Some(host) = node.url.host_str() {
+                return rustls::ServerName::try_from(host).ok();
+            }
+        }
+
+        None
+    }
+
+    fn url_port(&self) -> Option<u16> {
+        if let Some(port) = self.url.as_ref().and_then(|url| url.port()) {
+            return Some(port);
+        }
+        if let Some(ref url) = self.url {
+            match url.scheme() {
+                "http" => return Some(80),
+                "https" => return Some(443),
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn use_https(&self, node: Option<&DerpNode>) -> bool {
+        // only disable https if we are explicitly dialing a http url
+        if let Some(true) = self.url.as_ref().map(|url| url.scheme() == "http") {
+            return false;
+        }
+        if let Some(node) = node {
+            if node.url.scheme() == "http" {
+                return false;
+            }
+        }
+        true
     }
 
     /// String representation of the url or derp region we are trying to
@@ -629,7 +1051,7 @@ impl Client {
     /// Creates the uri string from a [`DerpNode`]
     ///
     /// Return a TCP stream to the provided region, trying each node in order
-    /// (using [`Client::dial_node`]) until one connects
+    /// (using [`dial_node`]) until one connects
     async fn dial_region(
         &self,
         reg: DerpRegion,
@@ -643,15 +1065,16 @@ impl Client {
         const DIAL_PARALLELISM: usize = 4;
         let mut dials = bounded_join_set::JoinSet::new(DIAL_PARALLELISM);
 
+        let prefer_ipv6 = self.prefer_ipv6().await;
+
         for node in reg.nodes.clone().into_iter() {
-            let this = self.clone();
             let target = target.clone();
             dials.spawn(async move {
                 if node.stun_only {
                     return Err(ClientError::StunOnlyNodesFound(target));
                 }
 
-                this.dial_node(&node).await.map(|c| (c, node))
+                dial_node(&node, prefer_ipv6).await.map(|c| (c, node))
             });
         }
 
@@ -679,99 +1102,141 @@ impl Client {
         Err(errs.pop().unwrap())
     }
 
-    /// Returns a TCP connection to node n, racing IPv4 and IPv6
-    /// (both as applicable) against each other.
-    /// A node is only given `DIAL_NODE_TIMEOUT` to connect.
-    ///
-    // TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
-    // overall but have dialRegion start overlapping races?
-    async fn dial_node(&self, node: &DerpNode) -> Result<TcpStream, ClientError> {
-        // TODO: Add support for HTTP proxies.
-        debug!("dial node: {:?}", node);
-
-        match (node.ipv4.is_enabled(), node.ipv6.is_enabled()) {
-            (true, true) => {
-                let this = self.clone();
-                let node1 = node.clone();
-                let fut1 = Box::pin(
-                    async move { this.start_dial(&node1, UseIp::Ipv4(node.ipv4)).await }
-                        .instrument(info_span!("dial", proto = "ipv4")),
-                );
-
-                let this = self.clone();
-                let node2 = node.clone();
-                let fut2 = Box::pin(
-                    async move { this.start_dial(&node2, UseIp::Ipv6(node.ipv6)).await }
-                        .instrument(info_span!("dial", proto = "ipv6")),
-                );
-
-                match futures::future::select(fut1, fut2).await {
-                    futures::future::Either::Left((ipv4, ipv6)) => match ipv4 {
-                        Ok(conn) => Ok(conn),
-                        Err(_) => ipv6.await,
-                    },
-                    futures::future::Either::Right((ipv6, ipv4)) => match ipv6 {
-                        Ok(conn) => Ok(conn),
-                        Err(_) => ipv4.await,
-                    },
-                }
-            }
-            (true, false) => self.start_dial(node, UseIp::Ipv4(node.ipv4)).await,
-            (false, true) => self.start_dial(node, UseIp::Ipv6(node.ipv6)).await,
-            (false, false) => Err(ClientError::IPDisabled),
-        }
-    }
-
     /// Reports whether IPv4 dials should be slightly
     /// delayed to give IPv6 a better chance of winning dial races.
     /// Implementations should only return true if IPv6 is expected
     /// to succeed. (otherwise delaying IPv4 will delay the connection
     /// overall)
     async fn prefer_ipv6(&self) -> bool {
-        match self.inner.address_family_selector {
+        match self.address_family_selector {
             Some(ref selector) => selector().await,
             None => false,
         }
     }
 
-    async fn start_dial(
-        &self,
-        node: &DerpNode,
-        dst_primary: UseIp,
-    ) -> Result<TcpStream, ClientError> {
-        trace!("dial start: {:?}", dst_primary);
-        if matches!(dst_primary, UseIp::Ipv4(_)) && self.prefer_ipv6().await {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            // Start v4 dial
-        }
-        let host: IpAddr = match dst_primary {
-            UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
-            UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
-            _ => {
-                let host = node
-                    .url
-                    .host()
-                    .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
-                match host {
-                    url::Host::Domain(domain) => {
-                        // Need to do a DNS lookup
-                        let addr = DNS_RESOLVER
-                            .lookup_ip(domain)
-                            .await
-                            .map_err(|e| ClientError::Dns(Some(e)))?
-                            .iter()
-                            .find(|addr| match dst_primary {
-                                UseIp::Ipv4(_) => addr.is_ipv4(),
-                                UseIp::Ipv6(_) => addr.is_ipv6(),
-                            });
-                        addr.ok_or_else(|| ClientError::Dns(None))?
+    async fn recv_detail(&mut self) -> Result<(ReceivedMessage, usize), ClientError> {
+        loop {
+            trace!("recv_detail tick");
+            let (_client, client_receiver, conn_gen) = self.connect().await?;
+            match client_receiver.recv().await {
+                Ok(msg) => {
+                    if let ReceivedMessage::Pong(ping) = msg {
+                        match self.pings.unregister(ping, "pong") {
+                            Some(chan) => {
+                                if chan.send(()).is_err() {
+                                    warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                                }
+                            }
+                            None => {
+                                warn!("pong received for ping {ping:?}, but not registered");
+                            }
+                        }
+                        continue;
                     }
-                    url::Host::Ipv4(ip) => IpAddr::V4(ip),
-                    url::Host::Ipv6(ip) => IpAddr::V6(ip),
+                    return Ok((msg, conn_gen));
+                }
+                Err(e) => {
+                    self.close_for_reconnect().await;
+                    if self.is_closed {
+                        return Err(ClientError::Closed);
+                    }
+                    // TODO(ramfox): more specific error?
+                    return Err(ClientError::Receive(e));
                 }
             }
-        };
-        let port = match node.url.port() {
+        }
+    }
+
+    /// Close the underlying derp connection. The next time the client takes some action that
+    /// requires a connection, it will call `connect`.
+    async fn close_for_reconnect(&mut self) {
+        debug!("close for reconnect");
+        if let Some((client, _)) = self.derp_client.take() {
+            client.close().await
+        }
+    }
+}
+
+/// Returns a TCP connection to node n, racing IPv4 and IPv6
+/// (both as applicable) against each other.
+/// A node is only given `DIAL_NODE_TIMEOUT` to connect.
+///
+// TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
+// overall but have dialRegion start overlapping races?
+async fn dial_node(node: &DerpNode, prefer_ipv6: bool) -> Result<TcpStream, ClientError> {
+    // TODO: Add support for HTTP proxies.
+    debug!("dial node: {:?}", node);
+
+    match (node.ipv4.is_enabled(), node.ipv6.is_enabled()) {
+        (true, true) => {
+            let node1 = node.clone();
+            let fut1 = Box::pin(
+                async move { start_dial(&node1, UseIp::Ipv4(node.ipv4), prefer_ipv6).await }
+                    .instrument(info_span!("dial", proto = "ipv4")),
+            );
+
+            let node2 = node.clone();
+            let fut2 = Box::pin(
+                async move { start_dial(&node2, UseIp::Ipv6(node.ipv6), prefer_ipv6).await }
+                    .instrument(info_span!("dial", proto = "ipv6")),
+            );
+
+            match futures::future::select(fut1, fut2).await {
+                futures::future::Either::Left((ipv4, ipv6)) => match ipv4 {
+                    Ok(conn) => Ok(conn),
+                    Err(_) => ipv6.await,
+                },
+                futures::future::Either::Right((ipv6, ipv4)) => match ipv6 {
+                    Ok(conn) => Ok(conn),
+                    Err(_) => ipv4.await,
+                },
+            }
+        }
+        (true, false) => start_dial(node, UseIp::Ipv4(node.ipv4), prefer_ipv6).await,
+        (false, true) => start_dial(node, UseIp::Ipv6(node.ipv6), prefer_ipv6).await,
+        (false, false) => Err(ClientError::IPDisabled),
+    }
+}
+
+async fn start_dial(
+    node: &DerpNode,
+    dst_primary: UseIp,
+    prefer_ipv6: bool,
+) -> Result<TcpStream, ClientError> {
+    trace!("dial start: {:?}", dst_primary);
+    if matches!(dst_primary, UseIp::Ipv4(_)) && prefer_ipv6 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Start v4 dial
+    }
+    let host: IpAddr = match dst_primary {
+        UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
+        UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
+        _ => {
+            let host = node
+                .url
+                .host()
+                .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
+            match host {
+                url::Host::Domain(domain) => {
+                    // Need to do a DNS lookup
+                    let addr = DNS_RESOLVER
+                        .lookup_ip(domain)
+                        .await
+                        .map_err(|e| ClientError::Dns(Some(e)))?
+                        .iter()
+                        .find(|addr| match dst_primary {
+                            UseIp::Ipv4(_) => addr.is_ipv4(),
+                            UseIp::Ipv6(_) => addr.is_ipv6(),
+                        });
+                    addr.ok_or_else(|| ClientError::Dns(None))?
+                }
+                url::Host::Ipv4(ip) => IpAddr::V4(ip),
+                url::Host::Ipv6(ip) => IpAddr::V6(ip),
+            }
+        }
+    };
+    let port =
+        match node.url.port() {
             Some(port) => port,
             None => match node.url.scheme() {
                 "http" => 80,
@@ -782,306 +1247,20 @@ impl Client {
                 )),
             },
         };
-        let dst = format!("{host}:{port}");
-        debug!("dialing {}", dst);
-        let tcp_stream =
-            tokio::time::timeout(
-                DIAL_NODE_TIMEOUT,
-                async move { TcpStream::connect(dst).await },
-            )
-            .await
-            .map_err(|_| ClientError::ConnectTimeout)?
-            .map_err(ClientError::DialIO)?;
-        // TODO: ipv6 vs ipv4 specific connection
+    let dst = format!("{host}:{port}");
+    debug!("dialing {}", dst);
+    let tcp_stream =
+        tokio::time::timeout(
+            DIAL_NODE_TIMEOUT,
+            async move { TcpStream::connect(dst).await },
+        )
+        .await
+        .map_err(|_| ClientError::ConnectTimeout)?
+        .map_err(ClientError::DialIO)?;
+    // TODO: ipv6 vs ipv4 specific connection
 
-        trace!("dial done: {:?}", dst_primary);
-        Ok(tcp_stream)
-    }
-
-    /// Send a ping to the server. Return once we get an expected pong.
-    ///
-    /// There must be a task polling `recv_detail` to process the `pong` response.
-    pub async fn ping(&self) -> Result<Duration, ClientError> {
-        let ping = rand::thread_rng().gen::<[u8; 8]>();
-        debug!("ping: {}", hex::encode(ping));
-        let (client, _) = self.connect().await?;
-
-        let start = Instant::now();
-        let (send, recv) = oneshot::channel();
-        self.register_ping(ping, send).await;
-        if client.send_ping(ping).await.is_err() {
-            self.close_for_reconnect().await;
-            let _ = self.unregister_ping(ping).await;
-            return Err(ClientError::Send);
-        }
-        match tokio::time::timeout(PING_TIMEOUT, recv).await {
-            Ok(Ok(())) => Ok(start.elapsed()),
-            Err(_) => {
-                self.unregister_ping(ping).await;
-                Err(ClientError::PingTimeout)
-            }
-            Ok(Err(_)) => {
-                self.unregister_ping(ping).await;
-                Err(ClientError::PingAborted)
-            }
-        }
-    }
-
-    /// Send a pong back to the server.
-    ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
-    /// send the pong message.
-    ///
-    /// If there is an error sending pong, it closes the underlying derp connection before
-    /// returning.
-    pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
-        debug!("send_pong");
-        if self.inner.can_ack_pings {
-            let (client, _) = self.connect().await?;
-            if client.send_pong(data).await.is_err() {
-                self.close_for_reconnect().await;
-                return Err(ClientError::Send);
-            }
-            Ok(())
-        } else {
-            Err(ClientError::CannotAckPings)
-        }
-    }
-
-    /// Note that we have sent a ping, and store the [`oneshot::Sender`] we
-    /// must notify when the pong returns
-    async fn register_ping(&self, data: [u8; 8], chan: oneshot::Sender<()>) {
-        let mut ping_tracker = self.inner.ping_tracker.lock().await;
-        ping_tracker.insert(data, chan);
-    }
-
-    /// Remove the associated [`oneshot::Sender`] for `data` & return it.
-    ///
-    /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    async fn unregister_ping(&self, data: [u8; 8]) -> Option<oneshot::Sender<()>> {
-        let mut ping_tracker = self.inner.ping_tracker.lock().await;
-        ping_tracker.remove(&data)
-    }
-
-    /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
-    /// re-connections this Client has ever made
-    #[instrument(skip(self))]
-    pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
-        loop {
-            debug!("recv_detail tick");
-            let (client, conn_gen) = self.connect().await?;
-            match client.recv().await {
-                Ok(msg) => {
-                    if let Ok(region) = self.current_region().await {
-                        trace!("[DERP] <- {} ({:?})", self.target_string(&region), msg);
-                    } else if let Some(url) = self.url() {
-                        trace!("[DERP] <- {url} ({:?})", msg);
-                    }
-
-                    if let ReceivedMessage::Pong(ping) = msg {
-                        trace!("got pong: {}", hex::encode(ping));
-                        if let Some(chan) = self.unregister_ping(ping).await {
-                            if chan.send(()).is_err() {
-                                warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
-                            }
-                            continue;
-                        }
-                    }
-                    return Ok((msg, conn_gen));
-                }
-                Err(e) => {
-                    self.close_for_reconnect().await;
-                    if self.inner.is_closed.load(Ordering::SeqCst) {
-                        return Err(ClientError::Closed);
-                    }
-                    // TODO(ramfox): more specific error?
-                    return Err(ClientError::Receive(e));
-                }
-            }
-        }
-    }
-
-    /// Send a packet to the server.
-    ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
-    /// send the message.
-    ///
-    /// If there is an error sending the packet, it closes the underlying derp connection before
-    /// returning.
-    pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        debug!("send");
-        let (client, _) = self.connect().await?;
-        if client.send(dst_key, b).await.is_err() {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
-        }
-        Ok(())
-    }
-
-    /// Close the underlying derp connection. The next time the client takes some action that
-    /// requires a connection, it will call `connect`.
-    pub async fn close_for_reconnect(&self) {
-        debug!("close for reconnect");
-        let mut client = self.inner.derp_client.lock().await;
-        if let Some(client) = client.take() {
-            client.close().await
-        }
-    }
-
-    /// Close the http derp connection
-    pub async fn close(self) {
-        self.inner.is_closed.store(true, Ordering::Relaxed);
-        self.close_for_reconnect().await;
-    }
-
-    /// Returns `true` if the underyling derp connection is established.
-    pub async fn is_connected(&self) -> bool {
-        if self.inner.is_closed.load(Ordering::Relaxed) {
-            return false;
-        }
-        self.inner.derp_client.lock().await.is_some()
-    }
-
-    /// Send a request to subscribe as a "watcher" on the server.
-    ///
-    /// This returns the public key of the remote derp server that we have meshed to,
-    /// as well as the `conn_gen` of the latest connection.  The `conn_gen` is the
-    /// number of times we have successfully re-established a connection to that derp
-    /// server.
-    ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
-    /// send the "watch connection changes" message.
-    ///
-    /// If there is an error sending the message, it closes the underlying derp connection before
-    /// returning.
-    pub async fn watch_connection_changes(&self) -> Result<(PublicKey, usize), ClientError> {
-        debug!("watch_connection_changes");
-        let (client, conn_gen) = self.connect().await?;
-        if client.watch_connection_changes().await.is_err() {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
-        }
-        Ok((client.server_public_key(), conn_gen))
-    }
-
-    /// Send a "close peer" request to the server.
-    ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
-    /// send the request.
-    ///
-    /// If there is an error sending, it closes the underlying derp connection before
-    /// returning.
-    pub async fn close_peer(&self, target: PublicKey) -> Result<(), ClientError> {
-        debug!("close_peer");
-        let (client, _) = self.connect().await?;
-        if client.close_peer(target).await.is_err() {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
-        }
-        Ok(())
-    }
-
-    /// Run this client as a mesh client.
-    ///
-    /// This method will error if you do not have a `mesh_key`.
-    ///
-    /// It will establish a connection to the derp server & subscribe to the
-    /// network changes of that derp server. As peers connect to and disconnect
-    /// from that server, we will get `PeerPresent` and `PeerGone` messages. We
-    /// then and and remove that derp server as a `PacketForwarder` respectfully.
-    ///
-    /// If you pass in a `mesh_events` sender, it will send events about the mesh
-    /// activities.
-    /// [`MeshClientEvent::Meshed`] is sent the when we return successfully from `watch_connection_changes`,
-    /// indicating that the given server is aware that this client exists and wants to
-    /// track network changes.
-    /// When peers connect and disconnect, [`MeshClientEvent::PeerPresent`] and  [`MeshClientEvent::PeerGone`]
-    /// are sent respectively.
-    ///
-    /// This sender is typically used for aligning the mesh network during tests.
-    pub(crate) async fn run_mesh_client(
-        self,
-        packet_forwarder_handler: PacketForwarderHandler<Client>,
-        mesh_events: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
-    ) -> anyhow::Result<()> {
-        // connect to the remote server & request to watching the remote's state changes
-        let own_key = self.public_key();
-        loop {
-            let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
-                Ok(key) => {
-                    if let Some(ref sender) = mesh_events {
-                        if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
-                            bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
-                        }
-                    }
-                    key
-                }
-                Err(e) => {
-                    warn!("error connecting to derp server {e}");
-                    tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
-                    continue;
-                }
-            };
-
-            if server_public_key == own_key {
-                bail!("detected self-connect; closing this client");
-            }
-
-            let peers_present = PeersPresent::new(server_public_key);
-            info!("Connected to mesh derp server {server_public_key:?}");
-
-            // receive detail loop
-            loop {
-                let (msg, conn_gen) = match self.recv_detail().await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        warn!("recv error: {e:?}");
-                        tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
-                        break;
-                    }
-                };
-                if conn_gen != last_conn_gen {
-                    // TODO: In the current set up, once we know that this current
-                    // connection is a new connection, we must re-establish to the
-                    // server that we want to watch connection changes.
-                    // In the future, depending on how we handle multiple connections
-                    // for the same peer key in the derp server in the future, we may
-                    // be okay to just listen for future peer present
-                    // messages without re establishing this connection as a "watcher"
-                    trace!("new connection: {} != {}", conn_gen, last_conn_gen);
-                    break;
-                }
-                match msg {
-                    ReceivedMessage::PeerPresent(key) => {
-                        // ignore notifications about ourself
-                        if key == own_key {
-                            continue;
-                        }
-                        peers_present.insert(key).await?;
-                        packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
-                        if let Some(ref chan) = mesh_events {
-                            chan.send(MeshClientEvent::PeerPresent { peer: key })
-                                .await?;
-                        }
-                    }
-                    ReceivedMessage::PeerGone(key) => {
-                        // ignore notifications about ourself
-                        if key == own_key {
-                            continue;
-                        }
-                        peers_present.remove(key).await?;
-                        packet_forwarder_handler.remove_packet_forwarder(key)?;
-                        if let Some(ref chan) = mesh_events {
-                            chan.send(MeshClientEvent::PeerGone { peer: key }).await?;
-                        }
-                    }
-                    other => {
-                        warn!("mesh: received unexpected message: {:?}", other);
-                    }
-                }
-            }
-        }
-    }
+    trace!("dial done: {:?}", dst_primary);
+    Ok(tcp_stream)
 }
 
 const PEERS_PRESENT_LOGGING_DELAY: Duration = Duration::from_secs(5);
@@ -1279,7 +1458,7 @@ mod tests {
             region_code: "test_region".to_string(),
         };
 
-        let client = ClientBuilder::new()
+        let (_client, mut client_receiver) = ClientBuilder::new()
             .get_region(move || {
                 let region = bad_region.clone();
                 Box::pin(async move { Some(region) })
@@ -1288,12 +1467,26 @@ mod tests {
 
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect
-        if (client.recv_detail().await).is_ok() {
+        if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
             bail!("expected client with bad derp region detail to return with an error");
         }
         Ok(())
     }
 
+    /// In the real world, when we create a local server, that server spawn a [`MeshClient`] for every remote server it was instructed to mesh with (we give it a list of derp servers to connect to via a config file). The connection with the local server and its [`MeshClient`] is managed by the [`PacketForwarderHandler`].
+    ///
+    /// The [`MeshClient`] receives a message from the remote server every time that server connects to a new iroh node. This message includes the [`PublicKey`] of the node it has just connected to.
+    /// `test_run_mesh_client` tests the interactions between a remote server and a [`MeshClient`], using the [`PacketForwardHandler`] to inspect that we are getting the expected [`AddPacketForwarder`] messages from the remote.
+    /// to test this we:
+    /// - set up a remote server
+    /// - create a mesh client (by adding the same mesh key that the server has) and give it the url of the server
+    /// - create a `PacketForwardHandler` by hand (usually done by the local server as a bridge between the MeshClient and the local server)
+    /// - mesh the mesh client with the server
+    /// - ensure it's meshed when we received a `MeshClientEvent::Meshed` message
+    /// - create a normal client and connect it to the server
+    /// - test we receive an `AddPacketForwarder` message from the server. This translates to "Add me as a packet forwarder for the given key"
+    /// - close the normal client
+    /// - tet that we receive a `RemovePacketForwarder` message from the server
     #[tokio::test]
     async fn test_run_mesh_client() -> Result<()> {
         tracing_subscriber::registry()
@@ -1318,7 +1511,7 @@ mod tests {
         let url: Url = format!("http://{url}/derp").parse().unwrap();
 
         let mesh_client_secret_key = SecretKey::generate();
-        let mesh_client = ClientBuilder::new()
+        let (mesh_client, mesh_client_receiver) = ClientBuilder::new()
             .mesh_key(Some(mesh_key))
             .server_url(url.clone())
             .build(mesh_client_secret_key.clone())?;
@@ -1336,7 +1529,7 @@ mod tests {
         let mesh_task = tokio::spawn(
             async move {
                 mesh_client
-                    .run_mesh_client(packet_forwarder_handler, Some(send))
+                    .run_mesh_client(packet_forwarder_handler, Some(send), mesh_client_receiver)
                     .await
             }
             .instrument(info_span!("mesh-client")),
@@ -1346,51 +1539,42 @@ mod tests {
         assert!(matches!(msg, Some(MeshClientEvent::Meshed)));
 
         // create another client that will become a normal peer for the derp server
-        let normal_client = ClientBuilder::new()
-            .server_url(url)
-            .build(SecretKey::generate())?;
-        let normal_client_key = normal_client.public_key();
-        info!("normal client public key: {normal_client:?}");
-        let _ = normal_client.connect().await?;
+        let normal_client_key = {
+            let (normal_client, _normal_client_receiver) = ClientBuilder::new()
+                .server_url(url)
+                .build(SecretKey::generate())?;
+            let normal_client_key = normal_client.public_key();
+            info!("normal client public key: {normal_client_key:?}");
+            let _ = normal_client.connect().await?;
 
-        // wait for "add packet forwarder" message
-        match server_channel_r.recv().await {
-            Some(msg) => match msg {
+            // wait for "add packet forwarder" message
+            let msg = server_channel_r.recv().await.unwrap();
+            match msg {
                 ServerMessage::AddPacketForwarder { key, .. } => {
-                    debug!("received `ServerMessage::AddPacketForwarder` for {key:?}");
-                    assert!(key == mesh_client_key || key == normal_client_key);
+                    assert_eq!(key, normal_client_key);
                 }
-                _ => bail!("expected `ServerMessage::AddPacketForwarder`, got {msg:?}"),
-            },
-            None => bail!("no messages received off of the server_channel"),
-        }
+                _ => panic!("unexpected message {:?}", msg),
+            }
 
-        // close normal client
-        drop(normal_client);
+            // close normal client (by drop)
+            normal_client_key
+        };
+
+        info!("dropped normal client, waiting for packet forwarder to be removed");
 
         // wait for "remove packet forwarder" message
-        // potentially may get another `PeerPresent` message about ourselves, this is
-        // non deterministic
-        loop {
-            match server_channel_r.recv().await {
-                Some(msg) => match msg {
-                    ServerMessage::RemovePacketForwarder(key) => {
-                        debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
-                        break;
-                    }
-                    ServerMessage::AddPacketForwarder { key, .. } => {
-                        debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
-                        assert!(key == mesh_client_key || key == normal_client_key);
-                    }
-                    _ => bail!("expected `ServerMessage::RemovePacketForwarder`, got {msg:?}"),
-                },
-                None => bail!("no messages received off of the server_channel"),
+        match server_channel_r.recv().await.unwrap() {
+            ServerMessage::RemovePacketForwarder(key) => {
+                debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
+                assert_eq!(key, normal_client_key);
             }
+            _ => panic!("unexpected message {:?}", msg),
         }
 
         // clean up `run_mesh_client`
         mesh_task.abort();
         http_server.shutdown().await;
+
         Ok(())
     }
 }

@@ -9,7 +9,7 @@ use pkarr::url::Url;
 use pkarr::{Keypair, PkarrClient, SignedPacket};
 use simple_mdns::async_discovery::ServiceDiscovery;
 use simple_mdns::{InstanceInformation, NetworkScope};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use ttl_cache::TtlCache;
@@ -56,7 +56,7 @@ fn packet_to_peer_addr(peer_id: &PeerId, packet: &SignedPacket) -> PeerAddr {
         .resource_records("@")
         .filter_map(filter_txt)
         .filter_map(|addr| addr.parse().ok())
-        .collect::<HashSet<SocketAddr>>();
+        .collect::<BTreeSet<SocketAddr>>();
     let derp_region = packet
         .resource_records(DERP_REGION_KEY)
         .find_map(filter_u16);
@@ -142,7 +142,10 @@ impl iroh_net::magicsock::Discovery for PkarrRelayDiscovery {
         });
     }
 
-    fn resolve<'a>(&'a self, peer_id: &'a PeerId) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
+    fn resolve<'a>(
+        &'a self,
+        peer_id: &'a PeerId,
+    ) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
         async move {
             println!("resolving {} via {}", peer_id, self.relay);
             let pkarr_public_key = pkarr::PublicKey::try_from(*peer_id.as_bytes()).unwrap();
@@ -150,7 +153,8 @@ impl iroh_net::magicsock::Discovery for PkarrRelayDiscovery {
             let addr = packet_to_peer_addr(&peer_id, &packet);
             println!("resolved: {} to {:?}", peer_id, addr);
             Ok(addr.info)
-        }.boxed()
+        }
+        .boxed()
     }
 }
 
@@ -168,11 +172,15 @@ impl HardcodedRegionDiscovery {
 impl iroh_net::magicsock::Discovery for HardcodedRegionDiscovery {
     fn publish(&self, info: &AddrInfo) {}
 
-    fn resolve<'a>(&'a self, peer_id: &'a PeerId) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
-        futures::future::ok(AddrInfo { 
+    fn resolve<'a>(
+        &'a self,
+        peer_id: &'a PeerId,
+    ) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
+        futures::future::ok(AddrInfo {
             derp_region: Some(self.region),
             direct_addresses: Default::default(),
-        }).boxed()
+        })
+        .boxed()
     }
 }
 

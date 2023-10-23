@@ -27,6 +27,7 @@ pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 pub(super) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
 pub(super) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
+pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
@@ -207,7 +208,6 @@ pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 pub(crate) struct DerpCodec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)] // TODO: reevaluate
 pub(crate) enum Frame {
     ServerKey {
         key: PublicKey,

@@ -55,6 +55,11 @@ impl Timer {
         self.s.send(d).await.ok();
     }
 
+    /// Abort the timer.
+    pub fn abort(self) {
+        self.t.abort();
+    }
+
     /// Returns true if not yet expired.
     pub async fn stop(self) -> bool {
         self.t.abort();

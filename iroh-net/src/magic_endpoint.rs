@@ -1,6 +1,6 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use derive_more::Debug;
@@ -82,7 +82,7 @@ pub struct AddrInfo {
     /// The peer's home DERP region.
     pub derp_region: Option<u16>,
     /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: HashSet<SocketAddr>,
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl AddrInfo {
@@ -319,8 +319,16 @@ impl MagicEndpoint {
         let msock = magicsock::MagicSock::new(msock_opts).await?;
         trace!("created magicsock");
 
+        let mut endpoint_config = quinn::EndpointConfig::default();
+        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // the packet if grease_quic_bit is set to false.
+        endpoint_config.grease_quic_bit(false);
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
+            endpoint_config,
             server_config,
             msock.clone(),
             Arc::new(quinn::TokioRuntime),
@@ -348,6 +356,11 @@ impl MagicEndpoint {
     /// Get the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
         &self.secret_key
+    }
+
+    /// Optional reference to the discovery mechanism.
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.msock.discovery()
     }
 
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
@@ -521,8 +534,9 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
+    // TODO: Make sync
     pub async fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
-        self.msock.add_peer_addr(peer_addr).await?;
+        self.msock.add_peer_addr(peer_addr);
         Ok(())
     }
 
@@ -704,10 +718,10 @@ mod tests {
     #[tokio::test]
     async fn save_load_peers() {
         let _guard = iroh_test::logging::setup();
+
         let secret_key = SecretKey::generate();
-        let tempdir = tempfile::tempdir().unwrap();
-        let path: PathBuf = tempdir.path().into();
-        let path = path.join("peers");
+        let root = testdir::testdir!();
+        let path = root.join("peers");
 
         /// Create an endpoint for the test.
         async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> MagicEndpoint {
@@ -730,22 +744,24 @@ mod tests {
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8758u16).into();
         let peer_addr = PeerAddr::new(peer_id).with_direct_addresses([direct_addr]);
 
+        info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add adressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
         endpoint.add_peer_addr(peer_addr).await.unwrap();
 
+        info!("closing endpoint");
         // close the endpoint and restart it
         endpoint.close(0u32.into(), b"done").await.unwrap();
 
+        info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, path).await;
         let ConnectionInfo { mut addrs, .. } =
             endpoint.connection_info(peer_id).await.unwrap().unwrap();
-        let conn_addr = addrs.pop().unwrap().0;
+        let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
-        drop(tempdir);
     }
 
     // #[tokio::test]

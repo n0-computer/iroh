@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh-sync"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.71"
+rust-version = "1.72"
 
 [dependencies]
 # proto dependencies (required)
@@ -24,7 +24,7 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
-tracing = "0.1.37"
+tracing = "0.1"
 iroh-metrics = { path = "../iroh-metrics", version = "0.7.0" }
 
 # net dependencies (optional)

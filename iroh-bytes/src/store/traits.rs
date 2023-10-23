@@ -332,13 +332,13 @@ async fn gc_mark_task<'a>(
                 warn!("gc: {} creating data reader failed", hash);
                 continue;
             };
-            let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
+            let Ok((mut stream, count)) = parse_hash_seq(reader).await else {
                 warn!("gc: {} parse failed", hash);
                 continue;
             };
             info!("parsed collection {} {:?}", hash, count);
             loop {
-                let item = match iter.next().await {
+                let item = match stream.next().await {
                     Ok(Some(item)) => item,
                     Ok(None) => break,
                     Err(_err) => {
