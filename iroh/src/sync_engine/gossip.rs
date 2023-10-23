@@ -182,6 +182,14 @@ impl GossipActor {
                             .peers_have(hash, vec![(msg.delivered_from, PeerRole::Provider).into()])
                             .await;
                     }
+                    Op::SyncReport(report) => {
+                        self.to_sync_actor
+                            .send(ToLiveActor::IncomingSyncReport {
+                                from: msg.delivered_from,
+                                report,
+                            })
+                            .await?;
+                    }
                 }
             }
             // A new neighbor appeared in the gossip swarm. Try to sync with it directly.
