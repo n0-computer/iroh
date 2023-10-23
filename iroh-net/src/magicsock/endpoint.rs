@@ -146,23 +146,24 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub fn info(&self, now: Instant) -> EndpointInfo {
-        // If the best address is valid or outdated, report that the address is in use.
-        // Actually, if the best_addr is outdated, we are using *both* the direct address and derp
-        // in parallel. We don't have a way to report that in [`EndpointInfo`] at the moment though.
-        let direct = match self.best_addr.state(now) {
-            best_addr::State::Valid(addr) | best_addr::State::Outdated(addr) => Some(addr),
-            best_addr::State::Empty => None,
-        };
-        let (conn_type, latency) = if let Some(addr_info) = direct {
-            (
-                ConnectionType::Direct(addr_info.addr),
-                Some(addr_info.latency),
-            )
-        } else if let Some((region_id, relay_state)) = self.derp_region.as_ref() {
-            let latency = relay_state.recent_pong().map(|pong| pong.latency);
-            (ConnectionType::Relay(*region_id), latency)
-        } else {
-            (ConnectionType::None, None)
+        use best_addr::State::*;
+        // Report our active connection. This replicates the logic of [`Endpoint::addr_for_send`]
+        // without chosing a random candidate address if no best_addr is set.
+        let (conn_type, latency) = match (self.best_addr.state(now), self.derp_region.as_ref()) {
+            (Valid(addr), _) | (Outdated(addr), None) => {
+                (ConnectionType::Direct(addr.addr), Some(addr.latency))
+            }
+            (Outdated(addr), Some((region, relay_state))) => {
+                let latency = relay_state
+                    .latency()
+                    .map(|l| l.min(addr.latency))
+                    .unwrap_or(addr.latency);
+                (ConnectionType::Mixed(addr.addr, *region), Some(latency))
+            }
+            (Empty, Some((region, relay_state))) => {
+                (ConnectionType::Relay(*region), relay_state.latency())
+            }
+            (Empty, None) => (ConnectionType::None, None),
         };
         let addrs = self
             .direct_addr_state
@@ -1454,6 +1455,12 @@ pub enum ConnectionType {
     /// Relay connection over DERP
     #[display("relay")]
     Relay(u16),
+    /// Both a UDP and a DERP connection are used.
+    ///
+    /// This is the case if we do have a UDP address, but are missing a recent confirmation that
+    /// the addrss works.
+    #[display("relay")]
+    Mixed(SocketAddr, u16),
     /// We have no verified connection to this PublicKey
     #[display("none")]
     None,
@@ -1565,6 +1572,11 @@ impl EndpointState {
     /// Returns the most recent pong if available.
     fn recent_pong(&self) -> Option<&PongReply> {
         self.recent_pong.as_ref()
+    }
+
+    /// Returns the latency from the most recent pong, if available.
+    fn latency(&self) -> Option<Duration> {
+        self.recent_pong.as_ref().map(|p| p.latency)
     }
 
     fn needs_ping(&self, now: &Instant) -> bool {
@@ -1815,8 +1827,8 @@ mod tests {
                     last_control: Some((elapsed, ControlMsg::Pong)),
                     last_payload: None,
                 }]),
-                conn_type: ConnectionType::Direct(d_socket_addr),
-                latency: Some(Duration::from_millis(80)),
+                conn_type: ConnectionType::Mixed(d_socket_addr, 0),
+                latency: Some(Duration::from_millis(50)),
                 last_used: Some(elapsed),
             },
         ]);
