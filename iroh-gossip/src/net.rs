@@ -21,8 +21,9 @@ pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
-/// Maximum message size is limited to 1024 bytes.
-pub const MAX_MESSAGE_SIZE: usize = 1024;
+/// Maximum message size is limited currently. The limit is more-or-less arbitrary.
+// TODO: Make the limit configurable.
+pub const MAX_MESSAGE_SIZE: usize = 4096;
 
 /// Channel capacity for all subscription broadcast channels (single)
 const SUBSCRIBE_ALL_CAP: usize = 2048;

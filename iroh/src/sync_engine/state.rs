@@ -5,7 +5,7 @@ use iroh_sync::{
     NamespaceId,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::{Instant, SystemTime};
 use tracing::{debug, warn};
 
@@ -47,11 +47,11 @@ impl Default for SyncState {
 /// Contains an entry for each active (syncing) namespace, and in there an entry for each peer we
 /// synced with.
 #[derive(Default)]
-pub struct NamespaceStates(HashMap<NamespaceId, NamespaceState>);
+pub struct NamespaceStates(BTreeMap<NamespaceId, NamespaceState>);
 
 #[derive(Default)]
 struct NamespaceState {
-    peers: HashMap<PublicKey, PeerState>,
+    peers: BTreeMap<PublicKey, PeerState>,
 }
 
 impl NamespaceStates {

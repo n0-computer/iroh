@@ -43,7 +43,8 @@ pub enum Op {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncReport {
     namespace: NamespaceId,
-    heads: AuthorHeads,
+    /// Encoded [`AuthorHeads`]
+    heads: Vec<u8>,
 }
 
 /// Messages to the sync actor
@@ -513,12 +514,18 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 // broadcast a sync report to our neighbors, but only if we received new entries.
                 if details.outcome.num_recv > 0 {
                     info!("broadcast sync report to neighbors");
-                    let report = SyncReport {
-                        namespace,
-                        heads: details.outcome.heads_received.clone(),
-                    };
-                    self.broadcast_neighbors(namespace, &Op::SyncReport(report))
-                        .await;
+                    match details
+                        .outcome
+                        .heads_received
+                        .encode(Some(iroh_gossip::net::MAX_MESSAGE_SIZE))
+                    {
+                        Err(err) => warn!(?err, "Failed to encode author heads for sync report"),
+                        Ok(heads) => {
+                            let report = SyncReport { namespace, heads };
+                            self.broadcast_neighbors(namespace, &Op::SyncReport(report))
+                                .await;
+                        }
+                    }
                 }
             }
         };
@@ -581,11 +588,14 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         if !self.state.is_syncing(&namespace) {
             return;
         }
-        let has_news = match self
-            .sync
-            .has_news_for_us(report.namespace, report.heads)
-            .await
-        {
+        let heads = match AuthorHeads::decode(&report.heads) {
+            Ok(heads) => heads,
+            Err(err) => {
+                warn!(?err, "Failed to decode AuthorHeads");
+                return;
+            }
+        };
+        let has_news = match self.sync.has_news_for_us(report.namespace, heads).await {
             Ok(has_news) => has_news,
             Err(err) => {
                 warn!("sync actor error: {err:?}");
