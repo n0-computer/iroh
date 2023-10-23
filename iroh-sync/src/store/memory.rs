@@ -123,12 +123,14 @@ impl super::Store for Store {
         view: View,
     ) -> Result<Self::GetIter<'_>> {
         let records = self.replica_records.read();
+        let index = usize::try_from(query.range.start())?;
+
         Ok(RangeIterator {
             records,
             namespace,
             query,
             view,
-            index: 0,
+            index,
         })
     }
 
@@ -241,41 +243,51 @@ impl<'a> Iterator for RangeIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
-        /////////////////////////////////////////////////////////////////////////////
-        // loop {                                                                  //
-        //     let records = self.records.get(&self.filter.namespace())?;          //
-        //     let entry = match self.filter {                                     //
-        //         GetFilter::All { .. } => records.iter().nth(self.index)?,       //
-        //         GetFilter::Key { ref key, .. } => records                       //
-        //             .iter()                                                     //
-        //             .filter(|((_, k), _)| k == key)                             //
-        //             .nth(self.index)?,                                          //
-        //         GetFilter::Prefix { ref prefix, .. } => records                 //
-        //             .iter()                                                     //
-        //             .filter(|((_, k), _)| k.starts_with(prefix))                //
-        //             .nth(self.index)?,                                          //
-        //         GetFilter::Author { ref author, .. } => records                 //
-        //             .iter()                                                     //
-        //             .filter(|((a, _), _)| a == author)                          //
-        //             .nth(self.index)?,                                          //
-        //         GetFilter::AuthorAndPrefix {                                    //
-        //             ref prefix,                                                 //
-        //             ref author,                                                 //
-        //             ..                                                          //
-        //         } => records                                                    //
-        //             .iter()                                                     //
-        //             .filter(|((a, k), _)| a == author && k.starts_with(prefix)) //
-        //             .nth(self.index)?,                                          //
-        //     };                                                                  //
-        //     self.index += 1;                                                    //
-        //     if entry.1.is_empty() {                                             //
-        //         continue;                                                       //
-        //     } else {                                                            //
-        //         return Some(Ok(entry.1.clone()));                               //
-        //     }                                                                   //
-        // }                                                                       //
-        /////////////////////////////////////////////////////////////////////////////
+        loop {
+            if let Some(end) = self.query.range.end() {
+                if self.index as u64 >= end {
+                    return None;
+                }
+            }
+
+            let records = self.records.get(&self.namespace)?;
+            let author_check = match (&self.query.author, &self.view) {
+                (AuthorMatcher::Any, View::LatestByKeyAndAuthor) => None,
+                (AuthorMatcher::Any, View::LatestByKey) => None,
+                (AuthorMatcher::Exact(author), View::LatestByKeyAndAuthor) => Some(author), // TODO: what to do here?
+                (AuthorMatcher::Exact(author), View::LatestByKey) => Some(author),
+            };
+
+            let offset = self.index;
+            let entry = match self.query.key {
+                KeyMatcher::Any => records
+                    .iter()
+                    .filter(|((a, k), _)| author_check.map(|author| author == a).unwrap_or(true))
+                    .skip(offset)
+                    .next(),
+                KeyMatcher::Exact(ref key) => records
+                    .iter()
+                    .filter(|((a, k), _)| {
+                        k == key && author_check.map(|author| author == a).unwrap_or(true)
+                    })
+                    .skip(offset)
+                    .next(),
+                KeyMatcher::Prefix(ref prefix) => records
+                    .iter()
+                    .filter(|((a, k), _)| {
+                        k.starts_with(prefix)
+                            && author_check.map(|author| author == a).unwrap_or(true)
+                    })
+                    .skip(offset)
+                    .next(),
+            }?;
+            self.index += 1;
+            if entry.1.is_empty() {
+                continue;
+            } else {
+                return Some(Ok(entry.1.clone()));
+            }
+        }
     }
 }
 

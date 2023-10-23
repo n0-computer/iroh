@@ -225,6 +225,32 @@ impl Default for Range {
     }
 }
 
+impl Range {
+    /// The start of the range.
+    pub fn start(&self) -> u64 {
+        match self {
+            Self::All => 0,
+            Self::From(start) => *start,
+            Self::ToInclusive(_) => 0,
+            Self::Inclusive(start, _) => *start,
+            Self::To(_) => 0,
+            Self::Exclusive(start, _) => *start,
+        }
+    }
+
+    /// The optional end of the range, exclusive.
+    pub fn end(&self) -> Option<u64> {
+        match self {
+            Self::All => None,
+            Self::From(start) => None,
+            Self::ToInclusive(end) => end.checked_add(1),
+            Self::Inclusive(_, end) => end.checked_add(1),
+            Self::To(end) => Some(*end),
+            Self::Exclusive(_, end) => Some(*end),
+        }
+    }
+}
+
 impl From<std::ops::Range<u64>> for Range {
     fn from(value: std::ops::Range<u64>) -> Self {
         Range::Exclusive(value.start, value.end)
