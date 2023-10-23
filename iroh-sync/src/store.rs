@@ -242,7 +242,7 @@ impl Range {
     pub fn end(&self) -> Option<u64> {
         match self {
             Self::All => None,
-            Self::From(start) => None,
+            Self::From(_) => None,
             Self::ToInclusive(end) => end.checked_add(1),
             Self::Inclusive(_, end) => end.checked_add(1),
             Self::To(end) => Some(*end),

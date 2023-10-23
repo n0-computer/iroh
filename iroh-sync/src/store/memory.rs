@@ -262,7 +262,7 @@ impl<'a> Iterator for RangeIterator<'a> {
             let entry = match self.query.key {
                 KeyMatcher::Any => records
                     .iter()
-                    .filter(|((a, k), _)| author_check.map(|author| author == a).unwrap_or(true))
+                    .filter(|((a, _), _)| author_check.map(|author| author == a).unwrap_or(true))
                     .skip(offset)
                     .next(),
                 KeyMatcher::Exact(ref key) => records
