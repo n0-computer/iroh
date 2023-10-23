@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{bail, Context as _};
+use anyhow::{bail, ensure, Context as _};
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
@@ -49,7 +49,7 @@ impl RebindingUdpConn {
         }
 
         let sock = bind(Some(&self.io), port, network, cur_port_fate).await?;
-        self.io = Arc::new(tokio::net::UdpSocket::from_std(sock)?);
+        self.io = Arc::new(sock);
         self.state = Default::default();
 
         Ok(())
@@ -58,7 +58,7 @@ impl RebindingUdpConn {
     pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
         let sock = bind(None, port, network, CurrentPortFate::Keep).await?;
         Ok(Self {
-            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
+            io: Arc::new(sock),
             state: Default::default(),
         })
     }
@@ -138,7 +138,7 @@ async fn bind(
     port: u16,
     network: Network,
     cur_port_fate: CurrentPortFate,
-) -> anyhow::Result<std::net::UdpSocket> {
+) -> anyhow::Result<tokio::net::UdpSocket> {
     debug!(
         "bind_socket: network={:?} cur_port_fate={:?}",
         network, cur_port_fate
@@ -173,6 +173,15 @@ async fn bind(
         match listen_packet(network, *port).await {
             Ok(pconn) => {
                 let local_addr = pconn.local_addr().context("UDP socket not bound")?;
+                if *port != 0 {
+                    ensure!(
+                        local_addr.port() == *port,
+                        "wrong port bound: {:?}: wanted: {} got {}",
+                        network,
+                        port,
+                        local_addr.port()
+                    );
+                }
                 debug!("bind_socket: successfully bound {network:?} {local_addr}");
                 return Ok(pconn);
             }
@@ -191,7 +200,7 @@ async fn bind(
 }
 
 /// Opens a packet listener.
-async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net::UdpSocket> {
+async fn listen_packet(network: Network, port: u16) -> std::io::Result<tokio::net::UdpSocket> {
     let addr = SocketAddr::new(network.default_addr(), port);
     let socket = socket2::Socket::new(
         network.into(),
@@ -211,17 +220,19 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net:
             SOCKET_BUFFER_SIZE, err
         );
     }
-    socket.set_nonblocking(true)?; // UdpSocketState::configure also does this
 
     if network == Network::Ipv6 {
         // Avoid dualstack
         socket.set_only_v6(true)?;
     }
 
+    quinn_udp::UdpSocketState::configure((&socket).into())?;
     socket.bind(&addr.into())?;
     let socket: std::net::UdpSocket = socket.into();
+    // UdpSocketState::configure also does this
+    socket.set_nonblocking(true)?;
 
-    quinn_udp::UdpSocketState::configure((&socket).into())?;
+    let socket = tokio::net::UdpSocket::from_std(socket)?;
 
     Ok(socket)
 }

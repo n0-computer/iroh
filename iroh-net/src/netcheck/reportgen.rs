@@ -245,6 +245,7 @@ impl Actor {
                 debug!("all tasks done");
                 break;
             }
+
             tokio::select! {
                 _ = &mut total_timer => {
                     bail!("report timed out");
@@ -601,45 +602,53 @@ impl Actor {
                 let probe = probe.clone();
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();
+                let probe_name = probe.to_string();
 
-                set.spawn(run_probe(
-                    reportstate,
-                    stun_sock4,
-                    stun_sock6,
-                    derp_node,
-                    probe,
-                    netcheck,
-                    pinger,
-                ));
+                set.spawn(
+                    run_probe(
+                        reportstate,
+                        stun_sock4,
+                        stun_sock6,
+                        derp_node,
+                        probe,
+                        netcheck,
+                        pinger,
+                    )
+                    .instrument(debug_span!("probe", probe = probe_name)),
+                );
             }
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
-            probes.spawn(async move {
-                // Hack because ProbeSet is not it's own type yet.
-                let mut probe_proto = None;
-                while let Some(res) = set.join_next().await {
-                    match res {
-                        Ok(Ok(report)) => return Ok(report),
-                        Ok(Err(ProbeError::Error(err, probe))) => {
-                            probe_proto = Some(probe.proto());
-                            warn!(?probe, "probe failed: {:#}", err);
-                            continue;
-                        }
-                        Ok(Err(ProbeError::AbortSet(err, probe))) => {
-                            debug!(?probe, "probe set aborted: {:#}", err);
-                            set.abort_all();
-                            return Err(err);
-                        }
-                        Err(err) => {
-                            warn!("fatal probe set error, aborting: {:#}", err);
-                            continue;
+            probes.spawn(
+                async move {
+                    // Hack because ProbeSet is not it's own type yet.
+                    let mut probe_proto = None;
+                    while let Some(res) = set.join_next().await {
+                        debug!("received probe result: {:?}", res);
+                        match res {
+                            Ok(Ok(report)) => return Ok(report),
+                            Ok(Err(ProbeError::Error(err, probe))) => {
+                                probe_proto = Some(probe.proto());
+                                warn!(?probe, "probe failed: {:#}", err);
+                                continue;
+                            }
+                            Ok(Err(ProbeError::AbortSet(err, probe))) => {
+                                debug!(?probe, "probe set aborted: {:#}", err);
+                                set.abort_all();
+                                return Err(err);
+                            }
+                            Err(err) => {
+                                warn!("fatal probe set error, aborting: {:#}", err);
+                                continue;
+                            }
                         }
                     }
+                    warn!(?probe_proto, "no successfull probes in ProbeSet");
+                    Err(anyhow!("All probes in ProbeSet failed"))
                 }
-                warn!(?probe_proto, "no successfull probes in ProbeSet");
-                Err(anyhow!("All probes in ProbeSet failed"))
-            });
+                .instrument(debug_span!("probe-set", set = probe_set.name())),
+            );
         }
         self.outstanding_tasks.probes = true;
 
@@ -714,7 +723,7 @@ enum ProbeError {
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
 #[allow(clippy::too_many_arguments)]
-#[instrument(level = "debug", skip_all, fields(probe = %probe))]
+#[instrument(level = "debug", skip_all)]
 async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
@@ -785,7 +794,7 @@ async fn run_probe(
             if let Some(ref sock) = stun_sock4 {
                 let n = sock.send_to(&req, derp_addr).await;
                 inc!(NetcheckMetrics, stun_packets_sent_ipv4);
-                debug!(%derp_addr, send_res=?n, %txid, "sending probe StunIpv4");
+                debug!(%derp_addr, send_res=?n, %txid, "sent probe StunIpv4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;

@@ -160,6 +160,10 @@ impl ProbeSet {
     fn is_empty(&self) -> bool {
         self.probes.is_empty()
     }
+
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'a> IntoIterator for &'a ProbeSet {
