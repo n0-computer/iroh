@@ -13,7 +13,6 @@ use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::util::{BlobFormat, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, Hash};
-use iroh_gossip::proto::util::base32;
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, PeerAddr},
@@ -503,35 +502,46 @@ pub struct DocTicket {
     /// a list of peers
     pub peers: Vec<PeerAddr>,
 }
+
 impl DocTicket {
+    const OPT_PREFIX: &'static str = "doc:";
+
     /// Create a new doc ticket
     pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
         Self { key, peers }
     }
+
     /// Serialize the ticket to a byte array.
-    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let bytes = postcard::to_stdvec(&self)?;
-        Ok(bytes)
+    pub fn to_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
     }
+
     /// Parse ticket from a byte array.
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let slf = postcard::from_bytes(bytes)?;
         Ok(slf)
     }
 }
+
 impl FromStr for DocTicket {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_vec(s)?)
+        let s = s
+            .strip_prefix(Self::OPT_PREFIX)
+            .unwrap_or(s)
+            .to_ascii_uppercase();
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.as_bytes())?;
+        Self::from_bytes(&bytes)
     }
 }
+
 impl fmt::Display for DocTicket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            base32::fmt(self.to_bytes().expect("failed to serialize"))
-        )
+        let mut out = Self::OPT_PREFIX.to_string();
+        let bytes = self.to_bytes();
+        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
+        out.make_ascii_lowercase();
+        write!(f, "{out}",)
     }
 }
 

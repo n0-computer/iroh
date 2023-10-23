@@ -65,6 +65,7 @@ pub struct Ticket {
 }
 
 impl Ticket {
+    const OPT_PREFIX: &'static str = "blob:";
     /// Creates a new ticket.
     pub fn new(
         peer: PeerAddr,
@@ -154,10 +155,11 @@ impl Ticket {
 /// Serializes to base32.
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = self.to_bytes();
-        let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
+        let bytes = self.to_bytes();
+        let mut out = Self::OPT_PREFIX.to_string();
+        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
+        out.make_ascii_lowercase();
+        write!(f, "{out}",)
     }
 }
 
@@ -166,9 +168,12 @@ impl FromStr for Ticket {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let slf = Self::from_bytes(&bytes)?;
-        Ok(slf)
+        let s = s
+            .strip_prefix(Self::OPT_PREFIX)
+            .unwrap_or(s)
+            .to_ascii_uppercase();
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.as_bytes())?;
+        Self::from_bytes(&bytes)
     }
 }
 
