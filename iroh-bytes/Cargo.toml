@@ -35,7 +35,6 @@ self_cell = "1.0.1"
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
-subtle = "2.4"
 thiserror = "1"
 tokio = { version = "1" }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
