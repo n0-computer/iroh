@@ -41,5 +41,6 @@ pub mod store;
 pub mod sync;
 
 pub use self::heads::*;
+#[allow(unused_imports)]
 pub use self::keys::*;
 pub use self::sync::*;
