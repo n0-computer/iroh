@@ -38,9 +38,12 @@ pub enum Error {
     /// This looks like a ticket, but postcard deserialization failed.
     #[display("deserialization failed: {_0}")]
     Postcard(#[from] postcard::Error),
+    /// This looks like a ticket, but basse32 decoding failed.
+    #[display("decoding failed: {_0}")]
+    Encoding(#[from] data_encoding::DecodeError),
 }
 
-trait IrohTicket<'de>: serde::Serialize + serde::Deserialize<'de> {
+trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Kinf of Iroh ticket.
     const KIND: Kind;
 
@@ -50,7 +53,7 @@ trait IrohTicket<'de>: serde::Serialize + serde::Deserialize<'de> {
     }
 
     /// Deserialize from postcard bytes.
-    fn from_bytes(bytes: &'de [u8]) -> Result<Self, postcard::Error> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
         postcard::from_bytes(bytes)
     }
 
@@ -64,14 +67,15 @@ trait IrohTicket<'de>: serde::Serialize + serde::Deserialize<'de> {
     }
 
     /// Deserialize from a string.
-    fn deserialize(str: &'de str) -> Result<Self, Error> {
+    fn deserialize(str: &str) -> Result<Self, Error> {
         let expected = Self::KIND;
         let (prefix, bytes) = str.split_once(':').ok_or(Error::MissingKind { expected })?;
         let found: Kind = prefix.parse()?;
         if expected != found {
             return Err(Error::WrongKind { expected, found });
         }
-        let ticket = Self::from_bytes(bytes.as_bytes())?;
+        let bytes = data_encoding::BASE32_NOPAD.decode(bytes.as_bytes())?;
+        let ticket = Self::from_bytes(&bytes)?;
         Ok(ticket)
     }
 }
