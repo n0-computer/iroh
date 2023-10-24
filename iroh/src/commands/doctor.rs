@@ -266,7 +266,7 @@ async fn report(
     };
     println!("getting report using derp map {dm:#?}");
 
-    let r = client.get_report(dm, None, None).await?;
+    let r = client.get_report("doctor", dm, None, None).await?;
     println!("{r:#?}");
     Ok(())
 }

@@ -200,7 +200,7 @@ async fn bind(
 }
 
 /// Opens a packet listener.
-async fn listen_packet(network: Network, port: u16) -> std::io::Result<tokio::net::UdpSocket> {
+async fn listen_packet(network: Network, port: u16) -> anyhow::Result<tokio::net::UdpSocket> {
     let addr = SocketAddr::new(network.default_addr(), port);
     let socket = socket2::Socket::new(
         network.into(),
@@ -227,12 +227,28 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<tokio::ne
     }
 
     quinn_udp::UdpSocketState::configure((&socket).into())?;
+    socket.set_nonblocking(false)?;
+    debug!("bind:{:?}", addr);
     socket.bind(&addr.into())?;
     let socket: std::net::UdpSocket = socket.into();
     // UdpSocketState::configure also does this
     socket.set_nonblocking(true)?;
 
     let socket = tokio::net::UdpSocket::from_std(socket)?;
+    let addr = socket.local_addr()?;
+    let h = tokio::task::spawn(async move {
+        let test_socket = tokio::net::UdpSocket::bind((network.default_addr(), 0)).await?;
+        debug!("send to {:?}:{}", network.local_addr(), addr.port());
+        test_socket
+            .send_to(&[1u8; 8][..], (network.local_addr(), addr.port()))
+            .await?;
+        anyhow::Ok(())
+    });
+    debug!("waiting for socket recv");
+    let mut buf = [0u8; 8];
+    socket.recv(&mut buf[..]).await?;
+    ensure!(buf == [1u8; 8]);
+    h.await??;
 
     Ok(socket)
 }

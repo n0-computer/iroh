@@ -244,10 +244,17 @@ impl Client {
     /// may not be as reliable.
     pub async fn get_report(
         &mut self,
+        reason: &'static str,
         dm: DerpMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
+        warn!(
+            "get_report: {}: {:?} - {:?}",
+            reason,
+            stun_conn4.as_ref().map(|s| s.local_addr()),
+            stun_conn6.as_ref().map(|s| s.local_addr())
+        );
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
@@ -860,7 +867,7 @@ mod tests {
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             println!("--round {}", i);
-            let r = client.get_report(dm.clone(), None, None).await?;
+            let r = client.get_report("check", dm.clone(), None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -925,7 +932,7 @@ mod tests {
         dbg!(&dm);
 
         let r = client
-            .get_report(dm, None, None)
+            .get_report("check", dm, None, None)
             .await
             .context("failed to get netcheck report")?;
 
@@ -964,7 +971,7 @@ mod tests {
 
         let mut client = Client::new(None).await?;
 
-        let r = client.get_report(dm, None, None).await?;
+        let r = client.get_report("test", dm, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
@@ -1219,7 +1226,7 @@ mod tests {
             )
         };
 
-        let r = client.get_report(dm, Some(sock), None).await?;
+        let r = client.get_report("check", dm, Some(sock), None).await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 

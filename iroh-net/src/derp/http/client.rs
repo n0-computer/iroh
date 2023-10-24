@@ -51,8 +51,8 @@ pub enum ClientError {
     #[error("error receiving a packet: {0:?}")]
     Receive(anyhow::Error),
     /// There was a connection timeout error
-    #[error("connect timeout")]
-    ConnectTimeout,
+    #[error("connect timeout to {0}")]
+    ConnectTimeout(String),
     /// No derp nodes are available for the given region
     #[error("DERP region is not available")]
     DerpRegionNotAvail,
@@ -63,8 +63,13 @@ pub enum ClientError {
     #[error("no derp nodes found for {0}, only are stun_only nodes")]
     StunOnlyNodesFound(String),
     /// There was an error dialing
-    #[error("dial error")]
-    DialIO(#[from] std::io::Error),
+    #[error("dial error to {dst}: {err:?}")]
+    DialIO {
+        /// The IO error.
+        err: std::io::Error,
+        /// The destination that was dialed.
+        dst: String,
+    },
     /// There was an error from the task doing the dialing
     #[error("dial error")]
     DialTask(#[from] tokio::task::JoinError),
@@ -682,7 +687,7 @@ impl Actor {
                 let (derp_client, receiver) =
                     tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
                         .await
-                        .map_err(|_| ClientError::ConnectTimeout)??;
+                        .map_err(|_| ClientError::ConnectTimeout("".into()))??;
 
                 self.derp_client = Some((derp_client, receiver));
                 self.next_conn();
@@ -734,7 +739,14 @@ impl Actor {
             let hostname = self
                 .tls_servername(derp_node.as_deref())
                 .ok_or_else(|| ClientError::InvalidUrl("no tls servername".into()))?;
-            let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
+            let tls_stream = self
+                .tls_connector
+                .connect(hostname.clone(), tcp_stream)
+                .await
+                .map_err(|err| ClientError::DialIO {
+                    err,
+                    dst: format!("{:?}", hostname),
+                })?;
             debug!("tls_connector connect success");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tls_stream)
@@ -1044,7 +1056,12 @@ impl Actor {
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
-        let tcp_stream = TcpStream::connect(addr).await?;
+        let tcp_stream = TcpStream::connect(addr)
+            .await
+            .map_err(|err| ClientError::DialIO {
+                err,
+                dst: addr.to_string(),
+            })?;
         Ok(tcp_stream)
     }
 
@@ -1249,14 +1266,16 @@ async fn start_dial(
         };
     let dst = format!("{host}:{port}");
     debug!("dialing {}", dst);
+    let dst2 = dst.clone();
     let tcp_stream =
         tokio::time::timeout(
             DIAL_NODE_TIMEOUT,
-            async move { TcpStream::connect(dst).await },
+            async move { TcpStream::connect(dst2).await },
         )
         .await
-        .map_err(|_| ClientError::ConnectTimeout)?
-        .map_err(ClientError::DialIO)?;
+        .map_err(|_| ClientError::ConnectTimeout(dst.clone()))?
+        .map_err(|err| ClientError::DialIO { err, dst })?;
+
     // TODO: ipv6 vs ipv4 specific connection
 
     trace!("dial done: {:?}", dst_primary);

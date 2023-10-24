@@ -113,7 +113,6 @@ impl Network {
         }
     }
 
-    #[cfg(test)]
     fn local_addr(&self) -> IpAddr {
         match self {
             Self::Ipv4 => Ipv4Addr::LOCALHOST.into(),
@@ -1100,8 +1099,6 @@ impl MagicSock {
     }
 
     async fn with_name(me: String, opts: Options) -> Result<Self> {
-        let port_mapper = portmapper::Client::default().await;
-
         let Options {
             port,
             secret_key,
@@ -1131,7 +1128,9 @@ impl MagicSock {
 
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
+        warn!("binding to port: {}", port);
 
+        let port_mapper = portmapper::Client::default().await;
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
         match port.try_into() {
             Ok(non_zero_port) => {
@@ -1895,7 +1894,7 @@ impl Actor {
             self.rebind_all().await;
         }
 
-        match self.determine_endpoints().await {
+        match self.determine_endpoints(why).await {
             Ok(endpoints) => {
                 if self.set_endpoints(&endpoints).await {
                     log_endpoint_change(&endpoints);
@@ -1935,10 +1934,10 @@ impl Actor {
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
     #[instrument(level = "debug", skip_all)]
-    async fn determine_endpoints(&mut self) -> Result<Vec<config::Endpoint>> {
+    async fn determine_endpoints(&mut self, why: &'static str) -> Result<Vec<config::Endpoint>> {
         self.port_mapper.procure_mapping();
         let portmap_watcher = self.port_mapper.watch_external_address();
-        let nr = self.update_net_info().await.context("update_net_info")?;
+        let nr = self.update_net_info(why).await.context("update_net_info")?;
 
         // endpoint -> how it was found
         let mut already = HashMap::new();
@@ -2124,7 +2123,7 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
+    async fn update_net_info(&mut self, why: &'static str) -> Result<Arc<netcheck::Report>> {
         if self.inner.derp_map.is_empty() {
             debug!("skipping netcheck, empty DerpMap");
             return Ok(Default::default());
@@ -2137,7 +2136,7 @@ impl Actor {
 
         debug!("requesting netcheck report");
         let report = time::timeout(Duration::from_secs(10), async move {
-            net_checker.get_report(derp_map, pconn4, pconn6).await
+            net_checker.get_report(why, derp_map, pconn4, pconn6).await
         })
         .await??;
         self.inner
@@ -2264,10 +2263,13 @@ impl Actor {
         }
 
         if endpoint_sets_equal(endpoints, &self.last_endpoints) {
+            debug!("no endpoints change");
             return false;
         }
         self.last_endpoints.clear();
         self.last_endpoints.extend_from_slice(endpoints);
+
+        debug!("latest endpoints: {:?}", endpoints);
 
         true
     }
@@ -2480,7 +2482,12 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 
 /// Initial connection setup.
 async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
-    let ip6_port = if port != 0 { port + 1 } else { 0 };
+    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
+        .await
+        .context("rebind IPv4 failed")?;
+
+    let ip4_port = pconn4.local_addr()?.port();
+    let ip6_port = ip4_port + 1;
     let pconn6 = match RebindingUdpConn::bind(ip6_port, Network::Ipv6).await {
         Ok(conn) => Some(conn),
         Err(err) => {
@@ -2488,10 +2495,6 @@ async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)>
             None
         }
     };
-
-    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
-        .await
-        .context("rebind IPv4 failed")?;
 
     Ok((pconn4, pconn6))
 }

@@ -31,8 +31,11 @@ struct Cli {
 enum Command {
     Listen,
     Connect {
+        #[clap(long)]
         peer_id: String,
+        #[clap(long)]
         addrs: Option<Vec<SocketAddr>>,
+        #[clap(long)]
         derp_region: Option<u16>,
     },
 }
