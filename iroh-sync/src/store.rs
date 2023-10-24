@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     heads::AuthorHeads,
+    keys::{Author, Namespace},
     ranger,
-    sync::{Author, Namespace, Replica, SignedEntry},
+    sync::{Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes,
 };
 

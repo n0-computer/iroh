@@ -12,8 +12,9 @@ use iroh_bytes::Hash;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
 use crate::{
+    keys::{Author, Namespace},
     ranger::{Fingerprint, Range, RangeEntry},
-    sync::{Author, Namespace, RecordIdentifier, Replica, SignedEntry},
+    sync::{RecordIdentifier, Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes, Record,
 };
 
