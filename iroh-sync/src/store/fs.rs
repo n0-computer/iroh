@@ -19,11 +19,10 @@ use redb::{
 };
 
 use crate::{
+    keys::{Author, Namespace},
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
-    sync::{
-        Author, Entry, EntrySignature, Namespace, Record, RecordIdentifier, Replica, SignedEntry,
-    },
+    sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes,
 };
 
