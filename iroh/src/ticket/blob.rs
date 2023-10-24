@@ -26,7 +26,7 @@ pub struct Ticket {
     token: Option<RequestToken>,
 }
 
-impl<'de> IrohTicket<'de> for Ticket {
+impl IrohTicket for Ticket {
     const KIND: Kind = Kind::Blob;
 }
 

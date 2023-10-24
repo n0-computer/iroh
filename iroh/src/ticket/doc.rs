@@ -17,7 +17,7 @@ pub struct Ticket {
     pub nodes: Vec<PeerAddr>,
 }
 
-impl<'de> IrohTicket<'de> for Ticket {
+impl IrohTicket for Ticket {
     const KIND: Kind = Kind::Doc;
 }
 
