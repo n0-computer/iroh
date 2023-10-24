@@ -150,7 +150,7 @@ pub enum Commands {
         count: usize,
     },
     /// Inspect a ticket.
-    Ticket { ticket: String },
+    TicketInspect { ticket: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -921,11 +921,13 @@ fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow!("missing ticket prefix"))??;
     match kind {
         iroh::ticket::Kind::Blob => {
-            let ticket = iroh::ticket::blob::Ticket::from_str(ticket)?;
+            let ticket = iroh::ticket::blob::Ticket::from_str(ticket)
+                .context("failed parsing blob ticket")?;
             println!("Blob ticket:\n{ticket:#?}");
         }
         iroh::ticket::Kind::Doc => {
-            let ticket = iroh::ticket::doc::Ticket::from_str(ticket)?;
+            let ticket =
+                iroh::ticket::doc::Ticket::from_str(ticket).context("failed parsing doc ticket")?;
             println!("Document ticket:\n{ticket:#?}");
         }
         iroh::ticket::Kind::Node => {
@@ -994,6 +996,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let config = NodeConfig::from_env(None)?;
             derp_regions(count, config).await
         }
-        Commands::Ticket { ticket } => inspect_ticket(&ticket),
+        Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
     }
 }
