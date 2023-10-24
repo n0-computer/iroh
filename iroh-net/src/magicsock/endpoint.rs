@@ -12,16 +12,27 @@ use iroh_metrics::inc;
 use parking_lot::Mutex;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
+use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
-    config, disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
-    net::ip::is_unicast_link_local, stun, util::derp_only_mode, PeerAddr,
+    config,
+    disco::{self, CallMeMaybe, Pong},
+    key::PublicKey,
+    magic_endpoint::AddrInfo,
+    magicsock::Timer,
+    net::ip::is_unicast_link_local,
+    stun,
+    util::derp_only_mode,
+    PeerAddr,
 };
 
-use super::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr, SendAddr};
+use super::{
+    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
+    SendAddr,
+};
 
 mod best_addr;
 use best_addr::{BestAddr, ClearReason};
@@ -1092,14 +1103,83 @@ impl PeerMap {
         f(&inner)
     }
 
-    pub fn get_quic_mapped_addr_for_ip_port(
+    pub fn get_quic_mapped_addr_for_udp_recv(
         &self,
-        ipp: impl Into<IpPort>,
+        udp_addr: SocketAddr,
     ) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
-            .receive_ip(ipp)
+            .receive_ip(udp_addr)
             .map(|ep| ep.quic_mapped_addr)
+    }
+
+    pub fn get_quic_mapped_addr_for_derp_recv(
+        &self,
+        region_id: u16,
+        src: PublicKey,
+    ) -> QuicMappedAddr {
+        let mut pm = self.inner.lock();
+        let ep_quic_mapped_addr = pm.endpoint_for_node_key_mut(&src).as_mut().map(|ep| {
+            // NOTE: we don't update the derp region if there is already one but the new one is
+            // different
+            if ep.derp_region().is_none() {
+                ep.set_derp_region(region_id);
+            }
+            ep.quic_mapped_addr
+        });
+
+        match ep_quic_mapped_addr {
+            Some(addr) => addr,
+            None => {
+                info!(peer=%src, "no peer_map state found for peer");
+                let id = pm.insert_endpoint(Options {
+                    public_key: src,
+                    derp_region: Some(region_id),
+                    active: true,
+                });
+                let ep = pm.by_id_mut(&id).expect("inserted");
+                ep.quic_mapped_addr
+            }
+        }
+    }
+
+    pub(super) fn notify_ping_sent(
+        &self,
+        id: usize,
+        dst: SendAddr,
+        tx_id: stun::TransactionId,
+        purpose: DiscoPingPurpose,
+        msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
+    ) {
+        self.write(move |pm| {
+            if let Some(ep) = pm.by_id_mut(&id) {
+                ep.ping_sent(dst, tx_id, purpose, msg_sender);
+            }
+        });
+    }
+    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
+        if let Some(ep) = self.inner.lock().by_id_mut(&id).as_mut() {
+            ep.ping_timeout(tx_id);
+        }
+    }
+
+    /// Insert a received ping into the peer map, and return whether a ping with this tx_id was already
+    /// received.
+    pub(super) fn handle_ping(
+        &self,
+        sender: PublicKey,
+        src: &DiscoMessageSource,
+        tx_id: TransactionId,
+    ) -> bool {
+        self.inner.lock().handle_ping(sender, src, tx_id)
+    }
+
+    pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+        self.inner.lock().handle_pong(sender, src, pong)
+    }
+
+    pub(super) fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) {
+        self.inner.lock().handle_call_me_maybe(sender, cm)
     }
 
     pub fn get_quic_mapped_addr_for_node_key(&self, nk: &PublicKey) -> Option<QuicMappedAddr> {
@@ -1285,8 +1365,8 @@ impl PeerMapInner {
     }
 
     /// Marks the peer we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
-    pub(super) fn receive_ip(&mut self, ipp: impl Into<IpPort>) -> Option<&Endpoint> {
-        let ip_port = ipp.into();
+    pub(super) fn receive_ip(&mut self, udp_addr: SocketAddr) -> Option<&Endpoint> {
+        let ip_port: IpPort = udp_addr.into();
         // search by IpPort to get the Id
         let id = *self.by_ip_port.get(&ip_port)?;
         // search by Id to get the endpoint. This should never fail
@@ -1333,6 +1413,70 @@ impl PeerMapInner {
     pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
         self.endpoint_for_node_key(public_key)
             .map(|ep| ep.info(Instant::now()))
+    }
+
+    pub(super) fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+        if let Some(ep) = self.endpoint_for_node_key_mut(&sender).as_mut() {
+            let insert = ep.handle_pong_conn(&pong, src.into());
+            if let Some((src, key)) = insert {
+                self.set_node_key_for_ip_port(src, &key);
+            }
+            debug!(?insert, "received pong")
+        } else {
+            warn!("received pong: peer unknown, ignore")
+        }
+    }
+
+    pub(super) fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) {
+        match self.endpoint_for_node_key_mut(&sender) {
+            None => {
+                inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
+                debug!("received call-me-maybe: ignore, peer is unknown");
+            }
+            Some(ep) => {
+                debug!("received call-me-maybe: {} endpoints", cm.my_number.len());
+                ep.handle_call_me_maybe(cm);
+            }
+        };
+    }
+
+    pub(super) fn handle_ping(
+        &mut self,
+        sender: PublicKey,
+        src: &DiscoMessageSource,
+        tx_id: TransactionId,
+    ) -> bool {
+        let unknown_sender = if self.endpoint_for_node_key(&sender).is_none() {
+            match src {
+                DiscoMessageSource::Udp(addr) => self.receive_ip(*addr).is_none(),
+                DiscoMessageSource::Derp { .. } => true,
+            }
+        } else {
+            false
+        };
+        // if we get here we got a valid ping from an unknown sender
+        // so insert an endpoint for them
+        if unknown_sender {
+            debug!("received ping: peer unknown, add to peer map");
+            self.insert_endpoint(Options {
+                public_key: sender,
+                derp_region: src.derp_region(),
+                active: true,
+            });
+        }
+        let is_duplicate = if let Some(ep) = self.endpoint_for_node_key_mut(&sender) {
+            if ep.endpoint_confirmed(src.into(), tx_id) {
+                true
+            } else {
+                if let DiscoMessageSource::Udp(addr) = src {
+                    self.set_node_key_for_ip_port(*addr, &sender);
+                }
+                false
+            }
+        } else {
+            false
+        };
+        is_duplicate
     }
 
     /// Inserts a new endpoint into the [`PeerMap`].
