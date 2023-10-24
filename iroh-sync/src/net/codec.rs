@@ -295,9 +295,8 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
+        keys::{AuthorId, Namespace},
         store::{self, GetFilter, Store},
-        sync::Namespace,
-        AuthorId,
     };
     use anyhow::Result;
     use iroh_bytes::Hash;

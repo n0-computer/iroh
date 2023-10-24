@@ -65,6 +65,33 @@ pub fn print_hexdump(bytes: impl AsRef<[u8]>, line_lengths: impl AsRef<[usize]>)
     output
 }
 
+/// This is a macro to assert that two byte slices are equal.
+///
+/// It is like assert_eq!, but it will print a nicely formatted hexdump of the
+/// two slices if they are not equal. This makes it much easier to track down
+/// a difference in a large byte slice.
+#[macro_export]
+macro_rules! assert_eq_hex {
+    ($a:expr, $b:expr) => {
+        assert_eq_hex!($a, $b, [])
+    };
+    ($a:expr, $b:expr, $hint:expr) => {
+        let a = $a;
+        let b = $b;
+        let hint = $hint;
+        let ar: &[u8] = a.as_ref();
+        let br: &[u8] = b.as_ref();
+        let hintr: &[usize] = hint.as_ref();
+        if ar != br {
+            panic!(
+                "assertion failed: `(left == right)`\nleft:\n{}\nright:\n{}\n",
+                ::iroh_test::hexdump::print_hexdump(ar, hintr),
+                ::iroh_test::hexdump::print_hexdump(br, hintr),
+            )
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_hexdump, print_hexdump};
@@ -150,31 +177,4 @@ mod tests {
         let output = print_hexdump(data, [1, 0, 0, 2]);
         assert_eq!(output, "01\n\n\n02 03\n04 05\n06 07\n08\n");
     }
-}
-
-/// This is a macro to assert that two byte slices are equal.
-///
-/// It is like assert_eq!, but it will print a nicely formatted hexdump of the
-/// two slices if they are not equal. This makes it much easier to track down
-/// a difference in a large byte slice.
-#[macro_export]
-macro_rules! assert_eq_hex {
-    ($a:expr, $b:expr) => {
-        assert_eq_hex!($a, $b, [])
-    };
-    ($a:expr, $b:expr, $hint:expr) => {
-        let a = $a;
-        let b = $b;
-        let hint = $hint;
-        let ar: &[u8] = a.as_ref();
-        let br: &[u8] = b.as_ref();
-        let hintr: &[usize] = hint.as_ref();
-        if ar != br {
-            panic!(
-                "assertion failed: `(left == right)`\nleft:\n{}\nright:\n{}\n",
-                ::iroh_test::hexdump::print_hexdump(ar, hintr),
-                ::iroh_test::hexdump::print_hexdump(br, hintr),
-            )
-        }
-    };
 }

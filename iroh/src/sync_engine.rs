@@ -13,7 +13,7 @@ use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use iroh_sync::{
-    actor::SyncHandle, sync::NamespaceId, ContentStatus, ContentStatusCallback, Entry, InsertOrigin,
+    actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};

@@ -13,8 +13,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-#[cfg(feature = "metrics")]
-use crate::metrics::Metrics;
 use bytes::{Bytes, BytesMut};
 use derive_more::Deref;
 #[cfg(feature = "metrics")]
@@ -25,8 +23,10 @@ use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
 pub use crate::heads::AuthorHeads;
-pub use crate::keys::*;
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
 use crate::{
+    keys::{base32, Author, AuthorId, AuthorPublicKey, Namespace, NamespaceId, NamespacePublicKey},
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
     store::{self, PublicKeyStore},
 };
