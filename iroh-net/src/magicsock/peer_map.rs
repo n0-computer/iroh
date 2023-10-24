@@ -91,13 +91,12 @@ impl PeerMap {
     }
 
     /// Number of nodes currently listed.
-    pub(super) fn node_count(&self) -> usize {
+    pub fn node_count(&self) -> usize {
         self.inner.lock().node_count()
     }
 
-    pub(super) fn read<T>(&self, f: impl FnOnce(&PeerMapInner) -> T) -> T {
-        let inner = self.inner.lock();
-        f(&inner)
+    pub fn endpoint_id_to_public_key(&self, id: &usize) -> Option<PublicKey> {
+        self.inner.lock().by_id(id).map(|ep| ep.public_key)
     }
 
     pub fn get_quic_mapped_addr_for_udp_recv(
@@ -140,7 +139,7 @@ impl PeerMap {
         }
     }
 
-    pub(super) fn notify_ping_sent(
+    pub fn notify_ping_sent(
         &self,
         id: usize,
         dst: SendAddr,
@@ -153,7 +152,7 @@ impl PeerMap {
         }
     }
 
-    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
+    pub fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
         if let Some(ep) = self.inner.lock().by_id_mut(&id).as_mut() {
             ep.ping_timeout(tx_id);
         }
@@ -161,7 +160,7 @@ impl PeerMap {
 
     /// Insert a received ping into the peer map, and return whether a ping with this tx_id was already
     /// received.
-    pub(super) fn handle_ping(
+    pub fn handle_ping(
         &self,
         sender: PublicKey,
         src: &DiscoMessageSource,
@@ -170,11 +169,11 @@ impl PeerMap {
         self.inner.lock().handle_ping(sender, src, tx_id)
     }
 
-    pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+    pub fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
         self.inner.lock().handle_pong(sender, src, pong)
     }
 
-    pub(super) fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) {
+    pub fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) {
         self.inner.lock().handle_call_me_maybe(sender, cm)
     }
 
@@ -197,21 +196,21 @@ impl PeerMap {
         Some((public_key, udp_addr, derp_region, msgs))
     }
 
-    pub(super) fn notify_shutdown(&self) {
+    pub fn notify_shutdown(&self) {
         let mut inner = self.inner.lock();
         for (_, ep) in inner.endpoints_mut() {
             ep.stop_and_reset();
         }
     }
 
-    pub(super) fn reset_endpoint_states(&self) {
+    pub fn reset_endpoint_states(&self) {
         let mut inner = self.inner.lock();
         for (_, ep) in inner.endpoints_mut() {
             ep.note_connectivity_change();
         }
     }
 
-    pub(super) fn endpoints_stayin_alive(&self) -> Vec<PingAction> {
+    pub fn endpoints_stayin_alive(&self) -> Vec<PingAction> {
         let mut msgs = Vec::new();
         let mut inner = self.inner.lock();
         for (_, ep) in inner.endpoints_mut() {
@@ -221,17 +220,17 @@ impl PeerMap {
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub(super) fn endpoint_infos(&self, now: Instant) -> Vec<EndpointInfo> {
+    pub fn endpoint_infos(&self, now: Instant) -> Vec<EndpointInfo> {
         self.inner.lock().endpoint_infos(now)
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
+    pub fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
         self.inner.lock().endpoint_info(public_key)
     }
 
     /// Saves the known peer info to the given path, returning the number of peers persisted.
-    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
+    pub async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         ensure!(!path.is_dir(), "{} must be a file", path.display());
 
         // So, not sure what to do here.
@@ -282,7 +281,7 @@ impl PeerMap {
     }
 
     /// Prunes peers without recent activity so that at most [`MAX_INACTIVE_PEERS`] are kept.
-    pub(super) fn prune_inactive(&self) {
+    pub fn prune_inactive(&self) {
         self.inner.lock().prune_inactive();
     }
 }
@@ -290,7 +289,7 @@ impl PeerMap {
 impl PeerMapInner {
     /// Get the known peer addresses stored in the map. Peers with empty addressing information are
     /// filtered out.
-    pub fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
+    fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
         self.by_id.values().filter_map(|endpoint| {
             let peer_addr = endpoint.peer_addr();
             (!peer_addr.info.is_empty()).then_some(peer_addr)
@@ -298,7 +297,7 @@ impl PeerMapInner {
     }
 
     /// Create a new [`PeerMap`] from data stored in `path`.
-    pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
         ensure!(path.is_file(), "{} is not a file", path.display());
         let mut me = PeerMapInner::default();
@@ -315,7 +314,7 @@ impl PeerMapInner {
 
     /// Add the contact information for a peer.
     #[instrument(skip_all, fields(peer = %peer_addr.peer_id.fmt_short()))]
-    pub fn add_peer_addr(&mut self, peer_addr: PeerAddr) {
+    fn add_peer_addr(&mut self, peer_addr: PeerAddr) {
         let PeerAddr { peer_id, info } = peer_addr;
 
         if self.endpoint_for_node_key(&peer_id).is_none() {
@@ -337,31 +336,31 @@ impl PeerMapInner {
     }
 
     /// Number of nodes currently listed.
-    pub(super) fn node_count(&self) -> usize {
+    fn node_count(&self) -> usize {
         self.by_id.len()
     }
 
-    pub(super) fn by_id(&self, id: &usize) -> Option<&Endpoint> {
+    fn by_id(&self, id: &usize) -> Option<&Endpoint> {
         self.by_id.get(id)
     }
 
-    pub(super) fn by_id_mut(&mut self, id: &usize) -> Option<&mut Endpoint> {
+    fn by_id_mut(&mut self, id: &usize) -> Option<&mut Endpoint> {
         self.by_id.get_mut(id)
     }
 
     /// Returns the endpoint for nk, or None if nk is not known to us.
-    pub(super) fn endpoint_for_node_key(&self, nk: &PublicKey) -> Option<&Endpoint> {
+    fn endpoint_for_node_key(&self, nk: &PublicKey) -> Option<&Endpoint> {
         self.by_node_key.get(nk).and_then(|id| self.by_id(id))
     }
 
-    pub(super) fn endpoint_for_node_key_mut(&mut self, nk: &PublicKey) -> Option<&mut Endpoint> {
+    fn endpoint_for_node_key_mut(&mut self, nk: &PublicKey) -> Option<&mut Endpoint> {
         self.by_node_key
             .get(nk)
             .and_then(|id| self.by_id.get_mut(id))
     }
 
     /// Marks the peer we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
-    pub(super) fn receive_ip(&mut self, udp_addr: SocketAddr) -> Option<&Endpoint> {
+    fn receive_ip(&mut self, udp_addr: SocketAddr) -> Option<&Endpoint> {
         let ip_port: IpPort = udp_addr.into();
         // search by IpPort to get the Id
         let id = *self.by_ip_port.get(&ip_port)?;
@@ -383,7 +382,7 @@ impl PeerMapInner {
         Some(endpoint)
     }
 
-    pub fn endpoint_for_quic_mapped_addr_mut(
+    fn endpoint_for_quic_mapped_addr_mut(
         &mut self,
         addr: &QuicMappedAddr,
     ) -> Option<&mut Endpoint> {
@@ -392,26 +391,26 @@ impl PeerMapInner {
             .and_then(|id| self.by_id.get_mut(id))
     }
 
-    pub(super) fn endpoints(&self) -> impl Iterator<Item = (&usize, &Endpoint)> {
+    fn endpoints(&self) -> impl Iterator<Item = (&usize, &Endpoint)> {
         self.by_id.iter()
     }
 
-    pub(super) fn endpoints_mut(&mut self) -> impl Iterator<Item = (&usize, &mut Endpoint)> {
+    fn endpoints_mut(&mut self) -> impl Iterator<Item = (&usize, &mut Endpoint)> {
         self.by_id.iter_mut()
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub(super) fn endpoint_infos(&self, now: Instant) -> Vec<EndpointInfo> {
+    fn endpoint_infos(&self, now: Instant) -> Vec<EndpointInfo> {
         self.endpoints().map(|(_, ep)| ep.info(now)).collect()
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub(super) fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
+    fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
         self.endpoint_for_node_key(public_key)
             .map(|ep| ep.info(Instant::now()))
     }
 
-    pub(super) fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+    fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
         if let Some(ep) = self.endpoint_for_node_key_mut(&sender).as_mut() {
             let insert = ep.handle_pong_conn(&pong, src.into());
             if let Some((src, key)) = insert {
@@ -423,7 +422,7 @@ impl PeerMapInner {
         }
     }
 
-    pub(super) fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) {
+    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) {
         match self.endpoint_for_node_key_mut(&sender) {
             None => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
@@ -436,7 +435,7 @@ impl PeerMapInner {
         };
     }
 
-    pub(super) fn handle_ping(
+    fn handle_ping(
         &mut self,
         sender: PublicKey,
         src: &DiscoMessageSource,
@@ -476,7 +475,7 @@ impl PeerMapInner {
     }
 
     /// Inserts a new endpoint into the [`PeerMap`].
-    pub(super) fn insert_endpoint(&mut self, options: Options) -> usize {
+    fn insert_endpoint(&mut self, options: Options) -> usize {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let ep = Endpoint::new(id, options);
@@ -494,7 +493,7 @@ impl PeerMapInner {
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    pub(super) fn set_node_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
+    fn set_node_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
         let ipp = ipp.into();
         if let Some(id) = self.by_ip_port.get(&ipp) {
             if !self.by_node_key.contains_key(nk) {
@@ -508,7 +507,7 @@ impl PeerMapInner {
         }
     }
 
-    pub(super) fn set_endpoint_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
+    fn set_endpoint_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
         let ipp = ipp.into();
         trace!(?ipp, ?id, "set endpoint for ip:port");
         self.by_ip_port.insert(ipp, id);

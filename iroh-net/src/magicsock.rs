@@ -2196,10 +2196,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
-        let public_key = self
-            .inner
-            .peer_map
-            .read(|pm| pm.by_id(&endpoint_id).map(|ep| ep.public_key));
+        let public_key = self.inner.peer_map.endpoint_id_to_public_key(&endpoint_id);
         let Some(public_key) = public_key else {
             warn!(
                 "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",

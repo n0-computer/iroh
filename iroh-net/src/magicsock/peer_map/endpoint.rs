@@ -67,30 +67,30 @@ pub(in crate::magicsock) enum PingAction {
 /// A conneciton endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
 #[derive(Debug)]
-pub(in crate::magicsock) struct Endpoint {
+pub(super) struct Endpoint {
     pub id: usize,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub quic_mapped_addr: QuicMappedAddr,
     /// Peer public key (for UDP + DERP)
     pub public_key: PublicKey,
     /// Last time we pinged all endpoints
-    pub(super) last_full_ping: Option<Instant>,
+    pub last_full_ping: Option<Instant>,
     /// The region id of DERP node that we can relay over to communicate.
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    pub(super) derp_region: Option<(u16, EndpointState)>,
+    pub derp_region: Option<(u16, EndpointState)>,
     /// Best non-DERP path.
-    pub(super) best_addr: BestAddr,
+    pub best_addr: BestAddr,
     /// [`EndpointState`] for this peer's direct addresses.
-    pub(super) direct_addr_state: HashMap<IpPort, EndpointState>,
-    pub(super) is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
+    pub direct_addr_state: HashMap<IpPort, EndpointState>,
+    pub is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
     /// Any outstanding "tailscale ping" commands running
-    pub(super) pending_cli_pings: Vec<PendingCliPing>,
-    pub(super) sent_ping: HashMap<stun::TransactionId, SentPing>,
+    pub pending_cli_pings: Vec<PendingCliPing>,
+    pub sent_ping: HashMap<stun::TransactionId, SentPing>,
     /// Last time this peer was used.
     ///
     /// A peer is marked as in use when an endpoint to contact them is requested or if UDP activity
     /// is registered.
-    pub(super) last_used: Option<Instant>,
+    pub last_used: Option<Instant>,
 }
 
 #[derive(derive_more::Debug)]
@@ -101,11 +101,11 @@ pub struct PendingCliPing {
 }
 
 #[derive(Debug)]
-pub(in crate::magicsock) struct Options {
-    pub(super) public_key: PublicKey,
-    pub(super) derp_region: Option<u16>,
+pub(super) struct Options {
+    pub public_key: PublicKey,
+    pub derp_region: Option<u16>,
     /// Is this endpoint currently active (sending data)?
-    pub(super) active: bool,
+    pub active: bool,
 }
 
 impl Endpoint {
