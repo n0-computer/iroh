@@ -22,8 +22,8 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::GetFilter,
-    sync::{NamespaceId, SignedEntry},
-    AuthorId,
+    sync::SignedEntry,
+    {AuthorId, NamespaceId},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},

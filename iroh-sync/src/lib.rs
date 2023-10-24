@@ -40,6 +40,6 @@ mod ranger;
 pub mod store;
 pub mod sync;
 
-pub use heads::*;
-pub use keys::*;
-pub use sync::*;
+pub use self::heads::*;
+pub use self::keys::*;
+pub use self::sync::*;
