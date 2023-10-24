@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // copied from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
 use anyhow::Result;
 use futures::FutureExt;
@@ -170,11 +171,11 @@ impl HardcodedRegionDiscovery {
 }
 
 impl iroh_net::magicsock::Discovery for HardcodedRegionDiscovery {
-    fn publish(&self, info: &AddrInfo) {}
+    fn publish(&self, _info: &AddrInfo) {}
 
     fn resolve<'a>(
         &'a self,
-        peer_id: &'a PeerId,
+        _peer_id: &'a PeerId,
     ) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
         futures::future::ok(AddrInfo {
             derp_region: Some(self.region),

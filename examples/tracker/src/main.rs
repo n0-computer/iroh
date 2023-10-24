@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! An example that runs an iroh node that can be controlled via RPC.
 //!
 //! Run this example with
@@ -9,7 +10,6 @@
 use anyhow::Context;
 use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
 use bytes::Bytes;
-use futures::FutureExt;
 use iroh::util::fs::load_secret_key;
 use iroh_bytes::get::fsm::{BlobContentNext, EndBlobNext};
 use iroh_bytes::get::Stats;
@@ -26,6 +26,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::task::LocalPoolHandle;
+use iroh_net::magic_endpoint::{get_alpn, get_peer_id};
 
 mod discovery;
 
@@ -212,7 +213,11 @@ impl FromStr for ContentArg {
 struct AnnounceArgs {
     /// the peer if of the tracker
     #[clap(long)]
-    host: PublicKey,
+    tracker: PublicKey,
+    
+    /// the port to use for announcing
+    #[clap(long)]
+    port: Option<u16>,
 
     /// The content to announce.
     content: ContentArg,
@@ -229,7 +234,11 @@ struct AnnounceArgs {
 #[derive(Parser, Debug)]
 struct QueryArgs {
     #[clap(long)]
-    host: PublicKey,
+    tracker: PublicKey,
+    
+    /// the port to use for querying
+    #[clap(long)]
+    port: Option<u16>,
 
     /// The content to find peers for.
     content: ContentArg,
@@ -612,9 +621,10 @@ impl Tracker {
         Ok(stats)
     }
 
-    async fn handle_connecting(&self, connecting: quinn::Connecting) -> anyhow::Result<()> {
-        let connection = connecting.await?;
+    async fn handle_connection(&self, connection: quinn::Connection) -> anyhow::Result<()> {
+        println!("calling accept_bi");
         let (mut send, mut recv) = connection.accept_bi().await?;
+        println!("got bi stream");
         let request = recv.read_to_end(REQUEST_SIZE_LIMIT).await?;
         let request = postcard::from_bytes::<Request>(&request)?;
         match request {
@@ -916,8 +926,7 @@ async fn create_endpoint(
     key: iroh_net::key::SecretKey,
     port: u16,
 ) -> anyhow::Result<MagicEndpoint> {
-    let pkarr_relay_discovery =
-        discovery::PkarrRelayDiscovery::new(key.clone(), PKARR_RELAY_URL.parse().unwrap());
+    // let pkarr_relay_discovery = discovery::PkarrRelayDiscovery::new(key.clone(), PKARR_RELAY_URL.parse().unwrap());
     let region_discover = discovery::HardcodedRegionDiscovery::new(2);
     iroh_net::MagicEndpoint::builder()
         .secret_key(key)
@@ -955,7 +964,12 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
         let db = db.clone();
         tokio::task::spawn(async move {
             println!("got connecting");
-            if let Err(cause) = db.handle_connecting(connecting).await {
+            let Ok((pk, h, conn)) = accept_conn(connecting).await else {
+                tracing::error!("error accepting connection");
+                return;
+            };
+            println!("got connection from {} {}", pk, h);
+            if let Err(cause) = db.handle_connection(conn).await {
                 tracing::error!("error handling connection: {}", cause);
             }
         });
@@ -963,12 +977,32 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     Ok(())
 }
 
+/// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
+pub async fn accept_conn(
+    mut conn: quinn::Connecting,
+) -> anyhow::Result<(PublicKey, String, quinn::Connection)> {
+    let alpn = get_alpn(&mut conn).await?;
+    println!("awaiting conn");
+    let conn = conn.await?;
+    println!("got conn");
+    let peer_id = get_peer_id(&conn).await?;
+    Ok((peer_id, alpn, conn))
+}
+
 async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     let key = load_secret_key(tracker_path("client.key")?).await?;
-    let endpoint = create_endpoint(key, 0).await?;
+    let key = iroh_net::key::SecretKey::generate();
+    let endpoint = create_endpoint(key, 11112).await?;
     println!("announce {:?}", args);
-    println!("trying to connect to {:?}", args.host);
-    let connection = endpoint.connect_by_peer(&args.host, TRACKER_ALPN).await?;
+    println!("trying to connect to {:?}", args.tracker);
+    let info = PeerAddr {
+        peer_id: args.tracker,
+        info: AddrInfo {
+            derp_region: Some(2),
+            direct_addresses: Default::default(),
+        }
+    };
+    let connection = endpoint.connect(info, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");
@@ -1002,7 +1036,8 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
 
 async fn query(args: QueryArgs) -> anyhow::Result<()> {
     let key = load_secret_key(tracker_path("client.key")?).await?;
-    let endpoint = create_endpoint(key, 0).await?;
+    let key = iroh_net::key::SecretKey::generate();
+    let endpoint = create_endpoint(key, args.port.unwrap_or_default()).await?;
     let query = Query {
         content: args.content.hash_and_format(),
         flags: QueryFlags {
@@ -1010,9 +1045,15 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
             validated: args.validated,
         },
     };
-    let peer_addr = args.host;
-    println!("trying to connect to tracker at {:?}", peer_addr);
-    let connection = endpoint.connect_by_peer(&peer_addr, TRACKER_ALPN).await?;
+    let info = PeerAddr {
+        peer_id: args.tracker,
+        info: AddrInfo {
+            derp_region: Some(2),
+            direct_addresses: Default::default(),
+        }
+    };
+    println!("trying to connect to tracker at {:?}", args.tracker);
+    let connection = endpoint.connect(info, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");

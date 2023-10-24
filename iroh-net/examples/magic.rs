@@ -32,7 +32,9 @@ enum Command {
     Listen,
     Connect {
         peer_id: String,
+        #[clap(long)]
         addrs: Option<Vec<SocketAddr>>,
+        #[clap(long)]
         derp_region: Option<u16>,
     },
 }
@@ -41,9 +43,15 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
+    let name = match args.command {
+        Command::Listen => "listen.key",
+        Command::Connect { .. } => "conect.key",
+    };
+    let mut key = [0u8;32];
+    key[0..10].copy_from_slice(&name.to_owned().into_bytes());
     let secret_key = match args.secret {
         None => {
-            let secret_key = SecretKey::generate();
+            let secret_key = SecretKey::from_bytes(&key);
             println!("our secret key: {}", fmt_secret(&secret_key));
             secret_key
         }
