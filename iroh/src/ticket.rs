@@ -26,7 +26,7 @@ impl Kind {
     }
 }
 
-/// An error deserializing an [`IrohTicket`].
+/// An error deserializing an iroh ticket.
 #[derive(Debug, derive_more::Display, thiserror::Error)]
 pub enum Error {
     /// Found a ticket of the wrong [`Kind`].
