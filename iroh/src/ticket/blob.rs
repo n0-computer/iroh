@@ -11,8 +11,7 @@ use super::*;
 
 /// A token containing everything to get a file from the provider.
 ///
-/// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base32.
+/// It is a single item which can be easily serialized and deserialized.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, derive_more::Display)]
 #[display("{}", IrohTicket::serialize(self))]
 pub struct Ticket {
