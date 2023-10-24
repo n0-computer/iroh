@@ -45,8 +45,7 @@ const MAX_INACTIVE_PEERS: usize = 30;
 ///   is static and never changes.
 ///
 /// - The peers's public key, aka `PublicKey` or "node_key".  This is static and never changes,
-///   however a peer could be added when this is not yet known.  To set this after creation
-///   use [`PeerMap::write`] with `set_node_key_for_ip_port`.
+///   however a peer could be added when this is not yet known.
 ///
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the peer moves around on the internet
