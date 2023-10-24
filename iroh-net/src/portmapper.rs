@@ -207,27 +207,16 @@ impl Client {
 }
 
 /// Port mapping protocol information obtained during a probe.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Probe {
     /// When was the probe last updated.
-    last_probe: Instant,
+    last_probe: Option<Instant>,
     /// The last [`igd::aio::Gateway`] and when was it last seen.
     last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
     /// Last time PCP was seen.
     last_pcp: Option<Instant>,
     /// Last time NAT-PMP was seen.
     last_nat_pmp: Option<Instant>,
-}
-
-impl Default for Probe {
-    fn default() -> Self {
-        Self {
-            last_probe: Instant::now() - AVAILABILITY_TRUST_DURATION,
-            last_upnp_gateway_addr: None,
-            last_pcp: None,
-            last_nat_pmp: None,
-        }
-    }
 }
 
 impl Probe {
@@ -584,8 +573,11 @@ impl Service {
             let ProbeOutput { upnp, pcp, nat_pmp } = self.full_probe.output();
 
             debug!("getting a port mapping for {local_ip}:{local_port} -> {external_addr:?}");
-            let recently_probed =
-                self.full_probe.last_probe + UNAVAILABILITY_TRUST_DURATION > Instant::now();
+            let recently_probed = self
+                .full_probe
+                .last_probe
+                .map(|x| x + UNAVAILABILITY_TRUST_DURATION > Instant::now())
+                .unwrap_or_default();
             // strategy:
             // 1. check the available services and prefer pcp, then nat_pmp then upnp since it's
             //    the most unreliable, but possibly the most deployed one
