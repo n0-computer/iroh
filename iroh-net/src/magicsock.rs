@@ -59,20 +59,19 @@ use crate::{
 
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
-    endpoint::{PeerMap, PingAction},
     metrics::Metrics as MagicsockMetrics,
+    peer_map::{PeerMap, PingAction},
     rebinding_conn::RebindingUdpConn,
 };
 
 mod derp_actor;
-mod endpoint;
 mod metrics;
+mod peer_map;
 mod rebinding_conn;
 mod timer;
 
-pub use self::endpoint::ConnectionType;
-pub use self::endpoint::{DirectAddrInfo, EndpointInfo};
 pub use self::metrics::Metrics;
+pub use self::peer_map::{ConnectionType, DirectAddrInfo, EndpointInfo};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
