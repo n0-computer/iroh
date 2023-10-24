@@ -21,13 +21,14 @@ trait IrohTicket<'de>: Serialize + Deserialize<'de> {
     }
 }
 
-fn serialize<'de, T: IrohTicket<'de>>(ticket: &T) -> String {
-    let mut out = IrohTicket::KIND.to_string();
-    let bytes = ticket.to_bytes();
-    ticket.encode_append(&bytes, &mut out);
-    out
+impl<'de> IrohTicket<'de> {
+    fn serialize(&self) -> String {
+        let mut out = Self::KIND.to_string();
+        let bytes = self.to_bytes();
+        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
+        out
+    }
 }
-
 
 /// A token containing everything to get a file from the provider.
 ///
