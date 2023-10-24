@@ -917,7 +917,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
-    let (kind, _) = iroh::ticket::Kind::parse_prefix(&ticket)
+    let (kind, _) = iroh::ticket::Kind::parse_prefix(ticket)
         .ok_or_else(|| anyhow!("missing ticket prefix"))??;
     match kind {
         iroh::ticket::Kind::Blob => {
