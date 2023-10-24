@@ -41,5 +41,7 @@ pub mod store;
 pub mod sync;
 
 pub use heads::*;
+// See https://github.com/rust-lang/rust/issues/117120
+#[allow(dead_code)]
 pub use keys::*;
 pub use sync::*;
