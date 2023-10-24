@@ -15,6 +15,17 @@ pub enum Kind {
     Node,
 }
 
+impl Kind {
+    /// Parse the ticket prefix to obtain the [`Kind`] and remainig string.
+    pub fn parse_prefix(s: &str) -> Option<Result<(Self, &str), Error>> {
+        let (prefix, rest) = s.split_once(':')?;
+        match prefix.parse() {
+            Ok(kind) => Some(Ok((kind, rest))),
+            Err(e) => Some(Err(e.into())),
+        }
+    }
+}
+
 /// An error deserializing an [`IrohTicket`].
 #[derive(Debug, derive_more::Display, thiserror::Error)]
 pub enum Error {
@@ -70,8 +81,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Deserialize from a string.
     fn deserialize(str: &str) -> Result<Self, Error> {
         let expected = Self::KIND;
-        let (prefix, bytes) = str.split_once(':').ok_or(Error::MissingKind { expected })?;
-        let found: Kind = prefix.parse()?;
+        let (found, bytes) = Kind::parse_prefix(str).ok_or(Error::MissingKind { expected })??;
         if expected != found {
             return Err(Error::WrongKind { expected, found });
         }

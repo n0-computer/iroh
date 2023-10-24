@@ -4,13 +4,14 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use crate::config::{path_with_env, NodeConfig};
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
@@ -148,6 +149,8 @@ pub enum Commands {
         #[clap(long, default_value_t = 5)]
         count: usize,
     },
+    /// Inspect a ticket.
+    Ticket { ticket: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -913,6 +916,26 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
+fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
+    let (kind, _) = iroh::ticket::Kind::parse_prefix(&ticket)
+        .ok_or_else(|| anyhow!("missing ticket prefix"))??;
+    match kind {
+        iroh::ticket::Kind::Blob => {
+            let ticket = iroh::ticket::blob::Ticket::from_str(ticket)?;
+            println!("Blob ticket:\n{ticket:#?}");
+        }
+        iroh::ticket::Kind::Doc => {
+            let ticket = iroh::ticket::doc::Ticket::from_str(ticket)?;
+            println!("Document ticket:\n{ticket:#?}");
+        }
+        iroh::ticket::Kind::Node => {
+            println!("node tickets are yet to be implemented :)");
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     match command {
         Commands::Report {
@@ -971,5 +994,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let config = NodeConfig::from_env(None)?;
             derp_regions(count, config).await
         }
+        Commands::Ticket { ticket } => inspect_ticket(&ticket),
     }
 }
