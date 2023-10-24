@@ -52,6 +52,7 @@ use crate::{
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::PeerAddr,
+    magicsock::peer_map::PingRole,
     net::{ip::LocalAddresses, netmon},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
@@ -564,7 +565,7 @@ impl Inner {
 
             if is_quic {
                 // remap addr
-                match self.peer_map.get_quic_mapped_addr_for_udp_recv(meta.addr) {
+                match self.peer_map.receive_udp(meta.addr) {
                     None => {
                         warn!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: no peer state found, skipping");
                         // if we have no peer state for the from addr, set len to 0 to make quinn skip the buf completely.
@@ -674,8 +675,7 @@ impl Inner {
             }
         };
 
-        let is_derp = src.is_derp();
-        if is_derp {
+        if src.is_derp() {
             inc!(MagicsockMetrics, recv_disco_derp);
         } else {
             inc!(MagicsockMetrics, recv_disco_udp);
@@ -705,21 +705,23 @@ impl Inner {
 
     /// Handle a ping message.
     fn handle_ping(&self, dm: disco::Ping, sender: &PublicKey, src: DiscoMessageSource) {
-        let src_addr: SendAddr = src.clone().into();
-        // Check if we received a recent ping from the same address, if so, treat as hearbeat ping
-        // (not a new ping).
-        // TODO: restore likely_hear_beat
-        // if !likely_heart_beat {
-        //     debug!(tx = %hex::encode(dm.tx_id), "received ping");
-        // }
-
         // Insert the ping into the peer map, and return whether a ping with this tx_id was already
         // received.
-        let is_duplicate = self.peer_map.handle_ping(*sender, &src, dm.tx_id);
-        if is_duplicate {
-            debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
-            return;
-        };
+        let addr: SendAddr = src.clone().into();
+        let role = self.peer_map.handle_ping(*sender, addr, dm.tx_id);
+        match role {
+            PingRole::Duplicate => {
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
+                return;
+            }
+            PingRole::LikelyHeartbeat => {}
+            PingRole::NewEndpoint => {
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new endpoint");
+            }
+            PingRole::Reactivate => {
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint active");
+            }
+        }
 
         // Send a pong.
         debug!(tx = %hex::encode(dm.tx_id), "send pong");
@@ -954,13 +956,6 @@ impl From<&DiscoMessageSource> for SendAddr {
 impl DiscoMessageSource {
     fn is_derp(&self) -> bool {
         matches!(self, DiscoMessageSource::Derp { .. })
-    }
-
-    fn derp_region(&self) -> Option<u16> {
-        match self {
-            Self::Derp { region, .. } => Some(*region),
-            Self::Udp(_) => None,
-        }
     }
 
     /// Returns the mapped version or the actual `SocketAddr`.
@@ -1344,7 +1339,7 @@ struct DiscoSecrets(parking_lot::Mutex<HashMap<PublicKey, SharedSecret>>);
 
 impl DiscoSecrets {
     fn get(
-        &mut self,
+        &self,
         secret: &SecretKey,
         node_id: PublicKey,
     ) -> parking_lot::MappedMutexGuard<SharedSecret> {
@@ -1356,7 +1351,7 @@ impl DiscoSecrets {
     }
 
     pub fn encode_and_seal(
-        &mut self,
+        &self,
         secret_key: &SecretKey,
         node_id: PublicKey,
         msg: &disco::Message,
@@ -1367,7 +1362,7 @@ impl DiscoSecrets {
     }
 
     pub fn unseal_and_decode(
-        &mut self,
+        &self,
         secret: &SecretKey,
         node_id: PublicKey,
         mut sealed_box: Vec<u8>,
@@ -1742,10 +1737,7 @@ impl Actor {
         }
         let region_id = dm.region_id;
 
-        let quic_mapped_addr = self
-            .inner
-            .peer_map
-            .get_quic_mapped_addr_for_derp_recv(region_id, dm.src);
+        let quic_mapped_addr = self.inner.peer_map.receive_derp(region_id, dm.src);
 
         // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
@@ -2197,7 +2189,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
-        let public_key = self.inner.peer_map.endpoint_id_to_public_key(&endpoint_id);
+        let public_key = self.inner.peer_map.node_key_for_endpoint_id(&endpoint_id);
         let Some(public_key) = public_key else {
             warn!(
                 "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
@@ -2343,6 +2335,10 @@ impl Actor {
     ) -> bool {
         match disco::source_and_box(msg) {
             Some((source, sealed_box)) => {
+                if derp_node_src != source {
+                    // TODO: return here?
+                    warn!("Received Derp disco message from connection for {}, but with message from {}", derp_node_src.fmt_short(), source.fmt_short());
+                }
                 self.inner.handle_disco_message(
                     source,
                     sealed_box,
@@ -2419,6 +2415,13 @@ enum SendAddr {
 impl SendAddr {
     fn is_derp(&self) -> bool {
         matches!(self, Self::Derp(_))
+    }
+
+    fn derp_region(&self) -> Option<u16> {
+        match self {
+            Self::Derp(region_id) => Some(*region_id),
+            Self::Udp(_) => None,
+        }
     }
 
     /// Returns the mapped version or the actual `SocketAddr`.
