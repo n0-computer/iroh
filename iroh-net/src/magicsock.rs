@@ -59,20 +59,19 @@ use crate::{
 
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
-    endpoint::{Options as EndpointOptions, PeerMap, PingAction},
     metrics::Metrics as MagicsockMetrics,
+    peer_map::{PeerMap, PingAction},
     rebinding_conn::RebindingUdpConn,
 };
 
 mod derp_actor;
-mod endpoint;
 mod metrics;
+mod peer_map;
 mod rebinding_conn;
 mod timer;
 
-pub use self::endpoint::ConnectionType;
-pub use self::endpoint::{DirectAddrInfo, EndpointInfo};
 pub use self::metrics::Metrics;
+pub use self::peer_map::{ConnectionType, DirectAddrInfo, EndpointInfo};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -565,7 +564,7 @@ impl Inner {
 
             if is_quic {
                 // remap addr
-                match self.peer_map.get_quic_mapped_addr_for_ip_port(meta.addr) {
+                match self.peer_map.get_quic_mapped_addr_for_udp_recv(meta.addr) {
                     None => {
                         warn!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: no peer state found, skipping");
                         // if we have no peer state for the from addr, set len to 0 to make quinn skip the buf completely.
@@ -698,36 +697,16 @@ impl Inner {
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics, recv_disco_pong);
-                self.peer_map.write(|pm| {
-                    if let Some(ep) = pm.endpoint_for_node_key_mut(&sender).as_mut() {
-                        let insert = ep.handle_pong_conn(&pong, src.into());
-                        if let Some((src, key)) = insert {
-                            pm.set_node_key_for_ip_port(src, &key);
-                        }
-                        debug!(?insert, "received pong")
-                    } else {
-                        warn!("received pong: peer unknown, ignore")
-                    }
-                });
+                self.peer_map.handle_pong(sender, &src, pong);
             }
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
-                let DiscoMessageSource::Derp { key, .. } = src else {
+                if !matches!(src, DiscoMessageSource::Derp { .. }) {
                     // CallMeMaybe messages should only come via DERP.
                     debug!("[unexpected] call-me-maybe packets should only come via DERP");
                     return;
                 };
-                self.peer_map
-                    .write(|pm| match pm.endpoint_for_node_key_mut(&key).as_mut() {
-                        None => {
-                            inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
-                            debug!("received call-me-maybe: ignore, peer is unknown");
-                        }
-                        Some(ep) => {
-                            debug!("received call-me-maybe: {} endpoints", cm.my_number.len());
-                            ep.handle_call_me_maybe(cm);
-                        }
-                    });
+                self.peer_map.handle_call_me_maybe(sender, cm);
             }
         }
     }
@@ -749,54 +728,13 @@ impl Inner {
         };
         debug_assert_eq!(sender, &node_key);
 
-        let dst_key = match src {
-            DiscoMessageSource::Derp { key, .. } => key,
-            DiscoMessageSource::Udp(_) => node_key,
-        };
-
         if !likely_heart_beat {
             debug!(tx = %hex::encode(dm.tx_id), "received ping");
         }
 
-        let unknown_sender = self.peer_map.write(|pm| {
-            if pm.endpoint_for_node_key(sender).is_none() {
-                match src {
-                    DiscoMessageSource::Udp(addr) => pm.receive_ip(addr).is_none(),
-                    DiscoMessageSource::Derp { .. } => true,
-                }
-            } else {
-                false
-            }
-        });
-
-        // if we get here we got a valid ping from an unknown sender
-        // so insert an endpoint for them
-        if unknown_sender {
-            debug!("received ping: peer unknown, add to peer map");
-            self.peer_map.write(|pm| {
-                pm.insert_endpoint(EndpointOptions {
-                    public_key: *sender,
-                    derp_region: src.derp_region(),
-                    active: true,
-                })
-            });
-        }
-
         // Insert the ping into the peer map, and return whether a ping with this tx_id was already
         // received.
-        let is_duplicate = self.peer_map.write(|pm| {
-            if let Some(ep) = pm.endpoint_for_node_key_mut(&dst_key) {
-                if ep.endpoint_confirmed(src_addr, dm.tx_id) {
-                    return true;
-                }
-
-                if let DiscoMessageSource::Udp(addr) = src {
-                    pm.set_node_key_for_ip_port(addr, &dst_key);
-                }
-            }
-            false
-        });
-
+        let is_duplicate = self.peer_map.handle_ping(*sender, &src, dm.tx_id);
         if is_duplicate {
             debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
             return;
@@ -810,12 +748,12 @@ impl Inner {
         });
         match src {
             DiscoMessageSource::Udp(addr) => {
-                if let Err(err) = self.udp_disco_sender.try_send((addr, dst_key, pong)) {
+                if let Err(err) = self.udp_disco_sender.try_send((addr, *sender, pong)) {
                     warn!(%addr, %err, "failed to queue pong");
                 }
             }
             DiscoMessageSource::Derp { region, .. } => {
-                self.send_disco_message_derp(region, dst_key, pong);
+                self.send_disco_message_derp(region, *sender, pong);
             }
         }
     }
@@ -961,11 +899,8 @@ impl Inner {
                     SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
                 }
                 let msg_sender = self.actor_sender.clone();
-                self.peer_map.write(move |pm| {
-                    if let Some(ep) = pm.by_id_mut(&id) {
-                        ep.ping_sent(dst, tx_id, purpose, msg_sender);
-                    }
-                });
+                self.peer_map
+                    .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
             }
         }
         Poll::Ready(Ok(()))
@@ -1029,6 +964,15 @@ impl From<DiscoMessageSource> for SendAddr {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(addr),
             DiscoMessageSource::Derp { region, .. } => SendAddr::Derp(region),
+        }
+    }
+}
+
+impl From<&DiscoMessageSource> for SendAddr {
+    fn from(value: &DiscoMessageSource) -> Self {
+        match value {
+            DiscoMessageSource::Udp(addr) => SendAddr::Udp(*addr),
+            DiscoMessageSource::Derp { region, .. } => SendAddr::Derp(*region),
         }
     }
 }
@@ -1761,11 +1705,9 @@ impl Actor {
                     }
                 }
             }
-            ActorMessage::EndpointPingExpired(id, txid) => self.inner.peer_map.write(|pm| {
-                if let Some(ep) = pm.by_id_mut(&id).as_mut() {
-                    ep.ping_timeout(txid);
-                }
-            }),
+            ActorMessage::EndpointPingExpired(id, txid) => {
+                self.inner.peer_map.notify_ping_timeout(id, txid);
+            }
         }
 
         false
@@ -1799,30 +1741,10 @@ impl Actor {
         }
         let region_id = dm.region_id;
 
-        let ep_quic_mapped_addr = self.inner.peer_map.write(|pm| {
-            let ep_quic_mapped_addr = pm.endpoint_for_node_key_mut(&dm.src).as_mut().map(|ep| {
-                // NOTE: we don't update the derp region if there is already one but the new one is
-                // different
-                if ep.derp_region().is_none() {
-                    ep.set_derp_region(region_id);
-                }
-                ep.quic_mapped_addr
-            });
-
-            match ep_quic_mapped_addr {
-                Some(addr) => addr,
-                None => {
-                    info!(peer=%dm.src, "no peer_map state found for peer");
-                    let id = pm.insert_endpoint(EndpointOptions {
-                        public_key: dm.src,
-                        derp_region: Some(region_id),
-                        active: true,
-                    });
-                    let ep = pm.by_id_mut(&id).expect("inserted");
-                    ep.quic_mapped_addr
-                }
-            }
-        });
+        let quic_mapped_addr = self
+            .inner
+            .peer_map
+            .get_quic_mapped_addr_for_derp_recv(region_id, dm.src);
 
         // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
@@ -1844,7 +1766,7 @@ impl Actor {
                     let meta = quinn_udp::RecvMeta {
                         len: part.len(),
                         stride: part.len(),
-                        addr: ep_quic_mapped_addr.0,
+                        addr: quic_mapped_addr.0,
                         dst_ip,
                         ecn: None,
                     };
@@ -2274,10 +2196,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn enqueue_call_me_maybe(&mut self, derp_region: u16, endpoint_id: usize) {
-        let public_key = self
-            .inner
-            .peer_map
-            .read(|pm| pm.by_id(&endpoint_id).map(|ep| ep.public_key));
+        let public_key = self.inner.peer_map.endpoint_id_to_public_key(&endpoint_id);
         let Some(public_key) = public_key else {
             warn!(
                 "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
