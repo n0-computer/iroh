@@ -610,7 +610,12 @@ impl Actor {
         loop {
             tokio::select! {
                 res = self.recv_detail() => {
+                    let is_closed = matches!(res, Err(ClientError::Closed));
                     msg_sender.send(res).await.ok();
+                    if is_closed {
+                        self.close().await;
+                        break;
+                    }
                 }
                 Some(msg) = inbox.recv() => {
                     match msg {
@@ -1061,36 +1066,21 @@ impl Actor {
         if reg.nodes.is_empty() {
             return Err(ClientError::NoNodeForTarget(target));
         }
-        // usually 1 IPv4, 1 IPv6 and 2x http
-        const DIAL_PARALLELISM: usize = 4;
-        let mut dials = bounded_join_set::JoinSet::new(DIAL_PARALLELISM);
 
         let prefer_ipv6 = self.prefer_ipv6().await;
 
-        for node in reg.nodes.clone().into_iter() {
-            let target = target.clone();
-            dials.spawn(async move {
-                if node.stun_only {
-                    return Err(ClientError::StunOnlyNodesFound(target));
-                }
-
-                dial_node(&node, prefer_ipv6).await.map(|c| (c, node))
-            });
-        }
-
         let mut errs = Vec::new();
-        while let Some(res) = dials.join_next().await {
-            match res {
-                Ok(Ok((conn, node))) => {
-                    // return on the first successfull one
-                    trace!("dialed region");
-                    return Ok((conn, node));
+        for node in &reg.nodes {
+            if node.stun_only {
+                errs.push(ClientError::StunOnlyNodesFound(target.clone()));
+                continue;
+            }
+            match dial_node(&node, prefer_ipv6).await {
+                Ok(c) => {
+                    return Ok((c, node.clone()));
                 }
-                Err(e) => {
-                    errs.push(ClientError::DialTask(e));
-                }
-                Ok(Err(e)) => {
-                    errs.push(e);
+                Err(err) => {
+                    errs.push(err);
                 }
             }
         }
@@ -1135,13 +1125,9 @@ impl Actor {
                     }
                     return Ok((msg, conn_gen));
                 }
-                Err(e) => {
-                    self.close_for_reconnect().await;
-                    if self.is_closed {
-                        return Err(ClientError::Closed);
-                    }
-                    // TODO(ramfox): more specific error?
-                    return Err(ClientError::Receive(e));
+                Err(_e) => {
+                    // errors on the recv channel means things need to shutdown
+                    return Err(ClientError::Closed);
                 }
             }
         }
