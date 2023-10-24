@@ -38,13 +38,13 @@ pub enum Error {
     /// This looks like a ticket, but postcard deserialization failed.
     #[display("deserialization failed: {_0}")]
     Postcard(#[from] postcard::Error),
-    /// This looks like a ticket, but basse32 decoding failed.
+    /// This looks like a ticket, but base32 decoding failed.
     #[display("decoding failed: {_0}")]
     Encoding(#[from] data_encoding::DecodeError),
 }
 
 trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
-    /// Kinf of Iroh ticket.
+    /// Kind of Iroh ticket.
     const KIND: Kind;
 
     /// Serialize to postcard bytes.
@@ -63,6 +63,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
         out.push(':');
         let bytes = self.to_bytes();
         data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
+        out.make_ascii_lowercase();
         out
     }
 
@@ -74,6 +75,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
         if expected != found {
             return Err(Error::WrongKind { expected, found });
         }
+        let bytes = bytes.to_ascii_uppercase();
         let bytes = data_encoding::BASE32_NOPAD.decode(bytes.as_bytes())?;
         let ticket = Self::from_bytes(&bytes)?;
         Ok(ticket)
