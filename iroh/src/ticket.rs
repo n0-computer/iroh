@@ -1,176 +1,77 @@
 //! This module manages the different tickets Iroh has.
 
-use anyhow::{ensure, Result};
-use iroh_bytes::{protocol::RequestToken, BlobFormat, Hash};
-use iroh_net::PeerAddr;
-use serde::{Deserialize, Serialize};
+pub mod blob;
+pub mod doc;
 
-/// Kind of ticket
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, strum::EnumString)]
+/// Kind of ticket.
+#[derive(Debug, strum::EnumString, strum::Display, PartialEq, Eq, Clone, Copy)]
 #[strum(serialize_all = "snake_case")]
-pub enum TicketKind {
+pub enum Kind {
+    /// A blob ticket.
     Blob,
+    /// A document ticket.
     Doc,
-    Peer,
+    /// A ticket for an Iroh node.
+    Node,
 }
 
-trait IrohTicket<'de>: Serialize + Deserialize<'de> {
-    const KIND: TicketKind;
+/// An error deserializing an [`IrohTicket`].
+#[derive(Debug, derive_more::Display, thiserror::Error)]
+pub enum Error {
+    /// Found a ticket of the wrong [`Kind`].
+    #[display("expected a {expected} ticket but found {found}")]
+    WrongKind {
+        /// Expected [`Kind`] of ticket.
+        expected: Kind,
+        /// Found [`Kind`] of ticket.
+        found: Kind,
+    },
+    /// It appears to be a ticket but the prefix is not a known one.
+    #[display("unrecogized ticket prefix")]
+    UnrecognizedKind(#[from] strum::ParseError),
+    /// This does not appear to be a ticket.
+    #[display("not a {expected} ticket")]
+    MissingKind {
+        /// Prefix that is missing.
+        expected: Kind,
+    },
+    /// This looks like a ticket, but postcard deserialization failed.
+    #[display("deserialization failed: {_0}")]
+    Postcard(#[from] postcard::Error),
+}
+
+trait IrohTicket<'de>: serde::Serialize + serde::Deserialize<'de> {
+    /// Kinf of Iroh ticket.
+    const KIND: Kind;
+
+    /// Serialize to postcard bytes.
     fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(&self).expect("postcard::to_stdvec is infallible")
     }
-}
 
-impl<'de> IrohTicket<'de> {
+    /// Deserialize from postcard bytes.
+    fn from_bytes(bytes: &'de [u8]) -> Result<Self, postcard::Error> {
+        postcard::from_bytes(bytes)
+    }
+
+    /// Serialize to string.
     fn serialize(&self) -> String {
         let mut out = Self::KIND.to_string();
+        out.push(':');
         let bytes = self.to_bytes();
         data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
         out
     }
-}
 
-/// A token containing everything to get a file from the provider.
-///
-/// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base32.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BlobTicket {
-    /// The provider to get a file from.
-    peer: PeerAddr,
-    /// The format of the blob.
-    format: BlobFormat,
-    /// The hash to retrieve.
-    hash: Hash,
-    /// Optional Request token.
-    token: Option<RequestToken>,
-}
-
-impl BlobTicket {
-    const OPT_PREFIX: &'static str = "blob:";
-    /// Creates a new ticket.
-    pub fn new(
-        peer: PeerAddr,
-        hash: Hash,
-        format: BlobFormat,
-        token: Option<RequestToken>,
-    ) -> Result<Self> {
-        ensure!(!peer.is_empty(), "addressing information cannot be empty");
-        Ok(Self {
-            hash,
-            format,
-            peer,
-            token,
-        })
-    }
-
-    /// Deserializes from bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let slf: BlobTicket = postcard::from_bytes(bytes)?;
-        ensure!(!slf.is_empty(), "Invalid addressing info in ticket");
-        Ok(slf)
-    }
-
-    /// Serializes to bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-
-    /// The hash of the item this ticket can retrieve.
-    pub fn hash(&self) -> Hash {
-        self.hash
-    }
-
-    /// The [`PeerAddr`] of the provider for this ticket.
-    pub fn node_addr(&self) -> &PeerAddr {
-        &self.peer
-    }
-
-    /// The [`RequestToken`] for this ticket.
-    pub fn token(&self) -> Option<&RequestToken> {
-        self.token.as_ref()
-    }
-
-    /// The [`BlobFormat`] for this ticket.
-    pub fn format(&self) -> BlobFormat {
-        self.format
-    }
-
-    /// Set the [`RequestToken`] for this ticket.
-    pub fn with_token(self, token: Option<RequestToken>) -> Self {
-        Self { token, ..self }
-    }
-
-    /// True if the ticket is for a collection and should retrieve all blobs in it.
-    pub fn recursive(&self) -> bool {
-        self.format.is_hash_seq()
-    }
-
-    /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (PeerAddr, Hash, BlobFormat, Option<RequestToken>) {
-        let Self {
-            peer,
-            hash,
-            format,
-            token,
-        } = self;
-        (peer, hash, format, token)
-    }
-}
-
-/*
-/// Serializes to base32.
-impl Display for Ticket {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let bytes = self.to_bytes();
-        let mut out = Self::OPT_PREFIX.to_string();
-        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
-        out.make_ascii_lowercase();
-        write!(f, "{out}",)
-    }
-}
-
-/// Deserializes from base32.
-impl FromStr for Ticket {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s
-            .strip_prefix(Self::OPT_PREFIX)
-            .unwrap_or(s)
-            .to_ascii_uppercase();
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.as_bytes())?;
-        Self::from_bytes(&bytes)
-    }
-}
-*/
-#[cfg(test)]
-mod tests {
-    use std::net::SocketAddr;
-
-    use bao_tree::blake3;
-
-    use super::*;
-
-    #[test]
-    fn test_ticket_base32_roundtrip() {
-        let hash = blake3::hash(b"hi there");
-        let hash = Hash::from(hash);
-        let peer = SecretKey::generate().public();
-        let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
-        let derp_region = Some(0);
-        let ticket = Ticket {
-            hash,
-            peer: PeerAddr::from_parts(peer, derp_region, vec![addr]),
-            token: Some(token),
-            format: BlobFormat::HashSeq,
-        };
-        let base32 = ticket.to_string();
-        println!("Ticket: {base32}");
-        println!("{} bytes", base32.len());
-
-        let ticket2: Ticket = base32.parse().unwrap();
-        assert_eq!(ticket2, ticket);
+    /// Deserialize from a string.
+    fn deserialize(str: &'de str) -> Result<Self, Error> {
+        let expected = Self::KIND;
+        let (prefix, bytes) = str.split_once(':').ok_or(Error::MissingKind { expected })?;
+        let found: Kind = prefix.parse()?;
+        if expected != found {
+            return Err(Error::WrongKind { expected, found });
+        }
+        let ticket = Self::from_bytes(bytes.as_bytes())?;
+        Ok(ticket)
     }
 }

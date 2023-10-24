@@ -7,7 +7,7 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
 
 use crate::sync_engine::LiveEvent;
+pub use crate::ticket::doc::Ticket as DocTicket;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -492,57 +493,6 @@ impl RpcMsg<ProviderService> for DocCreateRequest {
 pub struct DocCreateResponse {
     /// The document id
     pub id: NamespaceId,
-}
-
-/// Contains both a key (either secret or public) to a document, and a list of peers to join.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DocTicket {
-    /// either a public or private key
-    pub key: KeyBytes,
-    /// a list of peers
-    pub peers: Vec<PeerAddr>,
-}
-
-impl DocTicket {
-    const OPT_PREFIX: &'static str = "doc:";
-
-    /// Create a new doc ticket
-    pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
-        Self { key, peers }
-    }
-
-    /// Serialize the ticket to a byte array.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-
-    /// Parse ticket from a byte array.
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        let slf = postcard::from_bytes(bytes)?;
-        Ok(slf)
-    }
-}
-
-impl FromStr for DocTicket {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s
-            .strip_prefix(Self::OPT_PREFIX)
-            .unwrap_or(s)
-            .to_ascii_uppercase();
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.as_bytes())?;
-        Self::from_bytes(&bytes)
-    }
-}
-
-impl fmt::Display for DocTicket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = Self::OPT_PREFIX.to_string();
-        let bytes = self.to_bytes();
-        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
-        out.make_ascii_lowercase();
-        write!(f, "{out}",)
-    }
 }
 
 /// Import a document from a ticket.
