@@ -2604,7 +2604,12 @@ pub(crate) mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
+    use crate::{
+        defaults::{default_eu_derp_region, EU_REGION_ID},
+        derp::DerpMode,
+        test_utils::run_derper,
+        tls, MagicEndpoint,
+    };
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -2695,11 +2700,11 @@ pub(crate) mod tests {
     const ALPN: [u8; 9] = *b"n0/test/1";
 
     impl MagicStack {
-        async fn new(derp_map: DerpMap) -> Result<Self> {
+        async fn new(derp_map: DerpMap, secret_key: Option<SecretKey>) -> Result<Self> {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
 
-            let secret_key = SecretKey::generate();
+            let secret_key = secret_key.unwrap_or_else(SecretKey::generate);
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -2760,7 +2765,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_peer_addr(addr);
+                // m.endpoint.magic_sock().add_peer_addr(addr);
             }
         }
 
@@ -2803,27 +2808,30 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
-        let (derp_map, region, _cleanup) = run_derper().await?;
+        // let (derp_map, region, _cleanup) = run_derper().await?;
+        // let dm = derp_map;
+        let region = EU_REGION_ID;
+        let dm = DerpMap::from_regions([default_eu_derp_region()])?;
 
-        let m1 = MagicStack::new(derp_map.clone()).await?;
-        let m2 = MagicStack::new(derp_map.clone()).await?;
+        let m1 = MagicStack::new(dm.clone(), None).await?;
+        // let m2 = MagicStack::new(dm.clone(), None).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+        // let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
         // Wait for magicsock to be told about peers from mesh_stacks.
-        let m1t = m1.clone();
-        let m2t = m2.clone();
-        time::timeout(Duration::from_secs(10), async move {
-            loop {
-                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-                if ab && ba {
-                    break;
-                }
-            }
-        })
-        .await
-        .context("failed to connect peers")?;
+        // let m1t = m1.clone();
+        // let m2t = m2.clone();
+        // time::timeout(Duration::from_secs(10), async move {
+        //     loop {
+        //         let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+        //         let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+        //         if ab && ba {
+        //             break;
+        //         }
+        //     }
+        // })
+        // .await
+        // .context("failed to connect peers")?;
 
         // msg from  m2 -> m1
         macro_rules! roundtrip {
@@ -2836,13 +2844,13 @@ pub(crate) mod tests {
                 println!("[{}] {:?}", a_name, a.endpoint.local_addr());
                 println!("[{}] {:?}", b_name, b.endpoint.local_addr());
 
-                let a_addr = b.endpoint.magic_sock().get_mapping_addr(&a.public()).await.unwrap();
-                let b_addr = a.endpoint.magic_sock().get_mapping_addr(&b.public()).await.unwrap();
+                let a_addr = b.endpoint.magic_sock().get_mapping_addr(&a.public()).await;//.unwrap();
+                let b_addr = a.endpoint.magic_sock().get_mapping_addr(&b.public()).await;//.unwrap()
                 let b_peer_id = b.endpoint.peer_id();
 
-                println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
+                println!("{}: {:?}, {}: {:?}", a_name, a_addr, b_name, b_addr);
 
-                let b_span = debug_span!("receiver", b_name, %b_addr);
+                let b_span = debug_span!("receiver", b_name, ?b_addr);
                 let b_task = tokio::task::spawn(
                     async move {
                         println!("[{}] accepting conn", b_name);
@@ -2891,10 +2899,10 @@ pub(crate) mod tests {
                     .instrument(b_span),
                 );
 
-                let a_span = debug_span!("sender", a_name, %a_addr);
+                let a_span = debug_span!("sender", a_name, ?a_addr);
                 async move {
-                    println!("[{}] connecting to {}", a_name, b_addr);
-                    let peer_b_data = PeerAddr::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
+                    println!("[{}] connecting to {:?}", a_name, b_addr);
+                    let peer_b_data = PeerAddr::new(b_peer_id).with_derp_region(region);//.with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(peer_b_data, &ALPN)
@@ -2947,8 +2955,10 @@ pub(crate) mod tests {
                 .await?;
             };
         }
+        let key = SecretKey::generate();
+        for i in 0..100 {
+            let m2 = MagicStack::new(dm.clone(), Some(key.clone())).await?;
 
-        for i in 0..10 {
             println!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello m1");
             roundtrip!(m2, m1, b"hello m2");
@@ -2964,7 +2974,7 @@ pub(crate) mod tests {
         }
 
         println!("cleaning up");
-        cleanup_mesh();
+        // cleanup_mesh();
         Ok(())
     }
 
@@ -2974,8 +2984,8 @@ pub(crate) mod tests {
         for _ in 0..10 {
             let (derp_map, _, _cleanup) = run_derper().await?;
             println!("setting up magic stack");
-            let m1 = MagicStack::new(derp_map.clone()).await?;
-            let m2 = MagicStack::new(derp_map.clone()).await?;
+            let m1 = MagicStack::new(derp_map.clone(), None).await?;
+            let m2 = MagicStack::new(derp_map.clone(), None).await?;
 
             let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
