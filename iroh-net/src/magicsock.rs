@@ -251,7 +251,7 @@ struct Inner {
     /// Netcheck client
     net_checker: netcheck::Client,
     /// The state for an active DiscoKey.
-    disco_info: parking_lot::Mutex<HashMap<PublicKey, DiscoInfo>>,
+    disco_secrets: DiscoSecrets,
     udp_state: quinn_udp::UdpState,
 
     // Send buffer used in `poll_send_udp`
@@ -650,26 +650,18 @@ impl Inner {
 
         // We're now reasonably sure we're expecting communication from
         // this peer, do the heavy crypto lifting to see what they want.
-        //
-        let (payload, sealed_box) = {
-            let mut disco_info = self.disco_info.lock();
-            let di = get_disco_info(&mut disco_info, &self.secret_key, &sender);
-            let mut sealed_box = sealed_box.to_vec();
-            let payload = di.shared_key.open(&mut sealed_box);
-            (payload, sealed_box)
-        };
-
-        if payload.is_err() {
-            // This could happen if we changed the key between restarts.
-            warn!("disco: failed to open box (wrong rcpt?) {:?}", payload,);
-            inc!(MagicsockMetrics, recv_disco_bad_key);
-            return;
-        }
-        let dm = disco::Message::from_bytes(&sealed_box);
-
-        let dm = match dm {
+        let dm = match self.disco_secrets.unseal_and_decode(
+            &self.secret_key,
+            sender,
+            sealed_box.to_vec(),
+        ) {
             Ok(dm) => dm,
-            Err(err) => {
+            Err(DiscoBoxError::Open(err)) => {
+                warn!(?err, "failed to open disco box");
+                inc!(MagicsockMetrics, recv_disco_bad_key);
+                return;
+            }
+            Err(DiscoBoxError::Parse(err)) => {
                 // Couldn't parse it, but it was inside a correctly
                 // signed box, so just ignore it, assuming it's from a
                 // newer version of Tailscale that we don't
@@ -714,23 +706,12 @@ impl Inner {
     /// Handle a ping message.
     fn handle_ping(&self, dm: disco::Ping, sender: &PublicKey, src: DiscoMessageSource) {
         let src_addr: SendAddr = src.clone().into();
-        let (node_key, likely_heart_beat) = {
-            let mut disco_info = self.disco_info.lock();
-            let di = get_disco_info(&mut disco_info, &self.secret_key, sender);
-            let likely_heart_beat = Some(src_addr) == di.last_ping_from
-                && di
-                    .last_ping_time
-                    .map(|s| s.elapsed() < Duration::from_secs(5))
-                    .unwrap_or_default();
-            di.last_ping_from.replace(src_addr);
-            di.last_ping_time.replace(Instant::now());
-            (di.node_key, likely_heart_beat)
-        };
-        debug_assert_eq!(sender, &node_key);
-
-        if !likely_heart_beat {
-            debug!(tx = %hex::encode(dm.tx_id), "received ping");
-        }
+        // Check if we received a recent ping from the same address, if so, treat as hearbeat ping
+        // (not a new ping).
+        // TODO: restore likely_hear_beat
+        // if !likely_heart_beat {
+        //     debug!(tx = %hex::encode(dm.tx_id), "received ping");
+        // }
 
         // Insert the ping into the peer map, and return whether a ping with this tx_id was already
         // received.
@@ -759,15 +740,8 @@ impl Inner {
     }
 
     fn encode_disco_message(&self, dst_key: PublicKey, msg: &disco::Message) -> Bytes {
-        let seal = {
-            let mut disco_info = self.disco_info.lock();
-            let di = get_disco_info(&mut disco_info, &self.secret_key, &dst_key);
-            let mut seal = msg.as_bytes();
-            di.shared_key.seal(&mut seal);
-            seal
-        };
-
-        disco::encode_message(&self.public_key(), seal).into()
+        self.disco_secrets
+            .encode_and_seal(&self.secret_key, dst_key, msg)
     }
 
     fn send_disco_message_derp(&self, region: u16, dst_key: PublicKey, msg: disco::Message) {
@@ -1130,7 +1104,7 @@ impl MagicSock {
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
             net_checker: net_checker.clone(),
-            disco_info: parking_lot::Mutex::new(HashMap::new()),
+            disco_secrets: DiscoSecrets::default(),
             peer_map,
             derp_actor_sender: derp_actor_sender.clone(),
             udp_state,
@@ -1365,25 +1339,52 @@ impl MagicSock {
     }
 }
 
-/// The info and state for the DiscoKey in the MagicSock.discoInfo map key.
-///
-/// Note that a DiscoKey does not necessarily map to exactly one
-/// node. In the case of shared nodes and users switching accounts, two
-/// nodes in the NetMap may legitimately have the same DiscoKey.  As
-/// such, no fields in here should be considered node-specific.
-#[derive(Debug)]
-struct DiscoInfo {
-    node_key: PublicKey,
-    /// The precomputed key for communication with the peer that has the `node_key` used to
-    /// look up this `DiscoInfo` in MagicSock.discoInfo.
-    /// Not modified once initialized.
-    shared_key: SharedSecret,
+#[derive(Debug, Default)]
+struct DiscoSecrets(parking_lot::Mutex<HashMap<PublicKey, SharedSecret>>);
 
-    /// The src of a ping for `node_key`.
-    last_ping_from: Option<SendAddr>,
+impl DiscoSecrets {
+    fn get(
+        &mut self,
+        secret: &SecretKey,
+        node_id: PublicKey,
+    ) -> parking_lot::MappedMutexGuard<SharedSecret> {
+        parking_lot::MutexGuard::map(self.0.lock(), |inner| {
+            inner
+                .entry(node_id)
+                .or_insert_with(|| secret.shared(&node_id))
+        })
+    }
 
-    /// The last time of a ping for `node_key`.
-    last_ping_time: Option<Instant>,
+    pub fn encode_and_seal(
+        &mut self,
+        secret_key: &SecretKey,
+        node_id: PublicKey,
+        msg: &disco::Message,
+    ) -> Bytes {
+        let mut seal = msg.as_bytes();
+        self.get(secret_key, node_id).seal(&mut seal);
+        disco::encode_message(&secret_key.public(), seal).into()
+    }
+
+    pub fn unseal_and_decode(
+        &mut self,
+        secret: &SecretKey,
+        node_id: PublicKey,
+        mut sealed_box: Vec<u8>,
+    ) -> Result<disco::Message, DiscoBoxError> {
+        self.get(secret, node_id)
+            .open(&mut sealed_box)
+            .map_err(DiscoBoxError::Open)?;
+        disco::Message::from_bytes(&sealed_box).map_err(DiscoBoxError::Parse)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum DiscoBoxError {
+    #[error("Failed to open crypto box")]
+    Open(anyhow::Error),
+    #[error("Failed to parse disco message")]
+    Parse(anyhow::Error),
 }
 
 type DerpRecvResult = Result<(quinn_udp::RecvMeta, Bytes), io::Error>;
@@ -2360,28 +2361,6 @@ impl Actor {
     fn local_port_v4(&self) -> u16 {
         self.pconn4.port()
     }
-}
-
-/// Returns the previous or new DiscoInfo for `k`.
-fn get_disco_info<'a>(
-    disco_info: &'a mut HashMap<PublicKey, DiscoInfo>,
-    node_private: &SecretKey,
-    k: &PublicKey,
-) -> &'a mut DiscoInfo {
-    if !disco_info.contains_key(k) {
-        let shared_key = node_private.shared(k);
-        disco_info.insert(
-            *k,
-            DiscoInfo {
-                node_key: *k,
-                shared_key,
-                last_ping_from: None,
-                last_ping_time: None,
-            },
-        );
-    }
-
-    disco_info.get_mut(k).unwrap()
 }
 
 fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
