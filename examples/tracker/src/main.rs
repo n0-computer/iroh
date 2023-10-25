@@ -829,7 +829,7 @@ impl Tracker {
                 let peer = PublicKey::from_bytes(&short_peer)?;
                 let t0 = Instant::now();
                 let res = endpoint
-                    .connect_by_peer(&peer, &iroh_bytes::protocol::ALPN)
+                    .connect_by_node_id(&peer, &iroh_bytes::protocol::ALPN)
                     .await;
                 self.log_connection_attempt(&peer, t0, &res)?;
                 let connection = match res {

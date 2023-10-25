@@ -435,29 +435,29 @@ impl MagicEndpoint {
         }
     }
 
-    /// Connect to a remote endpoint, using just the peer's [`PublicKey`].
-    pub async fn connect_by_peer(
+    /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
+    pub async fn connect_by_node_id(
         &self,
-        peer_id: &PublicKey,
+        node_id: &PublicKey,
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
-        let addr = match self.msock.get_mapping_addr(peer_id).await {
+        let addr = match self.msock.get_mapping_addr(node_id).await {
             Some(addr) => addr,
             None => {
-                let info = self.resolve(&peer_id).await?;
+                let info = self.resolve(&node_id).await?;
                 let peer_addr = PeerAddr {
-                    peer_id: *peer_id,
+                    peer_id: *node_id,
                     info,
                 };
                 self.add_peer_addr(peer_addr).await?;
-                self.msock.get_mapping_addr(peer_id).await.ok_or_else(|| {
-                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {peer_id:?}")
+                self.msock.get_mapping_addr(node_id).await.ok_or_else(|| {
+                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
                 })?
             }
         };
 
-        debug!("connecting to {}: (via {})", peer_id, addr);
-        self.connect_inner(peer_id, alpn, addr).await
+        debug!("connecting to {}: (via {})", node_id, addr);
+        self.connect_inner(node_id, alpn, addr).await
     }
 
     /// Connect to a remote endpoint.

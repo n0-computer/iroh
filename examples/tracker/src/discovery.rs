@@ -27,7 +27,7 @@ fn filter_ipaddr(rr: &ResourceRecord) -> Option<IpAddr> {
     Some(addr)
 }
 
-fn filter_txt<'a>(rr: &'a ResourceRecord) -> Option<String> {
+fn filter_txt(rr: &ResourceRecord) -> Option<String> {
     if rr.class != CLASS::IN {
         return None;
     }
@@ -88,7 +88,7 @@ fn node_addr_to_packet(keypair: &Keypair, info: &AddrInfo, ttl: u32) -> Result<S
             }),
         ));
     }
-    Ok(SignedPacket::from_packet(&keypair, &packet)?)
+    Ok(SignedPacket::from_packet(keypair, &packet)?)
 }
 
 /// A discovery method that uses the pkarr DNS protocol. See pkarr.org for more
@@ -133,7 +133,7 @@ impl iroh_net::magicsock::Discovery for PkarrRelayDiscovery {
             info!("resolving {} via {}", node_id, self.relay);
             let pkarr_public_key = pkarr::PublicKey::try_from(*node_id.as_bytes()).unwrap();
             let packet = self.client.relay_get(&self.relay, pkarr_public_key).await?;
-            let addr = packet_to_node_addr(&node_id, &packet);
+            let addr = packet_to_node_addr(node_id, &packet);
             info!("resolved: {} to {:?}", node_id, addr);
             Ok(addr.info)
         }
