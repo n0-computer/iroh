@@ -54,6 +54,7 @@ pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         derp_region: u16,
         dst_key: PublicKey,
+        force_now: bool
     },
     SendPing(SendPing),
 }
@@ -239,7 +240,13 @@ impl Endpoint {
                     .choose_stable(&mut rand::thread_rng())
                     .map(|ipp| SocketAddr::from(*ipp));
                 trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and derp");
-                (addr, self.derp_region(), addr.is_some())
+                let should_ping = addr.is_some()
+                    || self
+                        .derp_region
+                        .as_ref()
+                        .map(|(_r, state)| state.needs_ping(now))
+                        .unwrap_or(false);
+                (addr, self.derp_region(), should_ping)
             }
         }
     }
@@ -526,7 +533,7 @@ impl Endpoint {
             // of potential UDP addresses.
             //
             // Otherwise it is used for hole punching, as described below.
-            if let Some(derp_region) = self.derp_region() {
+            if let Some((derp_region, state)) = self.derp_region.as_ref() {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
                 // it doesn't know already) and then send a CallMeMaybe
                 // message to our peer via DERP informing them that we've
@@ -534,8 +541,11 @@ impl Endpoint {
                 // would be a good time for them to connect.
                 info!(?derp_region, "enqueue call-me-maybe");
                 msgs.push(PingAction::SendCallMeMaybe {
-                    derp_region,
+                    derp_region: *derp_region,
                     dst_key: self.public_key,
+                    // if the derp region was never pinged, force the call-me-maybe to go out right
+                    // away to trigger an endpoint update on the remote
+                    force_now: state.last_ping.is_none()
                 });
             }
         }

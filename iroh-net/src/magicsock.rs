@@ -943,8 +943,9 @@ impl Inner {
             PingAction::SendCallMeMaybe{
                 derp_region,
                 dst_key,
+                force_now
             } => {
-                self.send_call_me_maybe(derp_region, dst_key);
+                self.send_call_me_maybe(derp_region, dst_key, force_now);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -993,9 +994,10 @@ impl Inner {
         futures::future::poll_fn(|cx| self.poll_send_udp(addr, &transmits, cx)).await
     }
 
-    fn send_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
+    fn send_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey, force_now: bool) {
         let mut endpoints = self.endpoints.lock();
-        if !endpoints.fresh_enough() {
+        let is_fresh = endpoints.fresh_enough();
+        if !is_fresh {
             info!(
                 "want call-me-maybe but endpoints stale; restunning ({:?})",
                 endpoints.last_endpoints_time
@@ -1027,7 +1029,8 @@ impl Inner {
                     })
                 }),
             );
-        } else {
+        } 
+        if is_fresh || force_now {
             let eps: Vec<_> = endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::CallMeMaybe { my_number: eps };
             if !self.send_disco_message_derp(derp_region, dst_key, disco::Message::CallMeMaybe(msg))
@@ -1784,7 +1787,7 @@ impl Actor {
                 derp_region,
                 dst_key,
             } => {
-                self.inner.send_call_me_maybe(derp_region, dst_key);
+                self.inner.send_call_me_maybe(derp_region, dst_key, false);
             }
             ActorMessage::RebindAll(s) => {
                 self.rebind_all().await;
