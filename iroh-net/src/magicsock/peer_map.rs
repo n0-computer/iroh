@@ -28,7 +28,7 @@ mod best_addr;
 mod endpoint;
 
 pub use endpoint::{ConnectionType, DirectAddrInfo, EndpointInfo};
-pub(super) use endpoint::{DiscoPingPurpose, PingAction, PingRole};
+pub(super) use endpoint::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of peers that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`PeerMap::prune_inactive`].
@@ -152,7 +152,8 @@ impl PeerMap {
         self.inner.lock().handle_pong(sender, src, pong)
     }
 
-    pub fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) {
+    #[must_use = "actions must be handled"]
+    pub fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
         self.inner.lock().handle_call_me_maybe(sender, cm)
     }
 
@@ -387,17 +388,19 @@ impl PeerMapInner {
         }
     }
 
-    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) {
+    #[must_use = "actions must be handled"]
+    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
         match self.get_mut(EndpointId::NodeKey(&sender)) {
             None => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 debug!("received call-me-maybe: ignore, peer is unknown");
+                vec![]
             }
             Some(ep) => {
                 debug!("received call-me-maybe: {} endpoints", cm.my_number.len());
-                ep.handle_call_me_maybe(cm);
+                ep.handle_call_me_maybe(cm)
             }
-        };
+        }
     }
 
     fn handle_ping(&mut self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {

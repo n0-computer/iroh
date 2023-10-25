@@ -61,7 +61,7 @@ use crate::{
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     metrics::Metrics as MagicsockMetrics,
-    peer_map::{PeerMap, PingAction},
+    peer_map::{PeerMap, PingAction, SendPing},
     rebinding_conn::RebindingUdpConn,
 };
 
@@ -698,7 +698,17 @@ impl Inner {
                     debug!("[unexpected] call-me-maybe packets should only come via DERP");
                     return;
                 };
-                self.peer_map.handle_call_me_maybe(sender, cm);
+                let ping_actions = self.peer_map.handle_call_me_maybe(sender, cm);
+                for action in ping_actions {
+                    match action {
+                        PingAction::EnqueueCallMeMaybe { .. } => {
+                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
+                        }
+                        PingAction::SendPing(ping) => {
+                            self.send_ping_queued(ping);
+                        }
+                    }
+                }
             }
         }
     }
@@ -729,15 +739,9 @@ impl Inner {
             tx_id: dm.tx_id,
             src: src.as_socket_addr(),
         });
-        match src {
-            DiscoMessageSource::Udp(addr) => {
-                if let Err(err) = self.udp_disco_sender.try_send((addr, *sender, pong)) {
-                    warn!(%addr, %err, "failed to queue pong");
-                }
-            }
-            DiscoMessageSource::Derp { region, .. } => {
-                self.send_disco_message_derp(region, *sender, pong);
-            }
+        let dst: SendAddr = src.into();
+        if !self.send_disco_message_queued(dst, *sender, pong) {
+            warn!(%addr, "failed to queue pong");
         }
     }
 
@@ -746,13 +750,107 @@ impl Inner {
             .encode_and_seal(&self.secret_key, dst_key, msg)
     }
 
-    fn send_disco_message_derp(&self, region: u16, dst_key: PublicKey, msg: disco::Message) {
+    fn send_ping_queued(&self, ping: SendPing) {
+        let SendPing {
+            id,
+            dst,
+            dst_key,
+            tx_id,
+            purpose,
+        } = ping;
+        let msg = disco::Message::Ping(disco::Ping {
+            tx_id,
+            node_key: self.public_key(),
+        });
+        info!(dst = ?dst, %tx_id, ?purpose, "send ping");
+        let sent = match dst {
+            SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
+            SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
+        };
+        if sent {
+            let msg_sender = self.actor_sender.clone();
+            info!(dst = ?dst, %tx_id, ?purpose, "ping sent");
+            self.peer_map
+                .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+        } else {
+            info!(dst = ?dst, %tx_id, ?purpose, "failed to send ping: queues full");
+        }
+    }
+
+    fn poll_send_ping(&self, ping: &SendPing, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let SendPing {
+            id,
+            dst,
+            dst_key,
+            tx_id,
+            purpose,
+        } = ping;
+        let msg = disco::Message::Ping(disco::Ping {
+            tx_id: *tx_id,
+            node_key: self.public_key(),
+        });
+        ready!(self.poll_send_disco_message(*dst, *dst_key, msg, cx))?;
+        let msg_sender = self.actor_sender.clone();
+        info!(dst = ?dst, %tx_id, ?purpose, "ping sent");
+        self.peer_map
+            .notify_ping_sent(*id, *dst, *tx_id, *purpose, msg_sender);
+        Poll::Ready(Ok(()))
+    }
+
+    /// Send a disco message. UDP messages will be queued.
+    ///
+    /// If `dst` is [`SendAddr::Derp`], the message will be pushed into the derp client channel.
+    /// If `dst` is [`SendAddr::Udp`], the message will be pushed into the udp disco send channel.
+    ///
+    /// Returns true if the channel had capacity for the message, and false if the message was
+    /// dropped.
+    fn send_disco_message_queued(
+        &self,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> bool {
+        match dst {
+            SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
+            SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
+        }
+    }
+
+    /// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
+    fn poll_send_disco_message(
+        &self,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        match dst {
+            SendAddr::Udp(addr) => {
+                ready!(self.poll_send_disco_message_udp(addr, dst_key, &msg, cx))?;
+            }
+            SendAddr::Derp(region) => {
+                self.send_disco_message_derp(region, dst_key, msg);
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    fn send_disco_message_derp(
+        &self,
+        region: u16,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> bool {
         trace!(peer = %dst_key.fmt_short(), %region, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
-        self.send_derp(region, dst_key, smallvec![pkt]);
-        inc!(MagicsockMetrics, sent_disco_derp);
-        disco_message_sent(&msg);
+        if self.send_derp(region, dst_key, smallvec![pkt]) {
+            inc!(MagicsockMetrics, sent_disco_derp);
+            disco_message_sent(&msg);
+            true
+        } else {
+            false
+        }
     }
 
     async fn send_disco_message_udp(
@@ -794,17 +892,17 @@ impl Inner {
         Poll::Ready(match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
-                warn!(?msg, "failed to send disco message");
+                warn!(%dst, peer = %dst_key.fmt_short(), ?msg, "failed to send disco message");
                 Ok(false)
             }
             Ok(_n) => {
-                debug!(%msg, "sent disco message");
+                debug!(%dst, peer = %dst_key.fmt_short(), %msg, "sent disco message");
                 inc!(MagicsockMetrics, sent_disco_udp);
                 disco_message_sent(msg);
                 Ok(true)
             }
             Err(err) => {
-                warn!(?msg, ?err, "failed to send disco message");
+                warn!(%dst, peer = %dst_key.fmt_short(), ?msg, ?err, "failed to send disco message");
                 Err(err)
             }
         })
@@ -857,32 +955,14 @@ impl Inner {
                     }
                 }
             }
-            PingAction::SendPing {
-                id,
-                dst,
-                dst_key,
-                tx_id,
-                purpose,
-            } => {
-                let msg = disco::Message::Ping(disco::Ping {
-                    tx_id,
-                    node_key: self.public_key(),
-                });
-                match dst {
-                    SendAddr::Udp(addr) => {
-                        ready!(self.poll_send_disco_message_udp(addr, dst_key, &msg, cx))?;
-                    }
-                    SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
-                }
-                let msg_sender = self.actor_sender.clone();
-                self.peer_map
-                    .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+            PingAction::SendPing(ref ping) => {
+                ready!(self.poll_send_ping(ping, cx))?;
             }
         }
         Poll::Ready(Ok(()))
     }
 
-    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: DerpContents) {
+    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: DerpContents) -> bool {
         trace!(peer = %peer.fmt_short(), derp_region = region_id, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             region_id,
@@ -891,13 +971,16 @@ impl Inner {
         };
         match self.derp_actor_sender.try_send(msg) {
             Ok(_) => {
-                trace!(peer = %peer.fmt_short(), derp_region = region_id, "send derp: message queued")
+                trace!(peer = %peer.fmt_short(), derp_region = region_id, "send derp: message queued");
+                true
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 warn!(peer = %peer.fmt_short(), derp_region = region_id, "send derp: message dropped, channel to actor is closed");
+                false
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 warn!(peer = %peer.fmt_short(), derp_region = region_id, "send derp: message dropped, channel to actor is full");
+                false
             }
         }
     }
@@ -2235,7 +2318,7 @@ impl Actor {
                 derp_region,
                 public_key,
                 disco::Message::CallMeMaybe(msg),
-            )
+            );
         }
     }
 

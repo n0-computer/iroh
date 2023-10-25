@@ -55,13 +55,16 @@ pub(in crate::magicsock) enum PingAction {
         derp_region: u16,
         endpoint_id: usize,
     },
-    SendPing {
-        id: usize,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        tx_id: stun::TransactionId,
-        purpose: DiscoPingPurpose,
-    },
+    SendPing(SendPing),
+}
+
+#[derive(Debug)]
+pub(in crate::magicsock) struct SendPing {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_key: PublicKey,
+    pub tx_id: stun::TransactionId,
+    pub purpose: DiscoPingPurpose,
 }
 
 #[derive(Debug)]
@@ -324,7 +327,7 @@ impl Endpoint {
         let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_region) = derp_region {
             if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
-                msgs.push(msg);
+                msgs.push(PingAction::SendPing(msg));
             }
         }
         if let Some(udp_addr) = udp_addr {
@@ -334,7 +337,7 @@ impl Endpoint {
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
                 // IPv6 address, both 1ms away, and it's random who replies first.
                 if let Some(msg) = self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::Cli) {
-                    msgs.push(msg);
+                    msgs.push(PingAction::SendPing(msg));
                 }
             } else {
                 let eps: Vec<_> = self.direct_addr_state.keys().cloned().collect();
@@ -342,7 +345,7 @@ impl Endpoint {
                     if let Some(msg) =
                         self.start_ping(SendAddr::Udp(ep.into()), DiscoPingPurpose::Cli)
                     {
-                        msgs.push(msg);
+                        msgs.push(PingAction::SendPing(msg));
                     }
                 }
             }
@@ -392,7 +395,8 @@ impl Endpoint {
         }
     }
 
-    fn start_ping(&mut self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<PingAction> {
+    #[must_use = "pings must be handled"]
+    fn start_ping(&mut self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
         if derp_only_mode() && !dst.is_derp() {
             // don't attempt any hole punching in derp only mode
             warn!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
@@ -400,7 +404,7 @@ impl Endpoint {
         }
         let tx_id = stun::TransactionId::default();
         info!(tx = %hex::encode(tx_id), %dst, ?purpose, "start ping");
-        Some(PingAction::SendPing {
+        Some(SendPing {
             id: self.id,
             dst,
             dst_key: self.public_key,
@@ -463,6 +467,7 @@ impl Endpoint {
         );
     }
 
+    #[must_use = "actions must be handled"]
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
         let mut msgs = Vec::new();
 
@@ -473,7 +478,7 @@ impl Endpoint {
                 if let Some(msg) =
                     self.start_ping(SendAddr::Derp(*region), DiscoPingPurpose::Discovery)
                 {
-                    msgs.push(msg)
+                    msgs.push(PingAction::SendPing(msg))
                 }
             }
         }
@@ -512,7 +517,7 @@ impl Endpoint {
             if let Some(msg) =
                 self.start_ping(SendAddr::Udp(ep.into()), DiscoPingPurpose::Discovery)
             {
-                msgs.push(msg);
+                msgs.push(PingAction::SendPing(msg));
             }
         }
 
@@ -640,6 +645,7 @@ impl Endpoint {
         let prune_count = prune_candidates
             .len()
             .saturating_sub(MAX_INACTIVE_DIRECT_ADDRESSES);
+        debug!("prune addresses: {prune_count}");
         if prune_count == 0 {
             // nothing to do, within limits
             return;
@@ -950,7 +956,7 @@ impl Endpoint {
                 if let Some(msg) =
                     self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::StayinAlive)
                 {
-                    return vec![msg];
+                    return vec![PingAction::SendPing(msg)];
                 }
             }
         }

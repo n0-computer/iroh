@@ -23,6 +23,14 @@ struct BestAddrInner {
     confirmed_at: Instant,
 }
 
+impl BestAddrInner {
+    fn is_trusted(&self, now: Instant) -> bool {
+        self.trust_until
+            .map(|trust_until| trust_until >= now)
+            .unwrap_or(false)
+    }
+}
+
 #[derive(Debug)]
 pub(super) enum Source {
     ReceivedPong,
@@ -77,7 +85,7 @@ impl BestAddr {
     pub fn clear(&mut self, reason: ClearReason, has_derp: bool) -> bool {
         if let Some(addr) = self.addr() {
             self.0 = None;
-            debug!(?reason, ?has_derp, old_addr = %addr, "remove best_addr");
+            debug!(?reason, ?has_derp, old_addr = %addr, "clearing best_addr");
             // no longer relying on the direct connection
             inc!(MagicsockMetrics, num_direct_conns_removed);
             if has_derp {
@@ -117,11 +125,13 @@ impl BestAddr {
         has_derp: bool,
     ) {
         match self.0.as_mut() {
-            None => self.insert(addr, latency, source, confirmed_at, has_derp),
+            None => {
+                self.insert(addr, latency, source, confirmed_at, has_derp);
+            }
             Some(state) => {
                 let candidate = AddrLatency { addr, latency };
-                if candidate.is_better_than(&state.addr) {
-                    self.insert(addr, latency, source, confirmed_at, has_derp)
+                if !state.is_trusted(confirmed_at) || candidate.is_better_than(&state.addr) {
+                    self.insert(addr, latency, source, confirmed_at, has_derp);
                 } else if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = Some(source.trust_until(confirmed_at));
