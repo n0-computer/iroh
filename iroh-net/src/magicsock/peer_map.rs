@@ -101,10 +101,6 @@ impl PeerMap {
         self.inner.lock().node_count()
     }
 
-    pub fn node_key_for_endpoint_id(&self, id: &usize) -> Option<PublicKey> {
-        self.inner.lock().by_id.get(id).map(|ep| *ep.public_key())
-    }
-
     pub fn receive_udp(&self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
         self.inner.lock().receive_udp(udp_addr)
     }

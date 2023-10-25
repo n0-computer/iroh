@@ -344,7 +344,7 @@ impl DerpActor {
     }
 
     async fn send_derp(&mut self, region_id: u16, contents: DerpContents, peer: PublicKey) {
-        debug!(region_id, ?peer, "sending derp");
+        debug!(region_id, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
         if !self.conn.derp_map.contains_region(region_id) {
             warn!("unknown region id {}", region_id);
             return;

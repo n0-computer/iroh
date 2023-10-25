@@ -51,9 +51,9 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
-    EnqueueCallMeMaybe {
+    SendCallMeMaybe {
         derp_region: u16,
-        endpoint_id: usize,
+        dst_key: PublicKey,
     },
     SendPing(SendPing),
 }
@@ -532,11 +532,10 @@ impl Endpoint {
                 // message to our peer via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
-                let id = self.id;
                 info!(?derp_region, "enqueue call-me-maybe");
-                msgs.push(PingAction::EnqueueCallMeMaybe {
+                msgs.push(PingAction::SendCallMeMaybe {
                     derp_region,
-                    endpoint_id: id,
+                    dst_key: self.public_key,
                 });
             }
         }
