@@ -759,6 +759,9 @@ mod tests {
                 let client_secret_key = client_secret_key.clone();
                 let fut = async move {
                     info!("client binding");
+                    info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
+                    info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
+                    info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
                     let start = Instant::now();
                     let ep = MagicEndpoint::builder()
                         .alpns(vec![TEST_ALPN.to_vec()])

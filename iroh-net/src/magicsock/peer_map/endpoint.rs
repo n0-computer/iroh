@@ -54,7 +54,7 @@ pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         derp_region: u16,
         dst_key: PublicKey,
-        force_now: bool
+        clear_pongs: bool,
     },
     SendPing(SendPing),
 }
@@ -499,7 +499,6 @@ impl Endpoint {
             return msgs;
         }
 
-        self.last_full_ping.replace(now);
         self.prune_direct_addresses();
 
         let pings: Vec<_> = self
@@ -533,22 +532,23 @@ impl Endpoint {
             // of potential UDP addresses.
             //
             // Otherwise it is used for hole punching, as described below.
-            if let Some((derp_region, state)) = self.derp_region.as_ref() {
+            if let Some((derp_region, _state)) = self.derp_region.as_ref() {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
                 // it doesn't know already) and then send a CallMeMaybe
                 // message to our peer via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
-                info!(?derp_region, "enqueue call-me-maybe");
+                let clear_pongs = self.last_full_ping.is_none();
+                info!(?derp_region, ?clear_pongs, "queue call-me-maybe");
                 msgs.push(PingAction::SendCallMeMaybe {
                     derp_region: *derp_region,
                     dst_key: self.public_key,
-                    // if the derp region was never pinged, force the call-me-maybe to go out right
-                    // away to trigger an endpoint update on the remote
-                    force_now: state.last_ping.is_none()
+                    clear_pongs,
                 });
             }
         }
+
+        self.last_full_ping.replace(now);
 
         msgs
     }
@@ -869,6 +869,11 @@ impl Endpoint {
         // even if it's been less than 5 seconds ago.
         for st in self.direct_addr_state.values_mut() {
             st.last_ping = None;
+            if m.clear_pongs {
+                st.recent_pong = None;
+                st.call_me_maybe_time = None;
+                st.last_payload_msg = None;
+            }
         }
         self.send_pings(Instant::now(), false)
     }
