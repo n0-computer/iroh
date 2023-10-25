@@ -3,7 +3,6 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    marker::PhantomData,
     path::Path,
     sync::Arc,
 };
@@ -66,6 +65,13 @@ const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition:
 // Value: (u64, Vec<u8>) # (Timestamp, Key)
 const LATEST_TABLE: TableDefinition<LatestKey, LatestValue> =
     TableDefinition::new("latest-by-author-1");
+
+// Tags
+// Table
+// Key: &str # Tag
+// Value: [u8; 32] # NamespaceId
+const TAGS_TABLE: TableDefinition<&str, &[u8; 32]> = TableDefinition::new("tags-1");
+
 type LatestKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
 type LatestValue<'a> = (u64, &'a [u8]);
 type LatestTable<'a> = ReadOnlyTable<'a, LatestKey<'static>, LatestValue<'static>>;
@@ -75,6 +81,8 @@ type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
+type TagsTable<'a> = ReadOnlyTable<'a, &'static str, &'static [u8; 32]>;
+type TagsRange<'a> = TableRange<'a, &'static str, &'static [u8; 32]>;
 type DbResult<T> = Result<T, StorageError>;
 
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
@@ -134,6 +142,7 @@ impl Store {
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+            let _table = write_tx.open_table(TAGS_TABLE)?;
 
             // migration 001: populate latest table if it was empty before
             if latest_table.is_empty()? && !records_table.is_empty()? {
@@ -404,35 +413,76 @@ impl super::Store for Store {
     }
 
     fn set_tag(&self, tag: String, namespace: NamespaceId) -> Result<Option<NamespaceId>> {
-        todo!()
+        let write_tx = self.db.begin_write()?;
+        let old_ns = {
+            let mut tags_table = write_tx.open_table(TAGS_TABLE)?;
+            dbg!(&tag, namespace);
+            let old = tags_table.insert(tag.as_str(), namespace.as_bytes())?;
+            old.map(|v| NamespaceId::from(v.value()))
+        };
+        write_tx.commit()?;
+
+        dbg!(&old_ns);
+        Ok(old_ns)
     }
 
     fn get_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
-        todo!()
+        let read_tx = self.db.begin_read()?;
+        let tags_table = read_tx.open_table(TAGS_TABLE)?;
+        dbg!(&tag);
+        let val = tags_table.get(tag)?;
+        let val = val.map(|v| NamespaceId::from(v.value()));
+        dbg!(&val);
+
+        Ok(val)
     }
 
     fn delete_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
-        todo!()
+        let write_tx = self.db.begin_write()?;
+        let old_ns = {
+            let mut tags_table = write_tx.open_table(TAGS_TABLE)?;
+            let old = tags_table.remove(tag)?;
+            old.map(|v| NamespaceId::from(v.value()))
+        };
+        write_tx.commit()?;
+
+        Ok(old_ns)
     }
 
     fn tags(&self) -> Result<Self::TagsIter<'_>> {
-        Ok(TagsIter {
-            _a: Default::default(),
-        })
+        TagsIter::try_new(
+            self.db.begin_read()?,
+            |read_tx| read_tx.open_table(TAGS_TABLE).map_err(anyhow::Error::from),
+            |table| table.iter().map_err(anyhow::Error::from),
+        )
     }
 }
 
 /// Iterator over tags.
-#[derive(Debug)]
+#[self_referencing]
 pub struct TagsIter<'a> {
-    _a: PhantomData<&'a ()>,
+    read_tx: ReadTransaction<'a>,
+    #[borrows(read_tx)]
+    #[covariant]
+    record_table: TagsTable<'this>,
+    #[covariant]
+    #[borrows(record_table)]
+    records: TagsRange<'this>,
 }
 
 impl Iterator for TagsIter<'_> {
     type Item = Result<(String, NamespaceId)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        self.with_mut(|fields| match fields.records.next() {
+            None => None,
+            Some(Err(err)) => Some(Err(err.into())),
+            Some(Ok((key, value))) => {
+                let tag = key.value();
+                let ns = value.value();
+                Some(Ok((tag.into(), ns.into())))
+            }
+        })
     }
 }
 

@@ -265,10 +265,12 @@ mod tests {
         assert_eq!(tags[0], ("ns1".into(), ns1.id()));
         assert_eq!(tags[1], ("ns2".into(), ns2.id()));
 
-        store.delete_tag("ns1")?;
+        let old_ns = store.delete_tag("ns1")?;
+        assert_eq!(old_ns.unwrap(), ns1.id());
         assert!(store.get_tag("ns1")?.is_none());
 
-        store.delete_tag("ns2")?;
+        let old_ns = store.delete_tag("ns2")?;
+        assert_eq!(old_ns.unwrap(), ns2.id());
         assert!(store.get_tag("ns2")?.is_none());
 
         Ok(())
