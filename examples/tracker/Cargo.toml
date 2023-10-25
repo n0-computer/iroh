@@ -16,10 +16,11 @@ derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from"
 dirs-next = "2"
 futures = "0.3.25"
 hex = "0.4.3"
+humantime = "2.1.0"
 iroh = { path = "../../iroh" }
 iroh-bytes = { path = "../../iroh-bytes" }
 iroh-net = { path = "../../iroh-net" }
-pkarr = "0.2.0"
+pkarr = "0.3.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.10"
 rand = "0.8"

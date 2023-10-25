@@ -3167,9 +3167,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f04e14cf27c05bfaa5b572b4e9c21b76ad71f98f29c33e91727a900b61e2918"
+checksum = "178fff5a1cce6c245ec8f9d78c06cc137dda0fd5d41f415a1f10c43d565f163b"
 dependencies = [
  "bytes",
  "ed25519-dalek",
@@ -3179,7 +3179,7 @@ dependencies = [
  "simple-dns",
  "thiserror",
  "url",
- "zbase32",
+ "z32",
 ]
 
 [[package]]
@@ -5259,6 +5259,7 @@ dependencies = [
  "dirs-next",
  "futures",
  "hex",
+ "humantime",
  "iroh",
  "iroh-bytes",
  "iroh-net",
@@ -5884,10 +5885,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "zbase32"
-version = "0.1.2"
+name = "z32"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f9079049688da5871a7558ddacb7f04958862c703e68258594cb7a862b5e33f"
+checksum = "f4e62ec361f7259399a83b7983270dd0249067d94600c50475e65dca64e24083"
 
 [[package]]
 name = "zerocopy"
