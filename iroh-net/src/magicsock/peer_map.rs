@@ -336,7 +336,7 @@ impl PeerMapInner {
     fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
         let ip_port: IpPort = udp_addr.into();
         let Some(endpoint) = self.get_mut(EndpointId::IpPort(&ip_port)) else {
-            debug_assert!(false, "peer map inconsistency by_ip_port <-> by_id");
+            info!(src=%udp_addr, "receive_udp: no peer_map state found for addr, ignore");
             return None;
         };
         endpoint.receive_udp(ip_port, Instant::now());
@@ -345,7 +345,7 @@ impl PeerMapInner {
 
     fn receive_derp(&mut self, region_id: u16, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
-            info!(peer=%src, "no peer_map state found for peer");
+            info!(peer=%src.fmt_short(), "receive_derp: packets from unknown peer, insert into peer map");
             Options {
                 public_key: *src,
                 derp_region: Some(region_id),
