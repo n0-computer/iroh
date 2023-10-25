@@ -260,7 +260,9 @@ mod tests {
         store.set_tag("ns2".into(), ns2.id())?;
         assert_eq!(store.get_tag("ns2")?, Some(ns2.id()));
 
-        let tags = store.tags()?.collect::<Result<Vec<_>>>()?;
+        let mut tags = store.tags()?.collect::<Result<Vec<_>>>()?;
+        tags.sort_by_key(|(t, _)| t.clone());
+
         assert_eq!(tags.len(), 2);
         assert_eq!(tags[0], ("ns1".into(), ns1.id()));
         assert_eq!(tags[1], ("ns2".into(), ns2.id()));
