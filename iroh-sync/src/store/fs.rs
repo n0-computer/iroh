@@ -3,6 +3,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    marker::PhantomData,
     path::Path,
     sync::Arc,
 };
@@ -180,6 +181,7 @@ impl super::Store for Store {
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
+    type TagsIter<'a> = TagsIter<'a>;
 
     fn open_replica(
         &self,
@@ -399,6 +401,38 @@ impl super::Store for Store {
         } else {
             Ok(Some(peers.into_iter()))
         }
+    }
+
+    fn set_tag(&self, tag: String, namespace: NamespaceId) -> Result<Option<NamespaceId>> {
+        todo!()
+    }
+
+    fn get_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
+        todo!()
+    }
+
+    fn delete_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
+        todo!()
+    }
+
+    fn tags(&self) -> Result<Self::TagsIter<'_>> {
+        Ok(TagsIter {
+            _a: Default::default(),
+        })
+    }
+}
+
+/// Iterator over tags.
+#[derive(Debug)]
+pub struct TagsIter<'a> {
+    _a: PhantomData<&'a ()>,
+}
+
+impl Iterator for TagsIter<'_> {
+    type Item = Result<(String, NamespaceId)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
     }
 }
 

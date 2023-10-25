@@ -78,6 +78,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     where
         Self: 'a;
 
+    /// Iterator over tagged documents.
+    type TagsIter<'a>: Iterator<Item = Result<(String, NamespaceId)>>
+    where
+        Self: 'a;
+
     /// Create a new replica for `namespace` and persist in this store.
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
         let id = namespace.id();
@@ -170,6 +175,18 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get peers to use for syncing a document.
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
+
+    /// Set the tag for a document.
+    fn set_tag(&self, tag: String, namespace: NamespaceId) -> Result<Option<NamespaceId>>;
+
+    /// Get the document for a tag.
+    fn get_tag(&self, tag: &str) -> Result<Option<NamespaceId>>;
+
+    /// Delete a tag.
+    fn delete_tag(&self, tag: &str) -> Result<Option<NamespaceId>>;
+
+    /// Get all tags.
+    fn tags(&self) -> Result<Self::TagsIter<'_>>;
 }
 
 /// Filter a get query onto a namespace
@@ -202,5 +219,58 @@ impl GetFilter {
             (None, Some(prefix)) => Self::Prefix(prefix.as_ref().to_vec()),
             (Some(author), Some(prefix)) => Self::AuthorAndPrefix(author, prefix.as_ref().to_vec()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tags_basics_memory() -> Result<()> {
+        let store = memory::Store::default();
+
+        test_tags_basics(store)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_tags_basics_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = fs::Store::new(dbfile.path())?;
+        test_tags_basics(store)?;
+
+        Ok(())
+    }
+
+    fn test_tags_basics<S: Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+
+        let ns1 = Namespace::new(&mut rng);
+        let ns2 = Namespace::new(&mut rng);
+        let _replica = store.new_replica(ns1.clone())?;
+
+        assert!(store.get_tag("ns1")?.is_none());
+        store.set_tag("ns1".into(), ns1.id())?;
+        assert_eq!(store.get_tag("ns1")?, Some(ns1.id()));
+
+        assert!(store.get_tag("ns2")?.is_none());
+        store.set_tag("ns2".into(), ns2.id())?;
+        assert_eq!(store.get_tag("ns2")?, Some(ns2.id()));
+
+        let tags = store.tags()?.collect::<Result<Vec<_>>>()?;
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0], ("ns1".into(), ns1.id()));
+        assert_eq!(tags[1], ("ns2".into(), ns2.id()));
+
+        store.delete_tag("ns1")?;
+        assert!(store.get_tag("ns1")?.is_none());
+
+        store.delete_tag("ns2")?;
+        assert!(store.get_tag("ns2")?.is_none());
+
+        Ok(())
     }
 }
