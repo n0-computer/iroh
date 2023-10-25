@@ -43,15 +43,9 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
-    let name = match args.command {
-        Command::Listen => "listen.key",
-        Command::Connect { .. } => "conect.key",
-    };
-    let mut key = [0u8;32];
-    key[0..10].copy_from_slice(&name.to_owned().into_bytes());
     let secret_key = match args.secret {
         None => {
-            let secret_key = SecretKey::from_bytes(&key);
+            let secret_key = SecretKey::generate();
             println!("our secret key: {}", fmt_secret(&secret_key));
             secret_key
         }

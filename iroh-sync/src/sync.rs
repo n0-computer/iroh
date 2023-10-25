@@ -13,8 +13,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-#[cfg(feature = "metrics")]
-use crate::metrics::Metrics;
 use bytes::{Bytes, BytesMut};
 use derive_more::Deref;
 #[cfg(feature = "metrics")]
@@ -24,16 +22,14 @@ use ed25519_dalek::{Signature, SignatureError};
 use iroh_bytes::Hash;
 use serde::{Deserialize, Serialize};
 
+pub use crate::heads::AuthorHeads;
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
 use crate::{
-    ranger::{self, Fingerprint, Peer, RangeEntry, RangeKey},
-    store::PublicKeyStore,
+    keys::{base32, Author, AuthorId, AuthorPublicKey, Namespace, NamespaceId, NamespacePublicKey},
+    ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
+    store::{self, PublicKeyStore},
 };
-use crate::{
-    ranger::{InsertOutcome, RangeValue},
-    store,
-};
-
-pub use crate::keys::*;
 
 /// Protocol message for the set reconciliation protocol.
 ///
@@ -89,6 +85,8 @@ pub enum ContentStatus {
 /// Outcome of a sync operation.
 #[derive(Debug, Clone, Default)]
 pub struct SyncOutcome {
+    /// Timestamp of the latest entry for each author in the set we received.
+    pub heads_received: AuthorHeads,
     /// Number of entries we received.
     pub num_recv: usize,
     /// Number of entries we sent.
@@ -360,6 +358,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
         // update state with incoming data.
         state.num_recv += message.value_count();
+        for (entry, _content_status) in message.values() {
+            state
+                .heads_received
+                .insert(entry.author(), entry.timestamp());
+        }
 
         // let subscribers = std::rc::Rc::new(&mut self.subscribers);
         // l
@@ -1745,6 +1748,45 @@ mod tests {
         let prefix = vec![0u8];
         replica.delete_prefix(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_latest_iter_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_latest_iter(store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_latest_iter_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_latest_iter(store)
+    }
+
+    fn test_latest_iter<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let author0 = Author::new(&mut rng);
+        let author1 = Author::new(&mut rng);
+        let namespace = Namespace::new(&mut rng);
+        let mut replica = store.new_replica(namespace.clone())?;
+
+        replica.hash_and_insert(b"a0.1", &author0, b"hi")?;
+        let latest = store
+            .get_latest_for_each_author(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].2, b"a0.1".to_vec());
+
+        replica.hash_and_insert(b"a1.1", &author1, b"hi")?;
+        replica.hash_and_insert(b"a0.2", &author0, b"hi")?;
+        let latest = store
+            .get_latest_for_each_author(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+        let mut latest_keys: Vec<Vec<u8>> = latest.iter().map(|r| r.2.to_vec()).collect();
+        latest_keys.sort();
+        assert_eq!(latest_keys, vec![b"a0.2".to_vec(), b"a1.1".to_vec()]);
 
         Ok(())
     }

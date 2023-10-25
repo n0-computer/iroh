@@ -219,20 +219,18 @@ struct Probe {
     last_nat_pmp: Option<Instant>,
 }
 
-impl Default for Probe {
-    fn default() -> Self {
+impl Probe {
+    /// An empty probe set to `now`.
+    fn empty() -> Self {
         Self {
-            last_probe: Instant::now() - AVAILABILITY_TRUST_DURATION,
+            last_probe: Instant::now(),
             last_upnp_gateway_addr: None,
             last_pcp: None,
             last_nat_pmp: None,
         }
     }
-}
-
-impl Probe {
     /// Create a new probe based on a previous output.
-    async fn new(
+    async fn from_output(
         config: Config,
         output: ProbeOutput,
         local_ip: Ipv4Addr,
@@ -283,7 +281,7 @@ impl Probe {
         let mut pcp_done = pcp_probing_task.inner.is_none();
         let mut nat_pmp_done = nat_pmp_probing_task.inner.is_none();
 
-        let mut probe = Probe::default();
+        let mut probe = Probe::empty();
 
         while !upnp_done || !pcp_done || !nat_pmp_done {
             tokio::select! {
@@ -415,12 +413,20 @@ impl Service {
         rx: mpsc::Receiver<Message>,
     ) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (current_mapping, watcher) = CurrentMapping::new();
+        let mut full_probe = Probe::empty();
+        if let Some(in_the_past) = full_probe
+            .last_probe
+            .checked_sub(AVAILABILITY_TRUST_DURATION)
+        {
+            // we want to do a first full probe, so set is as expired on start-up
+            full_probe.last_probe = in_the_past;
+        }
         let service = Service {
             config,
             local_port: None,
             rx,
             current_mapping,
-            full_probe: Default::default(),
+            full_probe,
             mapping_task: None,
             probing_task: None,
         };
@@ -654,10 +660,13 @@ impl Service {
                     };
 
                     let config = self.config.clone();
-                    let handle = tokio::spawn(
-                        async move { Probe::new(config, probe_output, local_ip, gateway).await }
+                    let handle =
+                        tokio::spawn(
+                            async move {
+                                Probe::from_output(config, probe_output, local_ip, gateway).await
+                            }
                             .instrument(info_span!("portmapper.probe")),
-                    );
+                        );
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));
                 }

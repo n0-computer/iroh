@@ -115,7 +115,7 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
         let links: Box<[iroh_bytes::Hash]> = postcard::from_bytes(&links_bytes)
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to parse links"))?;
         let meta_link = *links
-            .get(0)
+            .first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing meta link"))?;
         let (meta_end, _meta_bytes) = at_meta.next(meta_link).concatenate_into_vec().await?;
         let mut curr = meta_end.next();

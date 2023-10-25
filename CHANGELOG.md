@@ -1,3 +1,43 @@
+# [v0.8.0](https://github.com/n0-computer/iroh/compare/v0.7.0...v0.8.0) (2023-10-23)
+
+### Breaking API Changes
+
+- `iroh::baomap` is now `iroh_bytes::store`.
+- Doc opening and closing is now more complete
+  - `iroh::client::Doc.leave()` will stop listening to changes
+  - `iroh::client::DocsClient.drop_doc()` will delete a doc
+
+### Bug Fixes
+
+* `doc export` exports the latest entry at a given key ([#1629](https://github.com/n0-computer/iroh/issues/1629)) ([b815576](https://github.com/n0-computer/iroh/commit/b8155763dbbd0fa7be2c2ca4047e7f241e881a0c))
+* actually transfer newer entries for identical keys ([#1630](https://github.com/n0-computer/iroh/issues/1630)) ([ef8c64b](https://github.com/n0-computer/iroh/commit/ef8c64b79c480ee6f133f1bb0386aea3c1686576)), closes [/github.com/n0-computer/iroh/pull/1630/files#diff-be755583e5a892a8b9a6329e59cfc17e9633447fb7992db74eef670ba1508ccbR378](https://github.com//github.com/n0-computer/iroh/pull/1630/files/issues/diff-be755583e5a892a8b9a6329e59cfc17e9633447fb7992db74eef670ba1508ccbR378) [#1535](https://github.com/n0-computer/iroh/issues/1535)
+* avoid FuturesUnordered ([#1647](https://github.com/n0-computer/iroh/issues/1647)) ([5813e09](https://github.com/n0-computer/iroh/commit/5813e09445cb7520aab49f6bf3c25a269c01e9b0)), closes [#1646](https://github.com/n0-computer/iroh/issues/1646)
+* **iroh-bytes:** handle case of 0 sent bytes in send stats ([#1625](https://github.com/n0-computer/iroh/issues/1625)) ([550303c](https://github.com/n0-computer/iroh/commit/550303cfaef0a16968e8992f1f04415325d71c22))
+* **iroh-net:** bring the doctor command up to date ([#1656](https://github.com/n0-computer/iroh/issues/1656)) ([16773b0](https://github.com/n0-computer/iroh/commit/16773b08cba7454c6a4e984f37d1324700fb481b))
+* **iroh-net:** direct address management ([#1653](https://github.com/n0-computer/iroh/issues/1653)) ([90f73f7](https://github.com/n0-computer/iroh/commit/90f73f7d5387413cbc9227101deea66bc9d97194))
+* **iroh-net:** enforce storing a single derp region per peer ([#1607](https://github.com/n0-computer/iroh/issues/1607)) ([bfcce3d](https://github.com/n0-computer/iroh/commit/bfcce3d80c6fa20a4e36bd1f4ae4580716dc482e)), closes [#1576](https://github.com/n0-computer/iroh/issues/1576)
+* **iroh-net:** ping via relay, enable relay ping in derp only mode ([#1632](https://github.com/n0-computer/iroh/issues/1632)) ([eec5425](https://github.com/n0-computer/iroh/commit/eec5425b4ba3f7cf5a0832f138f20871ce1843f6)), closes [#1576](https://github.com/n0-computer/iroh/issues/1576)
+* **iroh-net:** temp fix for progress bar when downloading a hash seq ([#1658](https://github.com/n0-computer/iroh/issues/1658)) ([1b5760d](https://github.com/n0-computer/iroh/commit/1b5760dfa94872fe754bb8e73f10a580903ac6e2))
+* **iroh:** cleanly exit on Eof ([#1695](https://github.com/n0-computer/iroh/issues/1695)) ([196ad7a](https://github.com/n0-computer/iroh/commit/196ad7a16874acf2b9d17b6217be9791ac8b3c0f)), closes [#1694](https://github.com/n0-computer/iroh/issues/1694)
+* **iroh:** do not exit on ctrl+c ([#1691](https://github.com/n0-computer/iroh/issues/1691)) ([a658d4a](https://github.com/n0-computer/iroh/commit/a658d4a7d9f26033dd07175f3d4d6c0c008f7001)), closes [#1690](https://github.com/n0-computer/iroh/issues/1690)
+* **net:** correct packet math for poll_recv ([#1698](https://github.com/n0-computer/iroh/issues/1698)) ([c603a9e](https://github.com/n0-computer/iroh/commit/c603a9ec53f54e51124b420863e9e471caf0b6f5))
+* **net:** correctly track dial errors ([#1706](https://github.com/n0-computer/iroh/issues/1706)) ([92bb5b4](https://github.com/n0-computer/iroh/commit/92bb5b4cdd16725fd62d612e05ed9194c296c117)), closes [#1702](https://github.com/n0-computer/iroh/issues/1702)
+
+
+### Features
+
+* **console:** improve the output of `node connections` and `node connection` ([#1683](https://github.com/n0-computer/iroh/issues/1683)) ([d0c7cac](https://github.com/n0-computer/iroh/commit/d0c7cac635633048c3dc09a70ed5d7d44a2c98bf))
+* **iroh-net:** cache for crypto keys ([#1677](https://github.com/n0-computer/iroh/issues/1677)) ([f8f08a0](https://github.com/n0-computer/iroh/commit/f8f08a0e78ed75f1eefa26d23243240d41fdf934))
+* **iroh-sync:** Sync propagation ([#1613](https://github.com/n0-computer/iroh/issues/1613)) ([d07e225](https://github.com/n0-computer/iroh/commit/d07e22510d618adee982e5a0f8d04c3dc23b2063))
+* update dependencies ([#1661](https://github.com/n0-computer/iroh/issues/1661)) ([133ca8a](https://github.com/n0-computer/iroh/commit/133ca8af1059f797bcbfd6a178bfab77c62ddcb7)), closes [#1442](https://github.com/n0-computer/iroh/issues/1442)
+
+
+### Performance Improvements
+
+* improve derp connection establishment ([#1631](https://github.com/n0-computer/iroh/issues/1631)) ([615381c](https://github.com/n0-computer/iroh/commit/615381c6e126304924d1ec476a744cb2514dca61))
+* no more channels for UDP send/recv ([#1579](https://github.com/n0-computer/iroh/issues/1579)) ([d6657bd](https://github.com/n0-computer/iroh/commit/d6657bd59b9c2e8f002fd80d5e1f1091aed1c9dc))
+
+
 # [v0.7.0](https://github.com/n0-computer/iroh/compare/v0.6.0...v0.7.0) (2023-10-11)
 
 ### Bug Fixes

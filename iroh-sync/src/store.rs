@@ -1,6 +1,6 @@
 //! Storage trait and implementation for iroh-sync documents
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 
 use anyhow::Result;
 use iroh_bytes::Hash;
@@ -8,8 +8,10 @@ use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    heads::AuthorHeads,
+    keys::{Author, Namespace},
     ranger,
-    sync::{Author, Namespace, Replica, SignedEntry},
+    sync::{Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes,
 };
 
@@ -61,6 +63,13 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Iterator over authors in the store, returned from [`Self::list_authors`]
     type AuthorsIter<'a>: Iterator<Item = Result<Author>>
+    where
+        Self: 'a;
+
+    /// Iterator over the latest entry for each author.
+    ///
+    /// The iterator returns a tuple of (AuthorId, Timestamp, Key).
+    type LatestIter<'a>: Iterator<Item = Result<(AuthorId, u64, Vec<u8>)>>
     where
         Self: 'a;
 
@@ -131,6 +140,30 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get all content hashes of all replicas in the store.
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>>;
+
+    /// Get the latest entry for each author in a namespace.
+    fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>>;
+
+    /// Check if a [`AuthorHeads`] contains entry timestamps that we do not have locally.
+    ///
+    /// Returns the number of authors that the other peer has updates for.
+    fn has_news_for_us(
+        &self,
+        namespace: NamespaceId,
+        heads: &AuthorHeads,
+    ) -> Result<Option<NonZeroU64>> {
+        let our_heads = {
+            let latest = self.get_latest_for_each_author(namespace)?;
+            let mut heads = AuthorHeads::default();
+            for e in latest {
+                let (author, timestamp, _key) = e?;
+                heads.insert(author, timestamp);
+            }
+            heads
+        };
+        let has_news_for_us = heads.has_news_for(&our_heads);
+        Ok(has_news_for_us)
+    }
 
     /// Register a peer that has been useful to sync a document.
     fn register_useful_peer(&self, namespace: NamespaceId, peer: PeerIdBytes) -> Result<()>;
