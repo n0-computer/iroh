@@ -3,6 +3,8 @@
 pub mod blob;
 pub mod doc;
 
+const PREFIX_SEPARATOR: char = ':';
+
 /// Kind of ticket.
 #[derive(Debug, strum::EnumString, strum::Display, PartialEq, Eq, Clone, Copy)]
 #[strum(serialize_all = "snake_case")]
@@ -18,7 +20,7 @@ pub enum Kind {
 impl Kind {
     /// Parse the ticket prefix to obtain the [`Kind`] and remainig string.
     pub fn parse_prefix(s: &str) -> Option<Result<(Self, &str), Error>> {
-        let (prefix, rest) = s.split_once(':')?;
+        let (prefix, rest) = s.split_once(PREFIX_SEPARATOR)?;
         match prefix.parse() {
             Ok(kind) => Some(Ok((kind, rest))),
             Err(e) => Some(Err(e.into())),
@@ -71,7 +73,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Serialize to string.
     fn serialize(&self) -> String {
         let mut out = Self::KIND.to_string();
-        out.push(':');
+        out.push(PREFIX_SEPARATOR);
         let bytes = self.to_bytes();
         data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
         out.make_ascii_lowercase();
