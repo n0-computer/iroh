@@ -17,6 +17,7 @@ use iroh_bytes::hashseq::HashSeq;
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::util::Hash;
 use iroh_bytes::BlobFormat;
+use iroh_net::magic_endpoint::{get_alpn, get_peer_id};
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -26,11 +27,10 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::task::LocalPoolHandle;
-use iroh_net::magic_endpoint::{get_alpn, get_peer_id};
 
 mod discovery;
 
-type ShortPeerId = [u8; 32];
+type ShortNodeId = [u8; 32];
 
 const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
 const PKARR_RELAY_URL: &str = "https://iroh-discovery.rklaehn.workers.dev/";
@@ -214,7 +214,7 @@ struct AnnounceArgs {
     /// the peer if of the tracker
     #[clap(long)]
     tracker: PublicKey,
-    
+
     /// the port to use for announcing
     #[clap(long)]
     port: Option<u16>,
@@ -235,7 +235,7 @@ struct AnnounceArgs {
 struct QueryArgs {
     #[clap(long)]
     tracker: PublicKey,
-    
+
     /// the port to use for querying
     #[clap(long)]
     port: Option<u16>,
@@ -716,7 +716,7 @@ impl Tracker {
     }
 
     /// Get the content that is supposedly available, grouped by peers
-    fn get_content_by_peers(&self) -> BTreeMap<ShortPeerId, BTreeMap<HashAndFormat, bool>> {
+    fn get_content_by_peers(&self) -> BTreeMap<ShortNodeId, BTreeMap<HashAndFormat, bool>> {
         let state = self.0.state.read().unwrap();
         let mut content_by_peers = BTreeMap::<[u8; 32], BTreeMap<HashAndFormat, bool>>::new();
         for (content, peers) in state.peer_info.iter() {
@@ -732,7 +732,7 @@ impl Tracker {
 
     fn apply_result(
         &self,
-        results: BTreeMap<HashAndFormat, Vec<(ShortPeerId, ProbeKind)>>,
+        results: BTreeMap<HashAndFormat, Vec<(ShortNodeId, ProbeKind)>>,
         now: Instant,
     ) {
         let mut state = self.0.state.write().unwrap();
@@ -823,7 +823,7 @@ impl Tracker {
     async fn probe_loop(self, endpoint: MagicEndpoint) -> anyhow::Result<()> {
         loop {
             let content_by_peers = self.get_content_by_peers();
-            let mut results = BTreeMap::<HashAndFormat, Vec<(ShortPeerId, ProbeKind)>>::new();
+            let mut results = BTreeMap::<HashAndFormat, Vec<(ShortNodeId, ProbeKind)>>::new();
             let now = Instant::now();
             for (short_peer, content) in content_by_peers {
                 let peer = PublicKey::from_bytes(&short_peer)?;
@@ -990,7 +990,9 @@ pub async fn accept_conn(
 }
 
 async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
-    let key = load_secret_key(tracker_path("client.key")?).await?;
+    // todo: uncomment once the connection problems are fixed
+    // for now, a random node id is more reliable.
+    // let key = load_secret_key(tracker_path("client.key")?).await?;
     let key = iroh_net::key::SecretKey::generate();
     let endpoint = create_endpoint(key, 11112).await?;
     println!("announce {:?}", args);
@@ -1000,7 +1002,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
         info: AddrInfo {
             derp_region: Some(2),
             direct_addresses: Default::default(),
-        }
+        },
     };
     let connection = endpoint.connect(info, TRACKER_ALPN).await?;
     println!("connected to {:?}", connection.remote_address());
@@ -1035,7 +1037,9 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
 }
 
 async fn query(args: QueryArgs) -> anyhow::Result<()> {
-    let key = load_secret_key(tracker_path("client.key")?).await?;
+    // todo: uncomment once the connection problems are fixed
+    // for now, a random node id is more reliable.
+    // let key = load_secret_key(tracker_path("client.key")?).await?;
     let key = iroh_net::key::SecretKey::generate();
     let endpoint = create_endpoint(key, args.port.unwrap_or_default()).await?;
     let query = Query {
@@ -1050,7 +1054,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
         info: AddrInfo {
             derp_region: Some(2),
             direct_addresses: Default::default(),
-        }
+        },
     };
     println!("trying to connect to tracker at {:?}", args.tracker);
     let connection = endpoint.connect(info, TRACKER_ALPN).await?;

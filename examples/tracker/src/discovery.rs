@@ -1,19 +1,16 @@
-#![allow(dead_code)]
-// copied from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
+// copied and adapted from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
 use anyhow::Result;
-use futures::FutureExt;
-use iroh_net::key::PublicKey as PeerId;
+use futures::future::BoxFuture;
+use futures::{future, FutureExt};
+use iroh_net::key::PublicKey as NodeId;
 use iroh_net::{AddrInfo, PeerAddr};
 use pkarr::dns::rdata::{RData, A, AAAA, TXT};
 use pkarr::dns::{Name, Packet, ResourceRecord, CLASS};
 use pkarr::url::Url;
 use pkarr::{Keypair, PkarrClient, SignedPacket};
-use simple_mdns::async_discovery::ServiceDiscovery;
-use simple_mdns::{InstanceInformation, NetworkScope};
 use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
-use ttl_cache::TtlCache;
+use tracing::info;
 
 const DERP_REGION_KEY: &str = "_derp_region.iroh.";
 
@@ -52,7 +49,7 @@ fn filter_u16(rr: &ResourceRecord) -> Option<u16> {
     }
 }
 
-fn packet_to_peer_addr(peer_id: &PeerId, packet: &SignedPacket) -> PeerAddr {
+fn packet_to_node_addr(peer_id: &NodeId, packet: &SignedPacket) -> PeerAddr {
     let direct_addresses = packet
         .resource_records("@")
         .filter_map(filter_txt)
@@ -70,7 +67,7 @@ fn packet_to_peer_addr(peer_id: &PeerId, packet: &SignedPacket) -> PeerAddr {
     }
 }
 
-fn peer_addr_to_packet(keypair: &Keypair, info: &AddrInfo, ttl: u32) -> Result<SignedPacket> {
+fn node_addr_to_packet(keypair: &Keypair, info: &AddrInfo, ttl: u32) -> Result<SignedPacket> {
     let mut packet = Packet::new_reply(0);
     for addr in &info.direct_addresses {
         let addr = addr.to_string();
@@ -94,25 +91,10 @@ fn peer_addr_to_packet(keypair: &Keypair, info: &AddrInfo, ttl: u32) -> Result<S
     Ok(SignedPacket::from_packet(&keypair, &packet)?)
 }
 
-fn peer_addr_to_instance_info(addr: &PeerAddr) -> InstanceInformation {
-    let mut instance_info = InstanceInformation::new();
-    for addr in &addr.info.direct_addresses {
-        instance_info.ip_addresses.push(addr.ip());
-        instance_info.ports.push(addr.port());
-    }
-    instance_info
-}
-
-fn instance_info_to_peer_addr(peer_id: &PeerId, instance_info: &InstanceInformation) -> PeerAddr {
-    PeerAddr {
-        peer_id: *peer_id,
-        info: AddrInfo {
-            derp_region: None,
-            direct_addresses: instance_info.get_socket_addresses().collect(),
-        },
-    }
-}
-
+/// A discovery method that uses the pkarr DNS protocol. See pkarr.org for more
+/// information.
+///
+/// This is using pkarr via a simple http relay or self-contained server.
 #[derive(Debug)]
 pub struct PkarrRelayDiscovery {
     keypair: pkarr::Keypair,
@@ -133,38 +115,40 @@ impl PkarrRelayDiscovery {
 
 impl iroh_net::magicsock::Discovery for PkarrRelayDiscovery {
     fn publish(&self, info: &AddrInfo) {
-        println!("publishing {:?} via {}", info, self.relay);
-        let signed_packet = peer_addr_to_packet(&self.keypair, info, 0).unwrap();
+        info!("publishing {:?} via {}", info, self.relay);
+        let signed_packet = node_addr_to_packet(&self.keypair, info, 0).unwrap();
         let client = self.client.clone();
         let relay = self.relay.clone();
         tokio::spawn(async move {
             let res = client.relay_put(&relay, signed_packet).await;
-            println!("done publishing, ok:{}", res.is_ok());
+            info!("done publishing, ok:{}", res.is_ok());
         });
     }
 
     fn resolve<'a>(
         &'a self,
-        peer_id: &'a PeerId,
+        node_id: &'a NodeId,
     ) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
         async move {
-            println!("resolving {} via {}", peer_id, self.relay);
-            let pkarr_public_key = pkarr::PublicKey::try_from(*peer_id.as_bytes()).unwrap();
+            info!("resolving {} via {}", node_id, self.relay);
+            let pkarr_public_key = pkarr::PublicKey::try_from(*node_id.as_bytes()).unwrap();
             let packet = self.client.relay_get(&self.relay, pkarr_public_key).await?;
-            let addr = packet_to_peer_addr(&peer_id, &packet);
-            println!("resolved: {} to {:?}", peer_id, addr);
+            let addr = packet_to_node_addr(&node_id, &packet);
+            info!("resolved: {} to {:?}", node_id, addr);
             Ok(addr.info)
         }
         .boxed()
     }
 }
 
+/// A discovery method that just uses a hardcoded region.
 #[derive(Debug)]
 pub struct HardcodedRegionDiscovery {
     region: u16,
 }
 
 impl HardcodedRegionDiscovery {
+    /// Create a new discovery method that always returns the given region.
     pub fn new(region: u16) -> Self {
         Self { region }
     }
@@ -173,98 +157,11 @@ impl HardcodedRegionDiscovery {
 impl iroh_net::magicsock::Discovery for HardcodedRegionDiscovery {
     fn publish(&self, _info: &AddrInfo) {}
 
-    fn resolve<'a>(
-        &'a self,
-        _peer_id: &'a PeerId,
-    ) -> futures::future::BoxFuture<'a, Result<AddrInfo>> {
-        futures::future::ok(AddrInfo {
+    fn resolve<'a>(&'a self, _node_id: &'a NodeId) -> BoxFuture<'a, Result<AddrInfo>> {
+        future::ok(AddrInfo {
             derp_region: Some(self.region),
             direct_addresses: Default::default(),
         })
         .boxed()
-    }
-}
-
-pub struct Discovery {
-    cache: TtlCache<PeerId, PeerAddr>,
-    keypair: Keypair,
-    relay: Option<Url>,
-    pkarr: Option<PkarrClient>,
-    mdns: Option<ServiceDiscovery>,
-    ttl: u32,
-}
-
-impl Discovery {
-    pub fn new(secret: [u8; 32], relay: Option<Url>, mdns: bool, ttl: u32) -> Result<Self> {
-        let keypair = Keypair::from_secret_key(&secret);
-        let origin = keypair.public_key().to_z32();
-        let mdns = if mdns {
-            Some(ServiceDiscovery::new_with_scope(
-                &origin,
-                "_pkarr.local",
-                ttl,
-                None,
-                NetworkScope::V4,
-            )?)
-        } else {
-            None
-        };
-        let pkarr = if relay.is_some() {
-            Some(PkarrClient::new())
-        } else {
-            None
-        };
-        Ok(Self {
-            cache: TtlCache::new(100),
-            keypair,
-            relay,
-            pkarr,
-            mdns,
-            ttl,
-        })
-    }
-
-    pub fn add_address(&mut self, addr: PeerAddr) {
-        self.cache
-            .insert(addr.peer_id, addr, Duration::from_secs(self.ttl as _));
-    }
-
-    pub async fn resolve(&mut self, peer_id: &PeerId) -> Result<PeerAddr> {
-        if let Some(addr) = self.cache.get(peer_id) {
-            return Ok(addr.clone());
-        }
-        let origin = pkarr::PublicKey::try_from(*peer_id.as_bytes()).unwrap();
-        let origin_z32 = origin.to_z32();
-        if let Some(mdns) = self.mdns.as_ref() {
-            if let Some(addr) = mdns
-                .get_known_services()
-                .await
-                .into_iter()
-                .find(|(peer, _)| peer == &origin_z32)
-                .map(|(_, instance_info)| instance_info_to_peer_addr(peer_id, &instance_info))
-            {
-                self.add_address(addr.clone());
-                return Ok(addr);
-            }
-        }
-        if let (Some(pkarr), Some(url)) = (self.pkarr.as_ref(), self.relay.as_ref()) {
-            let msg = pkarr.relay_get(url, origin).await?;
-            let addr = packet_to_peer_addr(peer_id, &msg);
-            self.add_address(addr.clone());
-            return Ok(addr);
-        }
-        anyhow::bail!("peer not found");
-    }
-
-    pub async fn publish(&mut self, addr: &PeerAddr) -> Result<()> {
-        if let Some(mdns) = self.mdns.as_mut() {
-            let instance_info = peer_addr_to_instance_info(addr);
-            mdns.add_service_info(instance_info).await?;
-        }
-        if let (Some(pkarr), Some(url)) = (self.pkarr.as_ref(), self.relay.as_ref()) {
-            let packet = peer_addr_to_packet(&self.keypair, &addr.info, self.ttl)?;
-            pkarr.relay_put(url, packet).await?;
-        }
-        Ok(())
     }
 }

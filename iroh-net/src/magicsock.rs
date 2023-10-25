@@ -150,17 +150,37 @@ pub struct Options {
     /// Path to store known peers.
     pub peers_path: Option<std::path::PathBuf>,
 
-    /// Optional discovery mechanism.
+    /// Optional node discovery mechanism.
     pub discovery: Option<Box<dyn Discovery>>,
 }
 
-/// Discovery trait for [`MagicEndpoint`].
+/// Node discovery for [`MagicEndpoint`].
+///
+/// The purpose of this trait is to hoop up a node discovery mechanism that
+/// allows finding informations such as the derp region and current addresses
+/// of a node given the id.
+///
+/// To allow for discovery, the [`MagicEndpoint`] will call `publish` whenever
+/// discovery information changes. If a discovery mechanism requires a periodic
+/// refresh, it should start it's own task.
 pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// Publish the given [`AddrInfo`] to the discovery mechanisms.
+    ///
+    /// This is fire and forget, since the magicsock can not wait for successful
+    /// publishing. If publishing is async, the implementation should start it's
+    /// own task.
+    ///
+    /// This will be called from a tokio task, so it is safe to spawn new tasks.
+    /// These tasks will be run on the runtime of the [`MagicEndpoint`].
     fn publish(&self, info: &AddrInfo);
 
     /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
-    fn resolve<'a>(&'a self, peer_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
+    ///
+    /// This is only called from [`MagicEndpoint::connect_by_peer`], and only if
+    /// the [`AddrInfo`] is not already known.
+    ///
+    /// This is async since the connect can not proceed without the [`AddrInfo`].
+    fn resolve<'a>(&'a self, node_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
 }
 
 /// Contains options for `MagicSock::listen`.
