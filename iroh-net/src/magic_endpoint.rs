@@ -444,7 +444,7 @@ impl MagicEndpoint {
         let addr = match self.msock.get_mapping_addr(node_id).await {
             Some(addr) => addr,
             None => {
-                let info = self.resolve(&node_id).await?;
+                let info = self.resolve(node_id).await?;
                 let peer_addr = PeerAddr {
                     peer_id: *node_id,
                     info,

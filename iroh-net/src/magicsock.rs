@@ -154,13 +154,13 @@ pub struct Options {
     pub discovery: Option<Box<dyn Discovery>>,
 }
 
-/// Node discovery for [`MagicEndpoint`].
+/// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hoop up a node discovery mechanism that
 /// allows finding informations such as the derp region and current addresses
 /// of a node given the id.
 ///
-/// To allow for discovery, the [`MagicEndpoint`] will call `publish` whenever
+/// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
 /// discovery information changes. If a discovery mechanism requires a periodic
 /// refresh, it should start it's own task.
 pub trait Discovery: std::fmt::Debug + Send + Sync {
@@ -171,12 +171,12 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
-    /// These tasks will be run on the runtime of the [`MagicEndpoint`].
+    /// These tasks will be run on the runtime of the [`super::MagicEndpoint`].
     fn publish(&self, info: &AddrInfo);
 
     /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
     ///
-    /// This is only called from [`MagicEndpoint::connect_by_peer`], and only if
+    /// This is only called from [`super::MagicEndpoint::connect_by_node_id`], and only if
     /// the [`AddrInfo`] is not already known.
     ///
     /// This is async since the connect can not proceed without the [`AddrInfo`].
