@@ -38,6 +38,9 @@ jobs:
             release-os: darwin
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -48,6 +51,9 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
+    
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests
@@ -84,7 +90,9 @@ jobs:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
-
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -97,6 +105,9 @@ jobs:
         rustup toolchain default ${{ matrix.rust }}
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
+
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
     
     - uses: msys2/setup-msys2@v2
 
@@ -156,6 +167,8 @@ jobs:
     env:
       RUST_BACKTRACE: full
       RUSTV: ${{ matrix.rust }}
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -170,6 +183,9 @@ jobs:
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install ${{ matrix.rust }}
+    
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: build release
       run: |
@@ -323,6 +339,9 @@ jobs:
     timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -331,6 +350,9 @@ jobs:
     
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh
       run: |
