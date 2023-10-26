@@ -58,7 +58,7 @@ jobs:
     - name: tests (all features)
       run: |
         crates=iroh,iroh-net
-        for i in ${variable//,/ }
+        for i in ${crates//,/ }
         do
           cargo test -p $i --all-features --lib --bins --tests
         done
