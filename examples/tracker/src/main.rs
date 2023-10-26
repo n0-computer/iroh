@@ -311,6 +311,55 @@ mod serde_duration {
     }
 }
 
+mod serde_hash_and_format {
+
+    use super::*;
+    use serde::de::Deserializer;
+    use serde::ser::Serializer;
+    type T = HashAndFormat;
+
+    pub fn serialize<S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(value.to_string().as_str())
+        } else {
+            value.serialize(serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<T, D::Error> {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            T::from_str(&s).map_err(serde::de::Error::custom)
+        } else {
+            T::deserialize(deserializer)
+        }
+    }
+}
+
+mod serde_public_key {
+    use super::*;
+    use serde::de::Deserializer;
+    use serde::ser::Serializer;
+    type T = PublicKey;
+
+    pub fn serialize<S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(value.to_string().as_str())
+        } else {
+            value.serialize(serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<T, D::Error> {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            T::from_str(&s).map_err(serde::de::Error::custom)
+        } else {
+            T::deserialize(deserializer)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Options {
     #[serde(with = "serde_duration")]
@@ -344,7 +393,8 @@ impl Default for Options {
     }
 }
 
-type AnnounceData = BTreeMap<HashAndFormat, BTreeMap<PublicKey, bool>>;
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AnnounceData(BTreeMap<HashAndFormat, BTreeMap<PublicKey, bool>>);
 
 impl Options {
     /// Make the paths in the options relative to the given base path.
@@ -546,7 +596,7 @@ impl Tracker {
         };
         let mut state = State::default();
         let now = Instant::now();
-        for (content, peers) in announce_data {
+        for (content, peers) in announce_data.0 {
             for (peer, complete) in peers {
                 let peer_info = state.peer_info.entry(content).or_default();
                 let peer_info = peer_info.entry(peer).or_default();
@@ -688,7 +738,7 @@ impl Tracker {
                 for (peer, info) in peers {
                     peers2.insert(*peer, info.complete);
                 }
-                data.insert(*content, peers2);
+                data.0.insert(*content, peers2);
             }
             drop(state);
             save_to_file(&data, path)?;
@@ -963,6 +1013,13 @@ async fn create_endpoint(
         .await
 }
 
+fn write_defaults() -> anyhow::Result<()> {
+    let default_path = tracker_path("server.config.default.toml")?;
+    let txt = toml::to_string_pretty(&Options::default())?;
+    std::fs::write(&default_path, txt)?;
+    Ok(())
+}
+
 async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyhow::Result<()> {
     let home = tracker_home()?;
     println!("tracker starting using {}", tracker_home()?.display());
@@ -970,9 +1027,7 @@ async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyh
     let key = load_secret_key(key_path).await?;
     let endpoint = create_endpoint(key, args.port).await?;
     let config_path = tracker_path("server.config.toml")?;
-    let default_path = tracker_path("server.config.default.toml")?;
-    let txt = toml::to_string_pretty(&Options::default())?;
-    std::fs::write(&default_path, txt)?;
+    write_defaults()?;
     let mut options = if config_path.exists() {
         let config = std::fs::read_to_string(config_path)?;
         toml::from_str(&config)?
