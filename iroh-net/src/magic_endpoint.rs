@@ -712,7 +712,7 @@ mod tests {
 
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
-        let _guard = iroh_test::logging::setup();
+        // let _guard = iroh_test::logging::setup();
         let n_iters = 5;
         let n_chunks_per_client = 2;
         let chunk_size = 10;
@@ -734,6 +734,8 @@ mod tests {
                     let eps = ep.local_addr().unwrap();
                     info!(me = %ep.peer_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_iters {
+                        let now = Instant::now();
+                        println!("[server] round {}", i + 1);
                         let conn = ep.accept().await.unwrap();
                         let (peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "accepted connection");
@@ -746,6 +748,7 @@ mod tests {
                         send.finish().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
+                        println!("[server] round {} done in {:?}", i + 1, now.elapsed());
                     }
                 }
                 .instrument(error_span!("server")),
@@ -755,6 +758,8 @@ mod tests {
         let client_secret_key = SecretKey::generate_with_rng(&mut rng);
         let client = tokio::spawn(async move {
             for i in 0..n_iters {
+                let now = Instant::now();
+                println!("[client] round {}", i + 1);
                 let derp_map = derp_map.clone();
                 let client_secret_key = client_secret_key.clone();
                 let fut = async move {
@@ -791,6 +796,7 @@ mod tests {
                 }
                 .instrument(error_span!("client", %i));
                 tokio::task::spawn(fut).await.unwrap();
+                println!("[client] round {} done in {:?}", i + 1, now.elapsed());
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
