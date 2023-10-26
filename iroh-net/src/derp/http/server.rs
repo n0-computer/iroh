@@ -471,7 +471,7 @@ where
                                         e
                                     );
                                 } else {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success"
                                     );
                                 };

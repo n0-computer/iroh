@@ -1231,7 +1231,7 @@ impl MagicSock {
             async move {
                 derp_actor.run(derp_actor_receiver).await;
             }
-            .instrument(info_span!("derp.actor")),
+            .instrument(info_span!("derp-actor")),
         );
 
         let inner2 = inner.clone();

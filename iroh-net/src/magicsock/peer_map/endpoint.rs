@@ -539,7 +539,7 @@ impl Endpoint {
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
                 let clear_pongs = self.last_full_ping.is_none();
-                info!(?derp_region, ?clear_pongs, "queue call-me-maybe");
+                debug!(?derp_region, ?clear_pongs, "queue call-me-maybe");
                 msgs.push(PingAction::SendCallMeMaybe {
                     derp_region: *derp_region,
                     dst_key: self.public_key,
