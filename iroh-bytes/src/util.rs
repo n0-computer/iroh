@@ -625,10 +625,9 @@ mod tests {
 
         assert_tokens(&hash.compact(), &tokens);
 
-        let mut tokens = Vec::new();
-        tokens.push(Token::String(
+        let tokens = vec![Token::String(
             "bafkr4ihkr4ld3m4gqkjf4reryxsy2s5tkbxprqkow6fin2iiyvreuzzab4",
-        ));
+        )];
         assert_tokens(&hash.readable(), &tokens);
     }
 
