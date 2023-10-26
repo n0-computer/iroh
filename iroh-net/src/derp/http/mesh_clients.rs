@@ -43,7 +43,7 @@ impl MeshClients {
         }
     }
 
-    pub(crate) async fn mesh(
+    pub(crate) fn mesh(
         &mut self,
     ) -> anyhow::Result<Vec<tokio::sync::mpsc::Receiver<MeshClientEvent>>> {
         let addrs = match &self.mesh_addrs {

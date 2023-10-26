@@ -368,21 +368,21 @@ impl MagicEndpoint {
     /// Get the DERP region we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERP region.
-    pub async fn my_derp(&self) -> Option<u16> {
-        self.msock.my_derp().await
+    pub fn my_derp(&self) -> Option<u16> {
+        self.msock.my_derp()
     }
 
     /// Get the [`PeerAddr`] for this endpoint.
     pub async fn my_addr(&self) -> Result<PeerAddr> {
         let addrs = self.local_endpoints().await?;
-        let derp = self.my_derp().await;
+        let derp = self.my_derp();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
         Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
     }
 
     /// Get the [`PeerAddr`] for this endpoint, while providing the endpoints.
-    pub async fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<PeerAddr> {
-        let derp = self.my_derp().await;
+    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<PeerAddr> {
+        let derp = self.my_derp();
         let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
     }
@@ -423,7 +423,7 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(&self, peer_addr: PeerAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        self.add_peer_addr(peer_addr.clone()).await?;
+        self.add_peer_addr(peer_addr.clone())?;
 
         let PeerAddr { peer_id, info } = peer_addr;
         let addr = self.msock.get_mapping_addr(&peer_id).await;
@@ -432,7 +432,7 @@ impl MagicEndpoint {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}")
                 }
-                (true, Some(region)) if !self.msock.has_derp_region(region).await => {
+                (true, Some(region)) if !self.msock.has_derp_region(region) => {
                     anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}. Unable to dial peer {peer_id:?}")
                 }
                 _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {peer_id:?}")
@@ -478,7 +478,7 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     // TODO: Make sync
-    pub async fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
+    pub fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
         self.msock.add_peer_addr(peer_addr);
         Ok(())
     }
@@ -517,7 +517,7 @@ pub async fn accept_conn(
 ) -> Result<(PublicKey, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
-    let peer_id = get_peer_id(&conn).await?;
+    let peer_id = get_peer_id(&conn)?;
     Ok((peer_id, alpn, conn))
 }
 
@@ -534,7 +534,7 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
 }
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
-pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
+pub fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => anyhow::bail!("no peer certificate found"),
@@ -692,7 +692,7 @@ mod tests {
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
-        endpoint.add_peer_addr(peer_addr).await.unwrap();
+        endpoint.add_peer_addr(peer_addr).unwrap();
 
         info!("closing endpoint");
         // close the endpoint and restart it

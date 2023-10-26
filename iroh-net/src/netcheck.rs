@@ -194,7 +194,7 @@ impl Client {
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+    pub fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
         let task =
@@ -248,6 +248,20 @@ impl Client {
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
+        let rx = self.get_report_channel(dm, stun_conn4, stun_conn6).await?;
+        match rx.await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("channel closed, actor awol")),
+        }
+    }
+
+    /// `get_report` but with channel
+    pub async fn get_report_channel(
+        &mut self,
+        dm: DerpMap,
+        stun_conn4: Option<Arc<UdpSocket>>,
+        stun_conn6: Option<Arc<UdpSocket>>,
+    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
@@ -259,10 +273,7 @@ impl Client {
                 response_tx: tx,
             })
             .await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
-        }
+        Ok(rx)
     }
 }
 
@@ -853,7 +864,7 @@ mod tests {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
@@ -895,9 +906,7 @@ mod tests {
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let mut client = Client::new(None)
-            .await
-            .context("failed to create netcheck client")?;
+        let mut client = Client::new(None).context("failed to create netcheck client")?;
 
         let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
@@ -962,13 +971,13 @@ mod tests {
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
         dm.get_node_mut(1, 0).unwrap().stun_only = true;
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)?;
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
-        let have_pinger = Pinger::new().await.is_ok();
+        let have_pinger = Pinger::new().is_ok();
 
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.
@@ -1186,7 +1195,7 @@ mod tests {
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
