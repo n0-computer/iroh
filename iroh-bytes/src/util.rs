@@ -103,7 +103,7 @@ impl Tag {
 }
 
 /// A hash and format pair
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HashAndFormat {
     /// The hash
     pub hash: Hash,
@@ -161,6 +161,34 @@ impl FromStr for HashAndFormat {
                 Ok(Self::hash_seq(hash.into()))
             }
             _ => anyhow::bail!("invalid hash and format"),
+        }
+    }
+}
+
+impl Serialize for HashAndFormat {
+    fn serialize<S>(&self, serializer: S) -> result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(self.to_string().as_str())
+        } else {
+            (self.hash, self.format).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HashAndFormat {
+    fn deserialize<D>(deserializer: D) -> result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            s.parse().map_err(de::Error::custom)
+        } else {
+            let (hash, format) = <(Hash, BlobFormat)>::deserialize(deserializer)?;
+            Ok(Self { hash, format })
         }
     }
 }
@@ -345,13 +373,17 @@ impl Serialize for Hash {
     where
         S: Serializer,
     {
-        // Fixed-length structures, including arrays, are supported in Serde as tuples
-        // See: https://serde.rs/impl-serialize.html#serializing-a-tuple
-        let mut s = serializer.serialize_tuple(32)?;
-        for item in self.0.as_bytes() {
-            s.serialize_element(item)?;
+        if serializer.is_human_readable() {
+            serializer.serialize_str(self.to_string().as_str())
+        } else {
+            // Fixed-length structures, including arrays, are supported in Serde as tuples
+            // See: https://serde.rs/impl-serialize.html#serializing-a-tuple
+            let mut s = serializer.serialize_tuple(32)?;
+            for item in self.0.as_bytes() {
+                s.serialize_element(item)?;
+            }
+            s.end()
         }
-        s.end()
     }
 }
 
@@ -360,7 +392,12 @@ impl<'de> Deserialize<'de> for Hash {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_tuple(32, HashVisitor)
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            s.parse().map_err(de::Error::custom)
+        } else {
+            deserializer.deserialize_tuple(32, HashVisitor)
+        }
     }
 }
 
@@ -527,11 +564,12 @@ impl NonSend {
 
 #[cfg(test)]
 mod tests {
+
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     use super::*;
 
-    use serde_test::{assert_tokens, Token};
+    use serde_test::{assert_tokens, Configure, Token};
 
     #[test]
     fn test_display_parse_roundtrip() {
@@ -585,7 +623,12 @@ mod tests {
         tokens.push(Token::TupleEnd);
         assert_eq!(tokens.len(), 34);
 
-        assert_tokens(&hash, &tokens);
+        assert_tokens(&hash.compact(), &tokens);
+
+        let tokens = vec![Token::String(
+            "bafkr4ihkr4ld3m4gqkjf4reryxsy2s5tkbxprqkow6fin2iiyvreuzzab4",
+        )];
+        assert_tokens(&hash.readable(), &tokens);
     }
 
     #[test]
@@ -599,6 +642,16 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_json() {
+        let hash = Hash::new("hello");
+        let ser = serde_json::to_string(&hash).unwrap();
+        let de = serde_json::from_str(&ser).unwrap();
+        assert_eq!(hash, de);
+        // 59 bytes of base32 + 2 quotes
+        assert_eq!(ser.len(), 61);
+    }
+
+    #[test]
     fn test_hash_and_format_parse() {
         let hash = Hash::new("hello");
 
@@ -609,5 +662,21 @@ mod tests {
         let expected = HashAndFormat::hash_seq(hash);
         let actual = expected.to_string().parse::<HashAndFormat>().unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_hash_and_format_postcard() {
+        let haf = HashAndFormat::raw(Hash::new("hello"));
+        let ser = postcard::to_stdvec(&haf).unwrap();
+        let de = postcard::from_bytes(&ser).unwrap();
+        assert_eq!(haf, de);
+    }
+
+    #[test]
+    fn test_hash_and_format_json() {
+        let haf = HashAndFormat::raw(Hash::new("hello"));
+        let ser = serde_json::to_string(&haf).unwrap();
+        let de = serde_json::from_str(&ser).unwrap();
+        assert_eq!(haf, de);
     }
 }
