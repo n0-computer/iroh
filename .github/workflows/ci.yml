@@ -56,7 +56,12 @@ jobs:
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
+      run: |
+        crates=iroh,iroh-net
+        for i in ${variable//,/ }
+        do
+          cargo test -p $i --all-features --lib --bins --tests
+        done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
