@@ -584,6 +584,9 @@ pub enum BlobCommands {
         /// download it recursively.
         #[clap(long, default_value_t = false)]
         non_recursive: bool,
+        /// Display the contents of this ticket too.
+        #[clap(long, hide = true)]
+        debug: bool,
     },
 }
 
@@ -662,6 +665,7 @@ impl BlobCommands {
                 no_derp,
                 derp_only,
                 non_recursive,
+                debug,
             } => {
                 let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
                 let node_addr = if no_derp {
@@ -703,6 +707,9 @@ impl BlobCommands {
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
                     HumanBytes(blob_reader.size())
                 );
+                if debug {
+                    println!("{ticket:#?}")
+                }
                 Ok(())
             }
         }
