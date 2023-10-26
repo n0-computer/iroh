@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
-use tracing::{info_span, instrument, trace, Instrument};
+use tracing::{info_span, trace, Instrument};
 
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
@@ -123,7 +123,7 @@ where
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
         let server_task = tokio::spawn(
-            async move { server_actor.run(done).await }.instrument(info_span!("derp.srv.actor")),
+            async move { server_actor.run(done).await }.instrument(info_span!("derp.server", me = %key.public().fmt_short())),
         );
         let meta_cert = init_meta_cert(&key.public());
         Self {
@@ -403,7 +403,6 @@ where
     client_mesh: HashMap<PublicKey, Option<P>>,
     /// Mesh clients that need to be appraised on the state of the network
     watchers: HashSet<PublicKey>,
-    name: String,
 }
 
 impl<P> ServerActor<P>
@@ -411,18 +410,15 @@ where
     P: PacketForwarder,
 {
     pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage<P>>) -> Self {
-        let name = format!("derp-{}", &key.to_string()[..8]);
         Self {
             key,
             receiver,
             clients: Clients::new(),
             client_mesh: HashMap::default(),
             watchers: HashSet::default(),
-            name,
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(crate) async fn run(mut self, done: CancellationToken) -> Result<()> {
         loop {
             tokio::select! {
@@ -691,6 +687,7 @@ mod tests {
         ReceivedMessage,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
+    use tracing::instrument;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
@@ -751,7 +748,7 @@ mod tests {
         // run server actor
         let server_task = tokio::spawn(
             async move { server_actor.run(server_done).await }
-                .instrument(info_span!("derp.srv.actor")),
+                .instrument(info_span!("derp.server")),
         );
 
         let key_a = SecretKey::generate().public();

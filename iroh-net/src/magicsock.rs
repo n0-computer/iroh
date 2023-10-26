@@ -220,8 +220,8 @@ struct Inner {
     /// Used for receiving DERP messages.
     derp_recv_receiver: flume::Receiver<DerpRecvResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
-    network_recv_wakers: std::sync::Mutex<Option<Waker>>,
-    network_send_wakers: std::sync::Mutex<Option<Waker>>,
+    network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
+    network_send_wakers: parking_lot::Mutex<Option<Waker>>,
 
     /// Key for this node.
     secret_key: SecretKey,
@@ -387,17 +387,6 @@ impl Inner {
                 let mut derp_sent = false;
                 let mut udp_error = None;
 
-                trace!(
-                    peer = %public_key.fmt_short(),
-                    quic_addr = %dest.0,
-                    transmit_count = %transmits.len(),
-                    packet_count = &transmits.iter().map(|t| t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1)).sum::<usize>(),
-                    len = &transmits.iter().map(|t| t.contents.len()).sum::<usize>(),
-                    ?udp_addr,
-                    ?derp_region,
-                    "send transmits"
-                );
-
                 // send udp
                 if let Some(addr) = udp_addr {
                     // rewrite target addresses.
@@ -406,7 +395,7 @@ impl Inner {
                     }
                     match ready!(self.poll_send_udp(addr, &transmits, cx)) {
                         Ok(n) => {
-                            debug!(peer = %public_key.fmt_short(), dst = %addr, transmit_count=n, "sent transmits over UDP");
+                            trace!(peer = %public_key.fmt_short(), dst = %addr, transmit_count=n, "sent transmits over UDP");
                             // truncate the transmits vec to `n`. these transmits will be sent to
                             // Derp further below. We only want to send those transmits to Derp that were
                             // sent to UDP, because the next transmits will be sent on the next
@@ -428,7 +417,7 @@ impl Inner {
 
                 // send derp
                 if let Some(derp_region) = derp_region {
-                    self.send_derp(derp_region, public_key, split_packets(&transmits));
+                    self.try_send_derp(derp_region, public_key, split_packets(&transmits));
                     derp_sent = true;
                 }
 
@@ -442,6 +431,15 @@ impl Inner {
                     });
                     Poll::Ready(Err(err))
                 } else {
+                    debug!(
+                        peer = %public_key.fmt_short(),
+                        transmit_count = %transmits.len(),
+                        packet_count = &transmits.iter().map(|t| t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1)).sum::<usize>(),
+                        len = &transmits.iter().map(|t| t.contents.len()).sum::<usize>(),
+                        send_udp = ?udp_addr,
+                        send_derp = ?derp_region,
+                        "sent transmits"
+                    );
                     Poll::Ready(Ok(n))
                 }
             }
@@ -570,12 +568,12 @@ impl Inner {
                 // remap addr
                 match self.peer_map.receive_udp(meta.addr) {
                     None => {
-                        warn!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: no peer state found, skipping");
+                        warn!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "UDP recv quic packets: no peer state found, skipping");
                         // if we have no peer state for the from addr, set len to 0 to make quinn skip the buf completely.
                         meta.len = 0;
                     }
-                    Some(quic_mapped_addr) => {
-                        trace!(src = ?meta.addr, count = %quic_packets_count, len = meta.len, "recv packets: peer state found");
+                    Some((node_id, quic_mapped_addr)) => {
+                        debug!(src = ?meta.addr, peer = %node_id.fmt_short(), count = %quic_packets_count, len = meta.len, "UDP recv quic packets");
                         quic_packets_total += quic_packets_count;
                         meta.addr = quic_mapped_addr.0;
                     }
@@ -613,7 +611,6 @@ impl Inner {
                 Err(flume::TryRecvError::Empty) => {
                     self.network_recv_wakers
                         .lock()
-                        .unwrap()
                         .replace(cx.waker().clone());
                     break;
                 }
@@ -624,9 +621,9 @@ impl Inner {
                     )));
                 }
                 Ok(Err(err)) => return Poll::Ready(Err(err)),
-                Ok(Ok((meta, bytes))) => {
+                Ok(Ok((node_id, meta, bytes))) => {
                     inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
-                    trace!(src = %meta.addr, len = %meta.len, "recv packet from derp");
+                    debug!(src = %meta.addr, peer = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, "recv quic packets from derp");
                     buf_out[..bytes.len()].copy_from_slice(&bytes);
                     *meta_out = meta;
                     num_msgs += 1;
@@ -637,11 +634,10 @@ impl Inner {
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
             inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
-            trace!("derp recv: {} packets", num_msgs);
-            return Poll::Ready(Ok(num_msgs));
+            Poll::Ready(Ok(num_msgs))
+        } else {
+            Poll::Pending
         }
-
-        Poll::Pending
     }
 
     /// Handles a discovery message.
@@ -847,7 +843,7 @@ impl Inner {
         trace!(peer = %dst_key.fmt_short(), %region, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
-        if self.send_derp(region, dst_key, smallvec![pkt]) {
+        if self.try_send_derp(region, dst_key, smallvec![pkt]) {
             inc!(MagicsockMetrics, sent_disco_derp);
             disco_message_sent(&msg);
             true
@@ -954,7 +950,7 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn send_derp(&self, region_id: u16, peer: PublicKey, contents: DerpContents) -> bool {
+    fn try_send_derp(&self, region_id: u16, peer: PublicKey, contents: DerpContents) -> bool {
         trace!(peer = %peer.fmt_short(), derp_region = region_id, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             region_id,
@@ -1214,8 +1210,8 @@ impl MagicSock {
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             derp_recv_receiver,
-            network_recv_wakers: std::sync::Mutex::new(None),
-            network_send_wakers: std::sync::Mutex::new(None),
+            network_recv_wakers: parking_lot::Mutex::new(None),
+            network_send_wakers: parking_lot::Mutex::new(None),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map,
@@ -1504,7 +1500,7 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
-type DerpRecvResult = Result<(quinn_udp::RecvMeta, Bytes), io::Error>;
+type DerpRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
 fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool {
@@ -1807,7 +1803,7 @@ impl Actor {
                         .send_async(passthrough)
                         .await
                         .expect("missing recv sender");
-                    let mut wakers = self.inner.network_recv_wakers.lock().unwrap();
+                    let mut wakers = self.inner.network_recv_wakers.lock();
                     if let Some(waker) = wakers.take() {
                         waker.wake();
                     }
@@ -1875,7 +1871,7 @@ impl Actor {
                         dst_ip,
                         ecn: None,
                     };
-                    out.push(Ok((meta, part)));
+                    out.push(Ok((dm.src, meta, part)));
                 }
                 Err(e) => {
                     out.push(Err(e));

@@ -101,7 +101,7 @@ impl PeerMap {
         self.inner.lock().node_count()
     }
 
-    pub fn receive_udp(&self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
+    pub fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
         self.inner.lock().receive_udp(udp_addr)
     }
 
@@ -330,14 +330,14 @@ impl PeerMapInner {
     }
 
     /// Marks the peer we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(endpoint) = self.get_mut(EndpointId::IpPort(&ip_port)) else {
             info!(src=%udp_addr, "receive_udp: no peer_map state found for addr, ignore");
             return None;
         };
         endpoint.receive_udp(ip_port, Instant::now());
-        Some(*endpoint.quic_mapped_addr())
+        Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
     fn receive_derp(&mut self, region_id: u16, src: &PublicKey) -> QuicMappedAddr {

@@ -376,7 +376,7 @@ impl DerpActor {
         }
 
         // Wake up the send waker if one is waiting for space in the channel
-        let mut wakers = self.conn.network_send_wakers.lock().unwrap();
+        let mut wakers = self.conn.network_send_wakers.lock();
         if let Some(waker) = wakers.take() {
             waker.wake();
         }
