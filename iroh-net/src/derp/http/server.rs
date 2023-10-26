@@ -129,7 +129,7 @@ impl Server {
         let mut mesh_clients =
             MeshClients::new(mesh_key, server_key.clone(), mesh_addrs, packet_fwd);
 
-        let recvs = mesh_clients.mesh().await?;
+        let recvs = mesh_clients.mesh()?;
         self.mesh_clients = Some(mesh_clients);
         Ok(recvs)
     }
@@ -406,7 +406,7 @@ impl ServerState {
             // servers will be down & unable to be reached
             // so we do not wait for all meshing to complete
             // back as successfull before running the server
-            let _ = mesh_clients.mesh().await?;
+            let _ = mesh_clients.mesh()?;
             Some(mesh_clients)
         } else {
             None

@@ -253,8 +253,8 @@ async fn report(
     stun_port: u16,
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::default().await;
-    let mut client = netcheck::Client::new(Some(port_mapper)).await?;
+    let port_mapper = portmapper::Client::default();
+    let mut client = netcheck::Client::new(Some(port_mapper))?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -532,7 +532,7 @@ async fn passive_side(
     endpoint: MagicEndpoint,
     connection: quinn::Connection,
 ) -> anyhow::Result<()> {
-    let remote_peer_id = magic_endpoint::get_peer_id(&connection).await?;
+    let remote_peer_id = magic_endpoint::get_peer_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
     loop {
         match connection.accept_bi().await {
@@ -660,7 +660,7 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(derp_region) = endpoint.my_derp().await {
+    if let Some(derp_region) = endpoint.my_derp() {
         println!(
             "iroh doctor connect {} --derp-region {}",
             secret_key.public(),
@@ -676,8 +676,7 @@ async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = magic_endpoint::get_peer_id(&connection).await
-                        else {
+                        let Ok(remote_peer_id) = magic_endpoint::get_peer_id(&connection) else {
                             return;
                         };
                         println!("Accepted connection from {}", remote_peer_id);
@@ -723,7 +722,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
         enable_pcp,
         enable_nat_pmp,
     };
-    let port_mapper = portmapper::Client::new(config).await;
+    let port_mapper = portmapper::Client::new(config);
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
@@ -745,7 +744,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
 
 async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     println!("probing port mapping protocols with {config:?}");
-    let port_mapper = portmapper::Client::new(config).await;
+    let port_mapper = portmapper::Client::new(config);
     let probe_rx = port_mapper.probe();
     let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
     println!("{probe}");

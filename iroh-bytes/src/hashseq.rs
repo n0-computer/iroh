@@ -45,12 +45,13 @@ pub struct HashSeqStream(HashSeq);
 
 impl HashSeqStream {
     /// Get the next hash in the sequence.
-    #[allow(clippy::should_implement_trait)]
+    #[allow(clippy::should_implement_trait, clippy::unused_async)]
     pub async fn next(&mut self) -> io::Result<Option<Hash>> {
         Ok(self.0.pop_front())
     }
 
     /// Skip a number of hashes in the sequence.
+    #[allow(clippy::unused_async)]
     pub async fn skip(&mut self, n: u64) -> io::Result<()> {
         let ok = self.0.drop_front(n as usize);
         if !ok {
