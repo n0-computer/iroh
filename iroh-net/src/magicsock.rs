@@ -998,10 +998,18 @@ impl DiscoMessageSource {
     }
 }
 
+/// Manages currently running endpoint updates.
+///
+/// Invariants:
+/// - only one endpoint update must be running at a time
+/// - if an update is scheduled while another one is running, remember that
+///   and start a new one when the current one has finished
 #[derive(Debug)]
 struct EndpointUpdateState {
     /// If running, set to the task handle of the update.
     running: sync::watch::Sender<Option<&'static str>>,
+    /// If set, this means we will start a new endpoint update state as soon as the current one
+    /// is finished.
     want_update: Option<&'static str>,
 }
 
