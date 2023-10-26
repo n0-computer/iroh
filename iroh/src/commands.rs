@@ -27,7 +27,7 @@ use iroh_net::{
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
-use self::node::{RpcPort, StartOptions};
+use self::node::StartOptions;
 use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -52,21 +52,13 @@ pub struct Cli {
     #[clap(subcommand)]
     pub command: Commands,
 
-    #[clap(flatten)]
-    #[clap(next_help_heading = "Options for console, doc, author, blob, node, tag")]
-    pub rpc_args: RpcArgs,
+    /// RPC port of the Iroh node.
+    #[clap(long, global = true, default_value_t = DEFAULT_RPC_PORT)]
+    pub rpc_port: u16,
 
     #[clap(flatten)]
     #[clap(next_help_heading = "Options for start, get, doctor")]
     pub full_args: FullArgs,
-}
-
-/// Options for commands that talk to a running Iroh node over RPC
-#[derive(Args, Debug, Clone)]
-pub struct RpcArgs {
-    /// RPC port of the Iroh node
-    #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-    pub rpc_port: u16,
 }
 
 /// Options for commands that may start an Iroh node
@@ -87,12 +79,12 @@ impl Cli {
     pub async fn run(self, rt: &runtime::Handle) -> Result<()> {
         match self.command {
             Commands::Console => {
-                let iroh = iroh::client::quic::connect(self.rpc_args.rpc_port).await?;
+                let iroh = iroh::client::quic::connect(self.rpc_port).await?;
                 let env = ConsoleEnv::for_console()?;
                 repl::run(&iroh, &env).await
             }
             Commands::Rpc(command) => {
-                let iroh = iroh::client::quic::connect(self.rpc_args.rpc_port).await?;
+                let iroh = iroh::client::quic::connect(self.rpc_port).await?;
                 let env = ConsoleEnv::for_cli()?;
                 command.run(&iroh, &env).await
             }
@@ -108,7 +100,7 @@ impl Cli {
                 #[cfg(feature = "metrics")]
                 let metrics_fut = start_metrics_server(metrics_addr, rt);
 
-                let res = command.run(rt, &config, keylog).await;
+                let res = command.run(rt, &config, keylog, self.rpc_port).await;
 
                 #[cfg(feature = "metrics")]
                 if let Some(metrics_fut) = metrics_fut {
@@ -151,9 +143,6 @@ pub enum FullCommands {
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
-        /// RPC port, set to "disabled" to disable RPC
-        #[clap(long, default_value_t = RpcPort::Enabled(DEFAULT_RPC_PORT))]
-        rpc_port: RpcPort,
         /// Use a token to authenticate requests for data
         ///
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
@@ -216,11 +205,16 @@ pub enum FullCommands {
 }
 
 impl FullCommands {
-    pub async fn run(self, rt: &runtime::Handle, config: &NodeConfig, keylog: bool) -> Result<()> {
+    pub async fn run(
+        self,
+        rt: &runtime::Handle,
+        config: &NodeConfig,
+        keylog: bool,
+        rpc_port: u16,
+    ) -> Result<()> {
         match self {
             FullCommands::Start {
                 addr,
-                rpc_port,
                 request_token,
                 add_options,
             } => {

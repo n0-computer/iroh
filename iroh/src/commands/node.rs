@@ -28,7 +28,7 @@ use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 #[derive(Debug)]
 pub struct StartOptions {
     pub addr: SocketAddr,
-    pub rpc_port: RpcPort,
+    pub rpc_port: u16,
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
