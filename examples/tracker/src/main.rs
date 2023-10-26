@@ -1,12 +1,3 @@
-#![allow(dead_code)]
-//! An example that runs an iroh node that can be controlled via RPC.
-//!
-//! Run this example with
-//!   $ cargo run --example rpc
-//! Then in another terminal, run any of the normal iroh CLI commands, which you can run from
-//! cargo as well:
-//!   $ cargo run node stats
-//! The `node stats` command will reach out over RPC to the node constructed in the example
 use anyhow::Context;
 use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
 use bytes::Bytes;
@@ -31,6 +22,8 @@ use tokio_util::task::LocalPoolHandle;
 mod discovery;
 
 const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
+
+#[allow(dead_code)]
 const PKARR_RELAY_URL: &str = "https://iroh-discovery.rklaehn.workers.dev/";
 
 /// Announce kind
@@ -532,7 +525,9 @@ fn random_hash_seq_ranges(sizes: &[u64], mut rng: impl Rng) -> RangeSpecSeq {
     for size in sizes.iter() {
         let chunks = ByteNum(*size).full_chunks().0;
         if remaining < chunks {
-            ranges.push(ChunkRanges::from(ChunkNum(remaining)..ChunkNum(remaining + 1)));
+            ranges.push(ChunkRanges::from(
+                ChunkNum(remaining)..ChunkNum(remaining + 1),
+            ));
             break;
         } else {
             remaining -= chunks;
@@ -881,10 +876,7 @@ impl Tracker {
                     self.log_probe_attempt(&peer, &haf, probe_kind, t0, &res)?;
                     match res {
                         Ok(_) => {
-                            results
-                                .entry(haf)
-                                .or_default()
-                                .push((peer, probe_kind));
+                            results.entry(haf).or_default().push((peer, probe_kind));
                         }
                         Err(cause) => {
                             tracing::error!("error probing peer {}: {}", peer, cause)

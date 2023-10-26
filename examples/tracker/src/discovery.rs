@@ -103,6 +103,7 @@ pub struct PkarrRelayDiscovery {
 }
 
 impl PkarrRelayDiscovery {
+    #[allow(dead_code)]
     pub fn new(secret_key: iroh_net::key::SecretKey, relay: Url) -> Self {
         let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
         Self {
