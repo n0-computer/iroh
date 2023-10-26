@@ -3,6 +3,7 @@
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use anyhow::Result;
+use bytes::Bytes;
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,9 @@ pub mod fs;
 pub mod memory;
 mod pubkeys;
 pub use pubkeys::*;
+
+/// Tag type
+pub type Tag = Bytes;
 
 /// Number of [`PeerIdBytes`] objects to cache per document.
 pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
@@ -79,7 +83,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Iterator over tagged documents.
-    type TagsIter<'a>: Iterator<Item = Result<(String, NamespaceId)>>
+    type TagsIter<'a>: Iterator<Item = Result<(Tag, NamespaceId)>>
     where
         Self: 'a;
 
@@ -177,13 +181,13 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
 
     /// Set the tag for a document.
-    fn set_tag(&self, tag: String, namespace: NamespaceId) -> Result<Option<NamespaceId>>;
+    fn set_tag(&self, tag: Tag, namespace: NamespaceId) -> Result<Option<NamespaceId>>;
 
     /// Get the document for a tag.
-    fn get_tag(&self, tag: &str) -> Result<Option<NamespaceId>>;
+    fn get_tag(&self, tag: &Tag) -> Result<Option<NamespaceId>>;
 
     /// Delete a tag.
-    fn delete_tag(&self, tag: &str) -> Result<Option<NamespaceId>>;
+    fn delete_tag(&self, tag: &Tag) -> Result<Option<NamespaceId>>;
 
     /// Get all tags.
     fn tags(&self) -> Result<Self::TagsIter<'_>>;
@@ -252,13 +256,13 @@ mod tests {
         let ns2 = Namespace::new(&mut rng);
         let _replica = store.new_replica(ns1.clone())?;
 
-        assert!(store.get_tag("ns1")?.is_none());
+        assert!(store.get_tag(&"ns1".into())?.is_none());
         store.set_tag("ns1".into(), ns1.id())?;
-        assert_eq!(store.get_tag("ns1")?, Some(ns1.id()));
+        assert_eq!(store.get_tag(&"ns1".into())?, Some(ns1.id()));
 
-        assert!(store.get_tag("ns2")?.is_none());
+        assert!(store.get_tag(&"ns2".into())?.is_none());
         store.set_tag("ns2".into(), ns2.id())?;
-        assert_eq!(store.get_tag("ns2")?, Some(ns2.id()));
+        assert_eq!(store.get_tag(&"ns2".into())?, Some(ns2.id()));
 
         let mut tags = store.tags()?.collect::<Result<Vec<_>>>()?;
         tags.sort_by_key(|(t, _)| t.clone());
@@ -267,13 +271,13 @@ mod tests {
         assert_eq!(tags[0], ("ns1".into(), ns1.id()));
         assert_eq!(tags[1], ("ns2".into(), ns2.id()));
 
-        let old_ns = store.delete_tag("ns1")?;
+        let old_ns = store.delete_tag(&"ns1".into())?;
         assert_eq!(old_ns.unwrap(), ns1.id());
-        assert!(store.get_tag("ns1")?.is_none());
+        assert!(store.get_tag(&"ns1".into())?.is_none());
 
-        let old_ns = store.delete_tag("ns2")?;
+        let old_ns = store.delete_tag(&"ns2".into())?;
         assert_eq!(old_ns.unwrap(), ns2.id());
-        assert!(store.get_tag("ns2")?.is_none());
+        assert!(store.get_tag(&"ns2".into())?.is_none());
 
         Ok(())
     }

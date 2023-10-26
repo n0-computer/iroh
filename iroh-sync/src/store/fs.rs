@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
@@ -26,7 +27,7 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore, Tag};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -70,7 +71,7 @@ const LATEST_TABLE: TableDefinition<LatestKey, LatestValue> =
 // Table
 // Key: &str # Tag
 // Value: [u8; 32] # NamespaceId
-const TAGS_TABLE: TableDefinition<&str, &[u8; 32]> = TableDefinition::new("tags-1");
+const TAGS_TABLE: TableDefinition<&[u8], &[u8; 32]> = TableDefinition::new("tags-1");
 
 type LatestKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
 type LatestValue<'a> = (u64, &'a [u8]);
@@ -81,8 +82,8 @@ type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
-type TagsTable<'a> = ReadOnlyTable<'a, &'static str, &'static [u8; 32]>;
-type TagsRange<'a> = TableRange<'a, &'static str, &'static [u8; 32]>;
+type TagsTable<'a> = ReadOnlyTable<'a, &'static [u8], &'static [u8; 32]>;
+type TagsRange<'a> = TableRange<'a, &'static [u8], &'static [u8; 32]>;
 type DbResult<T> = Result<T, StorageError>;
 
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
@@ -412,36 +413,32 @@ impl super::Store for Store {
         }
     }
 
-    fn set_tag(&self, tag: String, namespace: NamespaceId) -> Result<Option<NamespaceId>> {
+    fn set_tag(&self, tag: Tag, namespace: NamespaceId) -> Result<Option<NamespaceId>> {
         let write_tx = self.db.begin_write()?;
         let old_ns = {
             let mut tags_table = write_tx.open_table(TAGS_TABLE)?;
-            dbg!(&tag, namespace);
-            let old = tags_table.insert(tag.as_str(), namespace.as_bytes())?;
+            let old = tags_table.insert(tag.as_ref(), namespace.as_bytes())?;
             old.map(|v| NamespaceId::from(v.value()))
         };
         write_tx.commit()?;
 
-        dbg!(&old_ns);
         Ok(old_ns)
     }
 
-    fn get_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
+    fn get_tag(&self, tag: &Tag) -> Result<Option<NamespaceId>> {
         let read_tx = self.db.begin_read()?;
         let tags_table = read_tx.open_table(TAGS_TABLE)?;
-        dbg!(&tag);
-        let val = tags_table.get(tag)?;
+        let val = tags_table.get(tag.as_ref())?;
         let val = val.map(|v| NamespaceId::from(v.value()));
-        dbg!(&val);
 
         Ok(val)
     }
 
-    fn delete_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
+    fn delete_tag(&self, tag: &Tag) -> Result<Option<NamespaceId>> {
         let write_tx = self.db.begin_write()?;
         let old_ns = {
             let mut tags_table = write_tx.open_table(TAGS_TABLE)?;
-            let old = tags_table.remove(tag)?;
+            let old = tags_table.remove(tag.as_ref())?;
             old.map(|v| NamespaceId::from(v.value()))
         };
         write_tx.commit()?;
@@ -471,7 +468,7 @@ pub struct TagsIter<'a> {
 }
 
 impl Iterator for TagsIter<'_> {
-    type Item = Result<(String, NamespaceId)>;
+    type Item = Result<(Tag, NamespaceId)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.with_mut(|fields| match fields.records.next() {
@@ -480,7 +477,7 @@ impl Iterator for TagsIter<'_> {
             Some(Ok((key, value))) => {
                 let tag = key.value();
                 let ns = value.value();
-                Some(Ok((tag.into(), ns.into())))
+                Some(Ok((Bytes::copy_from_slice(tag), ns.into())))
             }
         })
     }

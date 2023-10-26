@@ -18,7 +18,7 @@ use crate::{
     AuthorId, NamespaceId, PeerIdBytes, Record,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore, Tag};
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
@@ -27,7 +27,7 @@ type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes,
 pub struct Store {
     open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
     namespaces: Arc<RwLock<HashMap<NamespaceId, Namespace>>>,
-    tags: Arc<RwLock<HashMap<String, NamespaceId>>>,
+    tags: Arc<RwLock<HashMap<Tag, NamespaceId>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
@@ -55,7 +55,7 @@ impl super::Store for Store {
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
     type LatestIter<'a> = LatestIterator<'a>;
-    type TagsIter<'a> = std::vec::IntoIter<Result<(String, NamespaceId)>>;
+    type TagsIter<'a> = std::vec::IntoIter<Result<(Tag, NamespaceId)>>;
 
     fn open_replica(&self, id: &NamespaceId) -> Result<Replica<Self::Instance>, OpenError> {
         if self.open_replicas.read().contains(id) {
@@ -197,18 +197,18 @@ impl super::Store for Store {
         Ok(Some(peers.into_iter()))
     }
 
-    fn set_tag(&self, tag: String, namespace: NamespaceId) -> Result<Option<NamespaceId>> {
+    fn set_tag(&self, tag: Tag, namespace: NamespaceId) -> Result<Option<NamespaceId>> {
         let res = self.tags.write().insert(tag, namespace);
 
         Ok(res)
     }
 
-    fn get_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
+    fn get_tag(&self, tag: &Tag) -> Result<Option<NamespaceId>> {
         let res = self.tags.read().get(tag).copied();
         Ok(res)
     }
 
-    fn delete_tag(&self, tag: &str) -> Result<Option<NamespaceId>> {
+    fn delete_tag(&self, tag: &Tag) -> Result<Option<NamespaceId>> {
         let res = self.tags.write().remove(tag);
         Ok(res)
     }
