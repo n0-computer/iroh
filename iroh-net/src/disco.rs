@@ -235,10 +235,8 @@ impl CallMeMaybe {
             let src = socket_addr_from_bytes(chunk);
             m.my_number.push(src);
         }
-        if p.len() > EP_LENGTH * m.my_number.len() {
-            if p.last() == Some(&1u8) {
-                m.clear_pongs = true;
-            }
+        if p.len() > EP_LENGTH * m.my_number.len() && p.last() == Some(&1u8) {
+            m.clear_pongs = true;
         }
 
         Ok(m)
