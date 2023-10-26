@@ -32,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
@@ -1575,6 +1575,7 @@ enum ActorMessage {
     },
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
+    NetcheckReport(Result<Arc<netcheck::Report>>, &'static str),
 }
 
 struct Actor {
@@ -1806,6 +1807,17 @@ impl Actor {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.inner.peer_map.notify_ping_timeout(id, txid);
             }
+            ActorMessage::NetcheckReport(report, why) => {
+                match report {
+                    Ok(report) => {
+                        self.handle_netcheck_report(report).await;
+                    }
+                    Err(err) => {
+                        warn!("failed to generate netcheck report for: {}: {:?}", why, err);
+                    }
+                }
+                self.finalize_endpoints_update(why);
+            }
         }
 
         false
@@ -1912,50 +1924,12 @@ impl Actor {
             self.rebind_all().await;
         }
 
-        match self.determine_endpoints().await {
-            Ok(endpoints) => {
-                if self.inner.endpoints.lock().set(&endpoints) {
-                    log_endpoint_change(&endpoints);
-                    if let Some(ref cb) = self.inner.on_endpoints {
-                        cb(&endpoints[..]);
-                    }
-                }
-            }
-            Err(err) => {
-                info!("endpoint update ({}) failed: {:#?}", why, err);
-                // TODO(crawshaw): are there any conditions under which
-                // we should trigger a retry based on the error here?
-            }
-        }
-
-        let new_why = self.endpoints_update_state.want_update.take();
-        if !self.inner.is_closed() {
-            if let Some(new_why) = new_why {
-                debug!("endpoint update: needed new ({})", new_why);
-                self.endpoints_update_state
-                    .running
-                    .send(Some(new_why))
-                    .expect("sender not go away");
-                return;
-            }
-            self.periodic_re_stun_timer = new_re_stun_timer(true);
-        }
-
-        self.endpoints_update_state
-            .running
-            .send(None)
-            .expect("sender not go away");
-
-        debug!("endpoint update done ({})", why);
+        self.port_mapper.procure_mapping();
+        self.update_net_info(why).await;
     }
 
-    /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
-    /// to determine its public address.
-    #[instrument(level = "debug", skip_all)]
-    async fn determine_endpoints(&mut self) -> Result<Vec<config::Endpoint>> {
-        self.port_mapper.procure_mapping();
+    async fn finish_endpoints_update(&mut self, nr: Arc<netcheck::Report>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
-        let nr = self.update_net_info().await.context("update_net_info")?;
 
         // endpoint -> how it was found
         let mut already = HashMap::new();
@@ -2066,26 +2040,20 @@ impl Actor {
             }
         }
 
-        if !is_unspecified_v4 && local_addr_v4.is_some() {
-            // Our local endpoint is bound to a particular address.
-            // Do not offer addresses on other local interfaces.
-            add_addr!(
-                already,
-                eps,
-                local_addr_v4.unwrap(),
-                config::EndpointType::Local
-            );
+        if !is_unspecified_v4 {
+            if let Some(addr) = local_addr_v4 {
+                // Our local endpoint is bound to a particular address.
+                // Do not offer addresses on other local interfaces.
+                add_addr!(already, eps, addr, config::EndpointType::Local);
+            }
         }
 
-        if !is_unspecified_v6 && local_addr_v6.is_some() {
-            // Our local endpoint is bound to a particular address.
-            // Do not offer addresses on other local interfaces.
-            add_addr!(
-                already,
-                eps,
-                local_addr_v6.unwrap(),
-                config::EndpointType::Local
-            );
+        if !is_unspecified_v6 {
+            if let Some(addr) = local_addr_v6 {
+                // Our local endpoint is bound to a particular address.
+                // Do not offer addresses on other local interfaces.
+                add_addr!(already, eps, addr, config::EndpointType::Local);
+            }
         }
 
         // Note: the endpoints are intentionally returned in priority order,
@@ -2098,7 +2066,34 @@ impl Actor {
         // The STUN address(es) are always first.
         // Despite this sorting, clients are not relying on this sorting for decisions;
 
-        Ok(eps)
+        if self.inner.endpoints.lock().set(&eps) {
+            log_endpoint_change(&eps);
+            if let Some(ref cb) = self.inner.on_endpoints {
+                cb(&eps[..]);
+            }
+        }
+    }
+
+    fn finalize_endpoints_update(&mut self, why: &'static str) {
+        let new_why = self.endpoints_update_state.want_update.take();
+        if !self.inner.is_closed() {
+            if let Some(new_why) = new_why {
+                debug!("endpoint update: needed new ({})", new_why);
+                self.endpoints_update_state
+                    .running
+                    .send(Some(new_why))
+                    .expect("sender not go away");
+                return;
+            }
+            self.periodic_re_stun_timer = new_re_stun_timer(true);
+        }
+
+        self.endpoints_update_state
+            .running
+            .send(None)
+            .expect("sender not go away");
+
+        debug!("endpoint update done ({})", why);
     }
 
     /// Updates `NetInfo.HavePortMap` to true.
@@ -2141,22 +2136,46 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
+    async fn update_net_info(&mut self, why: &'static str) {
         if self.inner.derp_map.is_empty() {
             debug!("skipping netcheck, empty DerpMap");
-            return Ok(Default::default());
+            return;
         }
 
         let derp_map = self.inner.derp_map.clone();
-        let net_checker = &mut self.net_checker;
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
         debug!("requesting netcheck report");
-        let report = time::timeout(Duration::from_secs(10), async move {
-            net_checker.get_report(derp_map, pconn4, pconn6).await
-        })
-        .await??;
+        match self
+            .net_checker
+            .get_report_channel(derp_map, pconn4, pconn6)
+            .await
+        {
+            Ok(rx) => {
+                let msg_sender = self.msg_sender.clone();
+                tokio::task::spawn(async move {
+                    let report = time::timeout(Duration::from_secs(10), rx).await;
+                    let report: anyhow::Result<_> = match report {
+                        Ok(Ok(Ok(report))) => Ok(report),
+                        Ok(Ok(Err(err))) => Err(err),
+                        Ok(Err(_)) => Err(anyhow!("netcheck report not received")),
+                        Err(err) => Err(anyhow!("netcheck report timeout: {:?}", err)),
+                    };
+                    msg_sender
+                        .send(ActorMessage::NetcheckReport(report, why))
+                        .await
+                        .ok();
+                });
+            }
+            Err(err) => {
+                warn!("unable to start netcheck generation: {:?}", err);
+                self.finalize_endpoints_update(why);
+            }
+        }
+    }
+
+    async fn handle_netcheck_report(&mut self, report: Arc<netcheck::Report>) {
         self.inner
             .ipv6_reported
             .store(report.ipv6, Ordering::Relaxed);
@@ -2200,7 +2219,7 @@ impl Actor {
         // TODO: set link type
         self.call_net_info_callback(ni).await;
 
-        Ok(report)
+        self.finish_endpoints_update(report).await;
     }
 
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
