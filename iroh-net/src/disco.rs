@@ -143,8 +143,6 @@ pub struct Pong {
 pub struct CallMeMaybe {
     /// What the peer believes its endpoints are.
     pub my_number: Vec<SocketAddr>,
-    /// If true invalidate all previous pongs. This is sent after a total state reset.
-    pub clear_pongs: bool,
 }
 
 impl Ping {
@@ -224,19 +222,16 @@ impl Pong {
 impl CallMeMaybe {
     fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
         ensure!(ver == V0, "invalid version");
+        ensure!(p.len() % EP_LENGTH == 0, "invalid entries");
 
         let num_entries = p.len() / EP_LENGTH;
         let mut m = CallMeMaybe {
             my_number: Vec::with_capacity(num_entries),
-            clear_pongs: false,
         };
 
         for chunk in p.chunks_exact(EP_LENGTH) {
             let src = socket_addr_from_bytes(chunk);
             m.my_number.push(src);
-        }
-        if p.len() > EP_LENGTH * m.my_number.len() && p.last() == Some(&1u8) {
-            m.clear_pongs = true;
         }
 
         Ok(m)
@@ -244,7 +239,7 @@ impl CallMeMaybe {
 
     fn as_bytes(&self) -> Vec<u8> {
         let header = msg_header(MessageType::CallMeMaybe, V0);
-        let mut out = vec![0u8; HEADER_LEN + self.my_number.len() * EP_LENGTH + 1];
+        let mut out = vec![0u8; HEADER_LEN + self.my_number.len() * EP_LENGTH];
         out[..HEADER_LEN].copy_from_slice(&header);
 
         for (m, chunk) in self
@@ -255,12 +250,6 @@ impl CallMeMaybe {
             let raw = socket_addr_as_bytes(m);
             chunk.copy_from_slice(&raw);
         }
-        let clear_pongs = match self.clear_pongs {
-            true => 1u8,
-            false => 0u8,
-        };
-        let last = out.len() - 1;
-        out[last] = clear_pongs;
 
         out
     }
@@ -361,13 +350,8 @@ mod tests {
             },
             Test {
                 name: "call_me_maybe",
-                m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new(), clear_pongs: false }),
-                want: "03 00 00",
-            },
-            Test {
-                name: "call_me_maybe_clear_pongs",
-                m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new(), clear_pongs: true }),
-                want: "03 00 01",
+                m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new() }),
+                want: "03 00",
             },
             Test {
                 name: "call_me_maybe_endpoints",
@@ -376,9 +360,8 @@ mod tests {
                         "1.2.3.4:567".parse().unwrap(),
                         "[2001::3456]:789".parse().unwrap(),
                     ],
-                    clear_pongs: false
                 }),
-                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03 00",
+                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03",
             },
         ];
         for test in tests {

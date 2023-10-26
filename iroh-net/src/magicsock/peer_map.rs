@@ -393,7 +393,7 @@ impl PeerMapInner {
                 vec![]
             }
             Some(ep) => {
-                debug!(endpoints = ?cm.my_number, clear_pongs = %cm.clear_pongs, "received call-me-maybe");
+                debug!(endpoints = ?cm.my_number, "received call-me-maybe");
                 ep.handle_call_me_maybe(cm)
             }
         }

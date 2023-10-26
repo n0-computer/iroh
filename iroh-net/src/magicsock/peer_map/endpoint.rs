@@ -54,7 +54,6 @@ pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         derp_region: u16,
         dst_key: PublicKey,
-        clear_pongs: bool,
     },
     SendPing(SendPing),
 }
@@ -538,12 +537,10 @@ impl Endpoint {
                 // message to our peer via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
-                let clear_pongs = self.last_full_ping.is_none();
-                debug!(?derp_region, ?clear_pongs, "queue call-me-maybe");
+                debug!(?derp_region, "queue call-me-maybe");
                 msgs.push(PingAction::SendCallMeMaybe {
                     derp_region: *derp_region,
                     dst_key: self.public_key,
-                    clear_pongs,
                 });
             }
         }
@@ -843,10 +840,9 @@ impl Endpoint {
                 new_eps.push(ep);
             }
         }
-        if !new_eps.is_empty() || m.clear_pongs {
+        if !new_eps.is_empty() {
             debug!(
                 ?new_eps,
-                clear_pongs = m.clear_pongs,
                 "received call-me-maybe, add new endpoints and reset state"
             );
         }
@@ -869,14 +865,6 @@ impl Endpoint {
         // even if it's been less than 5 seconds ago.
         for st in self.direct_addr_state.values_mut() {
             st.last_ping = None;
-            if m.clear_pongs {
-                st.recent_pong = None;
-                st.call_me_maybe_time = None;
-                st.last_payload_msg = None;
-            }
-        }
-        if m.clear_pongs {
-            self.best_addr.clear(ClearReason::PruneCallMeMaybe, self.derp_region.is_some());
         }
         self.send_pings(Instant::now(), false)
     }
