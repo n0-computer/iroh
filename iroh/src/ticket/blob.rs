@@ -1,5 +1,7 @@
 //! Tickets for blobs.
 
+use std::str::FromStr;
+
 use anyhow::{ensure, Result};
 use iroh_bytes::{protocol::RequestToken, BlobFormat, Hash};
 use iroh_net::{derp::DerpMap, key::SecretKey, PeerAddr};
@@ -12,7 +14,7 @@ use super::*;
 /// A token containing everything to get a file from the provider.
 ///
 /// It is a single item which can be easily serialized and deserialized.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", IrohTicket::serialize(self))]
 pub struct Ticket {
     /// The provider to get a file from.
@@ -36,7 +38,7 @@ impl IrohTicket for Ticket {
     }
 }
 
-impl std::str::FromStr for Ticket {
+impl FromStr for Ticket {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -116,28 +118,76 @@ impl Ticket {
     }
 }
 
+impl Serialize for Ticket {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&self.to_string())
+        } else {
+            let Ticket {
+                node,
+                format,
+                hash,
+                token,
+            } = self;
+            (node, format, hash, token).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Ticket {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            Self::from_str(&s).map_err(serde::de::Error::custom)
+        } else {
+            let (peer, format, hash, token) = Deserialize::deserialize(deserializer)?;
+            Self::new(peer, hash, format, token).map_err(serde::de::Error::custom)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, str::FromStr};
+    use std::net::SocketAddr;
 
     use bao_tree::blake3;
 
     use super::*;
 
-    #[test]
-    fn test_ticket_base32_roundtrip() {
+    fn make_ticket() -> Ticket {
         let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let derp_region = Some(0);
-        let ticket = Ticket {
+        Ticket {
             hash,
             node: PeerAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
             format: BlobFormat::HashSeq,
-        };
+        }
+    }
+
+    #[test]
+    fn test_ticket_postcard() {
+        let ticket = make_ticket();
+        let bytes = postcard::to_stdvec(&ticket).unwrap();
+        let ticket2: Ticket = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(ticket2, ticket);
+    }
+
+    #[test]
+    fn test_ticket_json() {
+        let ticket = make_ticket();
+        let json = serde_json::to_string(&ticket).unwrap();
+        let ticket2: Ticket = serde_json::from_str(&json).unwrap();
+        assert_eq!(ticket2, ticket);
+    }
+
+    #[test]
+    fn test_ticket_base32_roundtrip() {
+        let ticket = make_ticket();
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");
         println!("{} bytes", base32.len());

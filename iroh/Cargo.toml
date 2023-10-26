@@ -87,6 +87,7 @@ nix = "0.26.2"
 proptest = "1.2.0"
 rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
+serde_json = "1.0.107"
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
