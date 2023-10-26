@@ -11,6 +11,9 @@ repository = "https://github.com/n0-computer/iroh-sync"
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
 
+[lints]
+workspace = true
+
 [dependencies]
 # proto dependencies (required)
 anyhow = { version = "1", features = ["backtrace"] }
