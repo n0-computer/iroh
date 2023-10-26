@@ -176,8 +176,8 @@ async fn sync_gossip_bulk() -> Result<()> {
     let doc0 = clients[0].docs.create().await?;
     let mut ticket = doc0.share(ShareMode::Write).await?;
     // unset peers to not yet start sync
-    let peers = ticket.peers.clone();
-    ticket.peers = vec![];
+    let peers = ticket.nodes.clone();
+    ticket.nodes = vec![];
     let doc1 = clients[1].docs.import(ticket).await?;
     let mut events = doc1.subscribe().await?;
 
@@ -504,8 +504,8 @@ async fn sync_big() -> Result<()> {
     let doc0 = clients[0].docs.create().await?;
     let mut ticket = doc0.share(ShareMode::Write).await?;
     // do not join for now, just import without any peer info
-    let peer0 = ticket.peers[0].clone();
-    ticket.peers = vec![];
+    let peer0 = ticket.nodes[0].clone();
+    ticket.nodes = vec![];
 
     let mut docs = vec![];
     docs.push(doc0);

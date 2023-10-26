@@ -15,8 +15,8 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::client::quic::Iroh;
-use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
+use iroh::ticket::blob::Ticket;
 use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
 use iroh_net::magicsock::DirectAddrInfo;
 use iroh_net::PeerAddr;
