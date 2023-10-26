@@ -27,6 +27,13 @@ pub struct Ticket {
 
 impl IrohTicket for Ticket {
     const KIND: Kind = Kind::Blob;
+
+    fn verify(&self) -> std::result::Result<(), &'static str> {
+        if self.node.info.direct_addresses.is_empty() {
+            return Err("Invalid address list in ticket");
+        }
+        Ok(())
+    }
 }
 
 impl std::str::FromStr for Ticket {
@@ -55,16 +62,6 @@ impl Ticket {
             node: peer,
             token,
         })
-    }
-
-    /// Deserializes from bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let slf: Ticket = IrohTicket::from_bytes(bytes)?;
-        ensure!(
-            !slf.node.info.direct_addresses.is_empty(),
-            "Invalid address list in ticket"
-        );
-        Ok(slf)
     }
 
     /// The hash of the item this ticket can retrieve.

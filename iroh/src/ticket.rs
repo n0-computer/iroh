@@ -54,6 +54,9 @@ pub enum Error {
     /// This looks like a ticket, but base32 decoding failed.
     #[display("decoding failed: {_0}")]
     Encoding(#[from] data_encoding::DecodeError),
+    /// Verification of the deserialized bytes failed.
+    #[display("verification failed: {_0}")]
+    Verify(&'static str),
 }
 
 trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
@@ -66,8 +69,15 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     }
 
     /// Deserialize from postcard bytes.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
-        postcard::from_bytes(bytes)
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let ticket: Self = postcard::from_bytes(bytes)?;
+        ticket.verify().map_err(Error::Verify)?;
+        Ok(ticket)
+    }
+
+    /// Verify this ticket.
+    fn verify(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 
     /// Serialize to string.
