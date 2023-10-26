@@ -66,17 +66,29 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
     - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          cargo test -p $i --no-default-features --lib --bins --tests
+        done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          cargo test -p $i --lib --bins --tests
+        done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
-      run: cargo test --workspace --all-features --doc
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          cargo test -p $i --all-features --doc
+        done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
