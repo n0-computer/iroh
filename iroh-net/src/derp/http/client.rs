@@ -1056,40 +1056,24 @@ impl Actor {
         &self,
         reg: DerpRegion,
     ) -> Result<(TcpStream, Arc<DerpNode>), ClientError> {
-        debug!("dial region: {:?}", reg);
+        trace!(?reg, "dialing region");
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
             return Err(ClientError::NoNodeForTarget(target));
         }
-        // usually 1 IPv4, 1 IPv6 and 2x http
-        const DIAL_PARALLELISM: usize = 4;
-        let mut dials = bounded_join_set::JoinSet::new(DIAL_PARALLELISM);
-
         let prefer_ipv6 = self.prefer_ipv6().await;
 
-        for node in reg.nodes.clone().into_iter() {
-            let target = target.clone();
-            dials.spawn(async move {
-                if node.stun_only {
-                    return Err(ClientError::StunOnlyNodesFound(target));
-                }
-
-                dial_node(&node, prefer_ipv6).await.map(|c| (c, node))
-            });
-        }
-
         let mut errs = Vec::new();
-        while let Some(res) = dials.join_next().await {
-            match res {
-                Ok(Ok((conn, node))) => {
-                    // return on the first successfull one
-                    trace!("dialed region");
-                    return Ok((conn, node));
+        for node in reg.nodes.clone().into_iter() {
+            if node.stun_only {
+                return Err(ClientError::StunOnlyNodesFound(target.clone()));
+            }
+
+            match dial_node(&node, prefer_ipv6).await {
+                Ok(conn) => {
+                    return Ok((conn, node.clone()));
                 }
                 Err(e) => {
-                    errs.push(ClientError::DialTask(e));
-                }
-                Ok(Err(e)) => {
                     errs.push(e);
                 }
             }

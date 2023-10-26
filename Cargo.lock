@@ -428,15 +428,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78a6932c88f1d2c29533a3b8a5f5a2f84cc19c3339b431677c3160c5c2e6ca85"
 
 [[package]]
-name = "bounded_join_set"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a551ab5b908bdda1554a7045f624c46cafed4032669dc588b75f2f44afd644"
-dependencies = [
- "tokio",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2261,7 +2252,6 @@ dependencies = [
  "aead",
  "anyhow",
  "backoff",
- "bounded_join_set",
  "bytes",
  "clap",
  "criterion",
