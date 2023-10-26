@@ -224,7 +224,6 @@ impl Pong {
 impl CallMeMaybe {
     fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
         ensure!(ver == V0, "invalid version");
-        // ensure!(p.len() % EP_LENGTH == 0, "invalid entries");
 
         let num_entries = p.len() / EP_LENGTH;
         let mut m = CallMeMaybe {
@@ -365,7 +364,12 @@ mod tests {
             Test {
                 name: "call_me_maybe",
                 m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new(), clear_pongs: false }),
-                want: "03 00",
+                want: "03 00 00",
+            },
+            Test {
+                name: "call_me_maybe_clear_pongs",
+                m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new(), clear_pongs: true }),
+                want: "03 00 01",
             },
             Test {
                 name: "call_me_maybe_endpoints",
@@ -376,7 +380,7 @@ mod tests {
                     ],
                     clear_pongs: false
                 }),
-                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03",
+                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03 00",
             },
         ];
         for test in tests {

@@ -609,9 +609,7 @@ impl Inner {
             }
             match self.derp_recv_receiver.try_recv() {
                 Err(flume::TryRecvError::Empty) => {
-                    self.network_recv_wakers
-                        .lock()
-                        .replace(cx.waker().clone());
+                    self.network_recv_wakers.lock().replace(cx.waker().clone());
                     break;
                 }
                 Err(flume::TryRecvError::Disconnected) => {
@@ -761,18 +759,18 @@ impl Inner {
             tx_id,
             node_key: self.public_key(),
         });
-        info!(dst = ?dst, %tx_id, ?purpose, "send ping");
+        trace!(dst = ?dst, %tx_id, ?purpose, "send ping");
         let sent = match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
             SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
-            info!(dst = ?dst, %tx_id, ?purpose, "ping sent");
+            debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
             self.peer_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } else {
-            info!(dst = ?dst, %tx_id, ?purpose, "failed to send ping: queues full");
+            warn!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "failed to send ping: queues full");
         }
     }
 
@@ -790,7 +788,7 @@ impl Inner {
         });
         ready!(self.poll_send_disco_message(*dst, *dst_key, msg, cx))?;
         let msg_sender = self.actor_sender.clone();
-        info!(dst = ?dst, %tx_id, ?purpose, "ping sent");
+        debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
         self.peer_map
             .notify_ping_sent(*id, *dst, *tx_id, *purpose, msg_sender);
         Poll::Ready(Ok(()))
@@ -895,7 +893,7 @@ impl Inner {
                 Ok(false)
             }
             Ok(_n) => {
-                debug!(%dst, peer = %dst_key.fmt_short(), %msg, "sent disco message");
+                trace!(%dst, peer = %dst_key.fmt_short(), %msg, "sent disco message");
                 inc!(MagicsockMetrics, sent_disco_udp);
                 disco_message_sent(msg);
                 Ok(true)
@@ -1838,7 +1836,7 @@ impl Actor {
     }
 
     async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
-        debug!("process_derp_read {} bytes", dm.buf.len());
+        trace!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
             warn!("received empty derp packet");
             return Vec::new();
@@ -1860,7 +1858,7 @@ impl Actor {
                 Ok(part) => {
                     if self.handle_derp_disco_message(&part, region_id, dm.src) {
                         // Message was internal, do not bubble up.
-                        debug!(peer = %dm.src, "processed internal disco message");
+                        debug!(peer = %dm.src.fmt_short(), "handled disco message from derp");
                         continue;
                     }
 

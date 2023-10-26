@@ -123,7 +123,8 @@ where
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
         let server_task = tokio::spawn(
-            async move { server_actor.run(done).await }.instrument(info_span!("derp.server", me = %key.public().fmt_short())),
+            async move { server_actor.run(done).await }
+                .instrument(info_span!("derp.server", me = %key.public().fmt_short())),
         );
         let meta_cert = init_meta_cert(&key.public());
         Self {
@@ -687,7 +688,6 @@ mod tests {
         ReceivedMessage,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
-    use tracing::instrument;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;

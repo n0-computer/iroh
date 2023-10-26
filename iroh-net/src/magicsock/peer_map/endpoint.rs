@@ -410,7 +410,7 @@ impl Endpoint {
             return None;
         }
         let tx_id = stun::TransactionId::default();
-        info!(tx = %hex::encode(tx_id), %dst, ?purpose, "start ping");
+        debug!(tx = %hex::encode(tx_id), %dst, ?purpose, "start ping");
         Some(SendPing {
             id: self.id,
             dst,
@@ -428,7 +428,7 @@ impl Endpoint {
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender<ActorMessage>,
     ) {
-        debug!(%to, tx = %hex::encode(tx_id), ?purpose, "ping sent");
+        trace!(%to, tx = %hex::encode(tx_id), ?purpose, "record ping sent");
 
         let now = Instant::now();
         if purpose != DiscoPingPurpose::Cli {
@@ -654,7 +654,7 @@ impl Endpoint {
         let prune_count = prune_candidates
             .len()
             .saturating_sub(MAX_INACTIVE_DIRECT_ADDRESSES);
-        debug!("prune addresses: {prune_count}");
+        trace!("prune addresses: {prune_count}");
         if prune_count == 0 {
             // nothing to do, within limits
             return;
@@ -709,7 +709,7 @@ impl Endpoint {
         match self.sent_ping.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
-                info!(tx = %hex::encode(m.tx_id), "received pong with unknown transaction id");
+                warn!(tx = %hex::encode(m.tx_id), "received pong with unknown transaction id");
                 None
             }
             Some(sp) => {
@@ -720,8 +720,7 @@ impl Endpoint {
                 let now = Instant::now();
                 let latency = now - sp.at;
 
-                // TODO: degrade to debug.
-                info!(
+                debug!(
                     tx = %hex::encode(m.tx_id),
                     src = %src,
                     reported_ping_src = %m.src,
@@ -844,9 +843,10 @@ impl Endpoint {
                 new_eps.push(ep);
             }
         }
-        if !new_eps.is_empty() {
+        if !new_eps.is_empty() || m.clear_pongs {
             debug!(
                 ?new_eps,
+                clear_pongs = m.clear_pongs,
                 "received call-me-maybe, add new endpoints and reset state"
             );
         }

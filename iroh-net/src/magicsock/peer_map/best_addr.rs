@@ -6,7 +6,7 @@ use std::{
 };
 
 use iroh_metrics::inc;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::magicsock::metrics::Metrics as MagicsockMetrics;
 
@@ -85,7 +85,7 @@ impl BestAddr {
     pub fn clear(&mut self, reason: ClearReason, has_derp: bool) -> bool {
         if let Some(addr) = self.addr() {
             self.0 = None;
-            debug!(?reason, ?has_derp, old_addr = %addr, "clearing best_addr");
+            info!(?reason, ?has_derp, old_addr = %addr, "clearing best_addr");
             // no longer relying on the direct connection
             inc!(MagicsockMetrics, num_direct_conns_removed);
             if has_derp {
@@ -154,7 +154,7 @@ impl BestAddr {
            %addr,
            latency = ?latency,
            trust_for = ?trust_until.duration_since(Instant::now()),
-           "new best_addr (candidate address with most recent pong)"
+           "new best_addr"
         );
         let was_empty = self.is_empty();
         let inner = BestAddrInner {

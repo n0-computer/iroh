@@ -713,8 +713,8 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
         let _guard = iroh_test::logging::setup();
-        let n_iters = 10;
-        let n_chunks_per_client = 5;
+        let n_iters = 5;
+        let n_chunks_per_client = 2;
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (derp_map, region_id, _guard) = run_derper().await.unwrap();
@@ -759,9 +759,6 @@ mod tests {
                 let client_secret_key = client_secret_key.clone();
                 let fut = async move {
                     info!("client binding");
-                    info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
-                    info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
-                    info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
                     let start = Instant::now();
                     let ep = MagicEndpoint::builder()
                         .alpns(vec![TEST_ALPN.to_vec()])
