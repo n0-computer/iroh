@@ -28,27 +28,18 @@ jobs:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
         include:
-          # - name: ubuntu-arm-latest
-          #   os: ubuntu-latest
-          #   release-os: linux
-          #   release-arch: aarch64
-          #   runner: [self-hosted, linux, ARM64]
           - name: ubuntu-latest
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
             runner: [self-hosted, linux, X64]
-          # - name: macOS-latest
-          #   os: macOS-latest
-          #   release-os: darwin
-          #   release-arch: x86_64
-          #   runner: [self-hosted, macOS, X64]
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
-
+    env:
+      RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -153,6 +144,7 @@ jobs:
     env:
       RUST_BACKTRACE: full
       RUSTV: ${{ matrix.rust }}
+      RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -222,7 +214,8 @@ jobs:
           - i686-unknown-linux-gnu
           - armv7-linux-androideabi
           - aarch64-linux-android
-
+    env:
+      RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -355,9 +348,8 @@ jobs:
         cd ../chuck/netsim
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
-        sudo python3 main.py --integration sims/iroh/iroh.json
-        sudo python3 main.py --integration sims/integration
-
+        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/iroh/iroh.json
+        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
     - name: Cleanup
       run: |
         sudo kill -9 $(pgrep derper) || true
