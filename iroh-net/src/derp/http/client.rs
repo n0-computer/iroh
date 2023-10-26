@@ -18,7 +18,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
-use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, info, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
@@ -674,7 +674,6 @@ impl Actor {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
-        let key = self.secret_key.public();
         async move {
             if self.derp_client.is_none() {
                 trace!("no connection, trying to connect");

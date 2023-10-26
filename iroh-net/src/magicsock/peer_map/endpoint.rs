@@ -875,6 +875,9 @@ impl Endpoint {
                 st.last_payload_msg = None;
             }
         }
+        if m.clear_pongs {
+            self.best_addr.clear(ClearReason::PruneCallMeMaybe, self.derp_region.is_some());
+        }
         self.send_pings(Instant::now(), false)
     }
 

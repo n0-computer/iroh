@@ -712,7 +712,7 @@ mod tests {
 
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
-        // let _guard = iroh_test::logging::setup();
+        let _guard = iroh_test::logging::setup();
         let n_iters = 5;
         let n_chunks_per_client = 2;
         let chunk_size = 10;
