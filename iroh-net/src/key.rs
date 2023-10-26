@@ -102,7 +102,11 @@ impl Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0)
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&self.to_string())
+        } else {
+            serializer.serialize_bytes(&self.0)
+        }
     }
 }
 
@@ -111,8 +115,13 @@ impl<'de> Deserialize<'de> for PublicKey {
     where
         D: serde::Deserializer<'de>,
     {
-        let bytes: &serde_bytes::Bytes = serde::Deserialize::deserialize(deserializer)?;
-        Self::try_from(bytes.as_ref()).map_err(serde::de::Error::custom)
+        if deserializer.is_human_readable() {
+            let s: &str = serde::Deserialize::deserialize(deserializer)?;
+            Self::from_str(s).map_err(serde::de::Error::custom)
+        } else {
+            let bytes: &serde_bytes::Bytes = serde::Deserialize::deserialize(deserializer)?;
+            Self::try_from(bytes.as_ref()).map_err(serde::de::Error::custom)
+        }
     }
 }
 
@@ -406,6 +415,22 @@ mod tests {
         let ser = kp.to_openssh().unwrap();
         let de = SecretKey::try_from_openssh(&ser).unwrap();
         assert_eq!(kp.to_bytes(), de.to_bytes());
+    }
+
+    #[test]
+    fn public_key_postcard() {
+        let key = PublicKey::from_bytes(&[0; 32]).unwrap();
+        let bytes = postcard::to_stdvec(&key).unwrap();
+        let key2: PublicKey = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(key, key2);
+    }
+
+    #[test]
+    fn public_key_json() {
+        let key = PublicKey::from_bytes(&[0; 32]).unwrap();
+        let bytes = serde_json::to_string(&key).unwrap();
+        let key2: PublicKey = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(key, key2);
     }
 
     #[test]
