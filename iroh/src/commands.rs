@@ -698,7 +698,7 @@ impl BlobCommands {
                     BlobFormat::HashSeq
                 };
 
-                let request_token = token.map(|str| RequestToken::new(str)).transpose()?;
+                let request_token = token.map(RequestToken::new).transpose()?;
 
                 // TODO: I see no reason to prevent derp only tickets.
                 let ticket =
