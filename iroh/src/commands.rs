@@ -700,7 +700,6 @@ impl BlobCommands {
 
                 let request_token = token.map(RequestToken::new).transpose()?;
 
-                // TODO: I see no reason to prevent derp only tickets.
                 let ticket =
                     Ticket::new(node_addr, hash, format, request_token).expect("correct ticket");
                 println!(
