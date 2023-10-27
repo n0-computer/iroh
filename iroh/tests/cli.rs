@@ -748,7 +748,7 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
             (r"Total: [_\w\d-]*", 1),
             (r"", 1),
             (r"Collection: [\da-z]{59}", 1),
-            (r"All-in-one ticket: ([_a-zA-Z:\d-]*)", 1),
+            (r"All-in-one ticket: ([_a-zA-Z\d-]*)", 1),
         ],
     );
 
