@@ -17,6 +17,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
+  CARGO_TERM_COLOR: always
 
 jobs:
   build_and_test_nix:
@@ -33,11 +34,13 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
+            home: /root
             runner: [self-hosted, linux, X64]
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
+            home: /Users/hetzner
             runner: [self-hosted, macOS, ARM64]
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -53,6 +56,10 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
     
+    - uses: taiki-e/install-action@nextest
+      env:
+        HOME: ${{ matrix.home }}
+    
     - name: Run sccache-cache
       uses: mozilla-actions/sccache-action@v0.0.3
 
@@ -60,7 +67,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo test -p $i --all-features --lib --bins --tests
+          cargo nextest run -p $i --all-features --lib --bins --tests
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
@@ -69,7 +76,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo test -p $i --no-default-features --lib --bins --tests
+          cargo nextest run -p $i --no-default-features --lib --bins --tests
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
@@ -78,7 +85,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo test -p $i --lib --bins --tests
+          cargo nextest run -p $i --lib --bins --tests
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}

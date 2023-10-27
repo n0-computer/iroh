@@ -459,8 +459,8 @@ enum Input {
     Stdin,
 }
 
-fn iroh_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_iroh")
+fn iroh_bin() -> String {
+    std::env::var("NEXTEST_BIN_EXE_iroh").unwrap_or_else(|_| env!("CARGO_BIN_EXE_iroh").to_owned())
 }
 
 /// Makes a provider process with it's home directory in `iroh_data_dir`.
