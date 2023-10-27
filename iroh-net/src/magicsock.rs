@@ -1006,12 +1006,10 @@ impl Inner {
             self.pending_call_me_maybes
                 .lock()
                 .insert(dst_key, derp_region);
-
             info!(
                 "want call-me-maybe but endpoints stale; restunning ({:?})",
                 endpoints.last_endpoints_time
             );
-
             self.re_stun("refresh-for-peering");
         }
     }
