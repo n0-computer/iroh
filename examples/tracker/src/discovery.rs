@@ -1,18 +1,26 @@
-// copied and adapted from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
+//! Discovery services
+//!
+//! Originally copied and adapted from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
+use std::{
+    collections::BTreeSet,
+    net::{IpAddr, SocketAddr},
+};
+
 use anyhow::Result;
-use futures::future::BoxFuture;
-use futures::{future, FutureExt};
-use iroh_net::key::PublicKey as NodeId;
-use iroh_net::{AddrInfo, PeerAddr};
-use pkarr::dns::rdata::{RData, A, AAAA, TXT};
-use pkarr::dns::{Name, Packet, ResourceRecord, CLASS};
-use pkarr::url::Url;
-use pkarr::{Keypair, PkarrClient, SignedPacket};
-use std::collections::BTreeSet;
-use std::net::{IpAddr, SocketAddr};
+use futures::{future, future::BoxFuture, FutureExt};
+use iroh_net::{key::PublicKey as NodeId, AddrInfo, PeerAddr};
+use pkarr::{
+    dns::rdata::{RData, A, AAAA, TXT},
+    dns::{Name, Packet, ResourceRecord, CLASS},
+    url::Url,
+    Keypair, PkarrClient, SignedPacket,
+};
 use tracing::info;
 
 const DERP_REGION_KEY: &str = "_derp_region.iroh.";
+
+#[allow(dead_code)]
+const PKARR_RELAY_URL: &str = "https://iroh-discovery.rklaehn.workers.dev/";
 
 #[allow(unused)]
 fn filter_ipaddr(rr: &ResourceRecord) -> Option<IpAddr> {
