@@ -31,7 +31,7 @@ use gossip::GossipActor;
 use live::{LiveActor, ToLiveActor};
 
 pub use self::live::SyncEvent;
-pub use self::state::Origin;
+pub use self::state::{Origin, SyncReason};
 pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
