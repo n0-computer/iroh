@@ -35,6 +35,16 @@ pub enum AnnounceKind {
     Partial,
 }
 
+impl AnnounceKind {
+    fn new(complete: bool) -> Self {
+        if complete {
+            Self::Complete
+        } else {
+            Self::Partial
+        }
+    }
+}
+
 /// Announce that a peer claims to have some blobs or set of blobs.
 ///
 /// A peer can announce having some data, but it should also be able to announce
@@ -311,55 +321,6 @@ mod serde_duration {
     }
 }
 
-mod serde_hash_and_format {
-
-    use super::*;
-    use serde::de::Deserializer;
-    use serde::ser::Serializer;
-    type T = HashAndFormat;
-
-    pub fn serialize<S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        if serializer.is_human_readable() {
-            serializer.serialize_str(value.to_string().as_str())
-        } else {
-            value.serialize(serializer)
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<T, D::Error> {
-        if deserializer.is_human_readable() {
-            let s = String::deserialize(deserializer)?;
-            T::from_str(&s).map_err(serde::de::Error::custom)
-        } else {
-            T::deserialize(deserializer)
-        }
-    }
-}
-
-mod serde_public_key {
-    use super::*;
-    use serde::de::Deserializer;
-    use serde::ser::Serializer;
-    type T = PublicKey;
-
-    pub fn serialize<S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        if serializer.is_human_readable() {
-            serializer.serialize_str(value.to_string().as_str())
-        } else {
-            value.serialize(serializer)
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<T, D::Error> {
-        if deserializer.is_human_readable() {
-            let s = String::deserialize(deserializer)?;
-            T::from_str(&s).map_err(serde::de::Error::custom)
-        } else {
-            T::deserialize(deserializer)
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Options {
     #[serde(with = "serde_duration")]
@@ -388,13 +349,13 @@ impl Default for Options {
             max_hash_seq_size: 1024 * 16 * 32,
             dial_log: Some("dial.log".into()),
             probe_log: Some("probe.log".into()),
-            announce_data_path: Some("announce.data".into()),
+            announce_data_path: Some("announce.data.json".into()),
         }
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct AnnounceData(BTreeMap<HashAndFormat, BTreeMap<PublicKey, bool>>);
+struct AnnounceData(BTreeMap<HashAndFormat, BTreeMap<PublicKey, AnnounceKind>>);
 
 impl Options {
     /// Make the paths in the options relative to the given base path.
@@ -597,10 +558,10 @@ impl Tracker {
         let mut state = State::default();
         let now = Instant::now();
         for (content, peers) in announce_data.0 {
-            for (peer, complete) in peers {
+            for (peer, kind) in peers {
                 let peer_info = state.peer_info.entry(content).or_default();
                 let peer_info = peer_info.entry(peer).or_default();
-                peer_info.complete = complete;
+                peer_info.complete = kind == AnnounceKind::Complete;
                 // set the last announced time to now on startup, otherwise
                 // it would be considered too old
                 peer_info.last_announced = Some(now);
@@ -736,7 +697,7 @@ impl Tracker {
             for (content, peers) in state.peer_info.iter() {
                 let mut peers2 = BTreeMap::new();
                 for (peer, info) in peers {
-                    peers2.insert(*peer, info.complete);
+                    peers2.insert(*peer, AnnounceKind::new(info.complete));
                 }
                 data.0.insert(*content, peers2);
             }
@@ -941,18 +902,18 @@ impl Tracker {
 }
 
 fn save_to_file(data: impl Serialize, path: &Path) -> anyhow::Result<()> {
-    let data = postcard::to_stdvec(&data)?;
     let data_dir = path.parent().context("non absolute data file")?;
     let mut temp = tempfile::NamedTempFile::new_in(data_dir)?;
-    temp.write_all(&data)?;
+    let data = serde_json::to_string_pretty(&data)?;
+    temp.write_all(&data.as_bytes())?;
     std::fs::rename(temp.into_temp_path(), path)?;
     Ok(())
 }
 
 fn load_from_file<T: DeserializeOwned + Default>(path: &Path) -> anyhow::Result<T> {
     Ok(if path.exists() {
-        let data = std::fs::read(path)?;
-        postcard::from_bytes(&data)?
+        let data = std::fs::read_to_string(path)?;
+        serde_json::from_str(&data)?
     } else {
         T::default()
     })

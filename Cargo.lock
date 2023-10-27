@@ -5261,6 +5261,7 @@ dependencies = [
  "quinn",
  "rand",
  "serde",
+ "serde_json",
  "simple-mdns",
  "tempfile",
  "tokio",

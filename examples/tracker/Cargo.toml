@@ -25,6 +25,7 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 quinn = "0.10"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.107"
 simple-mdns = { version = "0.5.0", features = ["async-tokio"] }
 tempfile = "3.4"
 tokio = { version = "1", features = ["io-util", "rt"] }
