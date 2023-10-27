@@ -2,8 +2,9 @@
 use clap::{Parser, Subcommand};
 use iroh::ticket::blob::Ticket;
 use iroh_bytes::{Hash, HashAndFormat};
-use iroh_net::key::PublicKey;
 use std::{fmt::Display, str::FromStr};
+
+use crate::NodeId;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -48,7 +49,7 @@ impl ContentArg {
         }
     }
 
-    pub fn peer(&self) -> Option<PublicKey> {
+    pub fn peer(&self) -> Option<NodeId> {
         match self {
             ContentArg::Hash(_) => None,
             ContentArg::HashAndFormat(_) => None,
@@ -85,20 +86,20 @@ impl FromStr for ContentArg {
 
 #[derive(Parser, Debug)]
 pub struct AnnounceArgs {
-    /// the peer if of the tracker
+    /// the tracker to announce to
     #[clap(long)]
-    pub tracker: PublicKey,
+    pub tracker: NodeId,
 
     /// the port to use for announcing
     #[clap(long)]
     pub port: Option<u16>,
 
+    /// The host to announce. Not needed if content is a ticket.
+    #[clap(long)]
+    pub host: Option<NodeId>,
+
     /// The content to announce.
     pub content: ContentArg,
-
-    /// The peer to announce. Not needed if content is a ticket.
-    #[clap(long)]
-    pub peer: Option<PublicKey>,
 
     /// Announce that the peer has the complete data.
     #[clap(long)]
@@ -108,7 +109,7 @@ pub struct AnnounceArgs {
 #[derive(Parser, Debug)]
 pub struct QueryArgs {
     #[clap(long)]
-    pub tracker: PublicKey,
+    pub tracker: NodeId,
 
     /// the port to use for querying
     #[clap(long)]

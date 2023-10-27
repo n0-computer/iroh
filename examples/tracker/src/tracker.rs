@@ -13,7 +13,7 @@ use iroh_bytes::{
     protocol::GetRequest,
     BlobFormat, Hash, HashAndFormat,
 };
-use iroh_net::{key::PublicKey, MagicEndpoint};
+use iroh_net::MagicEndpoint;
 use rand::Rng;
 
 use crate::{
@@ -26,6 +26,7 @@ use crate::{
     protocol::{
         Announce, AnnounceKind, Query, QueryResponse, Request, Response, REQUEST_SIZE_LIMIT,
     },
+    NodeId,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -40,7 +41,7 @@ struct Inner {
 #[derive(Debug, Clone, Default)]
 struct State {
     // every announce we ever got, indexed by hash, kind and peer
-    announce_data: BTreeMap<HashAndFormat, BTreeMap<AnnounceKind, BTreeMap<PublicKey, PeerInfo>>>,
+    announce_data: BTreeMap<HashAndFormat, BTreeMap<AnnounceKind, BTreeMap<NodeId, PeerInfo>>>,
     // cache for verified sizes of hashes, used during probing
     sizes: BTreeMap<Hash, u64>,
     // cache for collections, used during collection probing
@@ -51,7 +52,7 @@ impl State {
     fn get_persisted_announce_data(&self) -> AnnounceData {
         let mut data: AnnounceData = Default::default();
         for (content, by_kind_and_peers) in self.announce_data.iter() {
-            let mut peers = BTreeMap::<AnnounceKind, BTreeSet<PublicKey>>::new();
+            let mut peers = BTreeMap::<AnnounceKind, BTreeSet<NodeId>>::new();
             for (kind, by_peer) in by_kind_and_peers {
                 for peer in by_peer.keys() {
                     peers.entry(*kind).or_default().insert(*peer);
@@ -165,11 +166,11 @@ impl Tracker {
     async fn probe(
         &self,
         connection: &quinn::Connection,
-        peer: &PublicKey,
+        host: &NodeId,
         content: &HashAndFormat,
         probe_kind: ProbeKind,
     ) -> anyhow::Result<Stats> {
-        let cap = format!("{} at {}", content, peer);
+        let cap = format!("{} at {}", content, host);
         let HashAndFormat { hash, format } = content;
         let mut rng = rand::thread_rng();
         let stats = if probe_kind == ProbeKind::Incomplete {
@@ -270,7 +271,7 @@ impl Tracker {
             let peer_info = entry
                 .entry(announce.kind)
                 .or_default()
-                .entry(announce.peer)
+                .entry(announce.host)
                 .or_default();
             let now = Instant::now();
             peer_info.last_announced = Some(now);
@@ -318,15 +319,14 @@ impl Tracker {
         }
         Ok(QueryResponse {
             content: query.content,
-            peers,
+            hosts: peers,
         })
     }
 
     /// Get the content that is supposedly available, grouped by peers
-    fn get_content_by_peers(&self) -> BTreeMap<PublicKey, BTreeMap<AnnounceKind, HashAndFormat>> {
+    fn get_content_by_peers(&self) -> BTreeMap<NodeId, BTreeMap<AnnounceKind, HashAndFormat>> {
         let state = self.0.state.read().unwrap();
-        let mut content_by_peers =
-            BTreeMap::<PublicKey, BTreeMap<AnnounceKind, HashAndFormat>>::new();
+        let mut content_by_peers = BTreeMap::<NodeId, BTreeMap<AnnounceKind, HashAndFormat>>::new();
         for (content, by_kind_and_peer) in state.announce_data.iter() {
             for (kind, by_peer) in by_kind_and_peer {
                 for peer in by_peer.keys() {
@@ -342,7 +342,7 @@ impl Tracker {
 
     fn apply_result(
         &self,
-        results: BTreeMap<PublicKey, Vec<(HashAndFormat, AnnounceKind, anyhow::Result<Stats>)>>,
+        results: BTreeMap<NodeId, Vec<(HashAndFormat, AnnounceKind, anyhow::Result<Stats>)>>,
         now: Instant,
     ) {
         let mut state = self.0.state.write().unwrap();
@@ -368,21 +368,21 @@ impl Tracker {
     async fn probe_one(
         self,
         endpoint: MagicEndpoint,
-        peer: PublicKey,
+        host: NodeId,
         by_kind_and_content: BTreeMap<AnnounceKind, HashAndFormat>,
     ) -> anyhow::Result<(
-        PublicKey,
+        NodeId,
         Vec<(HashAndFormat, AnnounceKind, anyhow::Result<Stats>)>,
     )> {
         let t0 = Instant::now();
         let res = endpoint
-            .connect_by_node_id(&peer, &iroh_bytes::protocol::ALPN)
+            .connect_by_node_id(&host, &iroh_bytes::protocol::ALPN)
             .await;
-        log_connection_attempt(&self.0.options.dial_log, &peer, t0, &res)?;
+        log_connection_attempt(&self.0.options.dial_log, &host, t0, &res)?;
         let connection = match res {
             Ok(connection) => connection,
             Err(cause) => {
-                tracing::error!("error dialing peer {}: {}", peer, cause);
+                tracing::error!("error dialing host {}: {}", host, cause);
                 return Err(cause);
             }
         };
@@ -390,21 +390,21 @@ impl Tracker {
         for (announce_kind, content) in by_kind_and_content {
             let probe_kind = ProbeKind::from(announce_kind);
             let t0 = Instant::now();
-            let res = self.probe(&connection, &peer, &content, probe_kind).await;
+            let res = self.probe(&connection, &host, &content, probe_kind).await;
             log_probe_attempt(
                 &self.0.options.probe_log,
-                &peer,
+                &host,
                 &content,
                 probe_kind,
                 t0,
                 &res,
             )?;
             if let Err(cause) = &res {
-                tracing::error!("error probing peer {}: {}", peer, cause);
+                tracing::error!("error probing host {}: {}", host, cause);
             }
             results.push((content, announce_kind, res));
         }
-        anyhow::Ok((peer, results))
+        anyhow::Ok((host, results))
     }
 
     /// The main loop that probes peers.

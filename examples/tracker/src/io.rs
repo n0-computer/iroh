@@ -9,17 +9,16 @@ use std::{
 
 use anyhow::Context;
 use iroh_bytes::{get::Stats, HashAndFormat};
-use iroh_net::key::PublicKey;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use crate::{protocol::AnnounceKind, tracker::ProbeKind};
+use crate::{protocol::AnnounceKind, tracker::ProbeKind, NodeId};
 
 /// Data format of the announce data file.
 ///
 /// This should be easy to edit manually when serialized as json or toml.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AnnounceData(pub BTreeMap<HashAndFormat, BTreeMap<AnnounceKind, BTreeSet<PublicKey>>>);
+pub struct AnnounceData(pub BTreeMap<HashAndFormat, BTreeMap<AnnounceKind, BTreeSet<NodeId>>>);
 
 pub fn save_to_file(data: impl Serialize, path: &Path) -> anyhow::Result<()> {
     let data_dir = path.parent().context("non absolute data file")?;
@@ -79,7 +78,7 @@ pub fn load_from_file<T: DeserializeOwned + Default>(path: &Path) -> anyhow::Res
 
 pub fn log_connection_attempt(
     path: &Option<PathBuf>,
-    peer: &PublicKey,
+    host: &NodeId,
     t0: Instant,
     outcome: &anyhow::Result<quinn::Connection>,
 ) -> anyhow::Result<()> {
@@ -95,7 +94,7 @@ pub fn log_connection_attempt(
         let line = format!(
             "{:.6},{},{:.6},{}\n",
             now,
-            peer,
+            host,
             t0.elapsed().as_secs_f64(),
             outcome
         );
@@ -111,7 +110,7 @@ pub fn log_connection_attempt(
 
 pub fn log_probe_attempt(
     path: &Option<PathBuf>,
-    peer: &PublicKey,
+    host: &NodeId,
     content: &HashAndFormat,
     kind: ProbeKind,
     t0: Instant,
@@ -129,7 +128,7 @@ pub fn log_probe_attempt(
         let line = format!(
             "{:.6},{},{},{:?},{:.6},{}\n",
             now,
-            peer,
+            host,
             content,
             kind,
             t0.elapsed().as_secs_f64(),

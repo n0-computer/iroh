@@ -14,7 +14,6 @@ use std::{
 use clap::Parser;
 use iroh::util::fs::load_secret_key;
 use iroh_net::{
-    key::PublicKey,
     magic_endpoint::{get_alpn, get_peer_id},
     AddrInfo, MagicEndpoint, PeerAddr,
 };
@@ -30,6 +29,8 @@ use crate::{
     },
     tracker::Tracker,
 };
+
+pub type NodeId = iroh_net::key::PublicKey;
 
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 
@@ -124,10 +125,10 @@ async fn server(args: ServerArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
+/// Accept an incoming connection and extract the client-provided [`NodeId`] and ALPN protocol.
 pub async fn accept_conn(
     mut conn: quinn::Connecting,
-) -> anyhow::Result<(PublicKey, String, quinn::Connection)> {
+) -> anyhow::Result<(NodeId, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     tracing::info!("awaiting conn");
     let conn = conn.await?;
@@ -160,7 +161,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     } else {
         AnnounceKind::Complete
     };
-    let peer = if let Some(peer) = args.peer {
+    let peer = if let Some(peer) = args.host {
         peer
     } else if let Some(peer) = args.content.peer() {
         peer
@@ -169,7 +170,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     };
     let content = [args.content.hash_and_format()].into_iter().collect();
     let announce = Announce {
-        peer,
+        host: peer,
         kind,
         content,
     };
@@ -217,7 +218,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
     match response {
         Response::QueryResponse(response) => {
             println!("content {}", response.content);
-            for peer in response.peers {
+            for peer in response.hosts {
                 println!("- peer {}", peer);
             }
         }

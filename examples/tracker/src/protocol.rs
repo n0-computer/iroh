@@ -2,8 +2,9 @@
 use std::collections::BTreeSet;
 
 use iroh_bytes::HashAndFormat;
-use iroh_net::key::PublicKey;
 use serde::{Deserialize, Serialize};
+
+use crate::NodeId;
 
 /// The ALPN string for this protocol
 pub const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
@@ -36,7 +37,7 @@ impl AnnounceKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Announce {
     /// The peer that supposedly has the data.
-    pub peer: PublicKey,
+    pub host: NodeId,
     /// The blobs or sets that the peer claims to have.
     pub content: BTreeSet<HashAndFormat>,
     /// The kind of the announcement.
@@ -77,11 +78,11 @@ pub struct Query {
 pub struct QueryResponse {
     /// The content that was queried.
     pub content: HashAndFormat,
-    /// The peers that supposedly have the content.
+    /// The hosts that supposedly have the content.
     ///
     /// If there are any addrs, they are as seen from the tracker,
     /// so they might or might not be useful.
-    pub peers: Vec<PublicKey>,
+    pub hosts: Vec<NodeId>,
 }
 
 /// A request to the tracker.
