@@ -6,6 +6,13 @@ use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
+use opentelemetry::{
+    trace::{FutureExt, TraceContextExt, Tracer},
+    Key,
+};
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::Resource;
+
 /// Configures logging for the current test, **single-threaded runtime only**.
 ///
 /// This setup can be used for any sync test or async test using a single-threaded tokio
@@ -83,9 +90,24 @@ pub fn testing_subscriber() -> impl tracing::Subscriber {
             .with_writer(|| TestWriter)
             .with_filter(EnvFilter::from_default_env())
     });
+
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::WithExportConfig::with_endpoint(opentelemetry_otlp::new_exporter()
+                .tonic(), "http://localhost:4317"),
+        )
+        .with_trace_config(opentelemetry::sdk::trace::config().with_resource(opentelemetry_sdk::Resource::new(vec![
+            opentelemetry::KeyValue::new("service.name", "iroh-trace"),
+        ])))
+        .install_batch(opentelemetry::runtime::TokioCurrentThread)
+        .unwrap();
+
+    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
     tracing_subscriber::registry()
         .with(trace_log_layer)
         .with(env_log_layer)
+        .with(opentelemetry)
 }
 
 /// A tracing writer that interacts well with test output capture.

@@ -17,3 +17,10 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+tracing-opentelemetry = { version = "0.21.0" }
+opentelemetry_sdk = { version = "0.20.0", features = [
+    "rt-tokio-current-thread",
+] }
+opentelemetry-otlp = { version = "0.13" }
+opentelemetry = { version = "0.20", features = ["rt-tokio"] }

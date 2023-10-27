@@ -512,6 +512,7 @@ impl MagicEndpoint {
 }
 
 /// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
+#[tracing::instrument(skip_all)]
 pub async fn accept_conn(
     mut conn: quinn::Connecting,
 ) -> Result<(PublicKey, String, quinn::Connection)> {
@@ -572,6 +573,7 @@ mod tests {
 
     #[ignore]
     #[tokio::test]
+    #[tracing::instrument]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
         let (derp_map, region_id, _guard) = run_derper().await.unwrap();
