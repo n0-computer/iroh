@@ -580,9 +580,9 @@ pub enum BlobCommands {
         /// Include only the DERP region information in the ticket. (advanced)
         #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
         derp_only: bool,
-        /// If the blob is a collection, the requester will only fetch the list.
+        /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
-        non_recursive: bool,
+        recursive: bool,
         /// Display the contents of this ticket too.
         #[clap(long, hide = true)]
         debug: bool,
@@ -663,7 +663,7 @@ impl BlobCommands {
                 token,
                 no_derp,
                 derp_only,
-                non_recursive,
+                recursive,
                 debug,
             } => {
                 let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
@@ -691,10 +691,10 @@ impl BlobCommands {
                     "incomplete blob"
                 };
 
-                let format = if non_recursive {
-                    BlobFormat::Raw
-                } else {
+                let format = if recursive {
                     BlobFormat::HashSeq
+                } else {
+                    BlobFormat::Raw
                 };
 
                 let request_token = token.map(RequestToken::new).transpose()?;
