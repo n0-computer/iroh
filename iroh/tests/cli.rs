@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
-use iroh::dial::Ticket;
+use iroh::ticket::blob::Ticket;
 use rand::{Rng, RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -748,7 +748,7 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
             (r"Total: [_\w\d-]*", 1),
             (r"", 1),
             (r"Collection: [\da-z]{59}", 1),
-            (r"All-in-one ticket: ([_a-zA-Z\d-]*)", 1),
+            (r"All-in-one ticket: ([_a-zA-Z:\d-]*)", 1),
         ],
     );
 

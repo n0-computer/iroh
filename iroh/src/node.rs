@@ -54,7 +54,6 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
-use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
@@ -68,6 +67,7 @@ use crate::rpc_protocol::{
     ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
+use crate::ticket::blob::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;

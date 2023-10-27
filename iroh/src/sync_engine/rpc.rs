@@ -115,7 +115,7 @@ impl SyncEngine {
         self.start_sync(req.doc_id, vec![]).await?;
         Ok(DocShareResponse(DocTicket {
             key,
-            peers: vec![me],
+            nodes: vec![me],
         }))
     }
 
@@ -131,7 +131,7 @@ impl SyncEngine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket { key, peers }) = req;
+        let DocImportRequest(DocTicket { key, nodes: peers }) = req;
         let namespace = Namespace::from_bytes(&key);
         let doc_id = self.sync.import_namespace(namespace).await?;
         self.sync.open(doc_id, Default::default()).await?;
