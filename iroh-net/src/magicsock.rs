@@ -34,7 +34,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt};
+use futures::FutureExt;
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -262,6 +262,10 @@ struct Inner {
 
     // Our discovered endpoints
     endpoints: parking_lot::Mutex<DiscoveredEndpoints>,
+
+    /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
+    /// completes
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, u16>>,
 }
 
 impl Inner {
@@ -938,7 +942,7 @@ impl Inner {
                 derp_region,
                 dst_key,
             } => {
-                self.send_call_me_maybe(derp_region, dst_key);
+                self.send_or_queue_call_me_maybe(derp_region, dst_key);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -987,49 +991,30 @@ impl Inner {
         futures::future::poll_fn(|cx| self.poll_send_udp(addr, &transmits, cx)).await
     }
 
-    fn send_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
-        let mut endpoints = self.endpoints.lock();
-        let is_fresh = endpoints.fresh_enough();
-        if !is_fresh {
+    fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
+        let endpoints = self.endpoints.lock();
+        if endpoints.fresh_enough() {
+            let my_number: Vec<_> = endpoints.iter().map(|ep| ep.addr).collect();
+            let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number });
+            if !self.send_disco_message_derp(derp_region, dst_key, msg) {
+                warn!(peer = %dst_key.fmt_short(), "Derp channel full, dropping CallMeMaybe");
+            }
+        } else {
+            self.pending_call_me_maybes
+                .lock()
+                .insert(dst_key, derp_region);
+
             info!(
                 "want call-me-maybe but endpoints stale; restunning ({:?})",
                 endpoints.last_endpoints_time
             );
 
-            let actor_sender = self.actor_sender.clone();
-
-            tokio::task::spawn(async move {
-                actor_sender
-                    .send(ActorMessage::ReStun("refresh-for-peering"))
-                    .await
-                    .ok()
-            });
-
-            let actor_sender = self.actor_sender.clone();
-            endpoints.insert_on_refresh(
-                dst_key,
-                Box::new(move || {
-                    let actor_sender = actor_sender.clone();
-                    Box::pin(async move {
-                        info!("STUN done; sending call-me-maybe",);
-                        actor_sender
-                            .send(ActorMessage::SendCallMeMaybe {
-                                derp_region,
-                                dst_key,
-                            })
-                            .await
-                            .ok();
-                    })
-                }),
-            );
-        }
-        if is_fresh {
-            let eps: Vec<_> = endpoints.iter().map(|ep| ep.addr).collect();
-            let msg = disco::CallMeMaybe { my_number: eps };
-            if !self.send_disco_message_derp(derp_region, dst_key, disco::Message::CallMeMaybe(msg))
+            if let Err(_) = self
+                .actor_sender
+                .try_send(ActorMessage::ReStun("refresh-for-peering"))
             {
-                warn!(peer = %dst_key.fmt_short(), "Derp channel full, dropping CallMeMaybe");
-            }
+                warn!("ReStun request dropped: Actor channel is full");
+            };
         }
     }
 }
@@ -1255,6 +1240,7 @@ impl MagicSock {
             send_buffer: Default::default(),
             udp_disco_sender,
             endpoints: Default::default(),
+            pending_call_me_maybes: Default::default(),
         });
 
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -1604,10 +1590,6 @@ enum ActorMessage {
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
     ReStun(&'static str),
-    SendCallMeMaybe {
-        derp_region: u16,
-        dst_key: PublicKey,
-    },
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
     NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
@@ -1811,12 +1793,6 @@ impl Actor {
             }
             ActorMessage::ReStun(reason) => {
                 self.re_stun(reason).await;
-            }
-            ActorMessage::SendCallMeMaybe {
-                derp_region,
-                dst_key,
-            } => {
-                self.inner.send_call_me_maybe(derp_region, dst_key);
             }
             ActorMessage::RebindAll(s) => {
                 self.rebind_all().await;
@@ -2094,6 +2070,10 @@ impl Actor {
             log_endpoint_change(&eps);
             if let Some(ref cb) = self.inner.on_endpoints {
                 cb(&eps[..]);
+            }
+            for (public_key, region_id) in self.inner.pending_call_me_maybes.lock().drain() {
+                self.inner
+                    .send_or_queue_call_me_maybe(region_id, public_key);
             }
         }
     }
@@ -2486,10 +2466,6 @@ struct DiscoveredEndpoints {
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
-
-    /// Functions to run (in their own tasks) when endpoints are refreshed.
-    #[debug("on_refresh: ({})", self.on_refresh.len())]
-    on_refresh: HashMap<PublicKey, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
 }
 
 impl DiscoveredEndpoints {
@@ -2497,12 +2473,9 @@ impl DiscoveredEndpoints {
         self.last_endpoints.iter()
     }
 
+    #[must_use = "pending call-me-maybes must be sent out"]
     fn set(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
-        for (_de, f) in self.on_refresh.drain() {
-            tokio::task::spawn(f());
-        }
-
         if endpoint_sets_equal(endpoints, &self.last_endpoints) {
             return false;
         }
@@ -2516,14 +2489,6 @@ impl DiscoveredEndpoints {
             None => false,
             Some(time) => time.elapsed() <= ENDPOINTS_FRESH_ENOUGH_DURATION,
         }
-    }
-
-    fn insert_on_refresh(
-        &mut self,
-        node_key: PublicKey,
-        f: Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>,
-    ) {
-        self.on_refresh.insert(node_key, f);
     }
 }
 
