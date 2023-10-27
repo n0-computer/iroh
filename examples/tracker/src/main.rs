@@ -1,22 +1,32 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
 use anyhow::Context;
 use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
 use bytes::Bytes;
-use iroh::util::fs::load_secret_key;
-use iroh_bytes::get::fsm::{BlobContentNext, EndBlobNext};
-use iroh_bytes::get::Stats;
-use iroh_bytes::hashseq::HashSeq;
-use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::util::Hash;
-use iroh_bytes::BlobFormat;
+use futures::StreamExt;
+use iroh::{ticket::blob::Ticket, util::fs::load_secret_key};
+use iroh_bytes::{
+    get::{
+        fsm::{BlobContentNext, EndBlobNext},
+        Stats,
+    },
+    hashseq::HashSeq,
+    protocol::{GetRequest, RangeSpecSeq},
+    BlobFormat, Hash,
+};
 use iroh_net::magic_endpoint::{get_alpn, get_peer_id};
 use serde::de::DeserializeOwned;
-use std::collections::{BTreeMap, BTreeSet};
-use std::env;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::task::LocalPoolHandle;
 
 mod discovery;
@@ -27,16 +37,16 @@ const TRACKER_ALPN: &[u8] = b"n0/tracker/1";
 const PKARR_RELAY_URL: &str = "https://iroh-discovery.rklaehn.workers.dev/";
 
 /// Announce kind
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnnounceKind {
-    /// The peer supposedly has the complete data.
-    Complete,
     /// The peer supposedly has some of the data.
     Partial,
+    /// The peer supposedly has the complete data.
+    Complete,
 }
 
 impl AnnounceKind {
-    fn new(complete: bool) -> Self {
+    fn from_complete(complete: bool) -> Self {
         if complete {
             Self::Complete
         } else {
@@ -118,7 +128,6 @@ enum Response {
 
 use clap::{Parser, Subcommand};
 use derive_more::Display;
-use iroh::dial::Ticket;
 use iroh_bytes::util::HashAndFormat;
 use iroh_net::key::PublicKey;
 use iroh_net::{AddrInfo, MagicEndpoint, PeerAddr};
@@ -153,6 +162,9 @@ struct ServerArgs {
     /// The port to listen on.
     #[clap(long, default_value_t = 0xacacu16)]
     port: u16,
+
+    #[clap(long)]
+    quiet: bool,
 }
 
 /// Various ways to specify content.
@@ -228,8 +240,8 @@ struct AnnounceArgs {
     peer: Option<PublicKey>,
 
     /// Announce that the peer has the complete data.
-    #[clap(long, default_value_t = true)]
-    complete: bool,
+    #[clap(long, default_value_t = false)]
+    partial: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -244,8 +256,8 @@ struct QueryArgs {
     /// The content to find peers for.
     content: ContentArg,
 
-    #[clap(long, default_value_t = true)]
-    complete: bool,
+    #[clap(long, default_value_t = false)]
+    partial: bool,
 
     #[clap(long, default_value_t = false)]
     validated: bool,
@@ -262,12 +274,28 @@ struct Inner {
 
 #[derive(Debug, Clone, Default)]
 struct State {
-    // key of the inner map is the bytes of the public key
-    peer_info: BTreeMap<HashAndFormat, BTreeMap<PublicKey, PeerInfo>>,
+    // every announce we ever got, indexed by hash, kind and peer
+    announce_data: BTreeMap<HashAndFormat, BTreeMap<AnnounceKind, BTreeMap<PublicKey, PeerInfo>>>,
     // cache for verified sizes of hashes, used during probing
     sizes: BTreeMap<Hash, u64>,
     // cache for collections, used during collection probing
     collections: BTreeMap<Hash, (HashSeq, Arc<[u64]>)>,
+}
+
+impl State {
+    fn get_persisted_announce_data(&self) -> AnnounceData {
+        let mut data: AnnounceData = Default::default();
+        for (content, peers) in self.announce_data.iter() {
+            let mut peers2 = BTreeMap::<AnnounceKind, BTreeSet<PublicKey>>::new();
+            for (kind, peers) in peers {
+                for peer in peers.keys() {
+                    peers2.entry(*kind).or_default().insert(*peer);
+                }
+            }
+            data.0.insert(*content, peers2);
+        }
+        data
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,24 +304,28 @@ enum ProbeKind {
     Complete,
 }
 
-impl ProbeKind {
-    fn new(complete: bool) -> Self {
-        if complete {
-            Self::Complete
-        } else {
-            Self::Incomplete
+impl From<AnnounceKind> for ProbeKind {
+    fn from(kind: AnnounceKind) -> Self {
+        match kind {
+            AnnounceKind::Partial => Self::Incomplete,
+            AnnounceKind::Complete => Self::Complete,
+        }
+    }
+}
+
+impl From<ProbeKind> for AnnounceKind {
+    fn from(kind: ProbeKind) -> Self {
+        match kind {
+            ProbeKind::Incomplete => Self::Partial,
+            ProbeKind::Complete => Self::Complete,
         }
     }
 }
 
 #[derive(Debug, Clone, Default)]
 struct PeerInfo {
-    /// Somebody claims that the peer has the complete data.
-    complete: bool,
     /// The last time the peer was announced by itself or another peer.
     last_announced: Option<Instant>,
-    /// last time the peer was asked for the data and answered.
-    last_size_probed: Option<Instant>,
     /// last time the peer was randomly probed for the data and answered.
     last_probed: Option<Instant>,
 }
@@ -328,13 +360,12 @@ pub struct Options {
     #[serde(with = "serde_duration")]
     probe_timeout: Duration,
     #[serde(with = "serde_duration")]
-    size_probe_timeout: Duration,
-    #[serde(with = "serde_duration")]
     probe_interval: Duration,
     max_hash_seq_size: u64,
     dial_log: Option<PathBuf>,
     probe_log: Option<PathBuf>,
     announce_data_path: Option<PathBuf>,
+    probe_parallelism: usize,
 }
 
 impl Default for Options {
@@ -342,20 +373,20 @@ impl Default for Options {
         Self {
             announce_timeout: Duration::from_secs(60 * 60 * 12),
             probe_timeout: Duration::from_secs(30),
-            size_probe_timeout: Duration::from_secs(30),
             // interval between probing peers
-            probe_interval: Duration::from_secs(60),
+            probe_interval: Duration::from_secs(10),
             // max hash seq size is 1000 hashes
             max_hash_seq_size: 1024 * 16 * 32,
             dial_log: Some("dial.log".into()),
             probe_log: Some("probe.log".into()),
-            announce_data_path: Some("announce.data.json".into()),
+            announce_data_path: Some("announce.data.toml".into()),
+            probe_parallelism: 4,
         }
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct AnnounceData(BTreeMap<HashAndFormat, BTreeMap<PublicKey, AnnounceKind>>);
+struct AnnounceData(BTreeMap<HashAndFormat, BTreeMap<AnnounceKind, BTreeSet<PublicKey>>>);
 
 impl Options {
     /// Make the paths in the options relative to the given base path.
@@ -370,6 +401,16 @@ impl Options {
             *path = base.join(&path);
         }
     }
+}
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+macro_rules! log {
+    ($($arg:tt)*) => {
+        if VERBOSE.load(Ordering::Relaxed) {
+            println!($($arg)*);
+        }
+    };
 }
 
 const REQUEST_SIZE_LIMIT: usize = 1024 * 16;
@@ -405,6 +446,7 @@ pub async fn verified_size(
     connection: &quinn::Connection,
     hash: &Hash,
 ) -> anyhow::Result<(u64, Stats)> {
+    log!("Getting verified size of {}", hash.to_hex());
     let request = iroh_bytes::protocol::GetRequest::new(
         *hash,
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
@@ -431,7 +473,65 @@ pub async fn verified_size(
         unreachable!("expected closing");
     };
     let stats = closing.next().await?;
+    log!(
+        "Got verified size of {}, {:.6}s",
+        hash.to_hex(),
+        stats.elapsed.as_secs_f64()
+    );
     Ok((size, stats))
+}
+
+async fn get_hash_seq_and_sizes(
+    connection: &quinn::Connection,
+    hash: &Hash,
+    max_size: u64,
+) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
+    let content = HashAndFormat::hash_seq(*hash);
+    log!("Getting hash seq and children sizes of {}", content);
+    let request = iroh_bytes::protocol::GetRequest::new(
+        *hash,
+        RangeSpecSeq::from_ranges_infinite([
+            ChunkRanges::all(),
+            ChunkRanges::from(ChunkNum(u64::MAX)..),
+        ]),
+    );
+    let at_start = iroh_bytes::get::fsm::start(connection.clone(), request);
+    let at_connected = at_start.next().await?;
+    let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = at_connected.next().await? else {
+        unreachable!("query includes root");
+    };
+    let at_start_root = start.next();
+    let (at_blob_content, size) = at_start_root.next().await?;
+    // check the size to avoid parsing a maliciously large hash seq
+    if size > max_size {
+        anyhow::bail!("size too large");
+    }
+    let (mut curr, hash_seq) = at_blob_content.concatenate_into_vec().await?;
+    let hash_seq = HashSeq::try_from(Bytes::from(hash_seq))?;
+    let mut sizes = Vec::with_capacity(hash_seq.len());
+    let closing = loop {
+        match curr.next() {
+            EndBlobNext::MoreChildren(more) => {
+                let hash = match hash_seq.get(sizes.len()) {
+                    Some(hash) => hash,
+                    None => break more.finish(),
+                };
+                let at_header = more.next(hash);
+                let (at_content, size) = at_header.next().await?;
+                let next = at_content.drain().await?;
+                sizes.push(size);
+                curr = next;
+            }
+            EndBlobNext::Closing(closing) => break closing,
+        }
+    };
+    let _stats = closing.next().await?;
+    log!(
+        "Got hash seq and children sizes of {}: {:?}",
+        content,
+        sizes
+    );
+    Ok((hash_seq, sizes.into()))
 }
 
 /// Probe for a single chunk of a blob.
@@ -441,7 +541,6 @@ async fn chunk_probe(
     chunk: ChunkNum,
 ) -> anyhow::Result<Stats> {
     let ranges = ChunkRanges::from(chunk..chunk + 1);
-    println!("random blob probe, chunks {:?}", ranges);
     let ranges = RangeSpecSeq::from_ranges([ranges]);
     let request = GetRequest::new(*hash, ranges);
     let request = iroh_bytes::get::fsm::start(connection.clone(), request);
@@ -467,56 +566,6 @@ async fn chunk_probe(
     };
     let stats = closing.next().await?;
     Ok(stats)
-}
-
-async fn get_hash_seq_and_sizes(
-    connection: &quinn::Connection,
-    hash: &Hash,
-    max_size: u64,
-) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
-    println!("probing hash seq");
-    let request = iroh_bytes::protocol::GetRequest::new(
-        *hash,
-        RangeSpecSeq::from_ranges_infinite([
-            ChunkRanges::all(),
-            ChunkRanges::from(ChunkNum(u64::MAX)..),
-        ]),
-    );
-    let at_start = iroh_bytes::get::fsm::start(connection.clone(), request);
-    let at_connected = at_start.next().await?;
-    let iroh_bytes::get::fsm::ConnectedNext::StartRoot(start) = at_connected.next().await? else {
-        unreachable!("query includes root");
-    };
-    let at_start_root = start.next();
-    let (at_blob_content, size) = at_start_root.next().await?;
-    // check the size to avoid parsing a maliciously large hash seq
-    if size > max_size {
-        anyhow::bail!("size too large");
-    }
-    let (mut curr, hash_seq) = at_blob_content.concatenate_into_vec().await?;
-    let hash_seq = HashSeq::try_from(Bytes::from(hash_seq))?;
-    println!("got hash seq {}", hash_seq.len());
-    let mut sizes = Vec::with_capacity(hash_seq.len());
-    let closing = loop {
-        match curr.next() {
-            EndBlobNext::MoreChildren(more) => {
-                let hash = match hash_seq.get(sizes.len()) {
-                    Some(hash) => hash,
-                    None => break more.finish(),
-                };
-                let at_header = more.next(hash);
-                let (at_content, size) = at_header.next().await?;
-                let next = at_content.drain().await?;
-                println!("got size {}", size);
-                sizes.push(size);
-                curr = next;
-            }
-            EndBlobNext::Closing(closing) => break closing,
-        }
-    };
-    let _stats = closing.next().await?;
-    println!("got sizes {:?}", sizes);
-    Ok((hash_seq, sizes.into()))
 }
 
 /// Given a sequence of sizes of children, generate a range spec that selects a
@@ -557,16 +606,19 @@ impl Tracker {
         };
         let mut state = State::default();
         let now = Instant::now();
-        for (content, peers) in announce_data.0 {
-            for (peer, kind) in peers {
-                let peer_info = state.peer_info.entry(content).or_default();
-                let peer_info = peer_info.entry(peer).or_default();
-                peer_info.complete = kind == AnnounceKind::Complete;
-                // set the last announced time to now on startup, otherwise
-                // it would be considered too old
-                peer_info.last_announced = Some(now);
-                // we do not set last_probed or last_size_probed, we don't want
-                // to report false data
+        for (content, peers_by_kind) in announce_data.0 {
+            for (kind, peers) in peers_by_kind {
+                for peer in peers {
+                    let by_kind_and_peer = state.announce_data.entry(content).or_default();
+                    let peer_info = by_kind_and_peer
+                        .entry(kind)
+                        .or_default()
+                        .entry(peer)
+                        .or_default();
+                    // set the last announced time to now on startup, otherwise
+                    // it would be considered too old
+                    peer_info.last_announced = Some(now);
+                }
             }
         }
         Ok(Self(Arc::new(Inner {
@@ -615,25 +667,49 @@ impl Tracker {
     async fn probe(
         &self,
         connection: &quinn::Connection,
+        peer: &PublicKey,
         content: &HashAndFormat,
         probe_kind: ProbeKind,
     ) -> anyhow::Result<Stats> {
+        let cap = format!("{} at {}", content, peer);
         let HashAndFormat { hash, format } = content;
         let mut rng = rand::thread_rng();
         let stats = if probe_kind == ProbeKind::Incomplete {
-            let (_size, stats) = unverified_size(connection, hash).await?;
+            log!("Size probing {}...", cap);
+            let (size, stats) = unverified_size(connection, hash).await?;
+            log!(
+                "Size probed {}, got unverified size {}, {:.6}s",
+                cap,
+                size,
+                stats.elapsed.as_secs_f64()
+            );
             stats
         } else {
             match format {
                 BlobFormat::Raw => {
                     let size = self.get_or_insert_size(connection, hash).await?;
                     let random_chunk = rng.gen_range(0..ByteNum(size).chunks().0);
-                    chunk_probe(connection, hash, ChunkNum(random_chunk)).await?
+                    log!("Chunk probing {}, chunk {}", cap, random_chunk);
+                    let stats = chunk_probe(connection, hash, ChunkNum(random_chunk)).await?;
+                    log!(
+                        "Chunk probed {}, chunk {}, {:.6}s",
+                        cap,
+                        random_chunk,
+                        stats.elapsed.as_secs_f64()
+                    );
+                    stats
                 }
                 BlobFormat::HashSeq => {
                     let (hs, sizes) = self.get_or_insert_sizes(connection, hash).await?;
                     let ranges = random_hash_seq_ranges(&sizes, rand::thread_rng());
-                    println!("probing {} using {:?}", content, ranges);
+                    let text = ranges
+                        .iter_non_empty()
+                        .map(|(index, ranges)| {
+                            format!("child={}, ranges={:?}", index, ranges.to_chunk_ranges())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    log!("Seq probing {} using {}", cap, text);
                     let request = GetRequest::new(*hash, ranges);
                     let request = iroh_bytes::get::fsm::start(connection.clone(), request);
                     let connected = request.next().await?;
@@ -650,7 +726,14 @@ impl Tracker {
                     let EndBlobNext::Closing(closing) = at_end_blob.next() else {
                         unreachable!("request contains only one blob");
                     };
-                    closing.next().await?
+                    let stats = closing.next().await?;
+                    log!(
+                        "Seq probed {} using {}, {:.6}s",
+                        cap,
+                        text,
+                        stats.elapsed.as_secs_f64()
+                    );
+                    stats
                 }
             }
         };
@@ -684,23 +767,18 @@ impl Tracker {
 
     async fn handle_announce(&self, announce: Announce) -> anyhow::Result<()> {
         let mut state = self.0.state.write().unwrap();
-        let peer = announce.peer;
         for content in announce.content {
-            let entry = state.peer_info.entry(content).or_default();
-            let peer_info = entry.entry(peer).or_default();
+            let entry = state.announce_data.entry(content).or_default();
+            let peer_info = entry
+                .entry(announce.kind)
+                .or_default()
+                .entry(announce.peer)
+                .or_default();
             let now = Instant::now();
             peer_info.last_announced = Some(now);
-            peer_info.complete = announce.kind == AnnounceKind::Complete;
         }
         if let Some(path) = &self.0.options.announce_data_path {
-            let mut data: AnnounceData = Default::default();
-            for (content, peers) in state.peer_info.iter() {
-                let mut peers2 = BTreeMap::new();
-                for (peer, info) in peers {
-                    peers2.insert(*peer, AnnounceKind::new(info.complete));
-                }
-                data.0.insert(*content, peers2);
-            }
+            let data = state.get_persisted_announce_data();
             drop(state);
             save_to_file(&data, path)?;
         }
@@ -709,44 +787,33 @@ impl Tracker {
 
     async fn handle_query(&self, query: Query) -> anyhow::Result<QueryResponse> {
         let state = self.0.state.read().unwrap();
-        let entry = state.peer_info.get(&query.content);
+        let entry = state.announce_data.get(&query.content);
         let options = &self.0.options;
+        let kind = AnnounceKind::from_complete(query.flags.complete);
         let mut peers = vec![];
-        if let Some(entry) = entry {
-            for (peer_id, peer_info) in entry {
-                let recently_announced = peer_info
-                    .last_announced
-                    .map(|t| t.elapsed() <= options.announce_timeout)
-                    .unwrap_or_default();
-                let recently_probed = peer_info
-                    .last_probed
-                    .map(|t| t.elapsed() <= options.probe_timeout)
-                    .unwrap_or_default();
-                let recently_size_probed = peer_info
-                    .last_size_probed
-                    .map(|t| t.elapsed() <= options.size_probe_timeout)
-                    .unwrap_or_default();
-                if query.flags.complete && !peer_info.complete {
-                    // query asks for complete peers, but the peer is not complete
-                    tracing::error!("content is not complete");
-                    continue;
+        if let Some(by_kind_and_peer) = entry {
+            if let Some(entry) = by_kind_and_peer.get(&kind) {
+                for (peer_id, peer_info) in entry {
+                    let recently_announced = peer_info
+                        .last_announced
+                        .map(|t| t.elapsed() <= options.announce_timeout)
+                        .unwrap_or_default();
+                    let recently_probed = peer_info
+                        .last_probed
+                        .map(|t| t.elapsed() <= options.probe_timeout)
+                        .unwrap_or_default();
+                    if !recently_announced {
+                        // info is too old
+                        tracing::error!("content is too old");
+                        continue;
+                    }
+                    if query.flags.validated && !recently_probed {
+                        // query asks for validated complete peers, but the probe is too old
+                        tracing::error!("validation of complete data is too old");
+                        continue;
+                    }
+                    peers.push(*peer_id);
                 }
-                if !recently_announced {
-                    // info is too old
-                    tracing::error!("content is too old");
-                    continue;
-                }
-                if !query.flags.complete && query.flags.validated && !recently_size_probed {
-                    // query asks for validated peers, but the size probe is too old
-                    tracing::error!("validation of incomplete data is too old");
-                    continue;
-                }
-                if query.flags.complete && query.flags.validated && !recently_probed {
-                    // query asks for validated complete peers, but the probe is too old
-                    tracing::error!("validation of complete data is too old");
-                    continue;
-                }
-                peers.push(*peer_id);
             }
         } else {
             tracing::error!("no peers for content");
@@ -758,15 +825,18 @@ impl Tracker {
     }
 
     /// Get the content that is supposedly available, grouped by peers
-    fn get_content_by_peers(&self) -> BTreeMap<PublicKey, BTreeMap<HashAndFormat, bool>> {
+    fn get_content_by_peers(&self) -> BTreeMap<PublicKey, BTreeMap<AnnounceKind, HashAndFormat>> {
         let state = self.0.state.read().unwrap();
-        let mut content_by_peers = BTreeMap::<PublicKey, BTreeMap<HashAndFormat, bool>>::new();
-        for (content, peers) in state.peer_info.iter() {
-            for (peer, info) in peers {
-                content_by_peers
-                    .entry(*peer)
-                    .or_default()
-                    .insert(*content, info.complete);
+        let mut content_by_peers =
+            BTreeMap::<PublicKey, BTreeMap<AnnounceKind, HashAndFormat>>::new();
+        for (content, by_kind_and_peer) in state.announce_data.iter() {
+            for (kind, by_peer) in by_kind_and_peer {
+                for peer in by_peer.keys() {
+                    content_by_peers
+                        .entry(*peer)
+                        .or_default()
+                        .insert(*kind, *content);
+                }
             }
         }
         content_by_peers
@@ -774,21 +844,20 @@ impl Tracker {
 
     fn apply_result(
         &self,
-        results: BTreeMap<HashAndFormat, Vec<(PublicKey, ProbeKind)>>,
+        results: BTreeMap<PublicKey, Vec<(HashAndFormat, AnnounceKind, anyhow::Result<Stats>)>>,
         now: Instant,
     ) {
         let mut state = self.0.state.write().unwrap();
-        for (haf, peers) in results {
-            let entry = state.peer_info.entry(haf).or_default();
-            for (peer, kind) in peers {
-                let peer_info = entry.entry(peer).or_default();
-                match kind {
-                    ProbeKind::Incomplete => {
-                        peer_info.last_size_probed = Some(now);
-                    }
-                    ProbeKind::Complete => {
-                        peer_info.last_probed = Some(now);
-                    }
+        for (peer, probes) in results {
+            for (content, announce_kind, result) in probes {
+                if result.is_ok() {
+                    let state_for_content = state.announce_data.entry(content).or_default();
+                    let peer_info = state_for_content
+                        .entry(announce_kind)
+                        .or_default()
+                        .entry(peer)
+                        .or_default();
+                    peer_info.last_probed = Some(now);
                 }
             }
         }
@@ -862,39 +931,62 @@ impl Tracker {
         Ok(())
     }
 
+    /// Execute probes for a single peer.
+    ///
+    /// This will fail if the connection fails, or if local logging fails.
+    /// Individual probes can fail, but the probe will continue.
+    async fn probe_one(
+        self,
+        endpoint: MagicEndpoint,
+        peer: PublicKey,
+        by_kind_and_content: BTreeMap<AnnounceKind, HashAndFormat>,
+    ) -> anyhow::Result<(
+        PublicKey,
+        Vec<(HashAndFormat, AnnounceKind, anyhow::Result<Stats>)>,
+    )> {
+        let t0 = Instant::now();
+        let res = endpoint
+            .connect_by_node_id(&peer, &iroh_bytes::protocol::ALPN)
+            .await;
+        self.log_connection_attempt(&peer, t0, &res)?;
+        let connection = match res {
+            Ok(connection) => connection,
+            Err(cause) => {
+                tracing::error!("error dialing peer {}: {}", peer, cause);
+                return Err(cause);
+            }
+        };
+        let mut results = Vec::new();
+        for (announce_kind, content) in by_kind_and_content {
+            let probe_kind = ProbeKind::from(announce_kind);
+            let t0 = Instant::now();
+            let res = self.probe(&connection, &peer, &content, probe_kind).await;
+            self.log_probe_attempt(&peer, &content, probe_kind, t0, &res)?;
+            if let Err(cause) = &res {
+                tracing::error!("error probing peer {}: {}", peer, cause);
+            }
+            results.push((content, announce_kind, res));
+        }
+        anyhow::Ok((peer, results))
+    }
+
+    /// The main loop that probes peers.
     async fn probe_loop(self, endpoint: MagicEndpoint) -> anyhow::Result<()> {
         loop {
             let content_by_peers = self.get_content_by_peers();
-            let mut results = BTreeMap::<HashAndFormat, Vec<(PublicKey, ProbeKind)>>::new();
             let now = Instant::now();
-            for (peer, content) in content_by_peers {
-                let t0 = Instant::now();
-                let res = endpoint
-                    .connect_by_node_id(&peer, &iroh_bytes::protocol::ALPN)
-                    .await;
-                self.log_connection_attempt(&peer, t0, &res)?;
-                let connection = match res {
-                    Ok(connection) => connection,
-                    Err(cause) => {
-                        tracing::error!("error dialing peer {}: {}", peer, cause);
-                        continue;
-                    }
-                };
-                for (haf, complete) in content {
-                    let probe_kind = ProbeKind::new(complete);
-                    let t0 = Instant::now();
-                    let res = self.probe(&connection, &haf, probe_kind).await;
-                    self.log_probe_attempt(&peer, &haf, probe_kind, t0, &res)?;
-                    match res {
-                        Ok(_) => {
-                            results.entry(haf).or_default().push((peer, probe_kind));
-                        }
-                        Err(cause) => {
-                            tracing::error!("error probing peer {}: {}", peer, cause)
-                        }
-                    }
-                }
-            }
+            let results = futures::stream::iter(content_by_peers.into_iter())
+                .map(|(peer, by_kind_and_content)| {
+                    let endpoint = endpoint.clone();
+                    let this = self.clone();
+                    this.probe_one(endpoint, peer, by_kind_and_content)
+                })
+                .buffer_unordered(self.0.options.probe_parallelism)
+                .collect::<Vec<_>>()
+                .await;
+            let results = results
+                .into_iter()
+                .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
             self.apply_result(results, now);
             tokio::time::sleep(self.0.options.probe_interval).await;
         }
@@ -903,20 +995,58 @@ impl Tracker {
 
 fn save_to_file(data: impl Serialize, path: &Path) -> anyhow::Result<()> {
     let data_dir = path.parent().context("non absolute data file")?;
+    let ext = path
+        .extension()
+        .context("no extension")?
+        .to_str()
+        .context("not utf8")?
+        .to_ascii_lowercase();
     let mut temp = tempfile::NamedTempFile::new_in(data_dir)?;
-    let data = serde_json::to_string_pretty(&data)?;
-    temp.write_all(&data.as_bytes())?;
+    match ext.as_str() {
+        "toml" => {
+            let data = toml::to_string_pretty(&data)?;
+            temp.write_all(&data.as_bytes())?;
+        }
+        "json" => {
+            let data = serde_json::to_string_pretty(&data)?;
+            temp.write_all(&data.as_bytes())?;
+        }
+        "postcard" => {
+            let data = postcard::to_stdvec(&data)?;
+            temp.write_all(&data)?;
+        }
+        _ => anyhow::bail!("unsupported extension"),
+    }
     std::fs::rename(temp.into_temp_path(), path)?;
     Ok(())
 }
 
 fn load_from_file<T: DeserializeOwned + Default>(path: &Path) -> anyhow::Result<T> {
-    Ok(if path.exists() {
-        let data = std::fs::read_to_string(path)?;
-        serde_json::from_str(&data)?
-    } else {
-        T::default()
-    })
+    anyhow::ensure!(path.is_absolute(), "non absolute data file");
+    let ext = path
+        .extension()
+        .context("no extension")?
+        .to_str()
+        .context("not utf8")?
+        .to_ascii_lowercase();
+    if !path.exists() {
+        return Ok(T::default());
+    }
+    match ext.as_str() {
+        "toml" => {
+            let data = std::fs::read_to_string(path)?;
+            Ok(toml::from_str(&data)?)
+        }
+        "json" => {
+            let data = std::fs::read_to_string(path)?;
+            Ok(serde_json::from_str(&data)?)
+        }
+        "postcard" => {
+            let data = std::fs::read(path)?;
+            Ok(postcard::from_bytes(&data)?)
+        }
+        _ => anyhow::bail!("unsupported extension"),
+    }
 }
 
 #[allow(dead_code)]
@@ -976,13 +1106,13 @@ async fn create_endpoint(
 
 fn write_defaults() -> anyhow::Result<()> {
     let default_path = tracker_path("server.config.default.toml")?;
-    let txt = toml::to_string_pretty(&Options::default())?;
-    std::fs::write(&default_path, txt)?;
+    save_to_file(&Options::default(), &default_path)?;
     Ok(())
 }
 
 async fn server(args: ServerArgs, rt: iroh_bytes::util::runtime::Handle) -> anyhow::Result<()> {
     let home = tracker_home()?;
+    VERBOSE.store(!args.quiet, Ordering::Relaxed);
     println!("tracker starting using {}", tracker_home()?.display());
     let key_path = tracker_path("server.key")?;
     let key = load_secret_key(key_path).await?;
@@ -1054,10 +1184,10 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     println!("connected to {:?}", connection.remote_address());
     let (mut send, mut recv) = connection.open_bi().await?;
     println!("opened bi stream");
-    let kind = if args.complete {
-        AnnounceKind::Complete
-    } else {
+    let kind = if args.partial {
         AnnounceKind::Partial
+    } else {
+        AnnounceKind::Complete
     };
     let peer = if let Some(peer) = args.peer {
         peer
@@ -1091,7 +1221,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
     let query = Query {
         content: args.content.hash_and_format(),
         flags: QueryFlags {
-            complete: args.complete,
+            complete: !args.partial,
             validated: args.validated,
         },
     };
