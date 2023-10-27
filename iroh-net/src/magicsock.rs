@@ -261,7 +261,7 @@ struct Inner {
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
     // Our discovered endpoints
-    endpoints: parking_lot::Mutex<DiscoveredEndpoints>,
+    endpoints: parking_lot::RwLock<DiscoveredEndpoints>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -995,7 +995,7 @@ impl Inner {
     }
 
     fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
-        let endpoints = self.endpoints.lock();
+        let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let my_number: Vec<_> = endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number });
@@ -1746,7 +1746,7 @@ impl Actor {
                 let _ = s.send(self.inner.peer_map.endpoint_info(&node_key));
             }
             ActorMessage::LocalEndpoints(s) => {
-                let eps: Vec<_> = self.inner.endpoints.lock().iter().cloned().collect();
+                let eps: Vec<_> = self.inner.endpoints.read().iter().cloned().collect();
                 let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
@@ -2048,7 +2048,7 @@ impl Actor {
         // The STUN address(es) are always first.
         // Despite this sorting, clients are not relying on this sorting for decisions;
 
-        if self.inner.endpoints.lock().set(&eps) {
+        if self.inner.endpoints.write().set(&eps) {
             log_endpoint_change(&eps);
             if let Some(ref cb) = self.inner.on_endpoints {
                 cb(&eps[..]);
