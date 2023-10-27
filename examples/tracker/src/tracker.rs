@@ -151,7 +151,8 @@ impl Tracker {
                 .await;
             let results = results
                 .into_iter()
-                .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+                .filter_map(|x| x.ok())
+                .collect::<BTreeMap<_, _>>();
             self.apply_result(results, now);
             tokio::time::sleep(self.0.options.probe_interval).await;
         }
