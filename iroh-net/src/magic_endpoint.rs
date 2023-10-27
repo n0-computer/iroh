@@ -552,8 +552,6 @@ impl MagicEndpoint {
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
-        self.endpoint.wait_idle().await;
-        // TODO: Now wait-idle on msock!
         self.msock.close().await?;
         Ok(())
     }
@@ -854,7 +852,6 @@ mod tests {
                 .instrument(error_span!("client", %i));
                 tokio::task::spawn(fut).await.unwrap();
                 println!("[client] round {} done in {:?}", i + 1, now.elapsed());
-                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
 
