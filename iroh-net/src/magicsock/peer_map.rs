@@ -28,7 +28,7 @@ mod best_addr;
 mod endpoint;
 
 pub use endpoint::{ConnectionType, DirectAddrInfo, EndpointInfo};
-pub(super) use endpoint::{DiscoPingPurpose, PingAction};
+pub(super) use endpoint::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of peers that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`PeerMap::prune_inactive`].
@@ -65,6 +65,13 @@ pub(super) struct PeerMapInner {
     next_id: usize,
 }
 
+enum EndpointId<'a> {
+    Id(&'a usize),
+    NodeKey(&'a PublicKey),
+    QuicMappedAddr(&'a QuicMappedAddr),
+    IpPort(&'a IpPort),
+}
+
 impl PeerMap {
     /// Create a new [`PeerMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -94,48 +101,12 @@ impl PeerMap {
         self.inner.lock().node_count()
     }
 
-    pub fn endpoint_id_to_public_key(&self, id: &usize) -> Option<PublicKey> {
-        self.inner.lock().by_id(id).map(|ep| ep.public_key)
+    pub fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
+        self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn get_quic_mapped_addr_for_udp_recv(
-        &self,
-        udp_addr: SocketAddr,
-    ) -> Option<QuicMappedAddr> {
-        self.inner
-            .lock()
-            .receive_ip(udp_addr)
-            .map(|ep| ep.quic_mapped_addr)
-    }
-
-    pub fn get_quic_mapped_addr_for_derp_recv(
-        &self,
-        region_id: u16,
-        src: PublicKey,
-    ) -> QuicMappedAddr {
-        let mut pm = self.inner.lock();
-        let ep_quic_mapped_addr = pm.endpoint_for_node_key_mut(&src).as_mut().map(|ep| {
-            // NOTE: we don't update the derp region if there is already one but the new one is
-            // different
-            if ep.derp_region().is_none() {
-                ep.set_derp_region(region_id);
-            }
-            ep.quic_mapped_addr
-        });
-
-        match ep_quic_mapped_addr {
-            Some(addr) => addr,
-            None => {
-                info!(peer=%src, "no peer_map state found for peer");
-                let id = pm.insert_endpoint(Options {
-                    public_key: src,
-                    derp_region: Some(region_id),
-                    active: true,
-                });
-                let ep = pm.by_id_mut(&id).expect("inserted");
-                ep.quic_mapped_addr
-            }
-        }
+    pub fn receive_derp(&self, region_id: u16, src: PublicKey) -> QuicMappedAddr {
+        self.inner.lock().receive_derp(region_id, &src)
     }
 
     pub fn notify_ping_sent(
@@ -146,25 +117,30 @@ impl PeerMap {
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
-        if let Some(ep) = self.inner.lock().by_id_mut(&id) {
+        if let Some(ep) = self.inner.lock().get_mut(EndpointId::Id(&id)) {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
     }
 
     pub fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
-        if let Some(ep) = self.inner.lock().by_id_mut(&id).as_mut() {
+        if let Some(ep) = self.inner.lock().get_mut(EndpointId::Id(&id)) {
             ep.ping_timeout(tx_id);
         }
     }
 
+    pub fn get_quic_mapped_addr_for_node_key(
+        &self,
+        node_key: &PublicKey,
+    ) -> Option<QuicMappedAddr> {
+        self.inner
+            .lock()
+            .get(EndpointId::NodeKey(node_key))
+            .map(|ep| *ep.quic_mapped_addr())
+    }
+
     /// Insert a received ping into the peer map, and return whether a ping with this tx_id was already
     /// received.
-    pub fn handle_ping(
-        &self,
-        sender: PublicKey,
-        src: &DiscoMessageSource,
-        tx_id: TransactionId,
-    ) -> bool {
+    pub fn handle_ping(&self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
         self.inner.lock().handle_ping(sender, src, tx_id)
     }
 
@@ -172,15 +148,9 @@ impl PeerMap {
         self.inner.lock().handle_pong(sender, src, pong)
     }
 
-    pub fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) {
+    #[must_use = "actions must be handled"]
+    pub fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
         self.inner.lock().handle_call_me_maybe(sender, cm)
-    }
-
-    pub fn get_quic_mapped_addr_for_node_key(&self, nk: &PublicKey) -> Option<QuicMappedAddr> {
-        self.inner
-            .lock()
-            .endpoint_for_node_key(nk)
-            .map(|ep| ep.quic_mapped_addr)
     }
 
     #[allow(clippy::type_complexity)]
@@ -189,7 +159,7 @@ impl PeerMap {
         addr: &QuicMappedAddr,
     ) -> Option<(PublicKey, Option<SocketAddr>, Option<u16>, Vec<PingAction>)> {
         let mut inner = self.inner.lock();
-        let ep = inner.endpoint_for_quic_mapped_addr_mut(addr)?;
+        let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
         let (udp_addr, derp_region, msgs) = ep.get_send_addrs();
         Some((public_key, udp_addr, derp_region, msgs))
@@ -316,21 +286,41 @@ impl PeerMapInner {
     fn add_peer_addr(&mut self, peer_addr: PeerAddr) {
         let PeerAddr { peer_id, info } = peer_addr;
 
-        if self.endpoint_for_node_key(&peer_id).is_none() {
-            info!(derp_region = ?info.derp_region, "inserting new peer endpoint in PeerMap");
-            self.insert_endpoint(Options {
-                public_key: peer_id,
-                derp_region: info.derp_region,
-                active: false,
-            });
-        }
+        let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&peer_id), || Options {
+            public_key: peer_id,
+            derp_region: info.derp_region,
+            active: false,
+        });
 
-        if let Some(ep) = self.endpoint_for_node_key_mut(&peer_id) {
-            ep.update_from_node_addr(&info);
-            let id = ep.id;
-            for endpoint in &info.direct_addresses {
-                self.set_endpoint_for_ip_port(*endpoint, id);
-            }
+        endpoint.update_from_node_addr(&info);
+        let id = endpoint.id();
+        for endpoint in &info.direct_addresses {
+            self.set_endpoint_for_ip_port(*endpoint, id);
+        }
+    }
+
+    fn get_id(&self, id: EndpointId) -> Option<usize> {
+        match id {
+            EndpointId::Id(id) => Some(*id),
+            EndpointId::NodeKey(node_key) => self.by_node_key.get(node_key).copied(),
+            EndpointId::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(addr).copied(),
+            EndpointId::IpPort(ipp) => self.by_ip_port.get(ipp).copied(),
+        }
+    }
+
+    fn get_mut(&mut self, id: EndpointId) -> Option<&mut Endpoint> {
+        self.get_id(id).and_then(|id| self.by_id.get_mut(&id))
+    }
+
+    fn get(&self, id: EndpointId) -> Option<&Endpoint> {
+        self.get_id(id).and_then(|id| self.by_id.get(&id))
+    }
+
+    fn get_or_insert_with(&mut self, id: EndpointId, f: impl FnOnce() -> Options) -> &mut Endpoint {
+        let id = self.get_id(id);
+        match id {
+            None => self.insert_endpoint(f()),
+            Some(id) => self.by_id.get_mut(&id).expect("is not empty"),
         }
     }
 
@@ -339,55 +329,28 @@ impl PeerMapInner {
         self.by_id.len()
     }
 
-    fn by_id(&self, id: &usize) -> Option<&Endpoint> {
-        self.by_id.get(id)
-    }
-
-    fn by_id_mut(&mut self, id: &usize) -> Option<&mut Endpoint> {
-        self.by_id.get_mut(id)
-    }
-
-    /// Returns the endpoint for nk, or None if nk is not known to us.
-    fn endpoint_for_node_key(&self, nk: &PublicKey) -> Option<&Endpoint> {
-        self.by_node_key.get(nk).and_then(|id| self.by_id(id))
-    }
-
-    fn endpoint_for_node_key_mut(&mut self, nk: &PublicKey) -> Option<&mut Endpoint> {
-        self.by_node_key
-            .get(nk)
-            .and_then(|id| self.by_id.get_mut(id))
-    }
-
     /// Marks the peer we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
-    fn receive_ip(&mut self, udp_addr: SocketAddr) -> Option<&Endpoint> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
-        // search by IpPort to get the Id
-        let id = *self.by_ip_port.get(&ip_port)?;
-        // search by Id to get the endpoint. This should never fail
-        let Some(endpoint) = self.by_id_mut(&id) else {
-            debug_assert!(false, "peer map inconsistency by_ip_port <-> by_id");
+        let Some(endpoint) = self.get_mut(EndpointId::IpPort(&ip_port)) else {
+            info!(src=%udp_addr, "receive_udp: no peer_map state found for addr, ignore");
             return None;
         };
-        // the endpoint we found must have the original address among its direct udp addresses if
-        // the peer map maintains consistency
-        let Some(state) = endpoint.direct_addr_state.get_mut(&ip_port) else {
-            debug_assert!(false, "peer map inconsistency by_ip_port <-> direct addr");
-            return None;
-        };
-        // record this peer and this address being in use
-        let now = Instant::now();
-        endpoint.last_used = Some(now);
-        state.last_payload_msg = Some(now);
-        Some(endpoint)
+        endpoint.receive_udp(ip_port, Instant::now());
+        Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
-    fn endpoint_for_quic_mapped_addr_mut(
-        &mut self,
-        addr: &QuicMappedAddr,
-    ) -> Option<&mut Endpoint> {
-        self.by_quic_mapped_addr
-            .get(addr)
-            .and_then(|id| self.by_id.get_mut(id))
+    fn receive_derp(&mut self, region_id: u16, src: &PublicKey) -> QuicMappedAddr {
+        let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
+            info!(peer=%src.fmt_short(), "receive_derp: packets from unknown peer, insert into peer map");
+            Options {
+                public_key: *src,
+                derp_region: Some(region_id),
+                active: true,
+            }
+        });
+        endpoint.receive_derp(region_id, src, Instant::now());
+        *endpoint.quic_mapped_addr()
     }
 
     fn endpoints(&self) -> impl Iterator<Item = (&usize, &Endpoint)> {
@@ -405,13 +368,13 @@ impl PeerMapInner {
 
     /// Get the [`EndpointInfo`]s for each endpoint
     fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
-        self.endpoint_for_node_key(public_key)
+        self.get(EndpointId::NodeKey(public_key))
             .map(|ep| ep.info(Instant::now()))
     }
 
     fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
-        if let Some(ep) = self.endpoint_for_node_key_mut(&sender).as_mut() {
-            let insert = ep.handle_pong_conn(&pong, src.into());
+        if let Some(ep) = self.get_mut(EndpointId::NodeKey(&sender)).as_mut() {
+            let insert = ep.handle_pong(&pong, src.into());
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }
@@ -421,70 +384,53 @@ impl PeerMapInner {
         }
     }
 
-    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) {
-        match self.endpoint_for_node_key_mut(&sender) {
+    #[must_use = "actions must be handled"]
+    fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
+        match self.get_mut(EndpointId::NodeKey(&sender)) {
             None => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 debug!("received call-me-maybe: ignore, peer is unknown");
+                vec![]
             }
             Some(ep) => {
-                debug!("received call-me-maybe: {} endpoints", cm.my_number.len());
-                ep.handle_call_me_maybe(cm);
+                debug!(endpoints = ?cm.my_number, "received call-me-maybe");
+                ep.handle_call_me_maybe(cm)
             }
-        };
+        }
     }
 
-    fn handle_ping(
-        &mut self,
-        sender: PublicKey,
-        src: &DiscoMessageSource,
-        tx_id: TransactionId,
-    ) -> bool {
-        let unknown_sender = if self.endpoint_for_node_key(&sender).is_none() {
-            match src {
-                DiscoMessageSource::Udp(addr) => self.receive_ip(*addr).is_none(),
-                DiscoMessageSource::Derp { .. } => true,
-            }
-        } else {
-            false
-        };
-        // if we get here we got a valid ping from an unknown sender
-        // so insert an endpoint for them
-        if unknown_sender {
+    fn handle_ping(&mut self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
+        let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&sender), || {
             debug!("received ping: peer unknown, add to peer map");
-            self.insert_endpoint(Options {
+            Options {
                 public_key: sender,
                 derp_region: src.derp_region(),
                 active: true,
-            });
-        }
-        let is_duplicate = if let Some(ep) = self.endpoint_for_node_key_mut(&sender) {
-            if ep.endpoint_confirmed(src.into(), tx_id) {
-                true
-            } else {
-                if let DiscoMessageSource::Udp(addr) = src {
-                    self.set_node_key_for_ip_port(*addr, &sender);
-                }
-                false
             }
-        } else {
-            false
-        };
-        is_duplicate
+        });
+
+        let role = endpoint.handle_ping(src, tx_id);
+        if let SendAddr::Udp(addr) = src {
+            if matches!(role, PingRole::NewEndpoint) {
+                self.set_node_key_for_ip_port(addr, &sender);
+            }
+        }
+        role
     }
 
     /// Inserts a new endpoint into the [`PeerMap`].
-    fn insert_endpoint(&mut self, options: Options) -> usize {
+    fn insert_endpoint(&mut self, options: Options) -> &mut Endpoint {
+        info!(peer = %options.public_key.fmt_short(), derp_region = ?options.derp_region, "inserting new peer endpoint in PeerMap");
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let ep = Endpoint::new(id, options);
 
         // update indices
-        self.by_quic_mapped_addr.insert(ep.quic_mapped_addr, id);
-        self.by_node_key.insert(ep.public_key, id);
+        self.by_quic_mapped_addr.insert(*ep.quic_mapped_addr(), id);
+        self.by_node_key.insert(*ep.public_key(), id);
 
         self.by_id.insert(id, ep);
-        id
+        self.by_id.get_mut(&id).expect("just inserted")
     }
 
     /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
@@ -519,7 +465,7 @@ impl PeerMapInner {
             .by_id
             .values()
             .filter(|peer| !peer.is_active(&now))
-            .map(|peer| (*peer.public_key(), peer.last_used))
+            .map(|peer| (*peer.public_key(), peer.last_used()))
             .collect();
 
         let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_PEERS);
@@ -551,7 +497,7 @@ impl PeerMapInner {
                 self.by_ip_port.remove(&ip_port);
             }
 
-            self.by_quic_mapped_addr.remove(&ep.quic_mapped_addr);
+            self.by_quic_mapped_addr.remove(ep.quic_mapped_addr());
         }
     }
 }
@@ -595,229 +541,10 @@ impl IpPort {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
-
-    use super::best_addr::BestAddr;
-    use super::endpoint::{ControlMsg, EndpointState, PongReply, MAX_INACTIVE_DIRECT_ADDRESSES};
+    use super::endpoint::MAX_INACTIVE_DIRECT_ADDRESSES;
     use super::*;
     use crate::{key::SecretKey, magic_endpoint::AddrInfo};
-
-    #[test]
-    fn test_endpoint_infos() {
-        let new_relay_and_state = |region_id: Option<u16>| {
-            region_id.map(|region_id| (region_id, EndpointState::default()))
-        };
-
-        let now = Instant::now();
-        let elapsed = Duration::from_secs(3);
-        let later = now + elapsed;
-
-        // endpoint with a `best_addr` that has a latency
-        let pong_src = "0.0.0.0:1".parse().unwrap();
-        let latency = Duration::from_millis(50);
-        let (a_endpoint, a_socket_addr) = {
-            let ip_port = IpPort {
-                ip: Ipv4Addr::UNSPECIFIED.into(),
-                port: 10,
-            };
-            let endpoint_state = HashMap::from([(
-                ip_port,
-                EndpointState::with_pong_reply(PongReply {
-                    latency,
-                    pong_at: now,
-                    from: SendAddr::Udp(ip_port.into()),
-                    pong_src,
-                }),
-            )]);
-            let key = SecretKey::generate();
-            (
-                Endpoint {
-                    id: 0,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
-                    public_key: key.public(),
-                    last_full_ping: None,
-                    derp_region: new_relay_and_state(Some(0)),
-                    best_addr: BestAddr::from_parts(
-                        ip_port.into(),
-                        latency,
-                        now,
-                        now + Duration::from_secs(100),
-                    ),
-                    direct_addr_state: endpoint_state,
-                    is_call_me_maybe_ep: HashMap::new(),
-                    pending_cli_pings: Vec::new(),
-                    sent_ping: HashMap::new(),
-                    last_used: Some(now),
-                },
-                ip_port.into(),
-            )
-        };
-        // endpoint w/ no best addr but a derp  w/ latency
-        let b_endpoint = {
-            // let socket_addr = "0.0.0.0:9".parse().unwrap();
-            let relay_state = EndpointState::with_pong_reply(PongReply {
-                latency,
-                pong_at: now,
-                from: SendAddr::Derp(0),
-                pong_src,
-            });
-            let key = SecretKey::generate();
-            Endpoint {
-                id: 1,
-                quic_mapped_addr: QuicMappedAddr::generate(),
-                public_key: key.public(),
-                last_full_ping: None,
-                derp_region: Some((0, relay_state)),
-                best_addr: BestAddr::default(),
-                direct_addr_state: HashMap::default(),
-                is_call_me_maybe_ep: HashMap::new(),
-                pending_cli_pings: Vec::new(),
-                sent_ping: HashMap::new(),
-                last_used: Some(now),
-            }
-        };
-
-        // endpoint w/ no best addr but a derp  w/ no latency
-        let c_endpoint = {
-            // let socket_addr = "0.0.0.0:8".parse().unwrap();
-            let endpoint_state = HashMap::new();
-            let key = SecretKey::generate();
-            Endpoint {
-                id: 2,
-                quic_mapped_addr: QuicMappedAddr::generate(),
-                public_key: key.public(),
-                last_full_ping: None,
-                derp_region: new_relay_and_state(Some(0)),
-                best_addr: BestAddr::default(),
-                direct_addr_state: endpoint_state,
-                is_call_me_maybe_ep: HashMap::new(),
-                pending_cli_pings: Vec::new(),
-                sent_ping: HashMap::new(),
-                last_used: Some(now),
-            }
-        };
-
-        // endpoint w/ expired best addr
-        let (d_endpoint, d_socket_addr) = {
-            let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
-            let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
-            let endpoint_state = HashMap::from([(
-                IpPort::from(socket_addr),
-                EndpointState::with_pong_reply(PongReply {
-                    latency,
-                    pong_at: now,
-                    from: SendAddr::Udp(socket_addr),
-                    pong_src,
-                }),
-            )]);
-            let relay_state = EndpointState::with_pong_reply(PongReply {
-                latency,
-                pong_at: now,
-                from: SendAddr::Derp(0),
-                pong_src,
-            });
-            let key = SecretKey::generate();
-            (
-                Endpoint {
-                    id: 3,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
-                    public_key: key.public(),
-                    last_full_ping: None,
-                    derp_region: Some((0, relay_state)),
-                    best_addr: BestAddr::from_parts(
-                        socket_addr,
-                        Duration::from_millis(80),
-                        now,
-                        expired,
-                    ),
-                    direct_addr_state: endpoint_state,
-                    is_call_me_maybe_ep: HashMap::new(),
-                    pending_cli_pings: Vec::new(),
-                    sent_ping: HashMap::new(),
-                    last_used: Some(now),
-                },
-                socket_addr,
-            )
-        };
-        let expect = Vec::from([
-            EndpointInfo {
-                id: a_endpoint.id,
-                public_key: a_endpoint.public_key,
-                derp_region: a_endpoint.derp_region(),
-                addrs: Vec::from([DirectAddrInfo {
-                    addr: a_socket_addr,
-                    latency: Some(latency),
-                    last_control: Some((elapsed, ControlMsg::Pong)),
-                    last_payload: None,
-                }]),
-                conn_type: ConnectionType::Direct(a_socket_addr),
-                latency: Some(latency),
-                last_used: Some(elapsed),
-            },
-            EndpointInfo {
-                id: b_endpoint.id,
-                public_key: b_endpoint.public_key,
-                derp_region: b_endpoint.derp_region(),
-                addrs: Vec::new(),
-                conn_type: ConnectionType::Relay(0),
-                latency: Some(latency),
-                last_used: Some(elapsed),
-            },
-            EndpointInfo {
-                id: c_endpoint.id,
-                public_key: c_endpoint.public_key,
-                derp_region: c_endpoint.derp_region(),
-                addrs: Vec::new(),
-                conn_type: ConnectionType::Relay(0),
-                latency: None,
-                last_used: Some(elapsed),
-            },
-            EndpointInfo {
-                id: d_endpoint.id,
-                public_key: d_endpoint.public_key,
-                derp_region: d_endpoint.derp_region(),
-                addrs: Vec::from([DirectAddrInfo {
-                    addr: d_socket_addr,
-                    latency: Some(latency),
-                    last_control: Some((elapsed, ControlMsg::Pong)),
-                    last_payload: None,
-                }]),
-                conn_type: ConnectionType::Mixed(d_socket_addr, 0),
-                latency: Some(Duration::from_millis(50)),
-                last_used: Some(elapsed),
-            },
-        ]);
-
-        let peer_map = PeerMap::from_inner(PeerMapInner {
-            by_node_key: HashMap::from([
-                (a_endpoint.public_key, a_endpoint.id),
-                (b_endpoint.public_key, b_endpoint.id),
-                (c_endpoint.public_key, c_endpoint.id),
-                (d_endpoint.public_key, d_endpoint.id),
-            ]),
-            by_ip_port: HashMap::from([
-                (a_socket_addr.into(), a_endpoint.id),
-                (d_socket_addr.into(), d_endpoint.id),
-            ]),
-            by_quic_mapped_addr: HashMap::from([
-                (a_endpoint.quic_mapped_addr, a_endpoint.id),
-                (b_endpoint.quic_mapped_addr, b_endpoint.id),
-                (c_endpoint.quic_mapped_addr, c_endpoint.id),
-                (d_endpoint.quic_mapped_addr, d_endpoint.id),
-            ]),
-            by_id: HashMap::from([
-                (a_endpoint.id, a_endpoint),
-                (b_endpoint.id, b_endpoint),
-                (c_endpoint.id, c_endpoint),
-                (d_endpoint.id, d_endpoint),
-            ]),
-            next_id: 5,
-        });
-        let mut got = peer_map.endpoint_infos(later);
-        got.sort_by_key(|p| p.id);
-        assert_eq!(expect, got);
-    }
+    use std::net::Ipv4Addr;
 
     /// Test persisting and loading of known peers.
     #[tokio::test]
@@ -879,11 +606,15 @@ mod tests {
 
         let peer_map = PeerMap::default();
         let public_key = SecretKey::generate().public();
-        let id = peer_map.inner.lock().insert_endpoint(Options {
-            public_key,
-            derp_region: None,
-            active: false,
-        });
+        let id = peer_map
+            .inner
+            .lock()
+            .insert_endpoint(Options {
+                public_key,
+                derp_region: None,
+                active: false,
+            })
+            .id();
 
         const LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 
@@ -897,7 +628,7 @@ mod tests {
             // add address
             peer_map.add_peer_addr(peer_addr);
             // make it active
-            peer_map.inner.lock().receive_ip(addr);
+            peer_map.inner.lock().receive_udp(addr);
         }
 
         // offline adddresses
@@ -914,7 +645,7 @@ mod tests {
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
             let txid = stun::TransactionId::from([i as u8; 12]);
-            endpoint.endpoint_confirmed(addr, txid);
+            endpoint.handle_ping(addr, txid);
         }
 
         endpoint.prune_direct_addresses();
@@ -926,9 +657,8 @@ mod tests {
 
         assert_eq!(
             endpoint
-                .direct_addr_state
-                .values()
-                .filter(|state| !state.is_active())
+                .direct_address_states()
+                .filter(|(_addr, state)| !state.is_active())
                 .count(),
             MAX_INACTIVE_DIRECT_ADDRESSES
         )
@@ -941,7 +671,7 @@ mod tests {
         let active_peer = SecretKey::generate().public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         peer_map.add_peer_addr(PeerAddr::new(active_peer).with_direct_addresses([addr]));
-        peer_map.inner.lock().receive_ip(addr).expect("registered");
+        peer_map.inner.lock().receive_udp(addr).expect("registered");
 
         for _ in 0..MAX_INACTIVE_PEERS + 1 {
             let peer = SecretKey::generate().public();
@@ -954,7 +684,7 @@ mod tests {
         peer_map
             .inner
             .lock()
-            .endpoint_for_node_key(&active_peer)
+            .get(EndpointId::NodeKey(&active_peer))
             .expect("should not be pruned");
     }
 }

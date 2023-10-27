@@ -344,7 +344,7 @@ impl DerpActor {
     }
 
     async fn send_derp(&mut self, region_id: u16, contents: DerpContents, peer: PublicKey) {
-        debug!(region_id, ?peer, "sending derp");
+        debug!(region_id, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
         if !self.conn.derp_map.contains_region(region_id) {
             warn!("unknown region id {}", region_id);
             return;
@@ -376,7 +376,7 @@ impl DerpActor {
         }
 
         // Wake up the send waker if one is waiting for space in the channel
-        let mut wakers = self.conn.network_send_wakers.lock().unwrap();
+        let mut wakers = self.conn.network_send_wakers.lock();
         if let Some(waker) = wakers.take() {
             waker.wake();
         }

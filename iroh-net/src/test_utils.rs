@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use tokio::sync::oneshot;
-use tracing::{info_span, Instrument};
+use tracing::{error_span, info_span, Instrument};
 
 use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 use crate::key::SecretKey;
@@ -24,11 +24,13 @@ pub(crate) async fn run_derper() -> Result<(DerpMap, u16, CleanupDropGuard)> {
     // TODO: pass a mesh_key?
 
     let server_key = SecretKey::generate();
+    let me = server_key.public().fmt_short();
     let tls_config = crate::derp::http::make_tls_config();
     let server = crate::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
         .secret_key(Some(server_key))
         .tls_config(Some(tls_config))
         .spawn()
+        .instrument(error_span!("derper", %me))
         .await?;
 
     let https_addr = server.addr();
