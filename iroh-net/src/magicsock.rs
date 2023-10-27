@@ -22,7 +22,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
@@ -53,7 +53,7 @@ use crate::{
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::PeerAddr,
     magicsock::peer_map::PingRole,
-    net::{ip::LocalAddresses, netmon},
+    net::{ip::LocalAddresses, netmon, Network},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
 };
@@ -70,6 +70,8 @@ mod metrics;
 mod peer_map;
 mod rebinding_conn;
 mod timer;
+
+pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
 pub use self::peer_map::{ConnectionType, DirectAddrInfo, EndpointInfo};
@@ -88,47 +90,6 @@ const SAVE_PEERS_INTERVAL: Duration = Duration::from_secs(30);
 enum CurrentPortFate {
     Keep,
     Drop,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Network {
-    Ipv4,
-    Ipv6,
-}
-
-impl From<IpAddr> for Network {
-    fn from(value: IpAddr) -> Self {
-        match value {
-            IpAddr::V4(_) => Self::Ipv4,
-            IpAddr::V6(_) => Self::Ipv6,
-        }
-    }
-}
-
-impl Network {
-    fn default_addr(&self) -> IpAddr {
-        match self {
-            Self::Ipv4 => Ipv4Addr::UNSPECIFIED.into(),
-            Self::Ipv6 => Ipv6Addr::UNSPECIFIED.into(),
-        }
-    }
-
-    #[cfg(test)]
-    fn local_addr(&self) -> IpAddr {
-        match self {
-            Self::Ipv4 => Ipv4Addr::LOCALHOST.into(),
-            Self::Ipv6 => Ipv6Addr::LOCALHOST.into(),
-        }
-    }
-}
-
-impl From<Network> for socket2::Domain {
-    fn from(value: Network) -> Self {
-        match value {
-            Network::Ipv4 => socket2::Domain::IPV4,
-            Network::Ipv6 => socket2::Domain::IPV6,
-        }
-    }
 }
 
 /// Contains options for `MagicSock::listen`.
@@ -2399,18 +2360,19 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 
 /// Initial connection setup.
 async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
-    let ip6_port = if port != 0 { port + 1 } else { 0 };
+    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
+        .await
+        .context("bind IPv4 failed")?;
+    let ip4_port = pconn4.local_addr()?.port();
+    let ip6_port = ip4_port + 1;
+
     let pconn6 = match RebindingUdpConn::bind(ip6_port, Network::Ipv6).await {
         Ok(conn) => Some(conn),
         Err(err) => {
-            info!("rebind ignoring IPv6 bind failure: {:?}", err);
+            info!("bind ignoring IPv6 bind failure: {:?}", err);
             None
         }
     };
-
-    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
-        .await
-        .context("rebind IPv4 failed")?;
 
     Ok((pconn4, pconn6))
 }

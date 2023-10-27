@@ -12,21 +12,20 @@ use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
-use super::{CurrentPortFate, Network};
+use crate::net::Network;
+use crate::net::UdpSocket;
 
-/// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
-/// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
-const SOCKET_BUFFER_SIZE: usize = 7 << 20;
+use super::CurrentPortFate;
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
 #[derive(Clone, Debug)]
 pub struct RebindingUdpConn {
-    io: Arc<tokio::net::UdpSocket>,
+    io: Arc<UdpSocket>,
     state: Arc<quinn_udp::UdpSocketState>,
 }
 
 impl RebindingUdpConn {
-    pub(super) fn as_socket(&self) -> Arc<tokio::net::UdpSocket> {
+    pub(super) fn as_socket(&self) -> Arc<UdpSocket> {
         self.io.clone()
     }
 
@@ -49,7 +48,7 @@ impl RebindingUdpConn {
         }
 
         let sock = bind(Some(&self.io), port, network, cur_port_fate).await?;
-        self.io = Arc::new(tokio::net::UdpSocket::from_std(sock)?);
+        self.io = Arc::new(sock);
         self.state = Default::default();
 
         Ok(())
@@ -58,7 +57,7 @@ impl RebindingUdpConn {
     pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
         let sock = bind(None, port, network, CurrentPortFate::Keep).await?;
         Ok(Self {
-            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
+            io: Arc::new(sock),
             state: Default::default(),
         })
     }
@@ -134,11 +133,11 @@ impl AsyncUdpSocket for RebindingUdpConn {
 }
 
 async fn bind(
-    inner: Option<&tokio::net::UdpSocket>,
+    inner: Option<&UdpSocket>,
     port: u16,
     network: Network,
     cur_port_fate: CurrentPortFate,
-) -> anyhow::Result<std::net::UdpSocket> {
+) -> anyhow::Result<UdpSocket> {
     debug!(
         "bind_socket: network={:?} cur_port_fate={:?}",
         network, cur_port_fate
@@ -170,7 +169,7 @@ async fn bind(
             // TODO: inner.close()
         }
         // Open a new one with the desired port.
-        match listen_packet(network, *port).await {
+        match UdpSocket::bind(network, *port).await {
             Ok(pconn) => {
                 let local_addr = pconn.local_addr().context("UDP socket not bound")?;
                 debug!("bind_socket: successfully bound {network:?} {local_addr}");
@@ -188,42 +187,6 @@ async fn bind(
 
     // Failed to bind, including on port 0 (!).
     bail!("failed to bind any ports (tried {:?})", ports);
-}
-
-/// Opens a packet listener.
-async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net::UdpSocket> {
-    let addr = SocketAddr::new(network.default_addr(), port);
-    let socket = socket2::Socket::new(
-        network.into(),
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )?;
-
-    if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
-        warn!(
-            "failed to set recv_buffer_size to {}: {:?}",
-            SOCKET_BUFFER_SIZE, err
-        );
-    }
-    if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
-        warn!(
-            "failed to set send_buffer_size to {}: {:?}",
-            SOCKET_BUFFER_SIZE, err
-        );
-    }
-    socket.set_nonblocking(true)?; // UdpSocketState::configure also does this
-
-    if network == Network::Ipv6 {
-        // Avoid dualstack
-        socket.set_only_v6(true)?;
-    }
-
-    socket.bind(&addr.into())?;
-    let socket: std::net::UdpSocket = socket.into();
-
-    quinn_udp::UdpSocketState::configure((&socket).into())?;
-
-    Ok(socket)
 }
 
 #[cfg(test)]

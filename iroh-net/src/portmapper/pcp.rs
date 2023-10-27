@@ -5,6 +5,8 @@ use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 use rand::RngCore;
 use tracing::{debug, trace};
 
+use crate::net::UdpSocket;
+
 mod protocol;
 
 /// Timeout to receive a response from a PCP server.
@@ -53,7 +55,7 @@ impl Mapping {
         preferred_external_address: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> anyhow::Result<Self> {
         // create the socket and send the request
-        let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+        let socket = UdpSocket::bind_full((local_ip, 0)).await?;
         socket.connect((gateway, protocol::SERVER_PORT)).await?;
 
         let mut nonce = [0u8; 12];
@@ -143,7 +145,7 @@ impl Mapping {
         } = self;
 
         // create the socket and send the request
-        let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+        let socket = UdpSocket::bind_full((local_ip, 0)).await?;
         socket.connect((gateway, protocol::SERVER_PORT)).await?;
 
         let local_port = local_port.into();
@@ -187,7 +189,7 @@ async fn probe_available_fallible(
     gateway: Ipv4Addr,
 ) -> anyhow::Result<protocol::Response> {
     // create the socket and send the request
-    let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+    let socket = UdpSocket::bind_full((local_ip, 0)).await?;
     socket.connect((gateway, protocol::SERVER_PORT)).await?;
     let req = protocol::Request::annouce(local_ip.to_ipv6_mapped());
     socket.send(&req.encode()).await?;
