@@ -38,6 +38,7 @@ pub enum ContentArg {
 }
 
 impl ContentArg {
+    /// Get the hash and format of the content.
     pub fn hash_and_format(&self) -> HashAndFormat {
         match self {
             ContentArg::Hash(hash) => HashAndFormat::raw(*hash),
@@ -49,7 +50,8 @@ impl ContentArg {
         }
     }
 
-    pub fn peer(&self) -> Option<NodeId> {
+    /// Get the host of the content. Only defined for tickets.
+    pub fn host(&self) -> Option<NodeId> {
         match self {
             ContentArg::Hash(_) => None,
             ContentArg::HashAndFormat(_) => None,
@@ -99,9 +101,13 @@ pub struct AnnounceArgs {
     pub host: Option<NodeId>,
 
     /// The content to announce.
-    pub content: ContentArg,
+    ///
+    /// Content can be specified as a hash, a hash and format, or a ticket.
+    /// If a hash is specified, the format is assumed to be raw.
+    /// Unless a ticket is specified, the host must be specified.
+    pub content: Vec<ContentArg>,
 
-    /// Announce that the peer has the complete data.
+    /// Announce that the peer has only partial data.
     #[clap(long)]
     pub partial: bool,
 }

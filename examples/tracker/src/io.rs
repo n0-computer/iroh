@@ -14,6 +14,11 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 
 use crate::{protocol::AnnounceKind, tracker::ProbeKind, NodeId};
 
+pub const CONFIG_DEFAULTS_FILE: &str = "config.defaults.toml";
+pub const CONFIG_FILE: &str = "config.toml";
+pub const SERVER_KEY_FILE: &str = "server.key";
+pub const CLIENT_KEY_FILE: &str = "client.key";
+
 /// Data format of the announce data file.
 ///
 /// This should be easy to edit manually when serialized as json or toml.

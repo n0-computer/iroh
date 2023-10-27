@@ -29,15 +29,20 @@ use crate::{
     NodeId,
 };
 
+/// The tracker server.
+///
+/// This is a cheaply cloneable handle to the state and the options.
 #[derive(Debug, Clone, Default)]
 pub struct Tracker(Arc<Inner>);
 
+/// The inner state of the tracker server. Options are immutable and don't need to be locked.
 #[derive(Debug, Default)]
 struct Inner {
     state: RwLock<State>,
     options: Options,
 }
 
+/// The mutable state of the tracker server.
 #[derive(Debug, Clone, Default)]
 struct State {
     // every announce we ever got, indexed by hash, kind and peer
@@ -49,6 +54,7 @@ struct State {
 }
 
 impl State {
+    /// Get the part of the announce data that is persisted
     fn get_persisted_announce_data(&self) -> AnnounceData {
         let mut data: AnnounceData = Default::default();
         for (content, by_kind_and_peers) in self.announce_data.iter() {
@@ -97,6 +103,9 @@ struct PeerInfo {
 }
 
 impl Tracker {
+    /// Create a new tracker server.
+    ///
+    /// You will have to drive the tracker server yourself, using `handle_connection` and `probe_loop`.
     pub fn new(options: Options) -> anyhow::Result<Self> {
         let announce_data = if let Some(data_path) = &options.announce_data_path {
             crate::io::load_from_file::<AnnounceData>(data_path)?
@@ -124,6 +133,54 @@ impl Tracker {
             state: RwLock::new(state),
             options,
         })))
+    }
+
+    /// The main loop that probes peers.
+    pub async fn probe_loop(self, endpoint: MagicEndpoint) -> anyhow::Result<()> {
+        loop {
+            let content_by_peers = self.get_content_by_peers();
+            let now = Instant::now();
+            let results = futures::stream::iter(content_by_peers.into_iter())
+                .map(|(peer, by_kind_and_content)| {
+                    let endpoint = endpoint.clone();
+                    let this = self.clone();
+                    this.probe_one(endpoint, peer, by_kind_and_content)
+                })
+                .buffer_unordered(self.0.options.probe_parallelism)
+                .collect::<Vec<_>>()
+                .await;
+            let results = results
+                .into_iter()
+                .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+            self.apply_result(results, now);
+            tokio::time::sleep(self.0.options.probe_interval).await;
+        }
+    }
+
+    /// Handle a single incoming connection on the tracker ALPN.
+    pub async fn handle_connection(&self, connection: quinn::Connection) -> anyhow::Result<()> {
+        log!("calling accept_bi");
+        let (mut send, mut recv) = connection.accept_bi().await?;
+        log!("got bi stream");
+        let request = recv.read_to_end(REQUEST_SIZE_LIMIT).await?;
+        let request = postcard::from_bytes::<Request>(&request)?;
+        match request {
+            Request::Announce(announce) => {
+                log!("got announce: {:?}", announce);
+                self.handle_announce(announce).await?;
+                send.finish().await?;
+            }
+
+            Request::Query(query) => {
+                log!("handle query: {:?}", query);
+                let response = self.handle_query(query).await?;
+                let response = Response::QueryResponse(response);
+                let response = postcard::to_stdvec(&response)?;
+                send.write_all(&response).await?;
+                send.finish().await?;
+            }
+        }
+        Ok(())
     }
 
     async fn get_or_insert_size(
@@ -237,31 +294,6 @@ impl Tracker {
             }
         };
         Ok(stats)
-    }
-
-    pub async fn handle_connection(&self, connection: quinn::Connection) -> anyhow::Result<()> {
-        println!("calling accept_bi");
-        let (mut send, mut recv) = connection.accept_bi().await?;
-        println!("got bi stream");
-        let request = recv.read_to_end(REQUEST_SIZE_LIMIT).await?;
-        let request = postcard::from_bytes::<Request>(&request)?;
-        match request {
-            Request::Announce(announce) => {
-                println!("got announce: {:?}", announce);
-                self.handle_announce(announce).await?;
-                send.finish().await?;
-            }
-
-            Request::Query(query) => {
-                println!("handle query: {:?}", query);
-                let response = self.handle_query(query).await?;
-                let response = Response::QueryResponse(response);
-                let response = postcard::to_stdvec(&response)?;
-                send.write_all(&response).await?;
-                send.finish().await?;
-            }
-        }
-        Ok(())
     }
 
     async fn handle_announce(&self, announce: Announce) -> anyhow::Result<()> {
@@ -405,27 +437,5 @@ impl Tracker {
             results.push((content, announce_kind, res));
         }
         anyhow::Ok((host, results))
-    }
-
-    /// The main loop that probes peers.
-    pub async fn probe_loop(self, endpoint: MagicEndpoint) -> anyhow::Result<()> {
-        loop {
-            let content_by_peers = self.get_content_by_peers();
-            let now = Instant::now();
-            let results = futures::stream::iter(content_by_peers.into_iter())
-                .map(|(peer, by_kind_and_content)| {
-                    let endpoint = endpoint.clone();
-                    let this = self.clone();
-                    this.probe_one(endpoint, peer, by_kind_and_content)
-                })
-                .buffer_unordered(self.0.options.probe_parallelism)
-                .collect::<Vec<_>>()
-                .await;
-            let results = results
-                .into_iter()
-                .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-            self.apply_result(results, now);
-            tokio::time::sleep(self.0.options.probe_interval).await;
-        }
     }
 }
