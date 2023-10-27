@@ -1002,7 +1002,7 @@ impl Inner {
                 actor_sender
                     .send(ActorMessage::ReStun("refresh-for-peering"))
                     .await
-                    .unwrap();
+                    .ok()
             });
 
             let actor_sender = self.actor_sender.clone();
@@ -1018,7 +1018,7 @@ impl Inner {
                                 dst_key,
                             })
                             .await
-                            .unwrap();
+                            .ok();
                     })
                 }),
             );
@@ -2455,9 +2455,7 @@ impl DiscoveredEndpoints {
     fn set(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
         for (_de, f) in self.on_refresh.drain() {
-            tokio::task::spawn(async move {
-                f();
-            });
+            tokio::task::spawn(f());
         }
 
         if endpoint_sets_equal(endpoints, &self.last_endpoints) {
