@@ -1,12 +1,12 @@
 //! This module manages the different tickets Iroh has.
 
+use strum::{AsRefStr, Display, EnumIter, IntoEnumIterator};
+
 pub mod blob;
 pub mod doc;
 
-const PREFIX_SEPARATOR: char = ':';
-
 /// Kind of ticket.
-#[derive(Debug, strum::EnumString, strum::Display, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Display, PartialEq, Eq, Clone, Copy, EnumIter, AsRefStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Kind {
     /// A blob ticket.
@@ -19,12 +19,14 @@ pub enum Kind {
 
 impl Kind {
     /// Parse the ticket prefix to obtain the [`Kind`] and remainig string.
-    pub fn parse_prefix(s: &str) -> Option<Result<(Self, &str), Error>> {
-        let (prefix, rest) = s.split_once(PREFIX_SEPARATOR)?;
-        match prefix.parse() {
-            Ok(kind) => Some(Ok((kind, rest))),
-            Err(e) => Some(Err(e.into())),
+    pub fn parse_prefix(s: &str) -> Result<(Self, &str), Error> {
+        // we don't know the kind of ticket so try them all
+        for kind in Kind::iter() {
+            if let Some(rest) = s.strip_prefix(kind.as_ref()) {
+                return Ok((kind, rest));
+            }
         }
+        Err(Error::MissingKind)
     }
 }
 
@@ -39,15 +41,9 @@ pub enum Error {
         /// Found [`Kind`] of ticket.
         found: Kind,
     },
-    /// It appears to be a ticket but the prefix is not a known one.
-    #[display("unrecogized ticket prefix")]
-    UnrecognizedKind(#[from] strum::ParseError),
     /// This does not appear to be a ticket.
-    #[display("not a {expected} ticket")]
-    MissingKind {
-        /// Prefix that is missing.
-        expected: Kind,
-    },
+    #[display("not a ticket: prefix missing")]
+    MissingKind,
     /// This looks like a ticket, but postcard deserialization failed.
     #[display("deserialization failed: {_0}")]
     Postcard(#[from] postcard::Error),
@@ -83,7 +79,6 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Serialize to string.
     fn serialize(&self) -> String {
         let mut out = Self::KIND.to_string();
-        out.push(PREFIX_SEPARATOR);
         let bytes = self.to_bytes();
         data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
         out.make_ascii_lowercase();
@@ -93,7 +88,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Deserialize from a string.
     fn deserialize(str: &str) -> Result<Self, Error> {
         let expected = Self::KIND;
-        let (found, bytes) = Kind::parse_prefix(str).ok_or(Error::MissingKind { expected })??;
+        let (found, bytes) = Kind::parse_prefix(str)?;
         if expected != found {
             return Err(Error::WrongKind { expected, found });
         }
