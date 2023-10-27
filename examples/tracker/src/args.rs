@@ -121,14 +121,14 @@ pub struct QueryArgs {
     #[clap(long)]
     pub port: Option<u16>,
 
-    /// The content to find peers for.
+    /// The content to find hosts for.
     pub content: ContentArg,
 
-    /// Ask for peers that were announced as having just partial data
+    /// Ask for hosts that were announced as having just partial data
     #[clap(long)]
     pub partial: bool,
 
-    /// Ask for peers that were recently checked and found to have some data
+    /// Ask for hosts that were recently checked and found to have some data
     #[clap(long)]
-    pub validated: bool,
+    pub verified: bool,
 }

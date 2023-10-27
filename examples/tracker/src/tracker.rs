@@ -312,7 +312,7 @@ impl Tracker {
         if let Some(path) = &self.0.options.announce_data_path {
             let data = state.get_persisted_announce_data();
             drop(state);
-            crate::io::save_to_file(&data, path)?;
+            crate::io::save_to_file(data, path)?;
         }
         Ok(())
     }
@@ -335,13 +335,13 @@ impl Tracker {
                         .map(|t| t.elapsed() <= options.probe_timeout)
                         .unwrap_or_default();
                     if !recently_announced {
-                        // info is too old
-                        tracing::error!("content is too old");
+                        // announce is too old
+                        tracing::error!("announce is too old");
                         continue;
                     }
-                    if query.flags.validated && !recently_probed {
-                        // query asks for validated complete peers, but the probe is too old
-                        tracing::error!("validation of complete data is too old");
+                    if query.flags.verified && !recently_probed {
+                        // query asks for verificated hosts, but the last successful probe is too old
+                        tracing::error!("verification of complete data is too old");
                         continue;
                     }
                     peers.push(*peer_id);

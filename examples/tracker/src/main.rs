@@ -47,7 +47,7 @@ pub fn verbose() -> bool {
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {
-        if crate::verbose() {
+        if $crate::verbose() {
             println!($($arg)*);
         }
     };
@@ -98,7 +98,7 @@ pub async fn accept_conn(
 /// Write default options to a sample config file.
 fn write_defaults() -> anyhow::Result<()> {
     let default_path = tracker_path(CONFIG_DEFAULTS_FILE)?;
-    crate::io::save_to_file(&Options::default(), &default_path)?;
+    crate::io::save_to_file(Options::default(), &default_path)?;
     Ok(())
 }
 
@@ -190,12 +190,7 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
         }
         *hosts.iter().next().unwrap()
     };
-    let content = args
-        .content
-        .iter()
-        .map(|x| x.hash_and_format())
-        .into_iter()
-        .collect();
+    let content = args.content.iter().map(|x| x.hash_and_format()).collect();
     let announce = Announce {
         host,
         kind,
@@ -221,7 +216,7 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
         content: args.content.hash_and_format(),
         flags: QueryFlags {
             complete: !args.partial,
-            validated: args.validated,
+            verified: args.verified,
         },
     };
     let info = PeerAddr {

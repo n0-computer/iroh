@@ -1,6 +1,6 @@
 //! Discovery services
 //!
-//! Originally copied and adapted from https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs
+//! Originally copied and adapted from <https://github.com/dvc94ch/p2p/blob/master/src/discovery.rs>
 use std::{
     collections::BTreeSet,
     net::{IpAddr, SocketAddr},

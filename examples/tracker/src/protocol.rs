@@ -52,14 +52,14 @@ pub struct QueryFlags {
     /// If this is false, the response might contain peers that only have some of the data.
     pub complete: bool,
 
-    /// Only return peers that have been validated.
+    /// Only return hosts that have been verified.
     ///
-    /// In case of a partial query, validation just means a check that the peer exists
+    /// In case of a partial query, verification just means a check that the host exists
     /// and returns the size for the data.
     ///
-    /// In case of a complete query, validation means that the peer has been randomly
+    /// In case of a complete query, verification means that the host has been randomly
     /// probed for the data.
-    pub validated: bool,
+    pub verified: bool,
 }
 
 /// Query a peer for a blob or set of blobs.

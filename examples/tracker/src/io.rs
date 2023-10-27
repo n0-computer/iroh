@@ -37,11 +37,11 @@ pub fn save_to_file(data: impl Serialize, path: &Path) -> anyhow::Result<()> {
     match ext.as_str() {
         "toml" => {
             let data = toml::to_string_pretty(&data)?;
-            temp.write_all(&data.as_bytes())?;
+            temp.write_all(data.as_bytes())?;
         }
         "json" => {
             let data = serde_json::to_string_pretty(&data)?;
-            temp.write_all(&data.as_bytes())?;
+            temp.write_all(data.as_bytes())?;
         }
         "postcard" => {
             let data = postcard::to_stdvec(&data)?;
