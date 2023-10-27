@@ -571,17 +571,16 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Add this token to the ticket.
+        /// Include an optional authentication token in the ticket.
         #[clap(long)]
         token: Option<String>,
-        /// Do not include derp reion information in the ticket.
+        /// Do not include DERP reion information in the ticket. (advanced)
         #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
         no_derp: bool,
-        /// Include only the derp region information in the ticket.
+        /// Include only the DERP region information in the ticket. (advanced)
         #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
         derp_only: bool,
-        /// Create a ticket for the blob only. If the blob is a collection, the requester will not
-        /// download it recursively.
+        /// If the blob is a collection, the requester will only fetch the list.
         #[clap(long, default_value_t = false)]
         non_recursive: bool,
         /// Display the contents of this ticket too.
