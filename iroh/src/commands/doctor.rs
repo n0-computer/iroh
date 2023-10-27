@@ -11,7 +11,7 @@ use std::{
 
 use crate::config::{path_with_env, NodeConfig};
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
@@ -917,8 +917,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
-    let (kind, _) = iroh::ticket::Kind::parse_prefix(ticket)
-        .ok_or_else(|| anyhow!("missing ticket prefix"))??;
+    let (kind, _) = iroh::ticket::Kind::parse_prefix(ticket)?;
     match kind {
         iroh::ticket::Kind::Blob => {
             let ticket = iroh::ticket::blob::Ticket::from_str(ticket)
