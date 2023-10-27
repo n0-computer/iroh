@@ -767,8 +767,6 @@ mod tests {
         assert_eq!(conn_addr, direct_addr);
     }
 
-    // TODO: Enable in https://github.com/n0-computer/iroh/pull/1745
-    #[ignore]
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
         let _guard = iroh_test::logging::setup();
