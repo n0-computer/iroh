@@ -977,38 +977,31 @@ impl Inner {
         }
     }
 
-    #[instrument(skip_all)]
-    async fn send_raw(
-        &self,
-        addr: SocketAddr,
-        mut transmits: Vec<quinn_udp::Transmit>,
-    ) -> io::Result<usize> {
-        trace!(dst = %addr, "send {} packets", transmits.len());
-
-        if transmits.iter().any(|t| t.destination != addr) {
-            for t in &mut transmits {
-                t.destination = addr;
+    fn send_queued_call_me_maybes(&self) {
+        let msg = self.endpoints.read().to_call_me_maybe_message();
+        let msg = disco::Message::CallMeMaybe(msg);
+        for (public_key, region_id) in self.pending_call_me_maybes.lock().drain() {
+            if !self.send_disco_message_derp(region_id, public_key, msg.clone()) {
+                warn!(peer = %public_key.fmt_short(), "derp channel full, dropping call-me-maybe");
             }
         }
-
-        futures::future::poll_fn(|cx| self.poll_send_udp(addr, &transmits, cx)).await
     }
 
     fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
-            let my_number: Vec<_> = endpoints.iter().map(|ep| ep.addr).collect();
-            let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number });
+            let msg = self.endpoints.read().to_call_me_maybe_message();
+            let msg = disco::Message::CallMeMaybe(msg);
             if !self.send_disco_message_derp(derp_region, dst_key, msg) {
-                warn!(peer = %dst_key.fmt_short(), "Derp channel full, dropping CallMeMaybe");
+                warn!(peer = %dst_key.fmt_short(), "derp channel full, dropping call-me-maybe");
             }
         } else {
             self.pending_call_me_maybes
                 .lock()
                 .insert(dst_key, derp_region);
-            info!(
-                "want call-me-maybe but endpoints stale; restunning ({:?})",
-                endpoints.last_endpoints_time
+            debug!(
+                last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
+                "want call-me-maybe but endpoints stale; queing after restun",
             );
             self.re_stun("refresh-for-peering");
         }
@@ -2051,10 +2044,7 @@ impl Actor {
             if let Some(ref cb) = self.inner.on_endpoints {
                 cb(&eps[..]);
             }
-            for (public_key, region_id) in self.inner.pending_call_me_maybes.lock().drain() {
-                self.inner
-                    .send_or_queue_call_me_maybe(region_id, public_key);
-            }
+            self.inner.send_queued_call_me_maybes();
         }
     }
 
@@ -2469,6 +2459,11 @@ impl DiscoveredEndpoints {
             None => false,
             Some(time) => time.elapsed() <= ENDPOINTS_FRESH_ENOUGH_DURATION,
         }
+    }
+
+    fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
+        let my_number = self.last_endpoints.iter().map(|ep| ep.addr).collect();
+        disco::CallMeMaybe { my_number }
     }
 }
 
