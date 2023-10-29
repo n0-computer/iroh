@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, HashSet},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
@@ -93,7 +93,6 @@ pub(super) struct Endpoint {
     best_addr: BestAddr,
     /// [`EndpointState`] for this peer's direct addresses.
     direct_addr_state: HashMap<IpPort, EndpointState>,
-    is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
     /// Any outstanding "tailscale ping" commands running
     pending_cli_pings: Vec<PendingCliPing>,
     sent_ping: HashMap<stun::TransactionId, SentPing>,
@@ -139,7 +138,6 @@ impl Endpoint {
             best_addr: Default::default(),
             sent_ping: HashMap::new(),
             direct_addr_state: HashMap::new(),
-            is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
             last_used: options.active.then(Instant::now),
         }
@@ -811,11 +809,8 @@ impl Endpoint {
     /// open. Now we can Ping back and make it through.
     pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
         let now = Instant::now();
-        for el in self.is_call_me_maybe_ep.values_mut() {
-            *el = false;
-        }
-
         let mut new_eps = Vec::new();
+        let mut call_me_maybe_eps = HashSet::new();
 
         for ep in &m.my_number {
             if let IpAddr::V6(ip) = ep.ip() {
@@ -825,8 +820,8 @@ impl Endpoint {
                     continue;
                 }
             }
-            self.is_call_me_maybe_ep.insert(*ep, true);
             let ep = IpPort::from(*ep);
+            call_me_maybe_eps.insert(ep);
             if let Some(es) = self.direct_addr_state.get_mut(&ep) {
                 es.call_me_maybe_time.replace(now);
             } else {
@@ -840,6 +835,7 @@ impl Endpoint {
                 new_eps.push(ep);
             }
         }
+
         if !new_eps.is_empty() {
             debug!(
                 ?new_eps,
@@ -847,26 +843,24 @@ impl Endpoint {
             );
         }
 
-        // Delete any prior CallMeMaybe endpoints that weren't included in this message.
-        self.is_call_me_maybe_ep.retain(|ep, want| {
-            if !*want {
-                self.best_addr.clear_if_equals(
-                    *ep,
-                    ClearReason::PruneCallMeMaybe,
-                    self.derp_region.is_some(),
-                );
-                false
-            } else {
-                true
-            }
-        });
-
         // Zero out all the last_ping times to force send_pings to send new ones,
         // even if it's been less than 5 seconds ago.
-        for st in self.direct_addr_state.values_mut() {
+        // Also clear pongs for endpoints not included in the updated set.
+        for (ipp, st) in self.direct_addr_state.iter_mut() {
             st.last_ping = None;
+            if !call_me_maybe_eps.contains(ipp) {
+                st.recent_pong = None;
+            }
         }
-        self.send_pings(Instant::now(), false)
+        // Clear trust on our best_addr if it is not included in the updated set.
+        if let Some(addr) = self.best_addr.addr() {
+            let ipp: IpPort = addr.into();
+            if !call_me_maybe_eps.contains(&ipp) {
+                self.best_addr.clear_trust();
+            }
+        }
+
+        self.send_pings(now, false)
     }
 
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
@@ -1325,7 +1319,6 @@ mod tests {
                         now + Duration::from_secs(100),
                     ),
                     direct_addr_state: endpoint_state,
-                    is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
                     last_used: Some(now),
@@ -1351,7 +1344,6 @@ mod tests {
                 derp_region: Some((0, relay_state)),
                 best_addr: BestAddr::default(),
                 direct_addr_state: HashMap::default(),
-                is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
                 last_used: Some(now),
@@ -1371,7 +1363,6 @@ mod tests {
                 derp_region: new_relay_and_state(Some(0)),
                 best_addr: BestAddr::default(),
                 direct_addr_state: endpoint_state,
-                is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
                 last_used: Some(now),
@@ -1412,7 +1403,6 @@ mod tests {
                         expired,
                     ),
                     direct_addr_state: endpoint_state,
-                    is_call_me_maybe_ep: HashMap::new(),
                     pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
                     last_used: Some(now),
