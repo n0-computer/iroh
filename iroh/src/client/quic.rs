@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use iroh_bytes::util::runtime;
 use quic_rpc::transport::quinn::QuinnConnection;
 
 use crate::rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, ProviderService};
@@ -26,9 +27,13 @@ pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 pub type Doc = super::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// Connect to an iroh node running on the same computer, but in a different process.
-pub async fn connect(rpc_port: u16) -> anyhow::Result<Iroh> {
+pub async fn connect(rpc_port: u16, rt: Option<runtime::Handle>) -> anyhow::Result<Iroh> {
+    let rt = match rt {
+        Some(rt) => rt,
+        None => runtime::Handle::from_current(1)?,
+    };
     let client = connect_raw(rpc_port).await?;
-    Ok(Iroh::new(client))
+    Ok(Iroh::new(client, rt))
 }
 
 /// Create a raw RPC client to an iroh node running on the same computer, but in a different

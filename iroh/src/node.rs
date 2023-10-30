@@ -743,7 +743,7 @@ impl<D: ReadableStore> Node<D> {
 
     /// Return a client to control this node over an in-memory channel.
     pub fn client(&self) -> crate::client::mem::Iroh {
-        crate::client::Iroh::new(self.controller())
+        crate::client::Iroh::new(self.controller(), self.inner.rt.clone())
     }
 
     /// Return a single token containing everything needed to get a hash.
