@@ -25,7 +25,6 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
-use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::{self, Instant};
@@ -37,6 +36,7 @@ use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 use crate::dns::DNS_RESOLVER;
 use crate::net::interfaces;
 use crate::net::ip;
+use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::Pinger;
 use crate::util::{CancelOnDrop, MaybeFuture};
@@ -133,6 +133,11 @@ pub(super) struct Addr {
 impl Addr {
     /// Blocking send to the actor, to be used from a non-actor future.
     async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
+        trace!(
+            "sending {:?} to channel with cap {}",
+            msg,
+            self.sender.capacity()
+        );
         self.sender.send(msg).await
     }
 }
@@ -228,7 +233,7 @@ impl Actor {
             "reportstate actor starting",
         );
 
-        self.report.os_has_ipv6 = super::os_has_ipv6().await;
+        self.report.os_has_ipv6 = super::os_has_ipv6();
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
@@ -247,18 +252,19 @@ impl Actor {
             }
             tokio::select! {
                 _ = &mut total_timer => {
+                    trace!("tick: total_timer expired");
                     bail!("report timed out");
                 }
 
                 _ = &mut probe_timer => {
-                    warn!("probes timed out");
+                    warn!("tick: probes timed out");
                     probes.abort_all();
                     self.handle_abort_probes();
                 }
 
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
-                    debug!(report=?pm, "Portmapper probe report");
+                    debug!(report=?pm, "tick: portmapper probe report");
                     self.report.portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
@@ -267,6 +273,7 @@ impl Actor {
 
                 // Check for probes finishing.
                 set_result = probes.join_next(), if self.outstanding_tasks.probes => {
+                    trace!("tick: probes done: {:?}", set_result);
                     match set_result {
                         Some(Ok(Ok(report))) => self.handle_probe_report(report),
                         Some(Ok(Err(_))) => (),
@@ -277,18 +284,20 @@ impl Actor {
                             self.handle_abort_probes();
                         }
                     }
+                    trace!("tick: probes handled");
                 }
 
                 // Drive the captive task.
                 found = &mut captive_task, if self.outstanding_tasks.captive_task => {
+                    trace!("tick: captive portal task done");
                     self.report.captive_portal = found;
                     captive_task.inner = None;
                     self.outstanding_tasks.captive_task = false;
-                    trace!("captive portal task future done");
                 }
 
                 // Handle actor messages.
                 msg = self.msg_rx.recv() => {
+                    trace!("tick: msg recv: {:?}", msg);
                     match msg {
                         Some(msg) => self.handle_message(msg),
                         None => bail!("msg_rx closed, reportgen client must be dropped"),
@@ -476,6 +485,7 @@ impl Actor {
     /// task if there were successful probes.  Be sure to only handle this after all the
     /// required [`ProbeReport`]s have been processed.
     fn handle_abort_probes(&mut self) {
+        trace!("handle abort probes");
         self.outstanding_tasks.probes = false;
         if self.report.udp {
             self.outstanding_tasks.captive_task = false;
