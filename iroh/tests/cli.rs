@@ -342,7 +342,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
                 "--addr",
                 ADDR,
                 "--rpc-port",
-                "disabled",
+                "0",
                 path.to_str().unwrap(),
                 "--wrap",
             ],
@@ -476,7 +476,7 @@ fn make_provider_in(
         "--addr",
         addr.unwrap_or(ADDR),
         "--rpc-port",
-        rpc_port.unwrap_or("disabled"),
+        rpc_port.unwrap_or("0"),
     ];
     if wrap {
         args.push("--wrap");
