@@ -99,9 +99,7 @@ impl Actor {
     }
 
     async fn run_inner(self) -> Result<()> {
-        let socket = UdpSocket::bind_v4(0)
-            .await
-            .context("Failed to bind hairpin socket on 0.0.0.0:0")?;
+        let socket = UdpSocket::bind_v4(0).context("Failed to bind hairpin socket on 0.0.0.0:0")?;
 
         if let Err(err) = Self::prepare_hairpin(&socket).await {
             warn!("unable to send hairpin prep: {err:#}");
@@ -223,7 +221,7 @@ mod tests {
         // emulate this by binding a random socket which we pretend is our publicly
         // discovered address.  The hairpin actor will send it a request and we return it
         // via the inflight channel.
-        let public_sock = UdpSocket::bind_local_v4(0).await.unwrap();
+        let public_sock = UdpSocket::bind_local_v4(0).unwrap();
         actor.start_check(public_sock.local_addr().unwrap());
 
         // This bit is our dummy netcheck actor: it handles the inflight request and sends

@@ -312,7 +312,7 @@ impl Endpoint {
 
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
-    #[allow(unused)]
+    #[allow(unused, clippy::unused_async)]
     pub(super) async fn cli_ping<F>(
         &mut self,
         mut res: config::PingResult,

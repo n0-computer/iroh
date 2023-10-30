@@ -11,6 +11,9 @@ repository = "https://github.com/n0-computer/iroh"
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = "1"
 blake3 = { package = "iroh-blake3", version = "1.4.3"}

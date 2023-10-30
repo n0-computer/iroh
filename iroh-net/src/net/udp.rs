@@ -15,47 +15,43 @@ pub struct UdpSocket(Option<tokio::net::UdpSocket>);
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 impl UdpSocket {
     /// Bind only Ipv4 on any interface.
-    pub async fn bind_v4(port: u16) -> Result<Self> {
-        Self::bind(IpFamily::V4, port).await
+    pub fn bind_v4(port: u16) -> Result<Self> {
+        Self::bind(IpFamily::V4, port)
     }
 
     /// Bind only Ipv6 on any interface.
-    pub async fn bind_v6(port: u16) -> Result<Self> {
-        Self::bind(IpFamily::V6, port).await
+    pub fn bind_v6(port: u16) -> Result<Self> {
+        Self::bind(IpFamily::V6, port)
     }
 
     /// Bind only Ipv4 on localhost.
-    pub async fn bind_local_v4(port: u16) -> Result<Self> {
-        Self::bind_local(IpFamily::V4, port).await
+    pub fn bind_local_v4(port: u16) -> Result<Self> {
+        Self::bind_local(IpFamily::V4, port)
     }
 
     /// Bind only Ipv6 on localhost.
-    pub async fn bind_local_v6(port: u16) -> Result<Self> {
-        Self::bind_local(IpFamily::V6, port).await
+    pub fn bind_local_v6(port: u16) -> Result<Self> {
+        Self::bind_local(IpFamily::V6, port)
     }
 
     /// Bind to the given port only on localhost.
-    pub async fn bind_local(network: IpFamily, port: u16) -> Result<Self> {
+    pub fn bind_local(network: IpFamily, port: u16) -> Result<Self> {
         let addr = SocketAddr::new(network.local_addr(), port);
-        Self::bind_raw(addr, true)
-            .await
-            .with_context(|| format!("{addr:?}"))
+        Self::bind_raw(addr, true).with_context(|| format!("{addr:?}"))
     }
 
     /// Bind to the given port and listen on all interfaces.
-    pub async fn bind(network: IpFamily, port: u16) -> Result<Self> {
+    pub fn bind(network: IpFamily, port: u16) -> Result<Self> {
         let addr = SocketAddr::new(network.unspecified_addr(), port);
-        Self::bind_raw(addr, true)
-            .await
-            .with_context(|| format!("{addr:?}"))
+        Self::bind_raw(addr, true).with_context(|| format!("{addr:?}"))
     }
 
     /// Bind to any provided [`SocketAddr`]. Does not prepare for using the socket as QUIC socket.
-    pub async fn bind_full(addr: impl Into<SocketAddr>) -> Result<Self> {
-        Self::bind_raw(addr, false).await
+    pub fn bind_full(addr: impl Into<SocketAddr>) -> Result<Self> {
+        Self::bind_raw(addr, false)
     }
 
-    async fn bind_raw(addr: impl Into<SocketAddr>, prepare_for_quinn: bool) -> Result<Self> {
+    fn bind_raw(addr: impl Into<SocketAddr>, prepare_for_quinn: bool) -> Result<Self> {
         let addr = addr.into();
         let network = IpFamily::from(addr.ip());
         let socket = socket2::Socket::new(

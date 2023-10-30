@@ -29,7 +29,7 @@ impl RebindingUdpConn {
         self.io.clone()
     }
 
-    pub(super) async fn rebind(
+    pub(super) fn rebind(
         &mut self,
         port: u16,
         network: IpFamily,
@@ -47,15 +47,15 @@ impl RebindingUdpConn {
             return Ok(());
         }
 
-        let sock = bind(Some(&self.io), port, network, cur_port_fate).await?;
+        let sock = bind(Some(&self.io), port, network, cur_port_fate)?;
         self.io = Arc::new(sock);
         self.state = Default::default();
 
         Ok(())
     }
 
-    pub(super) async fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
-        let sock = bind(None, port, network, CurrentPortFate::Keep).await?;
+    pub(super) fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
+        let sock = bind(None, port, network, CurrentPortFate::Keep)?;
         Ok(Self {
             io: Arc::new(sock),
             state: Default::default(),
@@ -66,6 +66,7 @@ impl RebindingUdpConn {
         self.local_addr().map(|p| p.port()).unwrap_or_default()
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn close(&self) -> Result<(), io::Error> {
         // Nothing to do atm
         Ok(())
@@ -132,7 +133,7 @@ impl AsyncUdpSocket for RebindingUdpConn {
     }
 }
 
-async fn bind(
+fn bind(
     inner: Option<&UdpSocket>,
     port: u16,
     network: IpFamily,
@@ -166,7 +167,7 @@ async fn bind(
             // TODO: inner.close()
         }
         // Open a new one with the desired port.
-        match UdpSocket::bind(network, *port).await {
+        match UdpSocket::bind(network, *port) {
             Ok(pconn) => {
                 let local_addr = pconn.local_addr().context("UDP socket not bound")?;
                 debug!(?network, %local_addr, "successfully bound");
@@ -220,17 +221,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
-        if !crate::netcheck::os_has_ipv6().await {
+        if !crate::netcheck::os_has_ipv6() {
             return Ok(());
         }
         rebinding_conn_send_recv(IpFamily::V6).await
     }
 
     async fn rebinding_conn_send_recv(network: IpFamily) -> Result<()> {
-        let m1 = RebindingUdpConn::bind(0, network).await?;
+        let m1 = RebindingUdpConn::bind(0, network)?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = RebindingUdpConn::bind(0, network).await?;
+        let m2 = RebindingUdpConn::bind(0, network)?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());

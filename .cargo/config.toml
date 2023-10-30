@@ -1,2 +1,2 @@
 [build]
-rustflags = ["-Wmissing_debug_implementations"]
+rustflags = []
