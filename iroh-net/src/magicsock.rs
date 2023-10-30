@@ -1836,7 +1836,7 @@ impl Actor {
         (ipv4_addr, ipv6_addr)
     }
 
-    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
+    fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
         trace!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
             warn!("received empty derp packet");
@@ -2181,10 +2181,10 @@ impl Actor {
 
             if ni.preferred_derp == 0 {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                ni.preferred_derp = self.pick_derp_fallback().await;
+                ni.preferred_derp = self.pick_derp_fallback();
             }
 
-            if !self.set_nearest_derp(ni.preferred_derp).await {
+            if !self.set_nearest_derp(ni.preferred_derp) {
                 ni.preferred_derp = 0;
             }
 
