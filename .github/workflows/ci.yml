@@ -196,6 +196,7 @@ jobs:
         rustup toolchain install ${{ matrix.rust }}
     
     - name: Run sccache-cache
+      if: matrix.release-os != 'linux' && matrix.release-arch != 'aarch64'
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: build release
