@@ -33,5 +33,5 @@ async fn main_impl() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    cli.run(&rt).await
+    cli.run(rt).await
 }

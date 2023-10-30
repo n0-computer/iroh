@@ -76,15 +76,15 @@ pub struct FullArgs {
 }
 
 impl Cli {
-    pub async fn run(self, rt: &runtime::Handle) -> Result<()> {
+    pub async fn run(self, rt: runtime::Handle) -> Result<()> {
         match self.command {
             Commands::Console => {
-                let iroh = iroh::client::quic::connect(self.rpc_port).await?;
+                let iroh = iroh::client::quic::connect(self.rpc_port, Some(rt)).await?;
                 let env = ConsoleEnv::for_console()?;
                 repl::run(&iroh, &env).await
             }
             Commands::Rpc(command) => {
-                let iroh = iroh::client::quic::connect(self.rpc_port).await?;
+                let iroh = iroh::client::quic::connect(self.rpc_port, Some(rt)).await?;
                 let env = ConsoleEnv::for_cli()?;
                 command.run(&iroh, &env).await
             }
@@ -98,9 +98,10 @@ impl Cli {
                 let config = NodeConfig::from_env(cfg.as_deref())?;
 
                 #[cfg(feature = "metrics")]
-                let metrics_fut = start_metrics_server(metrics_addr, rt);
+                let metrics_fut = start_metrics_server(metrics_addr, &rt);
 
-                let res = command.run(rt, &config, keylog, self.rpc_port).await;
+
+                let res = command.run(&rt, &config, keylog, self.rpc_port).await;
 
                 #[cfg(feature = "metrics")]
                 if let Some(metrics_fut) = metrics_fut {
