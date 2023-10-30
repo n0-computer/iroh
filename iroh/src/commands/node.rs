@@ -134,7 +134,7 @@ async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Sto
     for ep in eps {
         println!("  {}", ep.addr);
     }
-    let region = provider.my_derp().await;
+    let region = provider.my_derp();
     println!(
         "DERP Region: {}",
         region.map_or("None".to_string(), |r| r.to_string())
