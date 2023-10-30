@@ -44,7 +44,7 @@ impl UdpSocket {
 
     /// Bind to the given port and listen on all interfaces.
     pub async fn bind(network: IpFamily, port: u16) -> Result<Self> {
-        let addr = SocketAddr::new(network.default_addr(), port);
+        let addr = SocketAddr::new(network.unspecified_addr(), port);
         Self::bind_raw(addr, true)
             .await
             .with_context(|| format!("{addr:?}"))

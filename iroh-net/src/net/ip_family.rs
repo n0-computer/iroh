@@ -20,7 +20,7 @@ impl From<IpAddr> for IpFamily {
 
 impl IpFamily {
     /// Returns the matching default address.
-    pub fn default_addr(&self) -> IpAddr {
+    pub fn unspecified_addr(&self) -> IpAddr {
         match self {
             Self::V4 => Ipv4Addr::UNSPECIFIED.into(),
             Self::V6 => Ipv6Addr::UNSPECIFIED.into(),
