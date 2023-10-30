@@ -741,3 +741,35 @@ where
         Err(err) => Err(err.into()),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use iroh_bytes::util::runtime;
+
+    #[tokio::test]
+    async fn test_drop_doc_client_sync() -> Result<()> {
+        let db = iroh_bytes::store::readonly_mem::Store::default();
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let rt = runtime::Handle::from_current(1)?;
+        let node = crate::node::Node::builder(db, doc_store)
+            .runtime(&rt)
+            .spawn()
+            .await?;
+
+        let client = node.client();
+        let doc = client.docs.create().await?;
+
+        let res = std::thread::spawn(move || {
+            drop(doc);
+            drop(client);
+            drop(node);
+        });
+
+        tokio::task::spawn_blocking(move || res.join().map_err(|e| anyhow::anyhow!("{:?}", e)))
+            .await??;
+
+        Ok(())
+    }
+}
