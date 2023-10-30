@@ -89,10 +89,10 @@ impl UdpSocket {
 
         socket.bind(&addr.into())?;
 
-        let socket: std::net::UdpSocket = socket.into();
-
         // Reenable nonblocking
         socket.set_nonblocking(true)?;
+
+        let socket: std::net::UdpSocket = socket.into();
 
         // Convert into tokio UdpSocket
         let socket = tokio::net::UdpSocket::from_std(socket)?;
