@@ -3,8 +3,8 @@
 pub mod interfaces;
 pub mod ip;
 pub mod netmon;
-mod udp;
 mod network;
+mod udp;
 
-pub use self::udp::UdpSocket;
 pub use self::network::Network;
+pub use self::udp::UdpSocket;
