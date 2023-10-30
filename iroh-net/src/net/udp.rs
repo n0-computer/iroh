@@ -78,27 +78,29 @@ impl UdpSocket {
         }
         if network == IpFamily::V6 {
             // Avoid dualstack
-            socket.set_only_v6(true)?;
+            socket.set_only_v6(true).context("only IPv6")?;
         }
 
         if prepare_for_quinn {
             quinn_udp::UdpSocketState::configure((&socket).into())?;
             // disable nonblocking to ensure socket2 bind works
-            socket.set_nonblocking(false)?;
+            socket
+                .set_nonblocking(false)
+                .context("nonblocking: false")?;
         }
 
-        socket.bind(&addr.into())?;
+        socket.bind(&addr.into()).context("binding")?;
 
         // Reenable nonblocking
-        socket.set_nonblocking(true)?;
+        socket.set_nonblocking(true).context("nonblocking: true")?;
 
         let socket: std::net::UdpSocket = socket.into();
 
         // Convert into tokio UdpSocket
-        let socket = tokio::net::UdpSocket::from_std(socket)?;
+        let socket = tokio::net::UdpSocket::from_std(socket).context("conversion to tokio")?;
 
         if addr.port() != 0 {
-            let local_addr = socket.local_addr()?;
+            let local_addr = socket.local_addr().context("local addr")?;
             ensure!(
                 local_addr.port() == addr.port(),
                 "wrong port bound: {:?}: wanted: {} got {}",
