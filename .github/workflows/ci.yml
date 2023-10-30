@@ -60,6 +60,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
+          echo "Checking $i"
           cargo check -p $i --all-features --lib --bins
         done
       env:
@@ -69,6 +70,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
+          echo "Checking $i"
           cargo check -p $i --no-default-features --lib --bins
         done
       env:
@@ -78,6 +80,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
+          echo "Checking $i"
           cargo check -p $i --lib --bins
         done
       env:
