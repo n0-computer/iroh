@@ -56,39 +56,53 @@ jobs:
     - name: Run sccache-cache
       uses: mozilla-actions/sccache-action@v0.0.3
 
-    - name: tests (all features)
+    - name: check all features
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo test -p $i --all-features --lib --bins --tests
+          echo "Checking $i"
+          cargo check -p $i --all-features --lib --bins
         done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
+    - name: check no default features
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          echo "Checking $i"
+          cargo check -p $i --no-default-features --lib --bins
+        done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
+    - name: check default features
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          echo "Checking $i"
+          cargo check -p $i --lib --bins
+        done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
+    - name: tests (all features)
+      run: cargo test --workspace --all-features --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
     - name: tests (no features)
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          cargo test -p $i --no-default-features --lib --bins --tests
-        done
+      run: cargo test --workspace --no-default-features --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (default features)
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          cargo test -p $i --lib --bins --tests
-        done
+      run: cargo test --workspace --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          cargo test -p $i --all-features --doc
-        done
+      run: cargo test --workspace --all-features --doc
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
