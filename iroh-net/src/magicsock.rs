@@ -53,7 +53,7 @@ use crate::{
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::PeerAddr,
     magicsock::peer_map::PingRole,
-    net::{ip::LocalAddresses, netmon, Network},
+    net::{ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
 };
@@ -2254,7 +2254,7 @@ impl Actor {
             let port = conn.port();
             trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
             // If we were not able to bind ipv6 at program start, dont retry
-            if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
+            if let Err(err) = conn.rebind(port, IpFamily::V6, cur_port_fate).await {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
             } else {
                 ipv6_addr = conn.local_addr().ok();
@@ -2263,7 +2263,7 @@ impl Actor {
 
         let port = self.local_port_v4();
         self.pconn4
-            .rebind(port, Network::Ipv4, cur_port_fate)
+            .rebind(port, IpFamily::V4, cur_port_fate)
             .await
             .context("rebind IPv4 failed")?;
 
@@ -2360,13 +2360,13 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 
 /// Initial connection setup.
 async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
-    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
+    let pconn4 = RebindingUdpConn::bind(port, IpFamily::V4)
         .await
         .context("bind IPv4 failed")?;
     let ip4_port = pconn4.local_addr()?.port();
     let ip6_port = ip4_port + 1;
 
-    let pconn6 = match RebindingUdpConn::bind(ip6_port, Network::Ipv6).await {
+    let pconn6 = match RebindingUdpConn::bind(ip6_port, IpFamily::V6).await {
         Ok(conn) => Some(conn),
         Err(err) => {
             info!("bind ignoring IPv6 bind failure: {:?}", err);

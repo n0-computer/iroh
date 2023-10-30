@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
-use crate::net::{Network, UdpSocket};
+use crate::net::{IpFamily, UdpSocket};
 use crate::util::CancelOnDrop;
 
 use super::derp::DerpMap;
@@ -490,11 +490,11 @@ impl Actor {
         let cancel_token = CancellationToken::new();
         let stun_sock_v4 = match stun_sock_v4 {
             Some(sock) => Some(sock),
-            None => bind_local_stun_socket(Network::Ipv4, self.addr(), cancel_token.clone()).await,
+            None => bind_local_stun_socket(IpFamily::V4, self.addr(), cancel_token.clone()).await,
         };
         let stun_sock_v6 = match stun_sock_v6 {
             Some(sock) => Some(sock),
-            None => bind_local_stun_socket(Network::Ipv6, self.addr(), cancel_token.clone()).await,
+            None => bind_local_stun_socket(IpFamily::V6, self.addr(), cancel_token.clone()).await,
         };
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
@@ -763,7 +763,7 @@ struct ReportRun {
 /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
 /// socket is no longer needed.
 async fn bind_local_stun_socket(
-    network: Network,
+    network: IpFamily,
     actor_addr: Addr,
     cancel_token: CancellationToken,
 ) -> Option<Arc<UdpSocket>> {
@@ -836,7 +836,7 @@ mod tests {
 
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
     use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
-    use crate::net::Network;
+    use crate::net::IpFamily;
     use crate::ping::Pinger;
 
     use super::*;
@@ -1193,7 +1193,7 @@ mod tests {
         // it to this socket, which is forwarnding it back to our netcheck client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind_local(Network::Ipv4, 0).await?;
+        let sock = UdpSocket::bind_local(IpFamily::V4, 0).await?;
         let sock = Arc::new(sock);
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {

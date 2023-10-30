@@ -2,9 +2,9 @@
 
 pub mod interfaces;
 pub mod ip;
+mod ip_family;
 pub mod netmon;
-mod network;
 mod udp;
 
-pub use self::network::Network;
+pub use self::ip_family::IpFamily;
 pub use self::udp::UdpSocket;

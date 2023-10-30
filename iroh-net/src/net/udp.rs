@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use anyhow::{ensure, Context, Result};
 use tracing::warn;
 
-use super::Network;
+use super::IpFamily;
 
 /// Wrapper around a tokio UDP socket that handles the fact that
 /// on drop `libc::close` can block for UDP sockets.
@@ -16,26 +16,26 @@ const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 impl UdpSocket {
     /// Bind only Ipv4 on any interface.
     pub async fn bind_v4(port: u16) -> Result<Self> {
-        Self::bind(Network::Ipv4, port).await
+        Self::bind(IpFamily::V4, port).await
     }
 
     /// Bind only Ipv6 on any interface.
     pub async fn bind_v6(port: u16) -> Result<Self> {
-        Self::bind(Network::Ipv6, port).await
+        Self::bind(IpFamily::V6, port).await
     }
 
     /// Bind only Ipv4 on localhost.
     pub async fn bind_local_v4(port: u16) -> Result<Self> {
-        Self::bind(Network::Ipv4, port).await
+        Self::bind_local(IpFamily::V4, port).await
     }
 
     /// Bind only Ipv6 on localhost.
     pub async fn bind_local_v6(port: u16) -> Result<Self> {
-        Self::bind(Network::Ipv6, port).await
+        Self::bind_local(IpFamily::V6, port).await
     }
 
     /// Bind to the given port only on localhost.
-    pub async fn bind_local(network: Network, port: u16) -> Result<Self> {
+    pub async fn bind_local(network: IpFamily, port: u16) -> Result<Self> {
         let addr = SocketAddr::new(network.local_addr(), port);
         Self::bind_raw(addr, true)
             .await
@@ -43,7 +43,7 @@ impl UdpSocket {
     }
 
     /// Bind to the given port and listen on all interfaces.
-    pub async fn bind(network: Network, port: u16) -> Result<Self> {
+    pub async fn bind(network: IpFamily, port: u16) -> Result<Self> {
         let addr = SocketAddr::new(network.default_addr(), port);
         Self::bind_raw(addr, true)
             .await
@@ -57,7 +57,7 @@ impl UdpSocket {
 
     async fn bind_raw(addr: impl Into<SocketAddr>, prepare_for_quinn: bool) -> Result<Self> {
         let addr = addr.into();
-        let network = Network::from(addr.ip());
+        let network = IpFamily::from(addr.ip());
         let socket = socket2::Socket::new(
             network.into(),
             socket2::Type::DGRAM,
@@ -76,7 +76,7 @@ impl UdpSocket {
                 SOCKET_BUFFER_SIZE, err
             );
         }
-        if network == Network::Ipv6 {
+        if network == IpFamily::V6 {
             // Avoid dualstack
             socket.set_only_v6(true)?;
         }
@@ -142,9 +142,13 @@ impl std::ops::Deref for UdpSocket {
 impl Drop for UdpSocket {
     fn drop(&mut self) {
         let std_sock = self.0.take().expect("not yet dropped").into_std();
-        tokio::task::spawn_blocking(move || {
-            // Calls libc::close, which can block
-            drop(std_sock);
-        });
+
+        // Only spawn_blocking if we are inside a tokio runtime, otherwise we just drop.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || {
+                // Calls libc::close, which can block
+                drop(std_sock);
+            });
+        }
     }
 }

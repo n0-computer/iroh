@@ -12,7 +12,7 @@ use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
-use crate::net::Network;
+use crate::net::IpFamily;
 use crate::net::UdpSocket;
 
 use super::CurrentPortFate;
@@ -32,7 +32,7 @@ impl RebindingUdpConn {
     pub(super) async fn rebind(
         &mut self,
         port: u16,
-        network: Network,
+        network: IpFamily,
         cur_port_fate: CurrentPortFate,
     ) -> anyhow::Result<()> {
         trace!(
@@ -54,7 +54,7 @@ impl RebindingUdpConn {
         Ok(())
     }
 
-    pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
+    pub(super) async fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
         let sock = bind(None, port, network, CurrentPortFate::Keep).await?;
         Ok(Self {
             io: Arc::new(sock),
@@ -135,7 +135,7 @@ impl AsyncUdpSocket for RebindingUdpConn {
 async fn bind(
     inner: Option<&UdpSocket>,
     port: u16,
-    network: Network,
+    network: IpFamily,
     cur_port_fate: CurrentPortFate,
 ) -> anyhow::Result<UdpSocket> {
     debug!(
@@ -217,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv4() -> Result<()> {
-        rebinding_conn_send_recv(Network::Ipv4).await
+        rebinding_conn_send_recv(IpFamily::V4).await
     }
 
     #[tokio::test]
@@ -225,10 +225,10 @@ mod tests {
         if !crate::netcheck::os_has_ipv6().await {
             return Ok(());
         }
-        rebinding_conn_send_recv(Network::Ipv6).await
+        rebinding_conn_send_recv(IpFamily::V6).await
     }
 
-    async fn rebinding_conn_send_recv(network: Network) -> Result<()> {
+    async fn rebinding_conn_send_recv(network: IpFamily) -> Result<()> {
         let m1 = RebindingUdpConn::bind(0, network).await?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
