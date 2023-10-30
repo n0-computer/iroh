@@ -23,7 +23,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh_bytes::{util::runtime, Hash};
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
-    store::{self, GetFilter},
+    store::{self, View, Query},
     AuthorId, ContentStatus, Entry, NamespaceId,
 };
 
@@ -585,9 +585,9 @@ async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
 }
 
 async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let filter = GetFilter::Key(key.to_vec());
+    let query = Query::key(key.to_vec());
     let entry = doc
-        .get_many(filter)
+        .get_many(query, View::LatestByKeyAndAuthor)
         .await?
         .next()
         .await

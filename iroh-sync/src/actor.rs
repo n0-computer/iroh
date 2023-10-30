@@ -349,7 +349,6 @@ impl SyncHandle {
         rx.await?
     }
 
-    // TODO: it would be great if this could be a sync method...
     pub async fn get_many(
         &self,
         namespace: NamespaceId,
@@ -365,10 +364,12 @@ impl SyncHandle {
     pub async fn get_one(
         &self,
         namespace: NamespaceId,
-        author: AuthorMatcher,
-        key: KeyMatcher,
+        author: impl Into<AuthorMatcher>,
+        key: impl Into<KeyMatcher>,
     ) -> Result<Option<SignedEntry>> {
         let (reply, rx) = oneshot::channel();
+        let author = author.into();
+        let key = key.into();
         let action = ReplicaAction::GetOne { author, key, reply };
         self.send_replica(namespace, action).await?;
         rx.await?

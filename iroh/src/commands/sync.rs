@@ -21,7 +21,10 @@ use iroh::{
     util::fs::{path_content_info, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
-use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
+use iroh_sync::{
+    store::{Query, View},
+    AuthorId, Entry, NamespaceId,
+};
 
 use crate::config::ConsoleEnv;
 
@@ -324,22 +327,14 @@ impl DocCommands {
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
-                let filter = match (author, prefix) {
-                    (None, false) => GetFilter::Key(key),
-                    (None, true) => GetFilter::Prefix(key),
-                    (Some(author), true) => GetFilter::AuthorAndPrefix(author, key),
-                    (Some(author), false) => {
-                        // Special case: Author and key, this means single entry.
-                        let entry = doc
-                            .get_one(author, key)
-                            .await?
-                            .ok_or_else(|| anyhow!("Entry not found"))?;
-                        println!("{}", fmt_entry(&doc, &entry, mode).await);
-                        return Ok(());
-                    }
+                let query = match (author, prefix) {
+                    (None, false) => Query::key(key),
+                    (None, true) => Query::prefix(key),
+                    (Some(author), true) => Query::author(author).with_prefix(key),
+                    (Some(author), false) => Query::author(author).with_key(key),
                 };
 
-                let mut stream = doc.get_many(filter).await?;
+                let mut stream = doc.get_many(query, View::LatestByKey).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -351,9 +346,14 @@ impl DocCommands {
                 mode,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let filter = GetFilter::author_prefix(author, prefix);
-
-                let mut stream = doc.get_many(filter).await?;
+                let mut query = Query::all();
+                if let Some(author) = author {
+                    query.set_author(author);
+                }
+                if let Some(prefix) = prefix {
+                    query.set_prefix(prefix);
+                }
+                let mut stream = doc.get_many(query, View::LatestByKey).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -420,8 +420,10 @@ impl DocCommands {
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let stream = doc.get_many(GetFilter::Key(key)).await?;
-                let entry = match get_latest(stream).await? {
+                let mut stream = doc
+                    .get_many(Query::key(key), View::LatestByKeyAndAuthor)
+                    .await?;
+                let entry = match stream.try_next().await? {
                     None => {
                         println!("<unable to find entry for key {key_str}>");
                         return Ok(());
@@ -845,24 +847,4 @@ impl ImportProgressBar {
     fn all_done(self) {
         self.mp.clear().ok();
     }
-}
-
-/// Get the latest entry for a key. If `None`, then an entry of the given key
-/// could not be found.
-async fn get_latest(stream: impl Stream<Item = Result<Entry>>) -> Result<Option<Entry>> {
-    let entry = stream
-        .try_fold(None, |acc: Option<Entry>, cur: Entry| async move {
-            match acc {
-                None => Ok(Some(cur)),
-                Some(prev) => {
-                    if cur.timestamp() > prev.timestamp() {
-                        Ok(Some(cur))
-                    } else {
-                        Ok(Some(prev))
-                    }
-                }
-            }
-        })
-        .await?;
-    Ok(entry)
 }

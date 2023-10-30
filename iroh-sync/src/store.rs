@@ -1,6 +1,6 @@
 //! Storage trait and implementation for iroh-sync documents
 
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -118,8 +118,6 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
 
     /// Get an iterator over entries of a replica.
-    ///
-    /// The [`GetFilter`] has several methods of filtering the returned entries.
     fn get_many(
         &self,
         namespace: NamespaceId,
@@ -200,22 +198,48 @@ impl Query {
         self.key = KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref()));
         self
     }
+
+    /// Limits the query result to the specified range within the result set.
+    pub fn with_range(mut self, range: impl Into<Range>) -> Self {
+        self.range = range.into();
+        self
+    }
+
+    /// Restricts the query to matching an author.
+    pub fn set_author(&mut self, author: AuthorId) {
+        self.author = AuthorMatcher::Exact(author);
+    }
+
+    /// Restricts the query to matching a key prefix.
+    pub fn set_prefix(&mut self, prefix: impl AsRef<[u8]>) {
+        self.key = KeyMatcher::Prefix(Bytes::copy_from_slice(prefix.as_ref()));
+    }
+
+    /// Restricts the query to matching an exact key.
+    pub fn set_key(&mut self, key: impl AsRef<[u8]>) {
+        self.key = KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref()));
+    }
+
+    /// Limits the query result to the specified range within the result set.
+    pub fn set_range(&mut self, range: impl Into<Range>) {
+        self.range = range.into();
+    }
 }
 
 /// A range.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Range {
-    /// ..
+    /// All entries (no limit)
     All,
-    /// x..
+    /// All entries after offset `x`.
     From(u64),
-    /// ..=x
-    ToInclusive(u64),
-    /// x..=y
-    Inclusive(u64, u64),
-    /// ..x
+    /// Entries from start to `x` (exclusive)
     To(u64),
-    /// x..y
+    /// Entries from start to `x` (inclusive).
+    ToInclusive(u64),
+    /// Entries from start `x` to end `y` (inclusive)
+    Inclusive(u64, u64),
+    /// Entries from start `x` to end `y` (exclusive)
     Exclusive(u64, u64),
 }
 

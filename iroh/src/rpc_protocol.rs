@@ -21,7 +21,7 @@ use iroh_net::{
 
 use iroh_sync::{
     actor::OpenState,
-    store::GetFilter,
+    store::{Query, View, KeyMatcher, AuthorMatcher},
     sync::{NamespaceId, SignedEntry},
     AuthorId,
 };
@@ -739,8 +739,10 @@ pub struct DocSetHashResponse {}
 pub struct DocGetManyRequest {
     /// The document id
     pub doc_id: NamespaceId,
-    /// Filter entries by this [`GetFilter`]
-    pub filter: GetFilter,
+    /// Document view to query on
+    pub view: View,
+    /// Query to run
+    pub query: Query,
 }
 
 impl Msg<ProviderService> for DocGetManyRequest {
@@ -763,10 +765,10 @@ pub struct DocGetManyResponse {
 pub struct DocGetOneRequest {
     /// The document id
     pub doc_id: NamespaceId,
-    /// Key
-    pub key: Bytes,
-    /// Author
-    pub author: AuthorId,
+    /// Key matcher
+    pub key: KeyMatcher,
+    /// Author matcher
+    pub author: AuthorMatcher,
 }
 
 impl RpcMsg<ProviderService> for DocGetOneRequest {
