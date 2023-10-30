@@ -31,8 +31,8 @@ impl IrohTicket for Ticket {
     const KIND: Kind = Kind::Blob;
 
     fn verify(&self) -> std::result::Result<(), &'static str> {
-        if self.node.info.direct_addresses.is_empty() {
-            return Err("Invalid address list in ticket");
+        if self.node.info.is_empty() {
+            return Err("addressing info cannot be empty");
         }
         Ok(())
     }
@@ -54,10 +54,7 @@ impl Ticket {
         format: BlobFormat,
         token: Option<RequestToken>,
     ) -> Result<Self> {
-        ensure!(
-            !peer.info.direct_addresses.is_empty(),
-            "addrs list can not be empty"
-        );
+        ensure!(!peer.info.is_empty(), "addressing info cannot be empty");
         Ok(Self {
             hash,
             format,

@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use colored::Colorize;
@@ -561,6 +561,26 @@ pub enum BlobCommands {
     /// Delete content on the node.
     #[clap(subcommand)]
     Delete(self::delete::Commands),
+    /// Get a ticket to share this blob.
+    Share {
+        /// Hash of the blob to share.
+        hash: Hash,
+        /// Include an optional authentication token in the ticket.
+        #[clap(long)]
+        token: Option<String>,
+        /// Do not include DERP reion information in the ticket. (advanced)
+        #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
+        no_derp: bool,
+        /// Include only the DERP region information in the ticket. (advanced)
+        #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
+        derp_only: bool,
+        /// If the blob is a collection, the requester will also fetch the listed blobs.
+        #[clap(long, default_value_t = false)]
+        recursive: bool,
+        /// Display the contents of this ticket too.
+        #[clap(long, hide = true)]
+        debug: bool,
+    },
 }
 
 impl BlobCommands {
@@ -631,6 +651,58 @@ impl BlobCommands {
                 // TODO: This is where we are missing the request token from the running
                 // node (last argument to run_with_opts).
                 self::add::run_with_opts(iroh, opts, None).await
+            }
+            Self::Share {
+                hash,
+                token,
+                no_derp,
+                derp_only,
+                recursive,
+                debug,
+            } => {
+                let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
+                let node_addr = if no_derp {
+                    PeerAddr::new(addr.peer_id)
+                        .with_direct_addresses(addr.direct_addresses().copied())
+                } else if derp_only {
+                    if let Some(region) = addr.derp_region() {
+                        PeerAddr::new(addr.peer_id).with_derp_region(region)
+                    } else {
+                        addr
+                    }
+                } else {
+                    addr
+                };
+
+                let blob_reader = iroh
+                    .blobs
+                    .read(hash)
+                    .await
+                    .context("failed to retrieve blob info")?;
+                let blob_status = if blob_reader.is_complete() {
+                    "blob"
+                } else {
+                    "incomplete blob"
+                };
+
+                let format = if recursive {
+                    BlobFormat::HashSeq
+                } else {
+                    BlobFormat::Raw
+                };
+
+                let request_token = token.map(RequestToken::new).transpose()?;
+
+                let ticket =
+                    Ticket::new(node_addr, hash, format, request_token).expect("correct ticket");
+                println!(
+                    "Ticket for {blob_status} {hash} ({})\n{ticket}",
+                    HumanBytes(blob_reader.size())
+                );
+                if debug {
+                    println!("{ticket:#?}")
+                }
+                Ok(())
             }
         }
     }
