@@ -100,7 +100,6 @@ impl Cli {
                 #[cfg(feature = "metrics")]
                 let metrics_fut = start_metrics_server(metrics_addr, &rt);
 
-
                 let res = command.run(&rt, &config, keylog, self.rpc_port).await;
 
                 #[cfg(feature = "metrics")]
