@@ -255,7 +255,7 @@ impl Client {
         }
     }
 
-    /// `get_report` but with channel
+    /// Get report with channel
     pub async fn get_report_channel(
         &mut self,
         dm: DerpMap,

@@ -388,7 +388,7 @@ impl ServerState {
                                 {
                                     error!("[{http_str}] derp: failed to handle connection: {e}");
                                 }
-                            }.instrument(info_span!("conn")));
+                            }.instrument(info_span!("conn", peer = %peer_addr)));
                         }
                         Err(err) => {
                             error!("[{http_str}] derp: failed to accept connection: {err}");
@@ -471,7 +471,7 @@ where
                                         e
                                     );
                                 } else {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success"
                                     );
                                 };
