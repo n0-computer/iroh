@@ -12,6 +12,9 @@ publish = true
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }

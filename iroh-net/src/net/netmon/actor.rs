@@ -84,7 +84,7 @@ impl Actor {
 
         // Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
         let (mon_sender, mon_receiver) = flume::bounded(MON_CHAN_CAPACITY);
-        let route_monitor = RouteMonitor::new(mon_sender).await?;
+        let route_monitor = RouteMonitor::new(mon_sender)?;
         let (actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
 
         Ok(Actor {
