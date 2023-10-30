@@ -82,17 +82,14 @@ impl UdpSocket {
             socket.set_only_v6(true).context("only IPv6")?;
         }
 
-        if prepare_for_quinn {
-            quinn_udp::UdpSocketState::configure((&socket).into()).context("QUIC config")?;
-            // disable nonblocking to ensure socket2 bind works
-            socket
-                .set_nonblocking(false)
-                .context("nonblocking: false")?;
-        }
-
+        // Binding must happen before calling quinn, otherwise `local_addr`
+        // is not yet available on all OSes.
         socket.bind(&addr.into()).context("binding")?;
 
-        // Reenable nonblocking
+        if prepare_for_quinn {
+            quinn_udp::UdpSocketState::configure((&socket).into()).context("QUIC config")?;
+        }
+        // Ensure nonblocking
         socket.set_nonblocking(true).context("nonblocking: true")?;
 
         let socket: std::net::UdpSocket = socket.into();
