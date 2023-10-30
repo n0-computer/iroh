@@ -12,6 +12,9 @@ default-run = "iroh"
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }

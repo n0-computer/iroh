@@ -26,7 +26,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Pinger {
     /// Create a new [Pinger].
-    pub async fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let client_v4 = Client::new(&Config::builder().kind(ICMP::V4).build())
             .context("failed creating IPv4 pinger")?;
         let client_v6 = Client::new(&Config::builder().kind(ICMP::V6).build())
@@ -92,7 +92,7 @@ mod tests {
         // Public DNS addrs from google based on
         // https://developers.google.com/speed/public-dns/docs/using
 
-        let pinger = Pinger::new().await?;
+        let pinger = Pinger::new()?;
 
         // IPv4
         let dur = pinger.send("8.8.8.8".parse()?, &[1u8; 8]).await?;

@@ -115,9 +115,7 @@ where
 {
     let t_start = Instant::now();
     let connection = connecting.await.map_err(AcceptError::connect)?;
-    let peer = get_peer_id(&connection)
-        .await
-        .map_err(AcceptError::connect)?;
+    let peer = get_peer_id(&connection).map_err(AcceptError::connect)?;
     let (mut send_stream, mut recv_stream) = connection
         .accept_bi()
         .await

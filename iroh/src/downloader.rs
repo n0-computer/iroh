@@ -224,11 +224,7 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader.
-    pub async fn new<S>(
-        store: S,
-        endpoint: MagicEndpoint,
-        rt: iroh_bytes::util::runtime::Handle,
-    ) -> Self
+    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: iroh_bytes::util::runtime::Handle) -> Self
     where
         S: Store,
     {
@@ -1085,6 +1081,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         connected_peers + dialing_peers
     }
 
+    #[allow(clippy::unused_async)]
     async fn shutdown(self) {
         debug!("shutting down");
         // TODO(@divma): how to make sure the download futures end gracefully?

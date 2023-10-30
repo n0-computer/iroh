@@ -112,16 +112,15 @@ pub struct Client {
     _service_handle: std::sync::Arc<util::CancelOnDrop>,
 }
 
-impl Client {
-    /// Creates a client that uses the default configuration.
-    ///
-    /// See [`Config::default`].
-    pub async fn default() -> Self {
-        Self::new(Config::default()).await
+impl Default for Client {
+    fn default() -> Self {
+        Self::new(Config::default())
     }
+}
 
+impl Client {
     /// Create a new port mapping client.
-    pub async fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Self {
         let (service_tx, service_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
 
         let (service, watcher) = Service::new(config, service_rx);
@@ -469,14 +468,14 @@ impl Service {
                         Ok(result) => result,
                         Err(join_err) => Err(anyhow!("Failed to obtain a result {join_err}"))
                     };
-                    self.on_mapping_result(result).await;
+                    self.on_mapping_result(result);
                 }
                 probe_result = util::MaybeFuture{ inner: self.probing_task.as_mut().map(|(fut, _rec)| fut) } => {
                     trace!("tick: probe ready");
                     // retrieve the receivers and clear the task
                     let receivers = self.probing_task.take().expect("is some").1;
                     let probe_result = probe_result.map_err(|join_err| anyhow!("Failed to obtain a result {join_err}"));
-                    self.on_probe_result(probe_result, receivers).await;
+                    self.on_probe_result(probe_result, receivers);
                 }
                 Some(event) = self.current_mapping.next() => {
                     trace!("tick: mapping event {event:?}");
@@ -492,7 +491,7 @@ impl Service {
         Ok(())
     }
 
-    async fn on_probe_result(
+    fn on_probe_result(
         &mut self,
         result: Result<Probe>,
         receivers: Vec<oneshot::Sender<ProbeResult>>,
@@ -515,7 +514,7 @@ impl Service {
         }
     }
 
-    async fn on_mapping_result(&mut self, result: Result<mapping::Mapping>) {
+    fn on_mapping_result(&mut self, result: Result<mapping::Mapping>) {
         match result {
             Ok(mapping) => {
                 self.current_mapping.update(Some(mapping));

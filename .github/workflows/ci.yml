@@ -305,7 +305,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - uses: dtolnay/rust-toolchain@stable
+    # Can be switched back once 1.75 lands
+    # https://github.com/rust-lang/cargo/issues/12115#issuecomment-1768170381
+    - uses: dtolnay/rust-toolchain@nightly
       with:
           components: clippy
 
