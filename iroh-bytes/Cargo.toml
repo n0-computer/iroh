@@ -39,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 thiserror = "1"
-tokio = { version = "1" }
+tokio = { version = "1", features = ["fs"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"
@@ -54,4 +54,4 @@ tokio = { version = "1", features = ["macros", "test-util"] }
 
 [features]
 default = ["flat-db"]
-flat-db = ["reflink-copy", "tokio/fs"]
+flat-db = ["reflink-copy"]
