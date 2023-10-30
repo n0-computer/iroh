@@ -32,9 +32,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt};
+use futures::FutureExt;
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -261,7 +261,14 @@ struct Inner {
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
     // Our discovered endpoints
-    endpoints: parking_lot::Mutex<DiscoveredEndpoints>,
+    endpoints: parking_lot::RwLock<DiscoveredEndpoints>,
+
+    /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
+    /// completes
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, u16>>,
+
+    /// Indicates the update endpoint state.
+    endpoints_update_state: EndpointUpdateState,
 }
 
 impl Inner {
@@ -938,7 +945,7 @@ impl Inner {
                 derp_region,
                 dst_key,
             } => {
-                self.send_call_me_maybe(derp_region, dst_key);
+                self.send_or_queue_call_me_maybe(derp_region, dst_key);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -970,67 +977,41 @@ impl Inner {
         }
     }
 
-    #[instrument(skip_all)]
-    async fn send_raw(
-        &self,
-        addr: SocketAddr,
-        mut transmits: Vec<quinn_udp::Transmit>,
-    ) -> io::Result<usize> {
-        trace!(dst = %addr, "send {} packets", transmits.len());
-
-        if transmits.iter().any(|t| t.destination != addr) {
-            for t in &mut transmits {
-                t.destination = addr;
+    fn send_queued_call_me_maybes(&self) {
+        let msg = self.endpoints.read().to_call_me_maybe_message();
+        let msg = disco::Message::CallMeMaybe(msg);
+        for (public_key, region_id) in self.pending_call_me_maybes.lock().drain() {
+            if !self.send_disco_message_derp(region_id, public_key, msg.clone()) {
+                warn!(peer = %public_key.fmt_short(), "derp channel full, dropping call-me-maybe");
             }
         }
-
-        futures::future::poll_fn(|cx| self.poll_send_udp(addr, &transmits, cx)).await
     }
 
-    fn send_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
-        let mut endpoints = self.endpoints.lock();
-        let is_fresh = endpoints.fresh_enough();
-        if !is_fresh {
-            info!(
-                "want call-me-maybe but endpoints stale; restunning ({:?})",
-                endpoints.last_endpoints_time
-            );
-
-            let actor_sender = self.actor_sender.clone();
-
-            tokio::task::spawn(async move {
-                actor_sender
-                    .send(ActorMessage::ReStun("refresh-for-peering"))
-                    .await
-                    .ok()
-            });
-
-            let actor_sender = self.actor_sender.clone();
-            endpoints.insert_on_refresh(
-                dst_key,
-                Box::new(move || {
-                    let actor_sender = actor_sender.clone();
-                    Box::pin(async move {
-                        info!("STUN done; sending call-me-maybe",);
-                        actor_sender
-                            .send(ActorMessage::SendCallMeMaybe {
-                                derp_region,
-                                dst_key,
-                            })
-                            .await
-                            .ok();
-                    })
-                }),
-            );
-        }
-        if is_fresh {
-            let eps: Vec<_> = endpoints.iter().map(|ep| ep.addr).collect();
-            let msg = disco::CallMeMaybe { my_number: eps };
-            if !self.send_disco_message_derp(derp_region, dst_key, disco::Message::CallMeMaybe(msg))
-            {
-                warn!(peer = %dst_key.fmt_short(), "Derp channel full, dropping CallMeMaybe");
+    fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
+        let endpoints = self.endpoints.read();
+        if endpoints.fresh_enough() {
+            let msg = self.endpoints.read().to_call_me_maybe_message();
+            let msg = disco::Message::CallMeMaybe(msg);
+            if !self.send_disco_message_derp(derp_region, dst_key, msg) {
+                warn!(peer = %dst_key.fmt_short(), "derp channel full, dropping call-me-maybe");
             }
+        } else {
+            self.pending_call_me_maybes
+                .lock()
+                .insert(dst_key, derp_region);
+            debug!(
+                last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
+                "want call-me-maybe but endpoints stale; queing after restun",
+            );
+            self.re_stun("refresh-for-peering");
         }
+    }
+
+    /// Triggers an address discovery. The provided why string is for debug logging only.
+    fn re_stun(&self, why: &'static str) {
+        debug!("re_stun: {}", why);
+        inc!(MagicsockMetrics, re_stun_calls);
+        self.endpoints_update_state.schedule_run(why);
     }
 }
 
@@ -1081,11 +1062,19 @@ impl DiscoMessageSource {
     }
 }
 
+/// Manages currently running endpoint updates.
+///
+/// Invariants:
+/// - only one endpoint update must be running at a time
+/// - if an update is scheduled while another one is running, remember that
+///   and start a new one when the current one has finished
 #[derive(Debug)]
 struct EndpointUpdateState {
-    /// If running, set to the task handle of the update.
+    /// If running, set to the reason fo the currently the update.
     running: sync::watch::Sender<Option<&'static str>>,
-    want_update: Option<&'static str>,
+    /// If set, this means we will start a new endpoint update state as soon as the current one
+    /// is finished.
+    want_update: parking_lot::Mutex<Option<&'static str>>,
 }
 
 impl EndpointUpdateState {
@@ -1093,13 +1082,38 @@ impl EndpointUpdateState {
         let (running, _) = sync::watch::channel(None);
         EndpointUpdateState {
             running,
-            want_update: None,
+            want_update: Default::default(),
+        }
+    }
+
+    /// Schedules a new run, either starting it immediately if none is running or
+    /// scheduling it for later.
+    fn schedule_run(&self, why: &'static str) {
+        if self.is_running() {
+            let _ = self.want_update.lock().insert(why);
+        } else {
+            self.run(why);
         }
     }
 
     /// Returns `true` if an update is currently in progress.
     fn is_running(&self) -> bool {
         self.running.borrow().is_some()
+    }
+
+    /// Trigger a new run.
+    fn run(&self, why: &'static str) {
+        self.running.send(Some(why)).ok();
+    }
+
+    /// Clears the current running state.
+    fn finish_run(&self) {
+        self.running.send(None).ok();
+    }
+
+    /// Returns the next update, if one is set.
+    fn next_update(&self) -> Option<&'static str> {
+        self.want_update.lock().take()
     }
 }
 
@@ -1220,6 +1234,8 @@ impl MagicSock {
             send_buffer: Default::default(),
             udp_disco_sender,
             endpoints: Default::default(),
+            pending_call_me_maybes: Default::default(),
+            endpoints_update_state: EndpointUpdateState::new(),
         });
 
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -1248,7 +1264,6 @@ impl MagicSock {
                     derp_actor_sender,
                     inner: inner2,
                     derp_recv_sender,
-                    endpoints_update_state: EndpointUpdateState::new(),
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     peers_path,
@@ -1317,12 +1332,8 @@ impl MagicSock {
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all, fields(me = %self.inner.me))]
-    pub async fn re_stun(&self, why: &'static str) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::ReStun(why))
-            .await
-            .unwrap();
+    pub fn re_stun(&self, why: &'static str) {
+        self.inner.re_stun(why);
     }
 
     /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this peer.
@@ -1568,13 +1579,9 @@ enum ActorMessage {
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
-    ReStun(&'static str),
-    SendCallMeMaybe {
-        derp_region: u16,
-        dst_key: PublicKey,
-    },
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
+    NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
 }
 
 struct Actor {
@@ -1584,8 +1591,6 @@ struct Actor {
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<DerpRecvResult>,
-    /// Indicates the update endpoint state.
-    endpoints_update_state: EndpointUpdateState,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -1616,10 +1621,10 @@ impl Actor {
     async fn run(mut self) -> Result<()> {
         // Setup network monitoring
         let monitor = netmon::Monitor::new().await?;
-        let sender = self.msg_sender.clone();
+        let inner = self.inner.clone();
         let _token = monitor
             .subscribe(move |is_major| {
-                let sender = sender.clone();
+                let inner = inner.clone();
                 async move {
                     info!("link change detected: major? {}", is_major);
 
@@ -1628,17 +1633,15 @@ impl Actor {
 
                     if is_major {
                         let (s, r) = sync::oneshot::channel();
-                        sender.send(ActorMessage::RebindAll(s)).await.ok();
-                        sender
-                            .send(ActorMessage::ReStun("link-change-major"))
+                        inner.re_stun("link-change-major");
+                        inner
+                            .actor_sender
+                            .send(ActorMessage::RebindAll(s))
                             .await
                             .ok();
                         r.await.ok();
                     } else {
-                        sender
-                            .send(ActorMessage::ReStun("link-change-minor"))
-                            .await
-                            .ok();
+                        inner.re_stun("link-change-minor");
                     }
                 }
                 .boxed()
@@ -1650,7 +1653,7 @@ impl Actor {
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
         );
-        let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
+        let mut endpoints_update_receiver = self.inner.endpoints_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
         let mut save_peers_timer = if self.peers_path.is_some() {
             tokio::time::interval_at(
@@ -1671,13 +1674,13 @@ impl Actor {
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
-                    self.re_stun("periodic").await;
+                    self.inner.re_stun("periodic");
                 }
                 Ok(()) = portmap_watcher.changed() => {
                     trace!("tick: portmap changed");
                     let new_external_address = *portmap_watcher.borrow();
                     debug!("external address updated: {new_external_address:?}");
-                    self.re_stun("portmap_updated").await;
+                    self.inner.re_stun("portmap_updated");
                 },
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.inner.peer_map.node_count());
@@ -1734,7 +1737,7 @@ impl Actor {
                 let _ = s.send(self.inner.peer_map.endpoint_info(&node_key));
             }
             ActorMessage::LocalEndpoints(s) => {
-                let eps: Vec<_> = self.inner.endpoints.lock().iter().cloned().collect();
+                let eps: Vec<_> = self.inner.endpoints.read().iter().cloned().collect();
                 let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
@@ -1773,15 +1776,6 @@ impl Actor {
                 debug!("shutdown complete");
                 return true;
             }
-            ActorMessage::ReStun(reason) => {
-                self.re_stun(reason).await;
-            }
-            ActorMessage::SendCallMeMaybe {
-                derp_region,
-                dst_key,
-            } => {
-                self.inner.send_call_me_maybe(derp_region, dst_key);
-            }
             ActorMessage::RebindAll(s) => {
                 self.rebind_all().await;
                 let _ = s.send(());
@@ -1805,6 +1799,17 @@ impl Actor {
             }
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.inner.peer_map.notify_ping_timeout(id, txid);
+            }
+            ActorMessage::NetcheckReport(report, why) => {
+                match report {
+                    Ok(report) => {
+                        self.handle_netcheck_report(report).await;
+                    }
+                    Err(err) => {
+                        warn!("failed to generate netcheck report for: {}: {:?}", why, err);
+                    }
+                }
+                self.finalize_endpoints_update(why);
             }
         }
 
@@ -1876,28 +1881,6 @@ impl Actor {
         out
     }
 
-    /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(level = "debug", skip_all, fields(reason=why))]
-    async fn re_stun(&mut self, why: &'static str) {
-        inc!(MagicsockMetrics, re_stun_calls);
-
-        if self.endpoints_update_state.is_running() {
-            if Some(why) != self.endpoints_update_state.want_update {
-                debug!(
-                    active_reason=?self.endpoints_update_state.want_update,
-                    "endpoint update active, need another later",
-                );
-                self.endpoints_update_state.want_update.replace(why);
-            }
-        } else {
-            debug!("started");
-            self.endpoints_update_state
-                .running
-                .send(Some(why))
-                .expect("update state not to go away");
-        }
-    }
-
     #[instrument(level = "debug", skip_all)]
     async fn update_endpoints(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_endpoints);
@@ -1912,50 +1895,13 @@ impl Actor {
             self.rebind_all().await;
         }
 
-        match self.determine_endpoints().await {
-            Ok(endpoints) => {
-                if self.inner.endpoints.lock().set(&endpoints) {
-                    log_endpoint_change(&endpoints);
-                    if let Some(ref cb) = self.inner.on_endpoints {
-                        cb(&endpoints[..]);
-                    }
-                }
-            }
-            Err(err) => {
-                info!("endpoint update ({}) failed: {:#?}", why, err);
-                // TODO(crawshaw): are there any conditions under which
-                // we should trigger a retry based on the error here?
-            }
-        }
-
-        let new_why = self.endpoints_update_state.want_update.take();
-        if !self.inner.is_closed() {
-            if let Some(new_why) = new_why {
-                debug!("endpoint update: needed new ({})", new_why);
-                self.endpoints_update_state
-                    .running
-                    .send(Some(new_why))
-                    .expect("sender not go away");
-                return;
-            }
-            self.periodic_re_stun_timer = new_re_stun_timer(true);
-        }
-
-        self.endpoints_update_state
-            .running
-            .send(None)
-            .expect("sender not go away");
-
-        debug!("endpoint update done ({})", why);
+        self.port_mapper.procure_mapping();
+        self.update_net_info(why).await;
     }
 
-    /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
-    /// to determine its public address.
-    #[instrument(level = "debug", skip_all)]
-    async fn determine_endpoints(&mut self) -> Result<Vec<config::Endpoint>> {
-        self.port_mapper.procure_mapping();
+    /// Stores the results of a successfull endpoint update.
+    async fn store_endpoints_update(&mut self, nr: Option<Arc<netcheck::Report>>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
-        let nr = self.update_net_info().await.context("update_net_info")?;
 
         // endpoint -> how it was found
         let mut already = HashMap::new();
@@ -1982,24 +1928,25 @@ impl Actor {
             self.set_net_info_have_port_map().await;
         }
 
-        if let Some(global_v4) = nr.global_v4 {
-            add_addr!(already, eps, global_v4, config::EndpointType::Stun);
+        if let Some(nr) = nr {
+            if let Some(global_v4) = nr.global_v4 {
+                add_addr!(already, eps, global_v4, config::EndpointType::Stun);
 
-            // If they're behind a hard NAT and are using a fixed
-            // port locally, assume they might've added a static
-            // port mapping on their router to the same explicit
-            // port that we are running with. Worst case it's an invalid candidate mapping.
-            let port = self.inner.port.load(Ordering::Relaxed);
-            if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
-                let mut addr = global_v4;
-                addr.set_port(port);
-                add_addr!(already, eps, addr, config::EndpointType::Stun4LocalPort);
+                // If they're behind a hard NAT and are using a fixed
+                // port locally, assume they might've added a static
+                // port mapping on their router to the same explicit
+                // port that we are running with. Worst case it's an invalid candidate mapping.
+                let port = self.inner.port.load(Ordering::Relaxed);
+                if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
+                    let mut addr = global_v4;
+                    addr.set_port(port);
+                    add_addr!(already, eps, addr, config::EndpointType::Stun4LocalPort);
+                }
+            }
+            if let Some(global_v6) = nr.global_v6 {
+                add_addr!(already, eps, global_v6, config::EndpointType::Stun);
             }
         }
-        if let Some(global_v6) = nr.global_v6 {
-            add_addr!(already, eps, global_v6, config::EndpointType::Stun);
-        }
-
         let local_addr_v4 = self.pconn4.local_addr().ok();
         let local_addr_v6 = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -2066,26 +2013,20 @@ impl Actor {
             }
         }
 
-        if !is_unspecified_v4 && local_addr_v4.is_some() {
-            // Our local endpoint is bound to a particular address.
-            // Do not offer addresses on other local interfaces.
-            add_addr!(
-                already,
-                eps,
-                local_addr_v4.unwrap(),
-                config::EndpointType::Local
-            );
+        if !is_unspecified_v4 {
+            if let Some(addr) = local_addr_v4 {
+                // Our local endpoint is bound to a particular address.
+                // Do not offer addresses on other local interfaces.
+                add_addr!(already, eps, addr, config::EndpointType::Local);
+            }
         }
 
-        if !is_unspecified_v6 && local_addr_v6.is_some() {
-            // Our local endpoint is bound to a particular address.
-            // Do not offer addresses on other local interfaces.
-            add_addr!(
-                already,
-                eps,
-                local_addr_v6.unwrap(),
-                config::EndpointType::Local
-            );
+        if !is_unspecified_v6 {
+            if let Some(addr) = local_addr_v6 {
+                // Our local endpoint is bound to a particular address.
+                // Do not offer addresses on other local interfaces.
+                add_addr!(already, eps, addr, config::EndpointType::Local);
+            }
         }
 
         // Note: the endpoints are intentionally returned in priority order,
@@ -2098,7 +2039,28 @@ impl Actor {
         // The STUN address(es) are always first.
         // Despite this sorting, clients are not relying on this sorting for decisions;
 
-        Ok(eps)
+        if self.inner.endpoints.write().set(&eps) {
+            log_endpoint_change(&eps);
+            if let Some(ref cb) = self.inner.on_endpoints {
+                cb(&eps[..]);
+            }
+            self.inner.send_queued_call_me_maybes();
+        }
+    }
+
+    /// Called when an endpoints update is done, no matter if it was successfull or not.
+    fn finalize_endpoints_update(&mut self, why: &'static str) {
+        let new_why = self.inner.endpoints_update_state.next_update();
+        if !self.inner.is_closed() {
+            if let Some(new_why) = new_why {
+                self.inner.endpoints_update_state.run(new_why);
+                return;
+            }
+            self.periodic_re_stun_timer = new_re_stun_timer(true);
+        }
+
+        self.inner.endpoints_update_state.finish_run();
+        debug!("endpoint update done ({})", why);
     }
 
     /// Updates `NetInfo.HavePortMap` to true.
@@ -2141,66 +2103,95 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
+    async fn update_net_info(&mut self, why: &'static str) {
         if self.inner.derp_map.is_empty() {
             debug!("skipping netcheck, empty DerpMap");
-            return Ok(Default::default());
+            self.msg_sender
+                .send(ActorMessage::NetcheckReport(Ok(None), why))
+                .await
+                .ok();
+            return;
         }
 
         let derp_map = self.inner.derp_map.clone();
-        let net_checker = &mut self.net_checker;
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
         debug!("requesting netcheck report");
-        let report = time::timeout(Duration::from_secs(10), async move {
-            net_checker.get_report(derp_map, pconn4, pconn6).await
-        })
-        .await??;
-        self.inner
-            .ipv6_reported
-            .store(report.ipv6, Ordering::Relaxed);
-        let r = &report;
-        debug!(
-            "setting no_v4_send {} -> {}",
-            self.no_v4_send, !r.ipv4_can_send
-        );
-        self.no_v4_send = !r.ipv4_can_send;
-
-        let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
-        let mut ni = config::NetInfo {
-            derp_latency: Default::default(),
-            mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
-            hair_pinning: r.hair_pinning,
-            portmap_probe: r.portmap_probe.clone(),
-            have_port_map,
-            working_ipv6: Some(r.ipv6),
-            os_has_ipv6: Some(r.os_has_ipv6),
-            working_udp: Some(r.udp),
-            working_icm_pv4: Some(r.icmpv4),
-            preferred_derp: r.preferred_derp,
-            link_type: None,
-        };
-        for (rid, d) in r.region_v4_latency.iter() {
-            ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
+        match self
+            .net_checker
+            .get_report_channel(derp_map, pconn4, pconn6)
+            .await
+        {
+            Ok(rx) => {
+                let msg_sender = self.msg_sender.clone();
+                tokio::task::spawn(async move {
+                    let report = time::timeout(Duration::from_secs(10), rx).await;
+                    let report: anyhow::Result<_> = match report {
+                        Ok(Ok(Ok(report))) => Ok(Some(report)),
+                        Ok(Ok(Err(err))) => Err(err),
+                        Ok(Err(_)) => Err(anyhow!("netcheck report not received")),
+                        Err(err) => Err(anyhow!("netcheck report timeout: {:?}", err)),
+                    };
+                    msg_sender
+                        .send(ActorMessage::NetcheckReport(report, why))
+                        .await
+                        .ok();
+                });
+            }
+            Err(err) => {
+                warn!("unable to start netcheck generation: {:?}", err);
+                self.finalize_endpoints_update(why);
+            }
         }
-        for (rid, d) in r.region_v6_latency.iter() {
-            ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
+    }
+
+    async fn handle_netcheck_report(&mut self, report: Option<Arc<netcheck::Report>>) {
+        if let Some(ref report) = report {
+            self.inner
+                .ipv6_reported
+                .store(report.ipv6, Ordering::Relaxed);
+            let r = &report;
+            debug!(
+                "setting no_v4_send {} -> {}",
+                self.no_v4_send, !r.ipv4_can_send
+            );
+            self.no_v4_send = !r.ipv4_can_send;
+
+            let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
+            let mut ni = config::NetInfo {
+                derp_latency: Default::default(),
+                mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
+                hair_pinning: r.hair_pinning,
+                portmap_probe: r.portmap_probe.clone(),
+                have_port_map,
+                working_ipv6: Some(r.ipv6),
+                os_has_ipv6: Some(r.os_has_ipv6),
+                working_udp: Some(r.udp),
+                working_icm_pv4: Some(r.icmpv4),
+                preferred_derp: r.preferred_derp,
+                link_type: None,
+            };
+            for (rid, d) in r.region_v4_latency.iter() {
+                ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
+            }
+            for (rid, d) in r.region_v6_latency.iter() {
+                ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
+            }
+
+            if ni.preferred_derp == 0 {
+                // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
+                ni.preferred_derp = self.pick_derp_fallback().await;
+            }
+
+            if !self.set_nearest_derp(ni.preferred_derp).await {
+                ni.preferred_derp = 0;
+            }
+
+            // TODO: set link type
+            self.call_net_info_callback(ni).await;
         }
-
-        if ni.preferred_derp == 0 {
-            // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-            ni.preferred_derp = self.pick_derp_fallback().await;
-        }
-
-        if !self.set_nearest_derp(ni.preferred_derp).await {
-            ni.preferred_derp = 0;
-        }
-
-        // TODO: set link type
-        self.call_net_info_callback(ni).await;
-
-        Ok(report)
+        self.store_endpoints_update(report).await;
     }
 
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
@@ -2394,10 +2385,14 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
     // a common UDP NAT timeout on Linux,etc)
     let mut rng = rand::thread_rng();
     let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
-    debug!("scheduling periodic_stun to run in {}s", d.as_secs());
     if initial_delay {
+        debug!("scheduling periodic_stun to run in {}s", d.as_secs());
         time::interval_at(time::Instant::now() + d, d)
     } else {
+        debug!(
+            "scheduling periodic_stun to run immediately and in {}s",
+            d.as_secs()
+        );
         time::interval(d)
     }
 }
@@ -2441,10 +2436,6 @@ struct DiscoveredEndpoints {
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
-
-    /// Functions to run (in their own tasks) when endpoints are refreshed.
-    #[debug("on_refresh: ({})", self.on_refresh.len())]
-    on_refresh: HashMap<PublicKey, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
 }
 
 impl DiscoveredEndpoints {
@@ -2452,12 +2443,9 @@ impl DiscoveredEndpoints {
         self.last_endpoints.iter()
     }
 
+    #[must_use = "pending call-me-maybes must be sent out"]
     fn set(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
-        for (_de, f) in self.on_refresh.drain() {
-            tokio::task::spawn(f());
-        }
-
         if endpoint_sets_equal(endpoints, &self.last_endpoints) {
             return false;
         }
@@ -2473,12 +2461,9 @@ impl DiscoveredEndpoints {
         }
     }
 
-    fn insert_on_refresh(
-        &mut self,
-        node_key: PublicKey,
-        f: Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>,
-    ) {
-        self.on_refresh.insert(node_key, f);
+    fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
+        let my_number = self.last_endpoints.iter().map(|ep| ep.addr).collect();
+        disco::CallMeMaybe { my_number }
     }
 }
 

@@ -495,8 +495,6 @@ impl MagicEndpoint {
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
-        self.endpoint.wait_idle().await;
-        // TODO: Now wait-idle on msock!
         self.msock.close().await?;
         Ok(())
     }
@@ -710,8 +708,6 @@ mod tests {
         assert_eq!(conn_addr, direct_addr);
     }
 
-    // TODO: Enable in https://github.com/n0-computer/iroh/pull/1745
-    #[ignore]
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
         let _guard = iroh_test::logging::setup();
@@ -799,7 +795,6 @@ mod tests {
                 .instrument(error_span!("client", %i));
                 tokio::task::spawn(fut).await.unwrap();
                 println!("[client] round {} done in {:?}", i + 1, now.elapsed());
-                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
 

@@ -58,7 +58,6 @@ pub(super) enum State<'a> {
 pub enum ClearReason {
     Reset,
     Inactive,
-    PruneCallMeMaybe,
     PongTimeout,
 }
 

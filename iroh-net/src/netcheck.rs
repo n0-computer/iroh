@@ -248,6 +248,20 @@ impl Client {
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
+        let rx = self.get_report_channel(dm, stun_conn4, stun_conn6).await?;
+        match rx.await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("channel closed, actor awol")),
+        }
+    }
+
+    /// Get report with channel
+    pub async fn get_report_channel(
+        &mut self,
+        dm: DerpMap,
+        stun_conn4: Option<Arc<UdpSocket>>,
+        stun_conn6: Option<Arc<UdpSocket>>,
+    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
@@ -259,10 +273,7 @@ impl Client {
                 response_tx: tx,
             })
             .await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
-        }
+        Ok(rx)
     }
 }
 
