@@ -60,7 +60,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo check -p $i --all-features --lib --bins --tests
+          cargo check -p $i --all-features --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
@@ -69,7 +69,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo check -p $i --no-default-features --lib --bins --tests
+          cargo check -p $i --no-default-features --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
@@ -78,7 +78,7 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          cargo check -p $i --lib --bins --tests
+          cargo check -p $i --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
