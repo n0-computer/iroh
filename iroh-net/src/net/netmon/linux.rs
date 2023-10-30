@@ -49,7 +49,7 @@ macro_rules! get_nla {
 }
 
 impl RouteMonitor {
-    pub(super) async fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
         let (mut conn, mut _handle, mut messages) = new_connection()?;
 
         // Specify flags to listen on.

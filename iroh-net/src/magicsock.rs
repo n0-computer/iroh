@@ -287,11 +287,11 @@ impl Inner {
     }
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    async fn has_derp_region(&self, region: u16) -> bool {
+    fn has_derp_region(&self, region: u16) -> bool {
         self.derp_map.contains_region(region)
     }
 
-    async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
+    fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
         self.derp_map.get_region(region).cloned()
     }
 
@@ -1136,12 +1136,12 @@ impl MagicSock {
     }
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    pub async fn has_derp_region(&self, region: u16) -> bool {
-        self.inner.has_derp_region(region).await
+    pub fn has_derp_region(&self, region: u16) -> bool {
+        self.inner.has_derp_region(region)
     }
 
     async fn with_name(me: String, opts: Options) -> Result<Self> {
-        let port_mapper = portmapper::Client::default().await;
+        let port_mapper = portmapper::Client::default();
 
         let Options {
             port,
@@ -1170,7 +1170,7 @@ impl MagicSock {
 
         let (derp_recv_sender, derp_recv_receiver) = flume::bounded(128);
 
-        let (pconn4, pconn6) = bind(port).await?;
+        let (pconn4, pconn6) = bind(port)?;
         let port = pconn4.port();
 
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
@@ -1183,7 +1183,7 @@ impl MagicSock {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
+        let net_checker = netcheck::Client::new(Some(port_mapper.clone()))?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(128);
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
@@ -1404,7 +1404,7 @@ impl MagicSock {
     /// Returns the DERP region with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a DERP node in any region.
-    pub async fn my_derp(&self) -> Option<u16> {
+    pub fn my_derp(&self) -> Option<u16> {
         let my_derp = self.inner.my_derp();
         if my_derp == 0 {
             None
@@ -1785,7 +1785,7 @@ impl Actor {
                 let _ = s.send(());
             }
             ActorMessage::ReceiveDerp(read_result) => {
-                let passthroughs = self.process_derp_read_result(read_result).await;
+                let passthroughs = self.process_derp_read_result(read_result);
                 for passthrough in passthroughs {
                     self.derp_recv_sender
                         .send_async(passthrough)
@@ -1836,7 +1836,7 @@ impl Actor {
         (ipv4_addr, ipv6_addr)
     }
 
-    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
+    fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
         trace!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
             warn!("received empty derp packet");
@@ -2181,10 +2181,10 @@ impl Actor {
 
             if ni.preferred_derp == 0 {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                ni.preferred_derp = self.pick_derp_fallback().await;
+                ni.preferred_derp = self.pick_derp_fallback();
             }
 
-            if !self.set_nearest_derp(ni.preferred_derp).await {
+            if !self.set_nearest_derp(ni.preferred_derp) {
                 ni.preferred_derp = 0;
             }
 
@@ -2194,7 +2194,7 @@ impl Actor {
         self.store_endpoints_update(report).await;
     }
 
-    async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
+    fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
         {
             let my_derp = self.inner.my_derp();
             if derp_num == my_derp {
@@ -2232,7 +2232,7 @@ impl Actor {
     /// latency checks aren't working.
     ///
     /// If no the [`DerpMap`] is empty, returns `0`.
-    async fn pick_derp_fallback(&self) -> u16 {
+    fn pick_derp_fallback(&self) -> u16 {
         let ids = {
             let ids = self.inner.derp_map.region_ids();
             if ids.is_empty() {
@@ -2293,7 +2293,7 @@ impl Actor {
             let port = conn.port();
             trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
             // If we were not able to bind ipv6 at program start, dont retry
-            if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
+            if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate) {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
             } else {
                 ipv6_addr = conn.local_addr().ok();
@@ -2303,7 +2303,6 @@ impl Actor {
         let port = self.local_port_v4();
         self.pconn4
             .rebind(port, Network::Ipv4, cur_port_fate)
-            .await
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
@@ -2398,9 +2397,9 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 }
 
 /// Initial connection setup.
-async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
+fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
     let ip6_port = if port != 0 { port + 1 } else { 0 };
-    let pconn6 = match RebindingUdpConn::bind(ip6_port, Network::Ipv6).await {
+    let pconn6 = match RebindingUdpConn::bind(ip6_port, Network::Ipv6) {
         Ok(conn) => Some(conn),
         Err(err) => {
             info!("rebind ignoring IPv6 bind failure: {:?}", err);
@@ -2408,9 +2407,7 @@ async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)>
         }
     };
 
-    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
-        .await
-        .context("rebind IPv4 failed")?;
+    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4).context("rebind IPv4 failed")?;
 
     Ok((pconn4, pconn6))
 }
@@ -2792,8 +2789,8 @@ pub(crate) mod tests {
     }
 
     /// Monitors endpoint changes and plumbs things together.
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
-        async fn update_eps(ms: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
+    fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
+        fn update_eps(ms: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
             let me = &ms[my_idx];
             for (i, m) in ms.iter().enumerate() {
                 if i == my_idx {
@@ -2821,7 +2818,7 @@ pub(crate) mod tests {
                         res = m.ep_ch.recv_async() => match res {
                             Ok(new_eps) => {
                                 debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                                update_eps(&stacks, my_idx, new_eps).await;
+                                update_eps(&stacks, my_idx, new_eps);
                             }
                             Err(err) => {
                                 warn!("err: {:?}", err);
@@ -2854,7 +2851,7 @@ pub(crate) mod tests {
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
 
         // Wait for magicsock to be told about peers from mesh_stacks.
         let m1t = m1.clone();
@@ -3023,7 +3020,7 @@ pub(crate) mod tests {
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
 
-            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
 
             // Wait for magicsock to be told about peers from mesh_stacks.
             println!("waiting for connection");
@@ -3201,9 +3198,9 @@ pub(crate) mod tests {
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
+        fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();
-            let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into()).await?;
+            let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into())?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
@@ -3229,8 +3226,8 @@ pub(crate) mod tests {
             Ok(quic_ep)
         }
 
-        let m1 = make_conn("127.0.0.1:7770".parse().unwrap()).await?;
-        let m2 = make_conn("127.0.0.1:7771".parse().unwrap()).await?;
+        let m1 = make_conn("127.0.0.1:7770".parse().unwrap())?;
+        let m2 = make_conn("127.0.0.1:7771".parse().unwrap())?;
 
         // msg from  a -> b
         macro_rules! roundtrip {

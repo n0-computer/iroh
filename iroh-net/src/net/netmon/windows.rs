@@ -19,7 +19,7 @@ pub(super) struct RouteMonitor {
 }
 
 impl RouteMonitor {
-    pub(super) async fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(sender: flume::Sender<NetworkMessage>) -> Result<Self> {
         // Register two callbacks with the windows api
         let mut cb_handler = CallbackHandler::default();
 

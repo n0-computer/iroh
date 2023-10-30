@@ -331,7 +331,7 @@ where
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone()).await;
+        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone());
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             rt.clone(),
@@ -761,8 +761,8 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Get the DERP region we are connected to.
-    pub async fn my_derp(&self) -> Option<u16> {
-        self.inner.endpoint.my_derp().await
+    pub fn my_derp(&self) -> Option<u16> {
+        self.inner.endpoint.my_derp()
     }
 
     /// Aborts the node.
@@ -1216,6 +1216,7 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
+    #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
         let res = Ok(NodeStatsResponse {
@@ -1239,6 +1240,8 @@ impl<D: BaoStore> RpcHandler<D> {
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
     }
+
+    #[allow(clippy::unused_async)]
     async fn node_shutdown(self, request: NodeShutdownRequest) {
         if request.force {
             info!("hard shutdown requested");
@@ -1584,7 +1587,7 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             DocSubscribe(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
-                    async move { handler.inner.sync.doc_subscribe(req).await }.flatten_stream()
+                    async move { handler.inner.sync.doc_subscribe(req) }.flatten_stream()
                 })
                 .await
             }

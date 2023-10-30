@@ -578,7 +578,7 @@ impl Actor {
         trace!(%plan, "probe plan");
 
         let pinger = if plan.has_icmp_probes() {
-            match Pinger::new().await {
+            match Pinger::new() {
                 Ok(pinger) => Some(pinger),
                 Err(err) => {
                     debug!("failed to create pinger: {err:#}");
@@ -1032,6 +1032,7 @@ async fn measure_icmp_latency(
     Ok(latency)
 }
 
+#[allow(clippy::unused_async)]
 async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {
     anyhow::bail!("not implemented");
     // TODO:
