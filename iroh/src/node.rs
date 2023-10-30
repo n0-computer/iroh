@@ -1684,6 +1684,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
+        let _guard = iroh_test::logging::setup();
+
         let rt = test_runtime();
         let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
@@ -1702,6 +1704,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         use std::io::Cursor;
         let rt = runtime::Handle::from_current(1)?;
         let db = iroh_bytes::store::mem::Store::new(rt);
@@ -1726,6 +1730,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let rt = runtime::Handle::from_current(1)?;
         let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();

@@ -186,7 +186,11 @@ async fn bind(
     }
 
     // Failed to bind, including on port 0 (!).
-    bail!("failed to bind any ports (tried {:?})", ports);
+    bail!(
+        "failed to bind any ports on {:?} (tried {:?})",
+        network,
+        ports
+    );
 }
 
 #[cfg(test)]
