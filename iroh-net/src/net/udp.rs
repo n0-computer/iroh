@@ -62,7 +62,8 @@ impl UdpSocket {
             network.into(),
             socket2::Type::DGRAM,
             Some(socket2::Protocol::UDP),
-        )?;
+        )
+        .context("socket create")?;
 
         if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
             warn!(
@@ -82,7 +83,7 @@ impl UdpSocket {
         }
 
         if prepare_for_quinn {
-            quinn_udp::UdpSocketState::configure((&socket).into())?;
+            quinn_udp::UdpSocketState::configure((&socket).into()).context("QUIC config")?;
             // disable nonblocking to ensure socket2 bind works
             socket
                 .set_nonblocking(false)
