@@ -138,10 +138,7 @@ async fn bind(
     network: IpFamily,
     cur_port_fate: CurrentPortFate,
 ) -> anyhow::Result<UdpSocket> {
-    debug!(
-        "bind_socket: network={:?} cur_port_fate={:?}",
-        network, cur_port_fate
-    );
+    debug!(?network, %port, ?cur_port_fate, "binding");
 
     // Build a list of preferred ports.
     // - Best is the port that the user requested.
@@ -161,7 +158,7 @@ async fn bind(
     ports.push(0);
     // Remove duplicates. (All duplicates are consecutive.)
     ports.dedup();
-    debug!("bind_socket: candidate ports: {:?}", ports);
+    debug!(?ports, "candidate ports");
 
     for port in &ports {
         // Close the existing conn, in case it is sitting on the port we want.
@@ -172,14 +169,11 @@ async fn bind(
         match UdpSocket::bind(network, *port).await {
             Ok(pconn) => {
                 let local_addr = pconn.local_addr().context("UDP socket not bound")?;
-                debug!("bind_socket: successfully bound {network:?} {local_addr}");
+                debug!(?network, %local_addr, "successfully bound");
                 return Ok(pconn);
             }
             Err(err) => {
-                warn!(
-                    "bind_socket: unable to bind {:?} port {}: {:?}",
-                    network, port, err
-                );
+                warn!(?network, %port, "failed to bind: {:#?}", err);
                 continue;
             }
         }
