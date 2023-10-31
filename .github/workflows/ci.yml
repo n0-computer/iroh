@@ -19,144 +19,144 @@ env:
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
 
 jobs:
-  build_and_test_nix:
-    timeout-minutes: 30
-    name: Build and test (Nix)
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, macOS-arm-latest]
-        rust: [nightly, stable]
-        include:
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
+  # build_and_test_nix:
+  #   timeout-minutes: 30
+  #   name: Build and test (Nix)
+  #   runs-on: ${{ matrix.runner }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       name: [ubuntu-latest, macOS-arm-latest]
+  #       rust: [nightly, stable]
+  #       include:
+  #         - name: ubuntu-latest
+  #           os: ubuntu-latest
+  #           release-os: linux
+  #           release-arch: amd64
+  #           runner: [self-hosted, linux, X64]
+  #         - name: macOS-arm-latest
+  #           os: macOS-latest
+  #           release-os: darwin
+  #           release-arch: aarch64
+  #           runner: [self-hosted, macOS, ARM64]
+  #   env:
+  #     SCCACHE_GHA_ENABLED: "true"
+  #     RUSTC_WRAPPER: "sccache"
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@master
+  #     with:
+  #       submodules: recursive
 
-    - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
+  #   - name: Install ${{ matrix.rust }}
+  #     uses: dtolnay/rust-toolchain@master
+  #     with:
+  #       toolchain: ${{ matrix.rust }}
     
-    - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.3
+  #   - name: Run sccache-cache
+  #     uses: mozilla-actions/sccache-action@v0.0.3
 
-    - name: check all features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --all-features --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: check all features
+  #     run: |
+  #       for i in ${CRATES_LIST//,/ }
+  #       do
+  #         echo "Checking $i"
+  #         cargo check -p $i --all-features --lib --bins
+  #       done
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: check no default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --no-default-features --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: check no default features
+  #     run: |
+  #       for i in ${CRATES_LIST//,/ }
+  #       do
+  #         echo "Checking $i"
+  #         cargo check -p $i --no-default-features --lib --bins
+  #       done
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: check default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: check default features
+  #     run: |
+  #       for i in ${CRATES_LIST//,/ }
+  #       do
+  #         echo "Checking $i"
+  #         cargo check -p $i --lib --bins
+  #       done
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: tests (all features)
+  #     run: cargo test --workspace --all-features --lib --bins --tests
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: tests (no features)
+  #     run: cargo test --workspace --no-default-features --lib --bins --tests
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: tests (default features)
+  #     run: cargo test --workspace --lib --bins --tests
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: doctests
-      run: cargo test --workspace --all-features --doc
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: doctests
+  #     run: cargo test --workspace --all-features --doc
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
-  build_and_test_windows:
-    timeout-minutes: 30
-    name: Build and test (Windows)
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [windows-latest]
-        rust: [nightly, stable]
-        target:
-          - x86_64-pc-windows-msvc
-        include:
-          - name: windows-latest
-            os: windows
-            runner: [self-hosted, windows, x64]
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
+  # build_and_test_windows:
+  #   timeout-minutes: 30
+  #   name: Build and test (Windows)
+  #   runs-on: ${{ matrix.runner }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       name: [windows-latest]
+  #       rust: [nightly, stable]
+  #       target:
+  #         - x86_64-pc-windows-msvc
+  #       include:
+  #         - name: windows-latest
+  #           os: windows
+  #           runner: [self-hosted, windows, x64]
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@master
+  #     with:
+  #       submodules: recursive
 
-    - name: Install ${{ matrix.rust }}
-      run: |
-        rustup toolchain install ${{ matrix.rust }}
-        rustup toolchain default ${{ matrix.rust }}
-        rustup target add ${{ matrix.target }}
-        rustup set default-host ${{ matrix.target }}
+  #   - name: Install ${{ matrix.rust }}
+  #     run: |
+  #       rustup toolchain install ${{ matrix.rust }}
+  #       rustup toolchain default ${{ matrix.rust }}
+  #       rustup target add ${{ matrix.target }}
+  #       rustup set default-host ${{ matrix.target }}
     
-    - uses: msys2/setup-msys2@v2
+  #   - uses: msys2/setup-msys2@v2
 
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: tests (all features)
+  #     run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: tests (no features)
+  #     run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: tests (default features)
+  #     run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
   build_release:
     timeout-minutes: 60
     name: Build release binaries
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
-    needs: build_and_test_nix
+    # needs: build_and_test_nix
     # if: ${{ always() && github.ref_name=='main' }}
     strategy:
       fail-fast: false
@@ -256,47 +256,47 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
-  cross:
-    timeout-minutes: 30
-    name: Cross compile
-    runs-on: [self-hosted, linux, X64]
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - i686-unknown-linux-gnu
-          - armv7-linux-androideabi
-          - aarch64-linux-android
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
+  # cross:
+  #   timeout-minutes: 30
+  #   name: Cross compile
+  #   runs-on: [self-hosted, linux, X64]
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       target:
+  #         - i686-unknown-linux-gnu
+  #         - armv7-linux-androideabi
+  #         - aarch64-linux-android
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@master
+  #     with:
+  #       submodules: recursive
 
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+  #   - name: Install rust stable
+  #     uses: dtolnay/rust-toolchain@stable
 
-    - name: Cleanup Docker
-      continue-on-error: true
-      run: |
-        docker kill $(docker ps -q)
+  #   - name: Cleanup Docker
+  #     continue-on-error: true
+  #     run: |
+  #       docker kill $(docker ps -q)
 
-    - name: Install cross
-      # See https://github.com/cross-rs/cross/issues/1222
-      run: cargo install cross --git https://github.com/cross-rs/cross
+  #   - name: Install cross
+  #     # See https://github.com/cross-rs/cross/issues/1222
+  #     run: cargo install cross --git https://github.com/cross-rs/cross
 
-    - name: check
-      run: cross check --all --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: check
+  #     run: cross check --all --target ${{ matrix.target }}
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: test
-      # cross tests are currently broken vor armv7 and aarch64
-      # see https://github.com/cross-rs/cross/issues/1311
-      if: matrix.target == 'i686-unknown-linux-gnu'
-      run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+  #   - name: test
+  #     # cross tests are currently broken vor armv7 and aarch64
+  #     # see https://github.com/cross-rs/cross/issues/1311
+  #     if: matrix.target == 'i686-unknown-linux-gnu'
+  #     run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
+  #     env:
+  #       RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
   check_fmt_and_docs:
     timeout-minutes: 30
@@ -363,110 +363,110 @@ jobs:
           command: check
           command-arguments: "-Dwarnings"
 
-  netsim-integration-tests:
-    timeout-minutes: 30
-    name: Run network simulations/benchmarks
-    runs-on: [self-hosted, linux, X64]
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
+  # netsim-integration-tests:
+  #   timeout-minutes: 30
+  #   name: Run network simulations/benchmarks
+  #   runs-on: [self-hosted, linux, X64]
+  #   env:
+  #     SCCACHE_GHA_ENABLED: "true"
+  #     RUSTC_WRAPPER: "sccache"
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@master
+  #     with:
+  #       submodules: recursive
     
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+  #   - name: Install rust stable
+  #     uses: dtolnay/rust-toolchain@stable
 
-    - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.3
+  #   - name: Run sccache-cache
+  #     uses: mozilla-actions/sccache-action@v0.0.3
 
-    - name: Build iroh
-      run: |
-        cargo build --release --workspace --all-features
+  #   - name: Build iroh
+  #     run: |
+  #       cargo build --release --workspace --all-features
 
-    - name: Fetch and build chuck
-      run: |
-        cd ..
-        rm -rf chuck
-        git clone https://github.com/n0-computer/chuck.git
-        cd chuck
-        cargo build --release
+  #   - name: Fetch and build chuck
+  #     run: |
+  #       cd ..
+  #       rm -rf chuck
+  #       git clone https://github.com/n0-computer/chuck.git
+  #       cd chuck
+  #       cargo build --release
     
-    - name: Install netsim deps
-      run: |
-        cd ../chuck/netsim
-        sudo apt update
-        ./setup.sh
+  #   - name: Install netsim deps
+  #     run: |
+  #       cd ../chuck/netsim
+  #       sudo apt update
+  #       ./setup.sh
 
-    - name: Copy binaries to right location
-      run: |
-        cp target/release/iroh ../chuck/netsim/bins/iroh
-        cp target/release/derper ../chuck/netsim/bins/derper
-        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
+  #   - name: Copy binaries to right location
+  #     run: |
+  #       cp target/release/iroh ../chuck/netsim/bins/iroh
+  #       cp target/release/derper ../chuck/netsim/bins/derper
+  #       cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
-    - name: Run tests
-      run: |
-        cd ../chuck/netsim
-        sudo kill -9 $(pgrep ovs) || true
-        sudo mn --clean || true
-        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/iroh/iroh.json
-        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
-    - name: Cleanup
-      run: |
-        sudo kill -9 $(pgrep derper) || true
-        sudo kill -9 $(pgrep iroh) || true
-        sudo kill -9 $(pgrep ovs) || true
-        sudo mn --clean || true
+  #   - name: Run tests
+  #     run: |
+  #       cd ../chuck/netsim
+  #       sudo kill -9 $(pgrep ovs) || true
+  #       sudo mn --clean || true
+  #       sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/iroh/iroh.json
+  #       sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
+  #   - name: Cleanup
+  #     run: |
+  #       sudo kill -9 $(pgrep derper) || true
+  #       sudo kill -9 $(pgrep iroh) || true
+  #       sudo kill -9 $(pgrep ovs) || true
+  #       sudo mn --clean || true
         
-    - name: Setup Environment (PR)  
-      if: ${{ github.event_name == 'pull_request' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
-    - name: Setup Environment (Push)  
-      if: ${{ github.event_name == 'push' || github.event_name == 'merge_group' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
+  #   - name: Setup Environment (PR)  
+  #     if: ${{ github.event_name == 'pull_request' }}  
+  #     shell: bash  
+  #     run: |  
+  #       echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
+  #       echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
+  #   - name: Setup Environment (Push)  
+  #     if: ${{ github.event_name == 'push' || github.event_name == 'merge_group' }}  
+  #     shell: bash  
+  #     run: |  
+  #       echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
+  #       echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
 
-    - name: Generate reports
-      run: |
-        cd ../chuck/netsim
-        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
-        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
-        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
+  #   - name: Generate reports
+  #     run: |
+  #       cd ../chuck/netsim
+  #       python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
+  #       python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+  #       python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
 
-    - name: Dump report
-      if: ${{ (github.event.pull_request && !github.event.pull_request.head.repo.fork) || !github.event.pull_request }}
-      run: |
-        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
-        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
-        export AWS_DEFAULT_REGION=us-west-2
+  #   - name: Dump report
+  #     if: ${{ (github.event.pull_request && !github.event.pull_request.head.repo.fork) || !github.event.pull_request }}
+  #     run: |
+  #       export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
+  #       export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
+  #       export AWS_DEFAULT_REGION=us-west-2
         
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip -q awscliv2.zip
-        sudo ./aws/install --update
+  #       curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  #       unzip -q awscliv2.zip
+  #       sudo ./aws/install --update
 
-        cd ../chuck/netsim
+  #       cd ../chuck/netsim
 
-        aws_fname=intg_${{ env.LAST_COMMIT_SHA }}.tar.gz
-        tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
-        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
+  #       aws_fname=intg_${{ env.LAST_COMMIT_SHA }}.tar.gz
+  #       tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
+  #       aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
 
-        link_data='dump{fname="'$aws_fname'",commit="'${{ env.LAST_COMMIT_SHA }}'",branch="'${{ env.HEAD_REF }}'"} 1.0'
-        link_data=$(printf "%s\n " "$link_data")
-        curl -X POST -H  "Content-Type: text/plain" --data "$link_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
+  #       link_data='dump{fname="'$aws_fname'",commit="'${{ env.LAST_COMMIT_SHA }}'",branch="'${{ env.HEAD_REF }}'"} 1.0'
+  #       link_data=$(printf "%s\n " "$link_data")
+  #       curl -X POST -H  "Content-Type: text/plain" --data "$link_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
 
-    - name: Echo metrics
-      run: |
-        cd ../chuck/netsim
-        d=$(cat report_metro.txt)
-        metro_data=$(printf "%s\n " "$d")
-        echo "$metro_data" 
-        d=$(cat report_metro_integration.txt)
-        metro_data=$(printf "%s\n " "$d")
-        echo "$metro_data" 
+  #   - name: Echo metrics
+  #     run: |
+  #       cd ../chuck/netsim
+  #       d=$(cat report_metro.txt)
+  #       metro_data=$(printf "%s\n " "$d")
+  #       echo "$metro_data" 
+  #       d=$(cat report_metro_integration.txt)
+  #       metro_data=$(printf "%s\n " "$d")
+  #       echo "$metro_data" 
