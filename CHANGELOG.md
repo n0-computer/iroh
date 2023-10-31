@@ -1,3 +1,26 @@
+# [v0.9.0](https://github.com/n0-computer/iroh/compare/v0.8.0...v0.9.0) (2023-10-31)
+
+### Bug Fixes
+
+* **console:** remove ticket separator to improve usability ([#1754](https://github.com/n0-computer/iroh/issues/1754)) ([f6c6932](https://github.com/n0-computer/iroh/commit/f6c69324975c1908d20dfba308f0931e600c7fc6))
+* **deps:** iroh-sync ([261debf](https://github.com/n0-computer/iroh/commit/261debfaae664e9e63a463d57aa83c824df7b5b4))
+* do not block on dropping UDP sockets ([#1755](https://github.com/n0-computer/iroh/issues/1755)) ([cadb89b](https://github.com/n0-computer/iroh/commit/cadb89b900131cbcadf559fd6c923021b3469c6b))
+* do not block on netcheck ([#1745](https://github.com/n0-computer/iroh/issues/1745)) ([8e6f5a9](https://github.com/n0-computer/iroh/commit/8e6f5a96ba28262de9a896d475d0e999814cab99))
+* do not wait_idle on endpoint close ([#1753](https://github.com/n0-computer/iroh/issues/1753)) ([f4735c6](https://github.com/n0-computer/iroh/commit/f4735c6052801876a26fdc880f9e1504757e0465)), closes [#1752](https://github.com/n0-computer/iroh/issues/1752)
+* **iroh-net:** correctly set the time in which a probe is created ([#1722](https://github.com/n0-computer/iroh/issues/1722)) ([d44a7dc](https://github.com/n0-computer/iroh/commit/d44a7dc70e950e75a7043ec90f045d67ff09f863))
+* **iroh:** handle rpc args in any position ([#1739](https://github.com/n0-computer/iroh/issues/1739)) ([0ca61ad](https://github.com/n0-computer/iroh/commit/0ca61ad60eecaaf7f2987e88edb6c0d10b62f7f9)), closes [#1639](https://github.com/n0-computer/iroh/issues/1639)
+* **net:** do not dial regions in parallel ([#1736](https://github.com/n0-computer/iroh/issues/1736)) ([c851fe1](https://github.com/n0-computer/iroh/commit/c851fe1e2da221e2358ed7a1a3eea4e0db15513a))
+* update ahash ([#1708](https://github.com/n0-computer/iroh/issues/1708)) ([118c1d7](https://github.com/n0-computer/iroh/commit/118c1d70da3394796b777e776ce3c87272f2e52c)), closes [#1707](https://github.com/n0-computer/iroh/issues/1707)
+
+
+### Features
+
+* **console:** blob share ticket ([#1746](https://github.com/n0-computer/iroh/issues/1746)) ([fa9fa83](https://github.com/n0-computer/iroh/commit/fa9fa836d6da29d503aa7a73909fa571d117de55))
+* **iroh:** add ticket prefixes and a `doctor ticket-inspect` command ([#1711](https://github.com/n0-computer/iroh/issues/1711)) ([2d292e3](https://github.com/n0-computer/iroh/commit/2d292e30b41e557c03ddbab9f2bd73942af82e78))
+* **iroh:** pass a runtime to Doc client to spawn close task on drop ([#1758](https://github.com/n0-computer/iroh/issues/1758)) ([0c145d5](https://github.com/n0-computer/iroh/commit/0c145d5dc77cf51de5c917e68f87b54085f87565))
+
+
+
 # [v0.8.0](https://github.com/n0-computer/iroh/compare/v0.7.0...v0.8.0) (2023-10-23)
 
 ### Breaking API Changes
