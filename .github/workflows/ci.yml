@@ -157,7 +157,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
     needs: build_and_test_nix
-    if: ${{ always() && github.ref_name=='main' }}
+    # if: ${{ always() && github.ref_name=='main' }}
     strategy:
       fail-fast: false
       matrix:
@@ -193,7 +193,7 @@ jobs:
       RUST_BACKTRACE: full
       RUSTV: ${{ matrix.rust }}
       SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
+      # RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -209,9 +209,9 @@ jobs:
       run: |
         rustup toolchain install ${{ matrix.rust }}
     
-    - name: Run sccache-cache
-      if: matrix.release-os != 'linux' && matrix.release-arch != 'aarch64'
-      uses: mozilla-actions/sccache-action@v0.0.3
+    # - name: Run sccache-cache
+    #   if: matrix.release-os != 'linux' && matrix.release-arch != 'aarch64'
+    #   uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: build release
       run: |
