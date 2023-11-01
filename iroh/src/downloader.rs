@@ -305,7 +305,7 @@ pub struct NodeInfo {
 }
 
 impl NodeInfo {
-    /// Create a new [`PeerInfo`] from its parts.
+    /// Create a new [`NodeInfo`] from its parts.
     pub fn new(node_id: NodeId, role: Role) -> Self {
         Self { node_id, role }
     }
@@ -1137,7 +1137,7 @@ impl ProviderMap {
 
     /// Get the next provider hash for a node.
     ///
-    /// I.e. get the next hash that was added with [`PeerRole::Provider`] for this node.
+    /// I.e. get the next hash that was added with [`Role::Provider`] for this node.
     fn get_next_provider_hash_for_node(&mut self, node: &NodeId) -> Option<Hash> {
         let hash = self
             .provider_hashes_by_node
