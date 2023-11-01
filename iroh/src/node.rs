@@ -41,7 +41,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMode,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, PeerAddr,
+    tls, MagicEndpoint, NodeAddr,
 };
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -755,8 +755,8 @@ impl<D: ReadableStore> Node<D> {
         Ticket::new(me, hash, format, None)
     }
 
-    /// Return the [`PeerAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<PeerAddr> {
+    /// Return the [`NodeAddr`] for this node.
+    pub async fn my_addr(&self) -> Result<NodeAddr> {
         self.inner.endpoint.my_addr().await
     }
 

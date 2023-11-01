@@ -5,7 +5,7 @@ use std::{collections::HashMap, io, pin::Pin, time::Instant};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
-use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     task::JoinSet,
@@ -119,7 +119,7 @@ impl Dialer {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect(PeerAddr::new(peer_id), alpn_protocol) => res
+                res = endpoint.connect(NodeAddr::new(peer_id), alpn_protocol) => res
             };
             (peer_id, res)
         });

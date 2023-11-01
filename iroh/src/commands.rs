@@ -19,7 +19,7 @@ use iroh::rpc_protocol::*;
 use iroh::ticket::blob::Ticket;
 use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
 use iroh_net::magicsock::DirectAddrInfo;
-use iroh_net::PeerAddr;
+use iroh_net::NodeAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
@@ -263,7 +263,7 @@ impl FullCommands {
                         rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
-                            peer: PeerAddr::from_parts(peer, region, addrs),
+                            peer: NodeAddr::from_parts(peer, region, addrs),
                             keylog,
                             derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
@@ -395,7 +395,7 @@ impl NodeCommands {
             Self::Status => {
                 let response = iroh.node.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node public key: {}", response.addr.peer_id);
+                println!("Node public key: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
             }
         }
@@ -612,7 +612,7 @@ impl BlobCommands {
                         Some(true) => BlobFormat::HashSeq,
                     };
                     (
-                        PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
+                        NodeAddr::from_parts(peer.unwrap(), derp_region, addr),
                         hash.unwrap(),
                         format,
                         token,
@@ -662,11 +662,11 @@ impl BlobCommands {
             } => {
                 let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
                 let node_addr = if no_derp {
-                    PeerAddr::new(addr.peer_id)
+                    NodeAddr::new(addr.node_id)
                         .with_direct_addresses(addr.direct_addresses().copied())
                 } else if derp_only {
                     if let Some(region) = addr.derp_region() {
-                        PeerAddr::new(addr.peer_id).with_derp_region(region)
+                        NodeAddr::new(addr.node_id).with_derp_region(region)
                     } else {
                         addr
                     }

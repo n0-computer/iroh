@@ -3,7 +3,7 @@
 use anyhow::Context;
 use iroh_net::derp::{DerpMap, DerpMode};
 use iroh_net::key::SecretKey;
-use iroh_net::PeerAddr;
+use iroh_net::NodeAddr;
 
 /// Options for the client
 #[derive(Clone, Debug)]
@@ -11,7 +11,7 @@ pub struct Options {
     /// The secret key of the node
     pub secret_key: SecretKey,
     /// The peer to connect to.
-    pub peer: PeerAddr,
+    pub peer: NodeAddr,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
     /// The configuration of the derp services

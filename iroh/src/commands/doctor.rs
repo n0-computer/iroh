@@ -24,7 +24,7 @@ use iroh_net::{
     magicsock::EndpointInfo,
     netcheck, portmapper,
     util::AbortingJoinHandle,
-    MagicEndpoint, PeerAddr,
+    MagicEndpoint, NodeAddr,
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
@@ -620,8 +620,8 @@ async fn connect(
     let endpoint = make_endpoint(secret_key, derp_map).await?;
 
     tracing::info!("dialing {:?}", peer_id);
-    let peer_addr = PeerAddr::from_parts(peer_id, derp_region, direct_addresses);
-    let conn = endpoint.connect(peer_addr, &DR_DERP_ALPN).await;
+    let node_addr = NodeAddr::from_parts(peer_id, derp_region, direct_addresses);
+    let conn = endpoint.connect(node_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
             if let Err(cause) = passive_side(endpoint.clone(), connection).await {

@@ -51,7 +51,7 @@ use crate::{
     disco,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::PeerAddr,
+    magic_endpoint::NodeAddr,
     magicsock::peer_map::PingRole,
     net::{ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper, stun,
@@ -1376,7 +1376,7 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub fn add_peer_addr(&self, addr: PeerAddr) {
+    pub fn add_peer_addr(&self, addr: NodeAddr) {
         self.inner.peer_map.add_peer_addr(addr);
     }
 
@@ -2758,8 +2758,8 @@ pub(crate) mod tests {
                 if i == my_idx {
                     continue;
                 }
-                let addr = PeerAddr {
-                    peer_id: me.public(),
+                let addr = NodeAddr {
+                    node_id: me.public(),
                     info: crate::AddrInfo {
                         derp_region: Some(1),
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
@@ -2899,7 +2899,7 @@ pub(crate) mod tests {
                 let a_span = debug_span!("sender", a_name, %a_addr);
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
-                    let peer_b_data = PeerAddr::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
+                    let peer_b_data = NodeAddr::new(b_peer_id).with_derp_region(region).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(peer_b_data, &ALPN)
