@@ -121,31 +121,3 @@ pub enum LinkType {
     /// LTE, 4G, 3G, etc.
     Mobile,
 }
-
-/// Contains response information for the "tailscale ping" subcommand,
-/// saying how Tailscale can reach a Tailscale IP or subnet-routed IP.
-/// See tailcfg.PingResponse for a related response that is sent back to control
-/// for remote diagnostic pings.
-// Based on tailscale/ipnstate
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct PingResult {
-    /// ping destination
-    pub ip: Option<IpAddr>,
-    /// Tailscale IP of node handling IP (different for subnet routers)
-    pub node_ip: Option<IpAddr>,
-    /// DNS name base or (possibly not unique) hostname
-    pub node_name: Option<String>,
-    /// Perceived latency in seconds.
-    pub latency_seconds: Option<f64>,
-    /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
-    pub endpoint: Option<SocketAddr>,
-    /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
-    pub derp_region_id: Option<u16>,
-    /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
-    pub derp_region_code: Option<String>,
-    /// Whether the ping request error is due to it being a ping to the local node.
-    pub is_local_ip: Option<bool>,
-
-    /// Did any error occur?
-    pub err: Option<String>,
-}

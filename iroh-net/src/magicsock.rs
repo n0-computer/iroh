@@ -1315,41 +1315,6 @@ impl MagicSock {
         None
     }
 
-    // TODO
-    // /// Handles a "ping" CLI query.
-    // #[instrument(skip_all, fields(me = %self.inner.me))]
-    // pub async fn ping<F>(&self, peer: config::Node, mut res: config::PingResult, cb: F)
-    // where
-    //     F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
-    // {
-    //     res.node_ip = peer.addresses.get(0).copied();
-    //     res.node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
-    //         Some(name) => {
-    //             // prefer DNS name
-    //             Some(name.to_string())
-    //         }
-    //         None => {
-    //             // else hostname
-    //             Some(peer.hostinfo.hostname.clone())
-    //         }
-    //     };
-    //     let ep = self
-    //         .peer_map
-    //         .read()
-    //         .await
-    //         .endpoint_for_node_key(&peer.key)
-    //         .cloned();
-    //     match ep {
-    //         Some(ep) => {
-    //             ep.cli_ping(res, cb).await;
-    //         }
-    //         None => {
-    //             res.err = Some("unknown peer".to_string());
-    //             cb(res);
-    //         }
-    //     }
-    // }
-
     /// Sets the connection's preferred local port.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn set_preferred_port(&self, port: u16) {
