@@ -511,7 +511,7 @@ impl Endpoint {
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
     #[instrument(skip_all, fields(peer = %self.public_key.fmt_short()))]
-    pub fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.last_full_ping = None;
         self.best_addr
             .clear(ClearReason::Reset, self.derp_region.is_some());
