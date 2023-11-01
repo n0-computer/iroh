@@ -14,10 +14,7 @@ use iroh::{
     collection::{Blob, Collection},
     node::{Builder, Event, Node, StaticTokenAuthHandler},
 };
-use iroh_net::{
-    key::{PublicKey, SecretKey},
-    MagicEndpoint, NodeAddr,
-};
+use iroh_net::{key::SecretKey, MagicEndpoint, NodeAddr, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
 use tokio::sync::mpsc;
@@ -137,8 +134,8 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given peer id and addresses, using a
 /// randomly generated secret key.
-fn get_options(peer_id: PublicKey, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
-    let peer = iroh_net::NodeAddr::from_parts(peer_id, Some(1), addrs);
+fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+    let peer = iroh_net::NodeAddr::from_parts(node_id, Some(1), addrs);
     iroh::dial::Options {
         secret_key: SecretKey::generate(),
         peer,

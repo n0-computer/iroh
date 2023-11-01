@@ -29,5 +29,7 @@ pub mod util;
 
 pub use magic_endpoint::{AddrInfo, MagicEndpoint, NodeAddr};
 
+pub use key::PublicKey as NodeId;
+
 #[cfg(test)]
 pub(crate) mod test_utils;

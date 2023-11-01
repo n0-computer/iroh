@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::downloader::{DownloadKind, Downloader, PeerRole};
+use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
 use iroh_bytes::{store::EntryStatus, Hash};
@@ -637,8 +637,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
                     let from = PublicKey::from_bytes(&from)?;
                     let role = match content_status {
-                        ContentStatus::Complete => PeerRole::Provider,
-                        _ => PeerRole::Candidate,
+                        ContentStatus::Complete => Role::Provider,
+                        _ => Role::Candidate,
                     };
                     let handle = self
                         .downloader
