@@ -168,7 +168,7 @@ impl PeerMap {
     pub fn notify_shutdown(&self) {
         let mut inner = self.inner.lock();
         for (_, ep) in inner.endpoints_mut() {
-            ep.stop_and_reset();
+            ep.reset();
         }
     }
 
