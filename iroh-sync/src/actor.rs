@@ -16,8 +16,8 @@ use tracing::{debug, error, error_span, trace, warn};
 use crate::{
     ranger::Message,
     store::{self, GetFilter},
-    Author, AuthorHeads, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace,
-    NamespaceId, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
+    Author, AuthorHeads, AuthorId, ContentStatus, ContentStatusCallback, Event, NamespaceId,
+    NamespaceSecret, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
 };
 
 #[derive(derive_more::Debug, derive_more::Display)]
@@ -30,7 +30,7 @@ enum Action {
     },
     #[display("NewReplica")]
     ImportNamespace {
-        namespace: Namespace,
+        namespace: NamespaceSecret,
         #[debug("reply")]
         reply: oneshot::Sender<Result<NamespaceId>>,
     },
@@ -134,7 +134,7 @@ enum ReplicaAction {
         reply: oneshot::Sender<Result<()>>,
     },
     ExportSecretKey {
-        reply: oneshot::Sender<Result<Namespace>>,
+        reply: oneshot::Sender<Result<NamespaceSecret>>,
     },
     HasNewsForUs {
         heads: AuthorHeads,
@@ -396,7 +396,7 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<Namespace> {
+    pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<NamespaceSecret> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::ExportSecretKey { reply };
         self.send_replica(namespace, action).await?;
@@ -428,7 +428,7 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn import_namespace(&self, namespace: Namespace) -> Result<NamespaceId> {
+    pub async fn import_namespace(&self, namespace: NamespaceSecret) -> Result<NamespaceId> {
         let (reply, rx) = oneshot::channel();
         self.send(Action::ImportNamespace { namespace, reply })
             .await?;
@@ -787,7 +787,7 @@ mod tests {
     async fn open_close() -> anyhow::Result<()> {
         let store = store::memory::Store::default();
         let sync = SyncHandle::spawn(store, None, "foo".into());
-        let namespace = Namespace::new(&mut rand::rngs::OsRng {});
+        let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         sync.import_namespace(namespace.clone()).await?;
         sync.open(namespace.id(), Default::default()).await?;
         let (tx, rx) = flume::bounded(10);

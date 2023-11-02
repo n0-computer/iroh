@@ -26,7 +26,9 @@ pub use crate::heads::AuthorHeads;
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::{
-    keys::{base32, Author, AuthorId, AuthorPublicKey, Namespace, NamespaceId, NamespacePublicKey},
+    keys::{
+        base32, Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret,
+    },
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
     store::{self, PublicKeyStore},
 };
@@ -121,7 +123,7 @@ impl Subscribers {
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    namespace: Namespace,
+    namespace: NamespaceSecret,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
@@ -132,7 +134,7 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.
     // TODO: make read only replicas possible
-    pub fn new(namespace: Namespace, store: S) -> Self {
+    pub fn new(namespace: NamespaceSecret, store: S) -> Self {
         Replica {
             namespace,
             peer: Peer::from_store(store),
@@ -414,8 +416,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.namespace.id()
     }
 
-    /// Get the byte represenation of the [`Namespace`] key for this replica.
-    pub fn secret_key(&self) -> Namespace {
+    /// Get the byte represenation of the [`NamespaceSecret`] key for this replica.
+    pub fn secret_key(&self) -> NamespaceSecret {
         self.namespace.clone()
     }
 }
@@ -534,14 +536,14 @@ impl SignedEntry {
     }
 
     /// Create a new signed entry by signing an entry with the `namespace` and `author`.
-    pub fn from_entry(entry: Entry, namespace: &Namespace, author: &Author) -> Self {
+    pub fn from_entry(entry: Entry, namespace: &NamespaceSecret, author: &Author) -> Self {
         let signature = EntrySignature::from_entry(&entry, namespace, author);
         SignedEntry { signature, entry }
     }
 
     /// Create a new signed entries from its parts.
     pub fn from_parts(
-        namespace: &Namespace,
+        namespace: &NamespaceSecret,
         author: &Author,
         key: impl AsRef<[u8]>,
         record: Record,
@@ -648,7 +650,7 @@ impl Debug for EntrySignature {
 
 impl EntrySignature {
     /// Create a new signature by signing an entry with the `namespace` and `author`.
-    pub fn from_entry(entry: &Entry, namespace: &Namespace, author: &Author) -> Self {
+    pub fn from_entry(entry: &Entry, namespace: &NamespaceSecret, author: &Author) -> Self {
         // TODO: this should probably include a namespace prefix
         // namespace in the cryptographic sense.
         let bytes = entry.to_vec();
@@ -701,7 +703,7 @@ impl EntrySignature {
 /// A single entry in a [`Replica`]
 ///
 /// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
-/// [`Namespace`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
+/// [`NamespaceSecret`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
@@ -771,8 +773,8 @@ impl Entry {
         out
     }
 
-    /// Sign this entry with a [`Namespace`] and [`Author`].
-    pub fn sign(self, namespace: &Namespace, author: &Author) -> SignedEntry {
+    /// Sign this entry with a [`NamespaceSecret`] and [`Author`].
+    pub fn sign(self, namespace: &NamespaceSecret, author: &Author) -> SignedEntry {
         SignedEntry::from_entry(self, namespace, author)
     }
 }
@@ -1016,7 +1018,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let bob = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
 
         let record_id = RecordIdentifier::new(myspace.id(), alice.id(), "/my/key");
         let record = Record::current_from_data(b"this is my cool data");
@@ -1219,7 +1221,7 @@ mod tests {
         let n_replicas = 3;
         let n_entries = 4;
         for i in 0..n_replicas {
-            let namespace = Namespace::new(&mut rng);
+            let namespace = NamespaceSecret::new(&mut rng);
             let author = store.new_author(&mut rng)?;
             let mut replica = store.new_replica(namespace)?;
             for j in 0..n_entries {
@@ -1241,7 +1243,7 @@ mod tests {
 
         let k = ["a", "c", "z"];
 
-        let mut n: Vec<_> = (0..3).map(|_| Namespace::new(&mut rng)).collect();
+        let mut n: Vec<_> = (0..3).map(|_| NamespaceSecret::new(&mut rng)).collect();
         n.sort_by_key(|n| n.id());
 
         let mut a: Vec<_> = (0..3).map(|_| Author::new(&mut rng)).collect();
@@ -1344,7 +1346,7 @@ mod tests {
 
     fn test_timestamps<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
         let author = store.new_author(&mut rng)?;
 
@@ -1405,7 +1407,7 @@ mod tests {
 
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
@@ -1455,7 +1457,7 @@ mod tests {
     fn test_replica_timestamp_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(namespace.clone())?;
         let mut bob = bob_store.new_replica(namespace.clone())?;
 
@@ -1497,7 +1499,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let store = store::memory::Store::default();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         let key = b"hi";
@@ -1540,7 +1542,7 @@ mod tests {
         let store = store::memory::Store::default();
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(myspace.clone())?;
         let hash = Hash::new(b"");
         let res = replica.insert(b"foo", &alice, hash, 0);
@@ -1567,7 +1569,7 @@ mod tests {
     fn test_prefix_delete<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(myspace.clone())?;
         let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
         let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
@@ -1616,7 +1618,7 @@ mod tests {
 
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
@@ -1659,7 +1661,7 @@ mod tests {
 
     fn test_replica_remove<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let author = Author::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
@@ -1712,7 +1714,7 @@ mod tests {
     fn test_replica_delete_edge_cases<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         let edgecases = [0u8, 1u8, 255u8];
@@ -1769,7 +1771,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         replica.hash_and_insert(b"a0.1", &author0, b"hi")?;
@@ -1812,7 +1814,7 @@ mod tests {
     fn test_replica_byte_keys<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         let hash = Hash::new(b"foo");
@@ -1848,7 +1850,7 @@ mod tests {
         let mut state2 = SyncOutcome::default();
 
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica1 = store1.new_replica(namespace.clone())?;
         let mut replica2 = store2.new_replica(namespace.clone())?;
 

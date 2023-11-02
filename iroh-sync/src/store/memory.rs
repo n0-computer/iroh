@@ -12,7 +12,7 @@ use iroh_bytes::Hash;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
 use crate::{
-    keys::{Author, Namespace},
+    keys::{Author, NamespaceSecret},
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{RecordIdentifier, Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes, Record,
@@ -26,7 +26,7 @@ type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes,
 #[derive(Debug, Clone, Default)]
 pub struct Store {
     open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
-    namespaces: Arc<RwLock<HashMap<NamespaceId, Namespace>>>,
+    namespaces: Arc<RwLock<HashMap<NamespaceId, NamespaceSecret>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
@@ -108,7 +108,7 @@ impl super::Store for Store {
             .into_iter())
     }
 
-    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
+    fn import_namespace(&self, namespace: NamespaceSecret) -> Result<()> {
         self.namespaces.write().insert(namespace.id(), namespace);
         Ok(())
     }

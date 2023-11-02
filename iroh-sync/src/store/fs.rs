@@ -19,7 +19,7 @@ use redb::{
 };
 
 use crate::{
-    keys::{Author, Namespace},
+    keys::{Author, NamespaceSecret},
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
@@ -149,7 +149,7 @@ impl Store {
     }
 
     /// Stores a new namespace
-    fn insert_namespace(&self, namespace: Namespace) -> Result<()> {
+    fn insert_namespace(&self, namespace: NamespaceSecret) -> Result<()> {
         let write_tx = self.db.begin_write()?;
         {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
@@ -199,7 +199,7 @@ impl super::Store for Store {
         else {
             return Err(OpenError::NotFound);
         };
-        let namespace = Namespace::from_bytes(namespace.value());
+        let namespace = NamespaceSecret::from_bytes(namespace.value());
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
         self.open_replicas.write().insert(*namespace_id);
         Ok(replica)
@@ -217,7 +217,7 @@ impl super::Store for Store {
         let namespaces: Vec<_> = namespace_table
             .iter()?
             .map(|res| match res {
-                Ok((_key, value)) => Ok(Namespace::from_bytes(value.value()).id()),
+                Ok((_key, value)) => Ok(NamespaceSecret::from_bytes(value.value()).id()),
                 Err(err) => Err(err.into()),
             })
             .collect();
@@ -255,7 +255,7 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
+    fn import_namespace(&self, namespace: NamespaceSecret) -> Result<()> {
         self.insert_namespace(namespace.clone())?;
         Ok(())
     }
@@ -524,7 +524,7 @@ fn prefix_range_end<'a>(prefix: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32]
     }
 }
 
-/// [`Namespace`] specific wrapper around the [`Store`].
+/// [`NamespaceSecret`] specific wrapper around the [`Store`].
 #[derive(Debug, Clone)]
 pub struct StoreInstance {
     namespace: NamespaceId,
@@ -1027,7 +1027,7 @@ mod tests {
         let store = Store::new(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let mut replica = store.new_replica(namespace)?;
 
         // test author prefix relation for all-255 keys
@@ -1057,7 +1057,7 @@ mod tests {
         let store = Store::new(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
         store.close_replica(replica);
         let replica = store.open_replica(&namespace.id())?;
@@ -1135,7 +1135,7 @@ mod tests {
     #[test]
     fn test_migration_001_populate_latest_table() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
 
         // create a store and add some data
         let expected = {
