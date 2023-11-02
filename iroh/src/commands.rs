@@ -648,10 +648,7 @@ impl BlobCommands {
 
                         // create the node address with the appropriate overrides
                         let node_addr = {
-                            let NodeAddr {
-                                node_id: peer_id,
-                                info,
-                            } = node_addr;
+                            let NodeAddr { node_id, info } = node_addr;
                             let addresses = if override_addresses {
                                 // use only the cli supplied ones
                                 address
@@ -665,7 +662,7 @@ impl BlobCommands {
                                 Some(Optional::Some(region)) => Some(region),
                                 None => info.derp_region,
                             };
-                            NodeAddr::from_parts(peer_id, region, addresses)
+                            NodeAddr::from_parts(node_id, region, addresses)
                         };
 
                         // check if the blob format has an override
