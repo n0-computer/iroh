@@ -330,7 +330,7 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(bob_replica.namespace(), GetFilter::All)
+                .get_many(bob_replica.id(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -339,7 +339,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(alice_replica.namespace(), GetFilter::All)
+                .get_many(alice_replica.id(), GetFilter::All)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -654,12 +654,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            get_messages(&alice_store, alice_replica.namespace()),
+            get_messages(&alice_store, alice_replica.id()),
             vec![(author.id(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, bob_replica.namespace()),
+            get_messages(&bob_store, bob_replica.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
