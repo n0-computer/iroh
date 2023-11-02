@@ -365,7 +365,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Get the identifier for an entry in this replica.
-    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
+    pub fn record_id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
         RecordIdentifier::new(self.namespace.id(), author.id(), key)
     }
 
