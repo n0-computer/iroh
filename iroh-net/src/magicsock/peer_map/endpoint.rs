@@ -1167,11 +1167,12 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use super::*;
-    use crate::{
-        key::SecretKey,
-        magicsock::peer_map::{best_addr::BestAddr, IpPort, PeerMap, PeerMapInner},
+    use super::{
+        super::{PeerMap, PeerMapInner},
+        best_addr::BestAddr,
+        IpPort, *,
     };
+    use crate::key::SecretKey;
 
     #[test]
     fn test_endpoint_infos() {
