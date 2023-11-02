@@ -1,6 +1,6 @@
 //! Storage trait and implementation for iroh-sync documents
 
-use std::{num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -121,16 +121,15 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_many(
         &self,
         namespace: NamespaceId,
-        query: Query,
-        view: View,
+        query: impl Into<Query>,
     ) -> Result<Self::GetIter<'_>>;
 
     /// Get an entry by key and author.
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: impl Into<AuthorMatcher>,
-        key: impl Into<KeyMatcher>,
+        author: AuthorId,
+        key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>>;
 
     /// Get all content hashes of all replicas in the store.
@@ -143,190 +142,223 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
 }
 
-/// Returns the first matching result.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+/// A query builder for document queries.
+#[derive(Debug, Default)]
+pub struct QueryBuilder<K> {
+    kind: K,
+    filter_author: AuthorMatcher,
+    filter_key: KeyMatcher,
+    limit_offset: LimitOffset,
+    include_empty: bool,
+    direction: Direction,
+}
+
+impl<K> QueryBuilder<K> {
+    /// Call to include empty entries (deletion markers).
+    pub fn include_empty(mut self) -> Self {
+        self.include_empty = true;
+        self
+    }
+    /// Filter by exact key match.
+    pub fn key_exact(mut self, key: impl AsRef<[u8]>) -> Self {
+        self.filter_key = KeyMatcher::Exact(key.as_ref().to_vec().into());
+        self
+    }
+    /// Filter by key prefix.
+    pub fn key_prefix(mut self, key: impl AsRef<[u8]>) -> Self {
+        self.filter_key = KeyMatcher::Prefix(key.as_ref().to_vec().into());
+        self
+    }
+    /// Filter by author.
+    pub fn author(mut self, author: AuthorId) -> Self {
+        self.filter_author = AuthorMatcher::Exact(author);
+        self
+    }
+    /// Set the maximum number of entries to be returned.
+    pub fn limit(mut self, limit: u64) -> Self {
+        self.limit_offset.limit = Some(limit);
+        self
+    }
+    /// Set the offset within the result set from where to start returning results.
+    pub fn offset(mut self, offset: u64) -> Self {
+        self.limit_offset.offset = Some(offset);
+        self
+    }
+}
+
+/// Query type for a [Query::flat]
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct FlatQuery {
+    order_by: SortBy,
+}
+
+/// Query type for a [Query::single_latest_per_key]
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SingleLatestPerKeyQuery {}
+
+impl QueryBuilder<FlatQuery> {
+    /// Set the ordering for the query.
+    pub fn sort_by(mut self, sort_by: SortBy, direction: Direction) -> Self {
+        self.kind.order_by = sort_by;
+        self.direction = direction;
+        self
+    }
+    /// Build the query.
+    pub fn build(self) -> Query {
+        Query::from(self)
+    }
+}
+
+impl QueryBuilder<SingleLatestPerKeyQuery> {
+    /// Set the order direction for the query.
+    ///
+    /// Ordering is always by key for this query type.
+    pub fn key_ordering(mut self, direction: Direction) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    /// Build the query.
+    pub fn build(self) -> Query {
+        Query::from(self)
+    }
+}
+
+impl From<QueryBuilder<SingleLatestPerKeyQuery>> for Query {
+    fn from(builder: QueryBuilder<SingleLatestPerKeyQuery>) -> Query {
+        let QueryBuilder {
+            kind,
+            filter_author,
+            filter_key,
+            limit_offset,
+            include_empty,
+            direction: ordering,
+        } = builder;
+
+        Query {
+            kind: QueryKind::SingleLatestPerKey(kind),
+            filter_author,
+            filter_key,
+            limit_offset,
+            include_empty,
+            ordering,
+        }
+    }
+}
+
+impl From<QueryBuilder<FlatQuery>> for Query {
+    fn from(builder: QueryBuilder<FlatQuery>) -> Query {
+        let QueryBuilder {
+            kind,
+            filter_author,
+            filter_key,
+            limit_offset,
+            include_empty,
+            direction: ordering,
+        } = builder;
+
+        Query {
+            kind: QueryKind::Flat(kind),
+            filter_author,
+            filter_key,
+            limit_offset,
+            include_empty,
+            ordering,
+        }
+    }
+}
+
+/// Note: When using the `SingleLatestPerKey` query kind, the key filter is applied *before* the
+/// grouping, the author filter is applied *after* the grouping.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Query {
-    author: AuthorMatcher,
-    key: KeyMatcher,
-    range: Range,
+    kind: QueryKind,
+    filter_author: AuthorMatcher,
+    filter_key: KeyMatcher,
+    limit_offset: LimitOffset,
+    include_empty: bool,
+    ordering: Direction,
 }
 
 impl Query {
-    /// Returns a query that will match everything.
-    pub fn all() -> Self {
-        Query::default()
+    /// Query all records.
+    pub fn all() -> QueryBuilder<FlatQuery> {
+        Default::default()
+    }
+    /// Query only the latest entry for each key, omitting older entries if the entry was written
+    /// to by multiple authors.
+    pub fn single_latest_per_key() -> QueryBuilder<SingleLatestPerKeyQuery> {
+        Default::default()
     }
 
-    /// Creates a query restricted to matching an author.
-    pub fn author(author: AuthorId) -> Self {
-        Query {
-            author: AuthorMatcher::Exact(author),
-            ..Default::default()
-        }
+    /// Create a [Query::all] query filtered by a single author.
+    pub fn author(author: AuthorId) -> QueryBuilder<FlatQuery> {
+        Self::all().author(author)
     }
 
-    /// Creates a query restricted to matching a key prefix.
-    pub fn prefix(prefix: impl AsRef<[u8]>) -> Self {
-        Query {
-            key: KeyMatcher::Prefix(Bytes::copy_from_slice(prefix.as_ref())),
-            ..Default::default()
-        }
+    /// Create a [Query::all] query filtered by a single key.
+    pub fn key(key: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
+        Self::all().key_exact(key)
     }
 
-    /// Creates a query restricted to matching an exact key.
-    pub fn key(key: impl AsRef<[u8]>) -> Self {
-        Query {
-            key: KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref())),
-            ..Default::default()
-        }
-    }
-
-    /// Creates a query restricted to matching an author.
-    pub fn with_author(mut self, author: AuthorId) -> Self {
-        self.author = AuthorMatcher::Exact(author);
-        self
-    }
-
-    /// Creates a query restricted to matching a key prefix.
-    pub fn with_prefix(mut self, prefix: impl AsRef<[u8]>) -> Self {
-        self.key = KeyMatcher::Prefix(Bytes::copy_from_slice(prefix.as_ref()));
-        self
-    }
-
-    /// Creates a query restricted to matching an exact key.
-    pub fn with_key(mut self, key: impl AsRef<[u8]>) -> Self {
-        self.key = KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref()));
-        self
-    }
-
-    /// Limits the query result to the specified range within the result set.
-    pub fn with_range(mut self, range: impl Into<Range>) -> Self {
-        self.range = range.into();
-        self
-    }
-
-    /// Restricts the query to matching an author.
-    pub fn set_author(&mut self, author: AuthorId) {
-        self.author = AuthorMatcher::Exact(author);
-    }
-
-    /// Restricts the query to matching a key prefix.
-    pub fn set_prefix(&mut self, prefix: impl AsRef<[u8]>) {
-        self.key = KeyMatcher::Prefix(Bytes::copy_from_slice(prefix.as_ref()));
-    }
-
-    /// Restricts the query to matching an exact key.
-    pub fn set_key(&mut self, key: impl AsRef<[u8]>) {
-        self.key = KeyMatcher::Exact(Bytes::copy_from_slice(key.as_ref()));
-    }
-
-    /// Limits the query result to the specified range within the result set.
-    pub fn set_range(&mut self, range: impl Into<Range>) {
-        self.range = range.into();
+    /// Create a [Query::all] query filtered by a key prefix.
+    pub fn prefix(prefix: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
+        Self::all().key_prefix(prefix)
     }
 }
 
-/// A range.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum Range {
-    /// All entries (no limit)
-    All,
-    /// All entries after offset `x`.
-    From(u64),
-    /// Entries from start to `x` (exclusive)
-    To(u64),
-    /// Entries from start to `x` (inclusive).
-    ToInclusive(u64),
-    /// Entries from start `x` to end `y` (inclusive)
-    Inclusive(u64, u64),
-    /// Entries from start `x` to end `y` (exclusive)
-    Exclusive(u64, u64),
+/// Sort direction
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub enum Direction {
+    /// Sort ascending
+    #[default]
+    Asc,
+    /// Sort descending
+    Desc,
 }
 
-impl Default for Range {
-    fn default() -> Self {
-        Range::All
-    }
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct LimitOffset {
+    limit: Option<u64>,
+    offset: Option<u64>,
 }
 
-impl Range {
-    /// The start of the range.
-    pub fn start(&self) -> u64 {
-        match self {
-            Self::All => 0,
-            Self::From(start) => *start,
-            Self::ToInclusive(_) => 0,
-            Self::Inclusive(start, _) => *start,
-            Self::To(_) => 0,
-            Self::Exclusive(start, _) => *start,
-        }
+impl LimitOffset {
+    fn offset(&self) -> u64 {
+        self.offset.unwrap_or(0)
     }
 
-    /// The optional end of the range, exclusive.
-    pub fn end(&self) -> Option<u64> {
-        match self {
-            Self::All => None,
-            Self::From(_) => None,
-            Self::ToInclusive(end) => end.checked_add(1),
-            Self::Inclusive(_, end) => end.checked_add(1),
-            Self::To(end) => Some(*end),
-            Self::Exclusive(_, end) => Some(*end),
-        }
+    fn limit(&self) -> Option<u64> {
+        self.limit
     }
 }
 
-impl From<std::ops::Range<u64>> for Range {
-    fn from(value: std::ops::Range<u64>) -> Self {
-        Range::Exclusive(value.start, value.end)
-    }
+#[derive(Debug, Serialize, Deserialize)]
+enum QueryKind {
+    Flat(FlatQuery),
+    SingleLatestPerKey(SingleLatestPerKeyQuery),
 }
 
-impl From<std::ops::RangeFrom<u64>> for Range {
-    fn from(value: std::ops::RangeFrom<u64>) -> Self {
-        Range::From(value.start)
-    }
-}
-
-impl From<std::ops::RangeFull> for Range {
-    fn from(_: std::ops::RangeFull) -> Self {
-        Range::All
-    }
-}
-
-impl From<std::ops::RangeInclusive<u64>> for Range {
-    fn from(value: std::ops::RangeInclusive<u64>) -> Self {
-        let (start, end) = value.into_inner();
-        Range::Inclusive(start, end)
-    }
-}
-
-impl From<std::ops::RangeToInclusive<u64>> for Range {
-    fn from(value: std::ops::RangeToInclusive<u64>) -> Self {
-        Range::ToInclusive(value.end)
-    }
-}
-
-impl From<std::ops::RangeTo<u64>> for Range {
-    fn from(value: std::ops::RangeTo<u64>) -> Self {
-        Range::To(value.end)
-    }
+/// Fields by which the query can be sorted
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub enum SortBy {
+    /// Sort by key.
+    Key,
+    /// Sort by author.
+    #[default]
+    Author,
 }
 
 /// Key matching.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub enum KeyMatcher {
     /// Matches any key
+    #[default]
     Any,
     /// Only keys that are exactly the provided value.
     Exact(Bytes),
     /// All keys matching the provided value.
     Prefix(Bytes),
-}
-
-impl Default for KeyMatcher {
-    fn default() -> Self {
-        KeyMatcher::Any
-    }
 }
 
 impl<T: AsRef<[u8]>> From<T> for KeyMatcher {
@@ -336,40 +368,17 @@ impl<T: AsRef<[u8]>> From<T> for KeyMatcher {
 }
 
 /// Author matching.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub enum AuthorMatcher {
     /// Matches any author
+    #[default]
     Any,
     /// Matches exactly the provided author
     Exact(AuthorId),
 }
 
-impl Default for AuthorMatcher {
-    fn default() -> Self {
-        AuthorMatcher::Any
-    }
-}
-
 impl From<AuthorId> for AuthorMatcher {
     fn from(value: AuthorId) -> Self {
         AuthorMatcher::Exact(value)
-    }
-}
-
-/// Virtual representation of the data.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum View {
-    /// Returns for each key and author the latest version
-    ///
-    /// This is how data is stored under the hood and matches
-    /// what is currently the "default" view
-    LatestByKey,
-    /// Returns for each key, the lastest version, independent of the author.
-    LatestByKeyAndAuthor,
-}
-
-impl Default for View {
-    fn default() -> Self {
-        Self::LatestByKey
     }
 }

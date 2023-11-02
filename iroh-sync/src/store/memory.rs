@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::{
-    pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query, View,
+    pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query,
 };
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
@@ -119,17 +119,15 @@ impl super::Store for Store {
     fn get_many(
         &self,
         namespace: NamespaceId,
-        query: Query,
-        view: View,
+        query: impl Into<Query>,
     ) -> Result<Self::GetIter<'_>> {
+        let query = query.into();
+        let index = usize::try_from(query.limit_offset.offset())?;
         let records = self.replica_records.read();
-        let index = usize::try_from(query.range.start())?;
-
         Ok(RangeIterator {
             records,
             namespace,
             query,
-            view,
             index,
         })
     }
@@ -137,38 +135,47 @@ impl super::Store for Store {
     fn get_one(
         &self,
         namespace: NamespaceId,
-        author: impl Into<AuthorMatcher>,
-        key: impl Into<KeyMatcher>,
+        author: AuthorId,
+        key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
-
         let Some(records) = inner.get(&namespace) else {
             return Ok(None);
         };
-
-        let res = match (author.into(), key.into()) {
-            (AuthorMatcher::Any, KeyMatcher::Any) => records.iter().next(),
-            (AuthorMatcher::Any, KeyMatcher::Exact(key)) => {
-                records.iter().find(|((_, k), _)| k == &key)
-            }
-            (AuthorMatcher::Any, KeyMatcher::Prefix(key)) => {
-                records.iter().find(|((_, k), _)| k.starts_with(&key))
-            }
-
-            (AuthorMatcher::Exact(author), KeyMatcher::Any) => {
-                records.iter().find(|((a, _), _)| &author == a)
-            }
-            (AuthorMatcher::Exact(author), KeyMatcher::Exact(key)) => {
-                records.iter().find(|((a, k), _)| a == &author && k == &key)
-            }
-
-            (AuthorMatcher::Exact(author), KeyMatcher::Prefix(key)) => records
-                .iter()
-                .find(|((a, k), _)| a == &author && k.starts_with(&key)),
-        };
-
-        Ok(res.map(|(_, e)| e.clone()))
+        let entry = records.get(&(author, key.as_ref().to_vec()));
+        Ok(entry.and_then(|entry| match entry.is_empty() {
+            true => None,
+            false => Some(entry.clone()),
+        }))
     }
+    //     let inner = self.replica_records.read();
+    //     let Some(records) = inner.get(&namespace) else {
+    //         return Ok(None);
+    //     };
+    //
+    //     let res = match (author.into(), key.into()) {
+    //         (AuthorMatcher::Any, KeyMatcher::Any) => records.iter().next(),
+    //         (AuthorMatcher::Any, KeyMatcher::Exact(key)) => {
+    //             records.iter().find(|((_, k), _)| k == &key)
+    //         }
+    //         (AuthorMatcher::Any, KeyMatcher::Prefix(key)) => {
+    //             records.iter().find(|((_, k), _)| k.starts_with(&key))
+    //         }
+    //
+    //         (AuthorMatcher::Exact(author), KeyMatcher::Any) => {
+    //             records.iter().find(|((a, _), _)| &author == a)
+    //         }
+    //         (AuthorMatcher::Exact(author), KeyMatcher::Exact(key)) => {
+    //             records.iter().find(|((a, k), _)| a == &author && k == &key)
+    //         }
+    //
+    //         (AuthorMatcher::Exact(author), KeyMatcher::Prefix(key)) => records
+    //             .iter()
+    //             .find(|((a, k), _)| a == &author && k.starts_with(&key)),
+    //     };
+    //
+    //     Ok(res.map(|(_, e)| e.clone()))
+    // }
 
     /// Get all content hashes of all replicas in the store.
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
@@ -234,7 +241,6 @@ pub struct RangeIterator<'a> {
     records: ReplicaRecords<'a>,
     namespace: NamespaceId,
     query: Query,
-    view: View,
     /// Current iteration index.
     index: usize,
 }
@@ -244,22 +250,20 @@ impl<'a> Iterator for RangeIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(end) = self.query.range.end() {
-                if self.index as u64 >= end {
+            if let Some(limit) = self.query.limit_offset.limit() {
+                if self.index as u64 >= limit {
                     return None;
                 }
             }
 
             let records = self.records.get(&self.namespace)?;
-            let author_check = match (&self.query.author, &self.view) {
-                (AuthorMatcher::Any, View::LatestByKeyAndAuthor) => None,
-                (AuthorMatcher::Any, View::LatestByKey) => None,
-                (AuthorMatcher::Exact(author), View::LatestByKeyAndAuthor) => Some(author), // TODO: what to do here?
-                (AuthorMatcher::Exact(author), View::LatestByKey) => Some(author),
+            let author_check = match &self.query.filter_author {
+                AuthorMatcher::Any => None,
+                AuthorMatcher::Exact(author) => Some(author), // TODO: what to do here?
             };
 
             let offset = self.index;
-            let entry = match self.query.key {
+            let entry = match self.query.filter_key {
                 KeyMatcher::Any => records
                     .iter()
                     .filter(|((a, _), _)| author_check.map(|author| author == a).unwrap_or(true))

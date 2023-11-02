@@ -21,10 +21,7 @@ use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
 use iroh_sync::actor::OpenState;
-use iroh_sync::{
-    store::{AuthorMatcher, KeyMatcher, Query, View},
-    AuthorId, Entry, NamespaceId,
-};
+use iroh_sync::{store::Query, AuthorId, Entry, NamespaceId};
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -655,16 +652,12 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_one(
-        &self,
-        author: impl Into<AuthorMatcher>,
-        key: impl Into<KeyMatcher>,
-    ) -> Result<Option<Entry>> {
+    pub async fn get_one(&self, author: AuthorId, key: impl AsRef<[u8]>) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
             .rpc(DocGetOneRequest {
-                author: author.into(),
-                key: key.into(),
+                author,
+                key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
             })
             .await??;
@@ -672,19 +665,14 @@ where
     }
 
     /// Get entries.
-    pub async fn get_many(
-        &self,
-        query: Query,
-        view: View,
-    ) -> Result<impl Stream<Item = Result<Entry>>> {
+    pub async fn get_many(&self, query: impl Into<Query>) -> Result<impl Stream<Item = Result<Entry>>> {
         self.ensure_open()?;
         let stream = self
             .0
             .rpc
             .server_streaming(DocGetManyRequest {
                 doc_id: self.id(),
-                view,
-                query,
+                query: query.into(),
             })
             .await?;
         Ok(flatten(stream).map_ok(|res| res.entry.into()))

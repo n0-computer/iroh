@@ -21,10 +21,7 @@ use iroh::{
     util::fs::{path_content_info, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
-use iroh_sync::{
-    store::{Query, View},
-    AuthorId, Entry, NamespaceId,
-};
+use iroh_sync::{store::Query, AuthorId, Entry, NamespaceId};
 
 use crate::config::ConsoleEnv;
 
@@ -327,14 +324,15 @@ impl DocCommands {
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
+                let query = Query::all();
                 let query = match (author, prefix) {
-                    (None, false) => Query::key(key),
-                    (None, true) => Query::prefix(key),
-                    (Some(author), true) => Query::author(author).with_prefix(key),
-                    (Some(author), false) => Query::author(author).with_key(key),
+                    (None, false) => query.key_exact(key),
+                    (None, true) => query.key_prefix(key),
+                    (Some(author), true) => query.author(author).key_prefix(key),
+                    (Some(author), false) => query.author(author).key_exact(key),
                 };
 
-                let mut stream = doc.get_many(query, View::LatestByKey).await?;
+                let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -348,12 +346,12 @@ impl DocCommands {
                 let doc = get_doc(iroh, env, doc).await?;
                 let mut query = Query::all();
                 if let Some(author) = author {
-                    query.set_author(author);
+                    query = query.author(author);
                 }
                 if let Some(prefix) = prefix {
-                    query.set_prefix(prefix);
+                    query = query.key_prefix(prefix);
                 }
-                let mut stream = doc.get_many(query, View::LatestByKey).await?;
+                let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -420,9 +418,7 @@ impl DocCommands {
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let mut stream = doc
-                    .get_many(Query::key(key), View::LatestByKeyAndAuthor)
-                    .await?;
+                let mut stream = doc.get_many(Query::key(key)).await?;
                 let entry = match stream.try_next().await? {
                     None => {
                         println!("<unable to find entry for key {key_str}>");

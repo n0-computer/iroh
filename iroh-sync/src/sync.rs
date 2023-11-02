@@ -685,12 +685,12 @@ impl EntrySignature {
     }
 
     #[cfg(feature = "fs-store")]
-    pub(crate) fn author_signature(&self) -> &Signature {
+    pub(crate) fn author(&self) -> &Signature {
         &self.author_signature
     }
 
     #[cfg(feature = "fs-store")]
-    pub(crate) fn namespace_signature(&self) -> &Signature {
+    pub(crate) fn namespace(&self) -> &Signature {
         &self.namespace_signature
     }
 }
@@ -833,6 +833,11 @@ impl RecordIdentifier {
     /// Get this [`RecordIdentifier`] as a byte slices.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Get this [`RecordIdentifier`] as [Bytes].
+    pub fn to_bytes(&self) -> Bytes {
+        self.0.clone()
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
@@ -987,7 +992,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        store::{self, AuthorMatcher, KeyMatcher, OpenError, Query, Store, View},
+        store::{self, AuthorMatcher, KeyMatcher, OpenError, Query, Store},
     };
 
     use super::*;
@@ -1032,11 +1037,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_one(
-                    my_replica.namespace(),
-                    AuthorMatcher::Exact(alice.id()),
-                    KeyMatcher::Exact(format!("/{i}").into()),
-                )?
+                .get_one(my_replica.namespace(), alice.id(), format!("/{i}"))?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -1046,55 +1047,35 @@ mod tests {
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_one(
-                my_replica.namespace(),
-                AuthorMatcher::Exact(alice.id()),
-                KeyMatcher::Exact("/cool/path".into()),
-            )?
+            .get_one(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_one(
-                my_replica.namespace(),
-                AuthorMatcher::Exact(alice.id()),
-                KeyMatcher::Exact("/cool/path".into()),
-            )?
+            .get_one(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::author(alice.id()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::author(bob.id()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::key(b"/cool/path".to_vec()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::key(b"/cool/path".to_vec()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::all(), View::LatestByKey)?
+            .get_many(my_replica.namespace(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
@@ -1103,40 +1084,24 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::author(alice.id()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::author(bob.id()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::key(b"/cool/path".to_vec()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::key(b"/cool/path".to_vec()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.namespace(),
-                Query::prefix(b"/cool".to_vec()),
-                View::LatestByKey,
-            )?
+            .get_many(my_replica.namespace(), Query::prefix(b"/cool".to_vec()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
@@ -1144,8 +1109,7 @@ mod tests {
         let entries: Vec<_> = store
             .get_many(
                 my_replica.namespace(),
-                Query::author(alice.id()).with_prefix(b"/cool".to_vec()),
-                View::LatestByKey,
+                Query::author(alice.id()).key_prefix(b"/cool".to_vec()),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
@@ -1153,15 +1117,14 @@ mod tests {
         let entries: Vec<_> = store
             .get_many(
                 my_replica.namespace(),
-                Query::author(bob.id()).with_prefix(b"/cool"),
-                View::LatestByKey,
+                Query::author(bob.id()).key_prefix(b"/cool"),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::all(), View::LatestByKey)?
+            .get_many(my_replica.namespace(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
@@ -1393,13 +1356,7 @@ mod tests {
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
-        let res = store
-            .get_one(
-                namespace.id(),
-                AuthorMatcher::Exact(author.id()),
-                KeyMatcher::Exact(key.to_vec().into()),
-            )?
-            .unwrap();
+        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
         assert_eq!(res, entry);
 
         let entry2 = {
@@ -1411,13 +1368,7 @@ mod tests {
 
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
         assert!(matches!(res, Err(InsertError::NewerEntryExists)));
-        let res = store
-            .get_one(
-                namespace.id(),
-                AuthorMatcher::Exact(author.id()),
-                KeyMatcher::Exact(key.to_vec().into()),
-            )?
-            .unwrap();
+        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
         assert_eq!(res, entry);
 
         Ok(())
@@ -1711,7 +1662,7 @@ mod tests {
         // insert entry
         let hash = replica.hash_and_insert(b"foo", &author, b"bar")?;
         let res = store
-            .get_many(namespace.id(), Query::all(), View::LatestByKey)?
+            .get_many(namespace.id(), Query::all())?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 1);
 
@@ -1722,7 +1673,7 @@ mod tests {
         store.close_replica(replica);
         store.remove_replica(&namespace.id())?;
         let res = store
-            .get_many(namespace.id(), Query::all(), View::LatestByKey)?
+            .get_many(namespace.id(), Query::all())?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 0);
 
@@ -1734,7 +1685,7 @@ mod tests {
         let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(b"foo", &author, hash, 3)?;
         let res = store
-            .get_many(namespace.id(), Query::all(), View::LatestByKey)?
+            .get_many(namespace.id(), Query::all())?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 1);
         Ok(())
@@ -1916,7 +1867,7 @@ mod tests {
 
     fn get_keys_sorted<S: store::Store>(store: &S, namespace: NamespaceId) -> Vec<Vec<u8>> {
         let mut res = store
-            .get_many(namespace, Query::all(), View::LatestByKey)
+            .get_many(namespace, Query::all())
             .unwrap()
             .map(|e| e.map(|e| e.key().to_vec()))
             .collect::<Result<Vec<_>>>()

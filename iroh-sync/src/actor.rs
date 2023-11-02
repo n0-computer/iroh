@@ -14,7 +14,7 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{self, AuthorMatcher, KeyMatcher, Query, View},
+    store::{self, Query},
     Author, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace, NamespaceId,
     PeerIdBytes, Replica, SignedEntry, SyncOutcome,
 };
@@ -121,13 +121,12 @@ enum ReplicaAction {
         reply: oneshot::Sender<Result<()>>,
     },
     GetOne {
-        author: AuthorMatcher,
-        key: KeyMatcher,
+        author: AuthorId,
+        key: Bytes,
         reply: oneshot::Sender<Result<Option<SignedEntry>>>,
     },
     GetMany {
         query: Query,
-        view: View,
         reply: flume::Sender<Result<SignedEntry>>,
     },
     DropReplica {
@@ -353,10 +352,9 @@ impl SyncHandle {
         &self,
         namespace: NamespaceId,
         query: Query,
-        view: View,
         reply: flume::Sender<Result<SignedEntry>>,
     ) -> Result<()> {
-        let action = ReplicaAction::GetMany { query, view, reply };
+        let action = ReplicaAction::GetMany { query, reply };
         self.send_replica(namespace, action).await?;
         Ok(())
     }
@@ -364,8 +362,8 @@ impl SyncHandle {
     pub async fn get_one(
         &self,
         namespace: NamespaceId,
-        author: impl Into<AuthorMatcher>,
-        key: impl Into<KeyMatcher>,
+        author: AuthorId,
+        key: Bytes,
     ) -> Result<Option<SignedEntry>> {
         let (reply, rx) = oneshot::channel();
         let author = author.into();
@@ -577,11 +575,11 @@ impl<S: store::Store> Actor<S> {
                     this.store.get_one(namespace, author, key)
                 })
             }
-            ReplicaAction::GetMany { query, view, reply } => {
+            ReplicaAction::GetMany { query, reply } => {
                 let iter = self
                     .states
                     .ensure_open(&namespace)
-                    .and_then(|_| self.store.get_many(namespace, query, view));
+                    .and_then(|_| self.store.get_many(namespace, query));
                 iter_to_channel(reply, iter)
             }
             ReplicaAction::DropReplica { reply } => send_reply_with(reply, self, |this| {
