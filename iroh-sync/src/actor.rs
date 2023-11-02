@@ -603,7 +603,10 @@ impl<S: store::Store> Actor<S> {
                 this.store.remove_replica(&namespace)
             }),
             ReplicaAction::ExportSecretKey { reply } => {
-                let res = self.states.replica(&namespace).map(|r| r.secret_key());
+                let res = self
+                    .states
+                    .replica(&namespace)
+                    .and_then(|r| Ok(r.secret_key()?.clone()));
                 send_reply(reply, res)
             }
             ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {

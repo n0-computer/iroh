@@ -120,10 +120,39 @@ impl Subscribers {
     }
 }
 
+/// The Namespace.
+// TODO: duh ofc. Someone document this
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From)]
+pub enum Namespace {
+    /// Write access to the namespace.
+    Write(NamespaceSecret),
+    /// Read only access to the namespace.
+    Read(NamespaceId),
+}
+
+impl Namespace {
+    /// Get the [`NamespaceId`] for this [`Namespace`].
+    pub fn id(&self) -> NamespaceId {
+        match self {
+            Namespace::Write(secret) => secret.id(),
+            Namespace::Read(id) => *id,
+        }
+    }
+
+    /// Get the [`NamespaceSecret`] of this [`Namespace`].
+    /// Will fail if the [`Namespace`] is read only.
+    pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
+        match self {
+            Namespace::Write(secret) => Ok(secret),
+            Namespace::Read(_) => Err(ReadOnly),
+        }
+    }
+}
+
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    namespace: NamespaceSecret,
+    namespace: Namespace,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
@@ -136,7 +165,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     // TODO: make read only replicas possible
     pub fn new(namespace: NamespaceSecret, store: S) -> Self {
         Replica {
-            namespace,
+            namespace: namespace.into(),
             peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
@@ -227,7 +256,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         let id = RecordIdentifier::new(self.namespace(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
-        let signed_entry = entry.sign(&self.namespace, author);
+        let secret = self.secret_key()?;
+        let signed_entry = entry.sign(secret, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -245,7 +275,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.ensure_open()?;
         let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
         let entry = Entry::new_empty(id);
-        let signed_entry = entry.sign(&self.namespace, author);
+        let signed_entry = entry.sign(self.secret_key()?, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -416,11 +446,17 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.namespace.id()
     }
 
-    /// Get the byte represenation of the [`NamespaceSecret`] key for this replica.
-    pub fn secret_key(&self) -> NamespaceSecret {
-        self.namespace.clone()
+    /// Get the byte represenation of the [`NamespaceSecret`] key for this replica. Will fail if
+    /// the replica is read only
+    pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
+        self.namespace.secret_key()
     }
 }
+
+/// Error that occurs trying to access the [`NamespaceSecret`] of a read-only [`Namespace`].
+#[derive(Debug, thiserror::Error)]
+#[error("Replica allows read access only.")]
+pub struct ReadOnly;
 
 /// Validate a [`SignedEntry`] if it's fit to be inserted.
 ///
@@ -454,7 +490,7 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
 }
 
 /// Error emitted when inserting entries into a [`Replica`] failed
-#[derive(thiserror::Error, derive_more::Debug)]
+#[derive(thiserror::Error, derive_more::Debug, derive_more::From)]
 pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Storage error
     #[error("storage error")]
@@ -468,6 +504,10 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Attempted to insert an empty entry.
     #[error("Attempted to insert an empty entry")]
     EntryIsEmpty,
+    /// Replica is read only.
+    #[error("Attempted to insert to read only replica")]
+    #[from(ReadOnly)]
+    ReadOnly,
     /// The replica is closed, no operations may be performed.
     #[error("replica is closed")]
     Closed,
