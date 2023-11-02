@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, NodeAddr};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
@@ -548,16 +548,13 @@ impl Actor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => match decode_peer_data(&data) {
-                    Err(err) => warn!("Failed to decode {data:?} from {peer}: {err}"),
+                OutEvent::PeerData(node_id, data) => match decode_peer_data(&data) {
+                    Err(err) => warn!("Failed to decode {data:?} from {node_id}: {err}"),
                     Ok(info) => {
-                        debug!(peer = ?peer, "add known addrs: {info:?}");
-                        let peer_addr = PeerAddr {
-                            peer_id: peer,
-                            info,
-                        };
-                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr) {
-                            debug!(peer = ?peer, "add known failed: {err:?}");
+                        debug!(peer = ?node_id, "add known addrs: {info:?}");
+                        let node_addr = NodeAddr { node_id, info };
+                        if let Err(err) = self.endpoint.add_peer_addr(node_addr) {
+                            debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
                 },
@@ -653,7 +650,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
-    use iroh_net::PeerAddr;
+    use iroh_net::NodeAddr;
     use iroh_net::{
         derp::{DerpMap, DerpMode},
         MagicEndpoint,
@@ -732,7 +729,7 @@ mod test {
         debug!("----- adding peers  ----- ");
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
+        let addr1 = NodeAddr::new(pi1).with_derp_region(derp_region);
         ep2.add_peer_addr(addr1.clone()).unwrap();
         ep3.add_peer_addr(addr1).unwrap();
 

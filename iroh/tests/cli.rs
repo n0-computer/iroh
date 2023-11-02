@@ -635,7 +635,7 @@ fn test_provide_get_loop_single(
         .direct_addresses()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
-    let peer = ticket.node_addr().peer_id.to_string();
+    let peer = ticket.node_addr().node_id.to_string();
     let region = ticket
         .node_addr()
         .derp_region()

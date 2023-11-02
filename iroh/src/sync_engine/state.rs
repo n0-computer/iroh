@@ -1,5 +1,5 @@
 use anyhow::Result;
-use iroh_net::key::PublicKey;
+use iroh_net::NodeId;
 use iroh_sync::{
     net::{AbortReason, AcceptOutcome, SyncFinished},
     NamespaceId,
@@ -27,11 +27,11 @@ pub enum SyncReason {
 pub enum Origin {
     /// We initiated the exchange
     Connect(SyncReason),
-    /// A peer connected to us and we accepted the exchange
+    /// A node connected to us and we accepted the exchange
     Accept,
 }
 
-/// The state we're in for a peer and a namespace
+/// The state we're in for a node and a namespace
 #[derive(Debug, Clone)]
 pub enum SyncState {
     Idle,
@@ -44,14 +44,14 @@ impl Default for SyncState {
     }
 }
 
-/// Contains an entry for each active (syncing) namespace, and in there an entry for each peer we
+/// Contains an entry for each active (syncing) namespace, and in there an entry for each node we
 /// synced with.
 #[derive(Default)]
 pub struct NamespaceStates(BTreeMap<NamespaceId, NamespaceState>);
 
 #[derive(Default)]
 struct NamespaceState {
-    peers: BTreeMap<PublicKey, PeerState>,
+    nodes: BTreeMap<NodeId, PeerState>,
 }
 
 impl NamespaceStates {
@@ -71,10 +71,10 @@ impl NamespaceStates {
     pub fn start_connect(
         &mut self,
         namespace: &NamespaceId,
-        peer: PublicKey,
+        node: NodeId,
         reason: SyncReason,
     ) -> bool {
-        let Some(state) = self.entry(namespace, peer) else {
+        let Some(state) = self.entry(namespace, node) else {
             debug!("abort connect: namespace is not in sync set");
             return false;
         };
@@ -91,14 +91,14 @@ impl NamespaceStates {
     /// Returns the [`AcceptOutcome`] to be perfomed.
     pub fn accept_request(
         &mut self,
-        me: &PublicKey,
+        me: &NodeId,
         namespace: &NamespaceId,
-        peer: PublicKey,
+        node: NodeId,
     ) -> AcceptOutcome {
-        let Some(state) = self.entry(namespace, peer) else {
+        let Some(state) = self.entry(namespace, node) else {
             return AcceptOutcome::Reject(AbortReason::NotFound);
         };
-        state.accept_request(me, &peer)
+        state.accept_request(me, &node)
     }
 
     /// Insert a finished sync operation into the state.
@@ -111,11 +111,11 @@ impl NamespaceStates {
     pub fn finish(
         &mut self,
         namespace: &NamespaceId,
-        peer: PublicKey,
+        node: NodeId,
         origin: &Origin,
         result: Result<SyncFinished>,
     ) -> Option<(SystemTime, bool)> {
-        let state = self.entry(namespace, peer)?;
+        let state = self.entry(namespace, node)?;
         state.finish(origin, result)
     }
 
@@ -124,17 +124,17 @@ impl NamespaceStates {
         self.0.remove(namespace).is_some()
     }
 
-    /// Get the [`PeerState`] for a namespace and peer.
-    /// If the namespace is syncing and the peer so far unknown, initialize and return a default [`PeerState`].
+    /// Get the [`PeerState`] for a namespace and node.
+    /// If the namespace is syncing and the node so far unknown, initialize and return a default [`PeerState`].
     /// If the namespace is not syncing return None.
-    fn entry(&mut self, namespace: &NamespaceId, peer: PublicKey) -> Option<&mut PeerState> {
+    fn entry(&mut self, namespace: &NamespaceId, node: NodeId) -> Option<&mut PeerState> {
         self.0
             .get_mut(namespace)
-            .map(|n| n.peers.entry(peer).or_default())
+            .map(|n| n.nodes.entry(node).or_default())
     }
 }
 
-/// State of a peer with regard to a namespace.
+/// State of a node with regard to a namespace.
 #[derive(Default)]
 struct PeerState {
     state: SyncState,
@@ -187,15 +187,15 @@ impl PeerState {
         }
     }
 
-    fn accept_request(&mut self, me: &PublicKey, peer: &PublicKey) -> AcceptOutcome {
+    fn accept_request(&mut self, me: &NodeId, node: &NodeId) -> AcceptOutcome {
         let outcome = match &self.state {
             SyncState::Idle => AcceptOutcome::Allow,
             SyncState::Running { origin, .. } => match origin {
                 Origin::Accept => AcceptOutcome::Reject(AbortReason::AlreadySyncing),
                 // Incoming sync request while we are dialing ourselves.
-                // In this case, compare the binary representations of our and the other node's peer id
+                // In this case, compare the binary representations of our and the other node's id
                 // to deterministically decide which of the two concurrent connections will succeed.
-                Origin::Connect(_reason) => match expected_sync_direction(me, peer) {
+                Origin::Connect(_reason) => match expected_sync_direction(me, node) {
                     SyncDirection::Accept => AcceptOutcome::Allow,
                     SyncDirection::Connect => AcceptOutcome::Reject(AbortReason::AlreadySyncing),
                 },
@@ -222,8 +222,8 @@ enum SyncDirection {
     Connect,
 }
 
-fn expected_sync_direction(self_peer_id: &PublicKey, other_peer_id: &PublicKey) -> SyncDirection {
-    if self_peer_id.as_bytes() > other_peer_id.as_bytes() {
+fn expected_sync_direction(self_node_id: &NodeId, other_node_id: &NodeId) -> SyncDirection {
+    if self_node_id.as_bytes() > other_node_id.as_bytes() {
         SyncDirection::Accept
     } else {
         SyncDirection::Connect

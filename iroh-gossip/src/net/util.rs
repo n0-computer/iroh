@@ -5,7 +5,7 @@ use std::{collections::HashMap, io, pin::Pin, time::Instant};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
-use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr, NodeId};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     task::JoinSet,
@@ -81,9 +81,9 @@ pub async fn read_lp(
 /// Future for a pending dial operation
 pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Connection>)>;
 
-/// Dial peers and maintain a queue of pending dials
+/// Dial nodes and maintain a queue of pending dials
 ///
-/// This wraps a [`MagicEndpoint`], connects to peers through the endpoint, stores
+/// This wraps a [`MagicEndpoint`], connects to nodes through the endpoint, stores
 /// the pending connect futures and emits finished connect results.
 ///
 // TODO: Move to iroh-net
@@ -91,7 +91,7 @@ pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Conne
 pub struct Dialer {
     endpoint: MagicEndpoint,
     pending: JoinSet<(PublicKey, anyhow::Result<quinn::Connection>)>,
-    pending_peers: HashMap<PublicKey, CancellationToken>,
+    pending_dials: HashMap<PublicKey, CancellationToken>,
 }
 
 impl Dialer {
@@ -100,52 +100,52 @@ impl Dialer {
         Self {
             endpoint,
             pending: Default::default(),
-            pending_peers: Default::default(),
+            pending_dials: Default::default(),
         }
     }
 
-    /// Start to dial a peer
+    /// Start to dial a node.
     ///
-    /// Note that the peer's addresses and/or derp region must be added to the endpoint's
+    /// Note that the node's addresses and/or derp region must be added to the endpoint's
     /// addressbook for a dial to succeed, see [`MagicEndpoint::add_peer_addr`].
-    pub fn queue_dial(&mut self, peer_id: PublicKey, alpn_protocol: &'static [u8]) {
-        if self.is_pending(&peer_id) {
+    pub fn queue_dial(&mut self, node_id: NodeId, alpn_protocol: &'static [u8]) {
+        if self.is_pending(&node_id) {
             return;
         }
         let cancel = CancellationToken::new();
-        self.pending_peers.insert(peer_id, cancel.clone());
+        self.pending_dials.insert(node_id, cancel.clone());
         let endpoint = self.endpoint.clone();
         self.pending.spawn(async move {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect(PeerAddr::new(peer_id), alpn_protocol) => res
+                res = endpoint.connect(NodeAddr::new(node_id), alpn_protocol) => res
             };
-            (peer_id, res)
+            (node_id, res)
         });
     }
 
     /// Abort a pending dial
-    pub fn abort_dial(&mut self, peer_id: &PublicKey) {
-        if let Some(cancel) = self.pending_peers.remove(peer_id) {
+    pub fn abort_dial(&mut self, node_id: &NodeId) {
+        if let Some(cancel) = self.pending_dials.remove(node_id) {
             cancel.cancel();
         }
     }
 
-    /// Check if a peer is currently being dialed
-    pub fn is_pending(&self, peer: &PublicKey) -> bool {
-        self.pending_peers.contains_key(peer)
+    /// Check if a node is currently being dialed
+    pub fn is_pending(&self, node: &NodeId) -> bool {
+        self.pending_dials.contains_key(node)
     }
 
     /// Wait for the next dial operation to complete
     pub async fn next_conn(&mut self) -> (PublicKey, anyhow::Result<quinn::Connection>) {
-        match self.pending_peers.is_empty() {
+        match self.pending_dials.is_empty() {
             false => {
-                let (peer_id, res) = loop {
+                let (node_id, res) = loop {
                     match self.pending.join_next().await {
-                        Some(Ok((peer_id, res))) => {
-                            self.pending_peers.remove(&peer_id);
-                            break (peer_id, res);
+                        Some(Ok((node_id, res))) => {
+                            self.pending_dials.remove(&node_id);
+                            break (node_id, res);
                         }
                         Some(Err(e)) => {
                             error!("next conn error: {:?}", e);
@@ -157,7 +157,7 @@ impl Dialer {
                     }
                 };
 
-                (peer_id, res)
+                (node_id, res)
             }
             true => futures::future::pending().await,
         }
@@ -165,7 +165,7 @@ impl Dialer {
 
     /// Number of pending connections to be opened.
     pub fn pending_count(&self) -> usize {
-        self.pending_peers.len()
+        self.pending_dials.len()
     }
 }
 
@@ -177,9 +177,9 @@ impl futures::Stream for Dialer {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.pending.poll_join_next(cx) {
-            std::task::Poll::Ready(Some(Ok((peer_id, result)))) => {
-                self.pending_peers.remove(&peer_id);
-                std::task::Poll::Ready(Some((peer_id, result)))
+            std::task::Poll::Ready(Some(Ok((node_id, result)))) => {
+                self.pending_dials.remove(&node_id);
+                std::task::Poll::Ready(Some((node_id, result)))
             }
             std::task::Poll::Ready(Some(Err(e))) => {
                 error!("dialer error: {:?}", e);
