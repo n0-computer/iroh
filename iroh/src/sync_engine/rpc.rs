@@ -110,11 +110,11 @@ impl SyncEngine {
                 // *replica.namespace().as_bytes()
                 return Err(anyhow!("creating read-only shares is not yet supported").into());
             }
-            ShareMode::Write => self.sync.export_secret_key(req.doc_id).await?.to_bytes(),
+            ShareMode::Write => self.sync.get_capability(req.doc_id).await?.to_bytes(),
         };
         self.start_sync(req.doc_id, vec![]).await?;
         Ok(DocShareResponse(DocTicket {
-            key,
+            capability: key,
             nodes: vec![me],
         }))
     }
@@ -131,7 +131,7 @@ impl SyncEngine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket { key, nodes: peers }) = req;
+        let DocImportRequest(DocTicket { capability: key, nodes: peers }) = req;
         let namespace = NamespaceSecret::from_bytes(&key);
         let doc_id = self.sync.import_namespace(namespace).await?;
         self.sync.open(doc_id, Default::default()).await?;

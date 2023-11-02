@@ -12,7 +12,7 @@ use super::*;
 #[display("{}", IrohTicket::serialize(self))]
 pub struct Ticket {
     /// either a public or private key
-    pub key: KeyBytes,
+    pub capability: KeyBytes,
     /// A list of nodes to contact.
     pub nodes: Vec<PeerAddr>,
 }
@@ -24,7 +24,10 @@ impl IrohTicket for Ticket {
 impl Ticket {
     /// Create a new doc ticket
     pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
-        Self { key, nodes: peers }
+        Self {
+            capability: key,
+            nodes: peers,
+        }
     }
 }
 
