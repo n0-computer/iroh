@@ -446,6 +446,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.namespace.id()
     }
 
+    /// Get the [`Namespace`] of this [`Replica`].
+    pub fn namespace(&self) -> &Namespace {
+        &self.namespace
+    }
+
     /// Get the byte represenation of the [`NamespaceSecret`] key for this replica. Will fail if
     /// the replica is read only
     pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
