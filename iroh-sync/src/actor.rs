@@ -133,7 +133,7 @@ enum ReplicaAction {
     DropReplica {
         reply: oneshot::Sender<Result<()>>,
     },
-    ExportSecretKey {
+    GetCapability {
         reply: oneshot::Sender<Result<NamespaceSecret>>,
     },
     HasNewsForUs {
@@ -398,7 +398,7 @@ impl SyncHandle {
 
     pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<NamespaceSecret> {
         let (reply, rx) = oneshot::channel();
-        let action = ReplicaAction::ExportSecretKey { reply };
+        let action = ReplicaAction::GetCapability { reply };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -602,7 +602,7 @@ impl<S: store::Store> Actor<S> {
                 this.close(namespace);
                 this.store.remove_replica(&namespace)
             }),
-            ReplicaAction::ExportSecretKey { reply } => {
+            ReplicaAction::GetCapability { reply } => {
                 let res = self
                     .states
                     .replica(&namespace)
