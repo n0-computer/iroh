@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use futures::Stream;
 use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
-use iroh_sync::{sync::Namespace, Author};
+use iroh_sync::{Author, Namespace};
 use tokio_stream::StreamExt;
 
 use crate::{
@@ -115,11 +115,11 @@ impl SyncEngine {
         self.start_sync(req.doc_id, vec![]).await?;
         Ok(DocShareResponse(DocTicket {
             key,
-            peers: vec![me],
+            nodes: vec![me],
         }))
     }
 
-    pub async fn doc_subscribe(
+    pub fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
@@ -131,7 +131,7 @@ impl SyncEngine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket { key, peers }) = req;
+        let DocImportRequest(DocTicket { key, nodes: peers }) = req;
         let namespace = Namespace::from_bytes(&key);
         let doc_id = self.sync.import_namespace(namespace).await?;
         self.sync.open(doc_id, Default::default()).await?;

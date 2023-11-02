@@ -21,8 +21,9 @@ pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
-/// Maximum message size is limited to 1024 bytes.
-pub const MAX_MESSAGE_SIZE: usize = 1024;
+/// Maximum message size is limited currently. The limit is more-or-less arbitrary.
+// TODO: Make the limit configurable.
+pub const MAX_MESSAGE_SIZE: usize = 4096;
 
 /// Channel capacity for all subscription broadcast channels (single)
 const SUBSCRIBE_ALL_CAP: usize = 2048;
@@ -227,7 +228,7 @@ impl Gossip {
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
     pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
-        let peer_id = get_peer_id(&conn).await?;
+        let peer_id = get_peer_id(&conn)?;
         self.send(ToActor::ConnIncoming(peer_id, ConnOrigin::Accept, conn))
             .await?;
         Ok(())
@@ -370,7 +371,7 @@ impl Actor {
                 new_endpoints = self.on_endpoints_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
-                            let addr = self.endpoint.my_addr_with_endpoints(endpoints).await?;
+                            let addr = self.endpoint.my_addr_with_endpoints(endpoints)?;
                             let peer_data = encode_peer_data(&addr.info)?;
                             self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                         }
@@ -555,7 +556,7 @@ impl Actor {
                             peer_id: peer,
                             info,
                         };
-                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
+                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr) {
                             debug!(peer = ?peer, "add known failed: {err:?}");
                         }
                     }
@@ -732,8 +733,8 @@ mod test {
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
         let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
-        ep2.add_peer_addr(addr1.clone()).await.unwrap();
-        ep3.add_peer_addr(addr1).await.unwrap();
+        ep2.add_peer_addr(addr1.clone()).unwrap();
+        ep3.add_peer_addr(addr1).unwrap();
 
         debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed

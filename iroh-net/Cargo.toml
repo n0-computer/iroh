@@ -1,6 +1,6 @@
 [package]
 name = "iroh-net"
-version = "0.7.0"
+version = "0.9.0"
 edition = "2021"
 readme = "README.md"
 description = "networking support for iroh"
@@ -11,11 +11,13 @@ repository = "https://github.com/n0-computer/iroh"
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
 
+[lints]
+workspace = true
+
 [dependencies]
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1", features = ["backtrace"] }
 backoff = "0.4.0"
-bounded_join_set = "0.1.0"
 bytes = "1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 curve25519-dalek = "4.0.0"
@@ -52,7 +54,7 @@ serdect = "0.2.0"
 smallvec = "1.11.1"
 socket2 = "0.5.3"
 ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"] }
-stun-rs = "0.1.4"
+stun-rs = "0.1.5"
 surge-ping = "0.8.0"
 thiserror = "1"
 time = "0.3.20"
@@ -78,7 +80,7 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # metrics
-iroh-metrics = { version = "0.7.0", path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.9.0", path = "../iroh-metrics", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -101,6 +103,7 @@ testdir = "0.8"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
+serde_json = "1.0.107"
 
 [[bench]]
 name = "key"

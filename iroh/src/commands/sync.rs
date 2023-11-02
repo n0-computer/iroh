@@ -501,14 +501,11 @@ impl DocCommands {
                                 Origin::Connect(_) => "we initiated",
                             };
                             match event.result {
-                                Ok(_) => println!(
-                                    "synced doc {} with peer {} ({origin})",
-                                    fmt_short(event.namespace),
-                                    fmt_short(event.peer)
-                                ),
+                                Ok(()) => {
+                                    println!("synced peer {} ({origin})", fmt_short(event.peer))
+                                }
                                 Err(err) => println!(
-                                    "failed to sync doc {} with peer {} ({origin}): {err}",
-                                    fmt_short(event.namespace),
+                                    "failed to sync with peer {} ({origin}): {err}",
                                     fmt_short(event.peer)
                                 ),
                             }

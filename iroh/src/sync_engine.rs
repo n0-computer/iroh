@@ -13,7 +13,7 @@ use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
 use iroh_sync::{
-    actor::SyncHandle, sync::NamespaceId, ContentStatus, ContentStatusCallback, Entry, InsertOrigin,
+    actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -25,11 +25,13 @@ use crate::downloader::Downloader;
 mod gossip;
 mod live;
 pub mod rpc;
+mod state;
 
 use gossip::GossipActor;
 use live::{LiveActor, ToLiveActor};
 
-pub use self::live::{Origin, SyncEvent};
+pub use self::live::SyncEvent;
+pub use self::state::{Origin, SyncReason};
 pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.

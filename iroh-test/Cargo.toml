@@ -1,6 +1,6 @@
 [package]
 name = "iroh-test"
-version = "0.7.0"
+version = "0.9.0"
 edition = "2021"
 readme = "README.md"
 description = "Internal utilities to support testing of iroh."
@@ -11,6 +11,9 @@ publish = true
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
+
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = "1"

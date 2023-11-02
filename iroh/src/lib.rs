@@ -13,6 +13,7 @@ pub mod get;
 pub mod node;
 pub mod rpc_protocol;
 pub mod sync_engine;
+pub mod ticket;
 pub mod util;
 
 /// Expose metrics module

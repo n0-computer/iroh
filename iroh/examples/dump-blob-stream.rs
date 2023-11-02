@@ -8,14 +8,13 @@
 //!     $ cargo run --example dump-blob-stream <ticket>
 use std::env::args;
 use std::io;
-use std::str::FromStr;
 
 use bao_tree::io::fsm::BaoContentItem;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
-use iroh::dial::Ticket;
+use iroh::ticket::blob::Ticket;
 use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_net::key::SecretKey;
@@ -115,7 +114,7 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
         let links: Box<[iroh_bytes::Hash]> = postcard::from_bytes(&links_bytes)
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to parse links"))?;
         let meta_link = *links
-            .get(0)
+            .first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing meta link"))?;
         let (meta_end, _meta_bytes) = at_meta.next(meta_link).concatenate_into_vec().await?;
         let mut curr = meta_end.next();
@@ -166,8 +165,7 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
 async fn main() -> anyhow::Result<()> {
     setup_logging();
 
-    let ticket = args().nth(1).expect("missing ticket");
-    let ticket = Ticket::from_str(&ticket)?;
+    let ticket: Ticket = args().nth(1).expect("missing ticket").parse()?;
 
     // generate a transient secret key for this connection
     //

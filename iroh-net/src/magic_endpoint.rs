@@ -368,21 +368,21 @@ impl MagicEndpoint {
     /// Get the DERP region we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERP region.
-    pub async fn my_derp(&self) -> Option<u16> {
-        self.msock.my_derp().await
+    pub fn my_derp(&self) -> Option<u16> {
+        self.msock.my_derp()
     }
 
     /// Get the [`PeerAddr`] for this endpoint.
     pub async fn my_addr(&self) -> Result<PeerAddr> {
         let addrs = self.local_endpoints().await?;
-        let derp = self.my_derp().await;
+        let derp = self.my_derp();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
         Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
     }
 
     /// Get the [`PeerAddr`] for this endpoint, while providing the endpoints.
-    pub async fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<PeerAddr> {
-        let derp = self.my_derp().await;
+    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<PeerAddr> {
+        let derp = self.my_derp();
         let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(PeerAddr::from_parts(self.peer_id(), derp, addrs))
     }
@@ -423,7 +423,7 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(&self, peer_addr: PeerAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        self.add_peer_addr(peer_addr.clone()).await?;
+        self.add_peer_addr(peer_addr.clone())?;
 
         let PeerAddr { peer_id, info } = peer_addr;
         let addr = self.msock.get_mapping_addr(&peer_id).await;
@@ -432,7 +432,7 @@ impl MagicEndpoint {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}")
                 }
-                (true, Some(region)) if !self.msock.has_derp_region(region).await => {
+                (true, Some(region)) if !self.msock.has_derp_region(region) => {
                     anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}. Unable to dial peer {peer_id:?}")
                 }
                 _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial peer {peer_id:?}")
@@ -478,7 +478,7 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     // TODO: Make sync
-    pub async fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
+    pub fn add_peer_addr(&self, peer_addr: PeerAddr) -> Result<()> {
         self.msock.add_peer_addr(peer_addr);
         Ok(())
     }
@@ -495,8 +495,6 @@ impl MagicEndpoint {
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
-        self.endpoint.wait_idle().await;
-        // TODO: Now wait-idle on msock!
         self.msock.close().await?;
         Ok(())
     }
@@ -517,7 +515,7 @@ pub async fn accept_conn(
 ) -> Result<(PublicKey, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
-    let peer_id = get_peer_id(&conn).await?;
+    let peer_id = get_peer_id(&conn)?;
     Ok((peer_id, alpn, conn))
 }
 
@@ -534,7 +532,7 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
 }
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
-pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
+pub fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => anyhow::bail!("no peer certificate found"),
@@ -559,7 +557,10 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
 #[cfg(test)]
 mod tests {
 
-    use tracing::{info, info_span, Instrument};
+    use std::time::Instant;
+
+    use rand_core::SeedableRng;
+    use tracing::{error_span, info, info_span, Instrument};
 
     use crate::test_utils::run_derper;
 
@@ -692,7 +693,7 @@ mod tests {
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
-        endpoint.add_peer_addr(peer_addr).await.unwrap();
+        endpoint.add_peer_addr(peer_addr).unwrap();
 
         info!("closing endpoint");
         // close the endpoint and restart it
@@ -705,6 +706,101 @@ mod tests {
             endpoint.connection_info(peer_id).await.unwrap().unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
+    }
+
+    #[tokio::test]
+    async fn magic_endpoint_derp_connect_loop() {
+        let _guard = iroh_test::logging::setup();
+        let n_iters = 5;
+        let n_chunks_per_client = 2;
+        let chunk_size = 10;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let (derp_map, region_id, _guard) = run_derper().await.unwrap();
+        let server_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let server_node_id = server_secret_key.public();
+        let server = {
+            let derp_map = derp_map.clone();
+            tokio::spawn(
+                async move {
+                    let ep = MagicEndpoint::builder()
+                        .secret_key(server_secret_key)
+                        .alpns(vec![TEST_ALPN.to_vec()])
+                        .derp_mode(DerpMode::Custom(derp_map))
+                        .bind(12345)
+                        .await
+                        .unwrap();
+                    let eps = ep.local_addr().unwrap();
+                    info!(me = %ep.peer_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
+                    for i in 0..n_iters {
+                        let now = Instant::now();
+                        println!("[server] round {}", i + 1);
+                        let conn = ep.accept().await.unwrap();
+                        let (peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
+                        info!(%i, peer = %peer_id.fmt_short(), "accepted connection");
+                        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+                        let mut buf = vec![0u8; chunk_size];
+                        for _i in 0..n_chunks_per_client {
+                            recv.read_exact(&mut buf).await.unwrap();
+                            send.write_all(&buf).await.unwrap();
+                        }
+                        send.finish().await.unwrap();
+                        recv.read_to_end(0).await.unwrap();
+                        info!(%i, peer = %peer_id.fmt_short(), "finished");
+                        println!("[server] round {} done in {:?}", i + 1, now.elapsed());
+                    }
+                }
+                .instrument(error_span!("server")),
+            )
+        };
+
+        let client_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let client = tokio::spawn(async move {
+            for i in 0..n_iters {
+                let now = Instant::now();
+                println!("[client] round {}", i + 1);
+                let derp_map = derp_map.clone();
+                let client_secret_key = client_secret_key.clone();
+                let fut = async move {
+                    info!("client binding");
+                    let start = Instant::now();
+                    let ep = MagicEndpoint::builder()
+                        .alpns(vec![TEST_ALPN.to_vec()])
+                        .derp_mode(DerpMode::Custom(derp_map))
+                        .secret_key(client_secret_key)
+                        .bind(0)
+                        .await
+                        .unwrap();
+                    let eps = ep.local_addr().unwrap();
+                    info!(me = %ep.peer_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
+                    let peer_addr = PeerAddr::new(server_node_id).with_derp_region(region_id);
+                    info!(to = ?peer_addr, "client connecting");
+                    let t = Instant::now();
+                    let conn = ep.connect(peer_addr, TEST_ALPN).await.unwrap();
+                    info!(t = ?t.elapsed(), "client connected");
+                    let t = Instant::now();
+                    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+
+                    for i in 0..n_chunks_per_client {
+                        let mut buf = vec![i; chunk_size];
+                        send.write_all(&buf).await.unwrap();
+                        recv.read_exact(&mut buf).await.unwrap();
+                        assert_eq!(buf, vec![i; chunk_size]);
+                    }
+                    send.finish().await.unwrap();
+                    recv.read_to_end(0).await.unwrap();
+                    info!(t = ?t.elapsed(), "client finished");
+                    ep.close(0u32.into(), &[]).await.unwrap();
+                    info!(total = ?start.elapsed(), "client closed");
+                }
+                .instrument(error_span!("client", %i));
+                tokio::task::spawn(fut).await.unwrap();
+                println!("[client] round {} done in {:?}", i + 1, now.elapsed());
+            }
+        });
+
+        client.await.unwrap();
+        server.abort();
+        let _ = server.await;
     }
 
     // #[tokio::test]

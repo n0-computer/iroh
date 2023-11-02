@@ -7,13 +7,12 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::util::{BlobFormat, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, Hash};
-use iroh_gossip::proto::util::base32;
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, PeerAddr},
@@ -21,9 +20,8 @@ use iroh_net::{
 
 use iroh_sync::{
     actor::OpenState,
-    store::{AuthorMatcher, KeyMatcher, Query},
-    sync::{NamespaceId, SignedEntry},
-    AuthorId,
+    store::{Query},
+    {AuthorId, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -34,6 +32,7 @@ use serde::{Deserialize, Serialize};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
 
 use crate::sync_engine::LiveEvent;
+pub use crate::ticket::doc::Ticket as DocTicket;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -493,46 +492,6 @@ impl RpcMsg<ProviderService> for DocCreateRequest {
 pub struct DocCreateResponse {
     /// The document id
     pub id: NamespaceId,
-}
-
-/// Contains both a key (either secret or public) to a document, and a list of peers to join.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DocTicket {
-    /// either a public or private key
-    pub key: KeyBytes,
-    /// a list of peers
-    pub peers: Vec<PeerAddr>,
-}
-impl DocTicket {
-    /// Create a new doc ticket
-    pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
-        Self { key, peers }
-    }
-    /// Serialize the ticket to a byte array.
-    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let bytes = postcard::to_stdvec(&self)?;
-        Ok(bytes)
-    }
-    /// Parse ticket from a byte array.
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        let slf = postcard::from_bytes(bytes)?;
-        Ok(slf)
-    }
-}
-impl FromStr for DocTicket {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_vec(s)?)
-    }
-}
-impl fmt::Display for DocTicket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            base32::fmt(self.to_bytes().expect("failed to serialize"))
-        )
-    }
 }
 
 /// Import a document from a ticket.

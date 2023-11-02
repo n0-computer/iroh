@@ -16,6 +16,7 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
+  CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
 
 jobs:
   build_and_test_nix:
@@ -28,27 +29,19 @@ jobs:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
         include:
-          # - name: ubuntu-arm-latest
-          #   os: ubuntu-latest
-          #   release-os: linux
-          #   release-arch: aarch64
-          #   runner: [self-hosted, linux, ARM64]
           - name: ubuntu-latest
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
             runner: [self-hosted, linux, X64]
-          # - name: macOS-latest
-          #   os: macOS-latest
-          #   release-os: darwin
-          #   release-arch: x86_64
-          #   runner: [self-hosted, macOS, X64]
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
-
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -59,18 +52,59 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
+    
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
+
+    - name: check all features
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          echo "Checking $i"
+          cargo check -p $i --all-features --lib --bins
+        done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
+    - name: check no default features
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          echo "Checking $i"
+          cargo check -p $i --no-default-features --lib --bins
+        done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
+    - name: check default features
+      run: |
+        for i in ${CRATES_LIST//,/ }
+        do
+          echo "Checking $i"
+          cargo check -p $i --lib --bins
+        done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
     - name: tests (no features)
       run: cargo test --workspace --no-default-features --lib --bins --tests
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (default features)
       run: cargo test --workspace --lib --bins --tests
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
       run: cargo test --workspace --all-features --doc
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
   build_and_test_windows:
     timeout-minutes: 30
@@ -87,7 +121,6 @@ jobs:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
-
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -105,12 +138,18 @@ jobs:
 
     - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (no features)
       run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
     - name: tests (default features)
       run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
   build_release:
     timeout-minutes: 60
@@ -153,6 +192,7 @@ jobs:
     env:
       RUST_BACKTRACE: full
       RUSTV: ${{ matrix.rust }}
+      SCCACHE_GHA_ENABLED: "true"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -222,7 +262,6 @@ jobs:
           - i686-unknown-linux-gnu
           - armv7-linux-androideabi
           - aarch64-linux-android
-
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -243,12 +282,16 @@ jobs:
 
     - name: check
       run: cross check --all --target ${{ matrix.target }}
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: test
       # cross tests are currently broken vor armv7 and aarch64
       # see https://github.com/cross-rs/cross/issues/1311
       if: matrix.target == 'i686-unknown-linux-gnu'
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
   check_fmt_and_docs:
     timeout-minutes: 30
@@ -272,7 +315,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - uses: dtolnay/rust-toolchain@stable
+    # Can be switched back once 1.75 lands
+    # https://github.com/rust-lang/cargo/issues/12115#issuecomment-1768170381
+    - uses: dtolnay/rust-toolchain@nightly
       with:
           components: clippy
 
@@ -317,6 +362,9 @@ jobs:
     timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -325,6 +373,9 @@ jobs:
     
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh
       run: |
@@ -355,9 +406,8 @@ jobs:
         cd ../chuck/netsim
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
-        sudo python3 main.py --integration sims/iroh/iroh.json
-        sudo python3 main.py --integration sims/integration
-
+        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/iroh/iroh.json
+        sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
     - name: Cleanup
       run: |
         sudo kill -9 $(pgrep derper) || true

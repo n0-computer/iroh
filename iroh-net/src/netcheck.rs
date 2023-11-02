@@ -4,19 +4,19 @@
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use iroh_metrics::inc;
-use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
+use crate::net::{IpFamily, UdpSocket};
 use crate::util::CancelOnDrop;
 
 use super::derp::DerpMap;
@@ -194,7 +194,7 @@ impl Client {
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+    pub fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
         let task =
@@ -248,6 +248,20 @@ impl Client {
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
+        let rx = self.get_report_channel(dm, stun_conn4, stun_conn6).await?;
+        match rx.await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("channel closed, actor awol")),
+        }
+    }
+
+    /// Get report with channel
+    pub async fn get_report_channel(
+        &mut self,
+        dm: DerpMap,
+        stun_conn4: Option<Arc<UdpSocket>>,
+        stun_conn6: Option<Arc<UdpSocket>>,
+    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
@@ -259,10 +273,7 @@ impl Client {
                 response_tx: tx,
             })
             .await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
-        }
+        Ok(rx)
     }
 }
 
@@ -434,8 +445,7 @@ impl Actor {
                     stun_sock_v6,
                     response_tx,
                 } => {
-                    self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx)
-                        .await;
+                    self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx);
                 }
                 Message::ReportReady { report, derp_map } => {
                     self.handle_report_ready(report, derp_map);
@@ -458,7 +468,7 @@ impl Actor {
     /// If *stun_sock_v4* or *stun_sock_v6* are not provided this will bind the sockets
     /// itself.  This is not ideal since really you want to send STUN probes from the
     /// sockets you will be using.
-    async fn handle_run_check(
+    fn handle_run_check(
         &mut self,
         derp_map: DerpMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
@@ -479,25 +489,11 @@ impl Actor {
         let cancel_token = CancellationToken::new();
         let stun_sock_v4 = match stun_sock_v4 {
             Some(sock) => Some(sock),
-            None => {
-                bind_local_stun_socket(
-                    SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
-                    self.addr(),
-                    cancel_token.clone(),
-                )
-                .await
-            }
+            None => bind_local_stun_socket(IpFamily::V4, self.addr(), cancel_token.clone()),
         };
         let stun_sock_v6 = match stun_sock_v6 {
             Some(sock) => Some(sock),
-            None => {
-                bind_local_stun_socket(
-                    SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
-                    self.addr(),
-                    cancel_token.clone(),
-                )
-                .await
-            }
+            None => bind_local_stun_socket(IpFamily::V6, self.addr(), cancel_token.clone()),
         };
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
@@ -765,15 +761,15 @@ struct ReportRun {
 /// If successfull this returns the bound socket and will forward STUN responses to the
 /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
 /// socket is no longer needed.
-async fn bind_local_stun_socket(
-    addr: SocketAddr,
+fn bind_local_stun_socket(
+    network: IpFamily,
     actor_addr: Addr,
     cancel_token: CancellationToken,
 ) -> Option<Arc<UdpSocket>> {
-    let sock = match UdpSocket::bind(addr).await {
+    let sock = match UdpSocket::bind(network, 0) {
         Ok(sock) => Arc::new(sock),
         Err(err) => {
-            debug!("failed to bind STUN socket at 0.0.0.0:0: {}", err);
+            debug!("failed to bind STUN socket: {}", err);
             return None;
         }
     };
@@ -827,22 +823,19 @@ async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> 
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
-pub(crate) async fn os_has_ipv6() -> bool {
-    // TODO: use socket2 to specify binding to ipv6
-    let udp = UdpSocket::bind("[::1]:0").await;
-    udp.is_ok()
+pub(crate) fn os_has_ipv6() -> bool {
+    UdpSocket::bind_local_v6(0).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use bytes::BytesMut;
     use tokio::time;
     use tracing::info;
 
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
     use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::net::IpFamily;
     use crate::ping::Pinger;
 
     use super::*;
@@ -853,9 +846,8 @@ mod tests {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
-        dbg!(&dm);
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
@@ -895,9 +887,7 @@ mod tests {
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let mut client = Client::new(None)
-            .await
-            .context("failed to create netcheck client")?;
+        let mut client = Client::new(None).context("failed to create netcheck client")?;
 
         let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
@@ -922,34 +912,39 @@ mod tests {
             region_code: "default".into(),
         }])
         .expect("hardcoded");
-        dbg!(&dm);
 
-        let r = client
-            .get_report(dm, None, None)
-            .await
-            .context("failed to get netcheck report")?;
+        for i in 0..100 {
+            println!("starting report {}", i + 1);
+            let now = Instant::now();
 
-        dbg!(&r);
-        if r.udp {
-            assert_eq!(
-                r.region_latency.len(),
-                1,
-                "expected 1 key in DERPLatency; got {}",
-                r.region_latency.len()
-            );
-            assert!(
-                r.region_latency.get(1).is_some(),
-                "expected key 1 in DERPLatency; got {:?}",
-                r.region_latency
-            );
-            assert!(r.global_v4.is_some(), "expected globalV4 set");
-            assert_eq!(
-                r.preferred_derp, 1,
-                "preferred_derp = {}; want 1",
-                r.preferred_derp
-            );
-        } else {
-            eprintln!("missing UDP, probe not returned by network");
+            let r = client
+                .get_report(dm.clone(), None, None)
+                .await
+                .context("failed to get netcheck report")?;
+
+            if r.udp {
+                assert_eq!(
+                    r.region_latency.len(),
+                    1,
+                    "expected 1 key in DERPLatency; got {}",
+                    r.region_latency.len()
+                );
+                assert!(
+                    r.region_latency.get(1).is_some(),
+                    "expected key 1 in DERPLatency; got {:?}",
+                    r.region_latency
+                );
+                assert!(r.global_v4.is_some(), "expected globalV4 set");
+                assert_eq!(
+                    r.preferred_derp, 1,
+                    "preferred_derp = {}; want 1",
+                    r.preferred_derp
+                );
+            } else {
+                eprintln!("missing UDP, probe not returned by network");
+            }
+
+            println!("report {} done in {:?}", i + 1, now.elapsed());
         }
 
         Ok(())
@@ -962,13 +957,13 @@ mod tests {
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
         dm.get_node_mut(1, 0).unwrap().stun_only = true;
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)?;
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
-        let have_pinger = Pinger::new().await.is_ok();
+        let have_pinger = Pinger::new().is_ok();
 
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.
@@ -1186,7 +1181,7 @@ mod tests {
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
@@ -1195,7 +1190,7 @@ mod tests {
         // it to this socket, which is forwarnding it back to our netcheck client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
+        let sock = UdpSocket::bind_local(IpFamily::V4, 0)?;
         let sock = Arc::new(sock);
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {

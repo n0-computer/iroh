@@ -9,8 +9,8 @@ use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{
     client::Iroh,
-    dial::Ticket,
     rpc_protocol::{ProviderService, SetTagOption, WrapOption},
+    ticket::blob::Ticket,
 };
 use iroh_bytes::{
     protocol::RequestToken,

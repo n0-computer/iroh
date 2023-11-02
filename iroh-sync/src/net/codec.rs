@@ -296,8 +296,7 @@ mod tests {
     use crate::{
         actor::OpenOpts,
         store::{self, Query, Store},
-        sync::Namespace,
-        AuthorId,
+        AuthorId, Namespace
     };
     use anyhow::Result;
     use iroh_bytes::Hash;

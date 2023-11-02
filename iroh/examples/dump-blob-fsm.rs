@@ -7,9 +7,8 @@
 //! copy that ticket value (the long string after `--ticket`) & feed it to this example:
 //!     $ cargo run --example dump-blob-fsm <ticket>
 use std::env::args;
-use std::str::FromStr;
 
-use iroh::dial::Ticket;
+use iroh::ticket::blob::Ticket;
 use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_io::ConcatenateSliceWriter;
@@ -29,8 +28,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
 
-    let ticket = args().nth(1).expect("missing ticket");
-    let ticket = Ticket::from_str(&ticket)?;
+    let ticket: Ticket = args().nth(1).expect("missing ticket").parse()?;
 
     // generate a transient secretkey for this connection
     //

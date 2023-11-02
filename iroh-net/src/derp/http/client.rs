@@ -335,8 +335,7 @@ impl ClientBuilder {
         let (msg_sender, inbox) = mpsc::channel(64);
         let (s, r) = mpsc::channel(64);
         let recv_loop = tokio::task::spawn(
-            async move { inner.run(inbox, s).await }
-                .instrument(info_span!("http:client:actor", key = %public_key.fmt_short())),
+            async move { inner.run(inbox, s).await }.instrument(info_span!("client")),
         );
 
         Ok((
@@ -675,7 +674,6 @@ impl Actor {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
-        let key = self.secret_key.public();
         async move {
             if self.derp_client.is_none() {
                 trace!("no connection, trying to connect");
@@ -697,7 +695,7 @@ impl Actor {
             trace!("already had connection");
             Ok((derp_client, receiver, count))
         }
-        .instrument(info_span!("client-connect", key = %key.fmt_short()))
+        .instrument(info_span!("connect"))
         .await
     }
 
@@ -708,12 +706,11 @@ impl Actor {
             .map(|url| url.as_str().ends_with(".invalid"))
             .unwrap_or_default();
 
-        debug!("url: {:?}, is_test_url: {}", url, is_test_url);
+        debug!(?url, %is_test_url, "start connect");
         let (tcp_stream, derp_node) = if url.is_some() && !is_test_url {
             (self.dial_url().await?, None)
         } else {
             let region = self.current_region().await?;
-            debug!("region: {:?}", region);
             let (tcp_stream, derp_node) = self.dial_region(region).await?;
             (tcp_stream, Some(derp_node))
         };
@@ -721,6 +718,8 @@ impl Actor {
         let local_addr = tcp_stream
             .local_addr()
             .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
+
+        debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
         let req = Request::builder()
             .uri("/derp")
@@ -886,7 +885,7 @@ impl Actor {
     }
 
     async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        debug!("send");
+        debug!(dst = %dst_key.fmt_short(), len = b.len(), "send");
         let (client, _, _) = self.connect().await?;
         if client.send(dst_key, b).await.is_err() {
             self.close_for_reconnect().await;
@@ -1056,40 +1055,24 @@ impl Actor {
         &self,
         reg: DerpRegion,
     ) -> Result<(TcpStream, Arc<DerpNode>), ClientError> {
-        debug!("dial region: {:?}", reg);
+        trace!(?reg, "dialing region");
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
             return Err(ClientError::NoNodeForTarget(target));
         }
-        // usually 1 IPv4, 1 IPv6 and 2x http
-        const DIAL_PARALLELISM: usize = 4;
-        let mut dials = bounded_join_set::JoinSet::new(DIAL_PARALLELISM);
-
         let prefer_ipv6 = self.prefer_ipv6().await;
 
-        for node in reg.nodes.clone().into_iter() {
-            let target = target.clone();
-            dials.spawn(async move {
-                if node.stun_only {
-                    return Err(ClientError::StunOnlyNodesFound(target));
-                }
-
-                dial_node(&node, prefer_ipv6).await.map(|c| (c, node))
-            });
-        }
-
         let mut errs = Vec::new();
-        while let Some(res) = dials.join_next().await {
-            match res {
-                Ok(Ok((conn, node))) => {
-                    // return on the first successfull one
-                    trace!("dialed region");
-                    return Ok((conn, node));
+        for node in reg.nodes.clone().into_iter() {
+            if node.stun_only {
+                return Err(ClientError::StunOnlyNodesFound(target.clone()));
+            }
+
+            match dial_node(&node, prefer_ipv6).await {
+                Ok(conn) => {
+                    return Ok((conn, node.clone()));
                 }
                 Err(e) => {
-                    warn!("dial join error: {:?}", e);
-                }
-                Ok(Err(e)) => {
                     errs.push(e);
                 }
             }

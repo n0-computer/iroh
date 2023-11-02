@@ -11,6 +11,8 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   MSRV: "1.66"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   netsim:
@@ -47,6 +49,9 @@ jobs:
 
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
+    
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh
       run: |
