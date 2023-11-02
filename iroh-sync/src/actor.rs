@@ -396,7 +396,7 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<NamespaceSecret> {
+    pub async fn get_capability(&self, namespace: NamespaceId) -> Result<NamespaceSecret> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::GetCapability { reply };
         self.send_replica(namespace, action).await?;

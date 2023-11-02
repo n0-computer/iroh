@@ -120,31 +120,30 @@ impl Subscribers {
     }
 }
 
-/// The Namespace.
-// TODO: duh ofc. Someone document this
+/// The capability of the namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From)]
-pub enum Namespace {
+pub enum Capability {
     /// Write access to the namespace.
     Write(NamespaceSecret),
     /// Read only access to the namespace.
     Read(NamespaceId),
 }
 
-impl Namespace {
-    /// Get the [`NamespaceId`] for this [`Namespace`].
+impl Capability {
+    /// Get the [`NamespaceId`] for this [`Capability`].
     pub fn id(&self) -> NamespaceId {
         match self {
-            Namespace::Write(secret) => secret.id(),
-            Namespace::Read(id) => *id,
+            Capability::Write(secret) => secret.id(),
+            Capability::Read(id) => *id,
         }
     }
 
-    /// Get the [`NamespaceSecret`] of this [`Namespace`].
-    /// Will fail if the [`Namespace`] is read only.
+    /// Get the [`NamespaceSecret`] of this [`Capability`].
+    /// Will fail if the [`Capability`] is read only.
     pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
         match self {
-            Namespace::Write(secret) => Ok(secret),
-            Namespace::Read(_) => Err(ReadOnly),
+            Capability::Write(secret) => Ok(secret),
+            Capability::Read(_) => Err(ReadOnly),
         }
     }
 }
@@ -152,7 +151,7 @@ impl Namespace {
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    namespace: Namespace,
+    capability: Capability,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
@@ -161,11 +160,10 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
-    /// Create a new replica.
-    // TODO: make read only replicas possible
-    pub fn new(namespace: NamespaceSecret, store: S) -> Self {
+    /// Create a new write replica.
+    pub fn new(secret: NamespaceSecret, store: S) -> Self {
         Replica {
-            namespace: namespace.into(),
+            capability: secret.into(),
             peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
@@ -366,7 +364,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the identifier for an entry in this replica.
     pub fn record_id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        RecordIdentifier::new(self.namespace.id(), author.id(), key)
+        RecordIdentifier::new(self.capability.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
@@ -443,22 +441,22 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn id(&self) -> NamespaceId {
-        self.namespace.id()
+        self.capability.id()
     }
 
-    /// Get the [`Namespace`] of this [`Replica`].
-    pub fn namespace(&self) -> &Namespace {
-        &self.namespace
+    /// Get the [`Capability`] of this [`Replica`].
+    pub fn capability(&self) -> &Capability {
+        &self.capability
     }
 
     /// Get the byte represenation of the [`NamespaceSecret`] key for this replica. Will fail if
     /// the replica is read only
     pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
-        self.namespace.secret_key()
+        self.capability.secret_key()
     }
 }
 
-/// Error that occurs trying to access the [`NamespaceSecret`] of a read-only [`Namespace`].
+/// Error that occurs trying to access the [`NamespaceSecret`] of a read-only [`Capability`].
 #[derive(Debug, thiserror::Error)]
 #[error("Replica allows read access only.")]
 pub struct ReadOnly;
