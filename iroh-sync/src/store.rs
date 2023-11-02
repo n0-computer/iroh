@@ -150,7 +150,7 @@ pub struct QueryBuilder<K> {
     filter_key: KeyMatcher,
     limit_offset: LimitOffset,
     include_empty: bool,
-    direction: Direction,
+    sort_direction: SortDirection,
 }
 
 impl<K> QueryBuilder<K> {
@@ -189,7 +189,7 @@ impl<K> QueryBuilder<K> {
 /// Query type for a [Query::flat]
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct FlatQuery {
-    order_by: SortBy,
+    sort_by: SortBy,
 }
 
 /// Query type for a [Query::single_latest_per_key]
@@ -197,10 +197,10 @@ pub struct FlatQuery {
 pub struct SingleLatestPerKeyQuery {}
 
 impl QueryBuilder<FlatQuery> {
-    /// Set the ordering for the query.
-    pub fn sort_by(mut self, sort_by: SortBy, direction: Direction) -> Self {
-        self.kind.order_by = sort_by;
-        self.direction = direction;
+    /// Set the sort for the query.
+    pub fn sort_by(mut self, sort_by: SortBy, direction: SortDirection) -> Self {
+        self.kind.sort_by = sort_by;
+        self.sort_direction = direction;
         self
     }
     /// Build the query.
@@ -213,8 +213,8 @@ impl QueryBuilder<SingleLatestPerKeyQuery> {
     /// Set the order direction for the query.
     ///
     /// Ordering is always by key for this query type.
-    pub fn key_ordering(mut self, direction: Direction) -> Self {
-        self.direction = direction;
+    pub fn key_ordering(mut self, direction: SortDirection) -> Self {
+        self.sort_direction = direction;
         self
     }
 
@@ -232,7 +232,7 @@ impl From<QueryBuilder<SingleLatestPerKeyQuery>> for Query {
             filter_key,
             limit_offset,
             include_empty,
-            direction: ordering,
+            sort_direction: ordering,
         } = builder;
 
         Query {
@@ -254,7 +254,7 @@ impl From<QueryBuilder<FlatQuery>> for Query {
             filter_key,
             limit_offset,
             include_empty,
-            direction: ordering,
+            sort_direction: ordering,
         } = builder;
 
         Query {
@@ -277,7 +277,7 @@ pub struct Query {
     filter_key: KeyMatcher,
     limit_offset: LimitOffset,
     include_empty: bool,
-    ordering: Direction,
+    ordering: SortDirection,
 }
 
 impl Query {
@@ -309,7 +309,7 @@ impl Query {
 
 /// Sort direction
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub enum Direction {
+pub enum SortDirection {
     /// Sort ascending
     #[default]
     Asc,

@@ -25,8 +25,8 @@ use crate::{
 use self::util::TableReader;
 
 use super::{
-    pubkeys::MemPublicKeyStore, AuthorMatcher, Direction, KeyMatcher, LimitOffset, OpenError,
-    OrderBy, PublicKeyStore, Query, QueryKind,
+    pubkeys::MemPublicKeyStore, AuthorMatcher, SortDirection, KeyMatcher, LimitOffset, OpenError,
+    SortBy, PublicKeyStore, Query, QueryKind,
 };
 
 mod util;
@@ -870,8 +870,8 @@ fn by_author_range(
 impl<'a> QueryIterator<'a> {
     fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
         let records = match query.kind {
-            QueryKind::Flat(details) => match (&query.filter_author, details.order_by) {
-                (AuthorMatcher::Any, OrderBy::Key) => {
+            QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
+                (AuthorMatcher::Any, SortBy::Key) => {
                     let (start, end) = by_key_range(namespace, &query.filter_key);
                     let start = map_bound(&start, records_by_key_id_as_ref);
                     let end = map_bound(&end, records_by_key_id_as_ref);
@@ -919,7 +919,7 @@ impl<'a> QueryIterator<'a> {
         };
         Ok(QueryIterator {
             records,
-            reverse: matches!(query.ordering, Direction::Desc),
+            reverse: matches!(query.ordering, SortDirection::Desc),
             limit: query.limit_offset,
             include_empty: query.include_empty,
             offset: 0,
