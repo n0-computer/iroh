@@ -20,6 +20,7 @@ use crate::{
 pub mod fs;
 pub mod memory;
 mod pubkeys;
+mod util;
 pub use pubkeys::*;
 
 /// Number of [`PeerIdBytes`] objects to cache per document.
@@ -220,13 +221,13 @@ impl<K> QueryBuilder<K> {
 }
 
 /// Query type for a [Query::flat]
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlatQuery {
     sort_by: SortBy,
 }
 
 /// Query type for a [Query::single_latest_per_key]
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SingleLatestPerKeyQuery {}
 
 impl QueryBuilder<FlatQuery> {
@@ -307,7 +308,7 @@ impl From<QueryBuilder<FlatQuery>> for Query {
 
 /// Note: When using the `SingleLatestPerKey` query kind, the key filter is applied *before* the
 /// grouping, the author filter is applied *after* the grouping.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Query {
     kind: QueryKind,
     filter_author: AuthorMatcher,
@@ -345,7 +346,7 @@ impl Query {
 }
 
 /// Sort direction
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum SortDirection {
     /// Sort ascending
     #[default]
@@ -354,7 +355,7 @@ pub enum SortDirection {
     Desc,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct LimitOffset {
     limit: Option<u64>,
     offset: Option<u64>,
@@ -370,14 +371,14 @@ impl LimitOffset {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum QueryKind {
     Flat(FlatQuery),
     SingleLatestPerKey(SingleLatestPerKeyQuery),
 }
 
 /// Fields by which the query can be sorted
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum SortBy {
     /// Sort by key, then author.
     KeyAuthor,

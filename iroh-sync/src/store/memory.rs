@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::Infallible,
+    ops::{RangeBounds, RangeFull},
     sync::Arc,
 };
 
@@ -19,7 +20,9 @@ use crate::{
 };
 
 use super::{
-    pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query,
+    pubkeys::MemPublicKeyStore,
+    util::{LatestPerKeySelector, SelectorRes, UseTable},
+    AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query,
 };
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
@@ -39,10 +42,43 @@ pub struct Store {
     peers_per_doc: SyncPeersCache,
 }
 
+type Key = Vec<u8>;
 type Rid = (AuthorId, Vec<u8>);
 type Rvalue = SignedEntry;
-type RecordMap = BTreeMap<Rid, Rvalue>;
+// type RecordMap = BTreeMap<Rid, Rvalue>;
 type ReplicaRecordsOwned = BTreeMap<NamespaceId, RecordMap>;
+
+#[derive(Debug, Default)]
+struct RecordMap {
+    by_author: BTreeMap<(AuthorId, Key), SignedEntry>,
+    by_key: BTreeMap<(Key, AuthorId), u64>,
+}
+
+impl RecordMap {
+    fn insert(&mut self, entry: SignedEntry) {
+        self.by_key
+            .insert((entry.key().to_vec(), entry.author()), entry.timestamp());
+        self.by_author
+            .insert((entry.author(), entry.key().to_vec()), entry);
+    }
+    fn remove(&mut self, id: &RecordIdentifier) -> Option<SignedEntry> {
+        let entry = self.by_author.remove(&(id.author(), id.key().to_vec()));
+        self.by_key.remove(&(id.key().to_vec(), id.author()));
+        entry
+    }
+    fn len(&self) -> usize {
+        self.by_author.len()
+    }
+    fn retain(&mut self, f: impl Fn(&(AuthorId, Key), &mut SignedEntry) -> bool) {
+        self.by_author.retain(|key, value| {
+            let retain = f(key, value);
+            if !retain {
+                self.by_key.remove(&(key.1.clone(), key.0));
+            }
+            retain
+        })
+    }
+}
 
 type LatestByAuthorMapOwned = BTreeMap<AuthorId, (u64, Vec<u8>)>;
 type LatestMapOwned = HashMap<NamespaceId, LatestByAuthorMapOwned>;
@@ -50,7 +86,7 @@ type LatestByAuthorMap<'a> = MappedRwLockReadGuard<'a, LatestByAuthorMapOwned>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
-    type GetIter<'a> = RangeIterator<'a>;
+    type GetIter<'a> = QueryIterator<'a>;
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
@@ -132,12 +168,7 @@ impl super::Store for Store {
         let query = query.into();
         let index = usize::try_from(query.limit_offset.offset())?;
         let records = self.replica_records.read();
-        Ok(RangeIterator {
-            records,
-            namespace,
-            query,
-            index,
-        })
+        Ok(QueryIterator::new(records, namespace, query))
     }
 
     fn get_one(
@@ -150,40 +181,12 @@ impl super::Store for Store {
         let Some(records) = inner.get(&namespace) else {
             return Ok(None);
         };
-        let entry = records.get(&(author, key.as_ref().to_vec()));
+        let entry = records.by_author.get(&(author, key.as_ref().to_vec()));
         Ok(entry.and_then(|entry| match entry.is_empty() {
             true => None,
             false => Some(entry.clone()),
         }))
     }
-    //     let inner = self.replica_records.read();
-    //     let Some(records) = inner.get(&namespace) else {
-    //         return Ok(None);
-    //     };
-    //
-    //     let res = match (author.into(), key.into()) {
-    //         (AuthorMatcher::Any, KeyMatcher::Any) => records.iter().next(),
-    //         (AuthorMatcher::Any, KeyMatcher::Exact(key)) => {
-    //             records.iter().find(|((_, k), _)| k == &key)
-    //         }
-    //         (AuthorMatcher::Any, KeyMatcher::Prefix(key)) => {
-    //             records.iter().find(|((_, k), _)| k.starts_with(&key))
-    //         }
-    //
-    //         (AuthorMatcher::Exact(author), KeyMatcher::Any) => {
-    //             records.iter().find(|((a, _), _)| &author == a)
-    //         }
-    //         (AuthorMatcher::Exact(author), KeyMatcher::Exact(key)) => {
-    //             records.iter().find(|((a, k), _)| a == &author && k == &key)
-    //         }
-    //
-    //         (AuthorMatcher::Exact(author), KeyMatcher::Prefix(key)) => records
-    //             .iter()
-    //             .find(|((a, k), _)| a == &author && k.starts_with(&key)),
-    //     };
-    //
-    //     Ok(res.map(|(_, e)| e.clone()))
-    // }
 
     /// Get all content hashes of all replicas in the store.
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
@@ -238,7 +241,7 @@ impl<'a> Iterator for ContentHashesIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let records = self.records.values().nth(self.namespace_i)?;
-            match records.values().nth(self.record_i) {
+            match records.by_author.values().nth(self.record_i) {
                 None => {
                     self.namespace_i += 1;
                     self.record_i = 0;
@@ -275,57 +278,115 @@ impl<'a> Iterator for LatestIterator<'a> {
 
 /// Iterator over entries in the memory store
 #[derive(Debug)]
-pub struct RangeIterator<'a> {
+pub struct QueryIterator<'a> {
     records: ReplicaRecords<'a>,
     namespace: NamespaceId,
     query: Query,
-    /// Current iteration index.
-    index: usize,
+    table: UseTable,
+    selector: Option<LatestPerKeySelector>,
+    // current iterator index
+    position: usize,
+    // number of entries returned from the iterator
+    count: usize,
+    // number of entries skipped at the beginning
+    offset: usize,
 }
 
-impl<'a> Iterator for RangeIterator<'a> {
+impl<'a> QueryIterator<'a> {
+    fn new(records: ReplicaRecords<'a>, namespace: NamespaceId, query: Query) -> Self {
+        let table = UseTable::from(&query);
+        let selector = match table {
+            UseTable::KeyAuthor { latest_per_key, .. } if latest_per_key => {
+                Some(LatestPerKeySelector::default())
+            }
+            _ => None,
+        };
+
+        Self {
+            records,
+            namespace,
+            query,
+            table,
+            selector,
+            position: 0,
+            offset: 0,
+            count: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for QueryIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(limit) = self.query.limit_offset.limit() {
-                if self.index as u64 >= limit {
+                if self.count as u64 >= limit {
                     return None;
                 }
             }
 
             let records = self.records.get(&self.namespace)?;
-            let author_check = match &self.query.filter_author {
-                AuthorMatcher::Any => None,
-                AuthorMatcher::Exact(author) => Some(author), // TODO: what to do here?
+
+            let entry = match &self.table {
+                UseTable::AuthorKey { range, filter } => records
+                    .by_author
+                    .iter()
+                    .filter(|(_key, entry)| {
+                        range.matches(&entry.author())
+                            && filter.matches(entry.key())
+                            && (self.query.include_empty || !entry.is_empty())
+                    })
+                    .map(|(_key, entry)| entry)
+                    .nth(self.position)
+                    .cloned(),
+                UseTable::KeyAuthor { range, filter, .. } => loop {
+                    let next = records
+                        .by_key
+                        .iter()
+                        // TODO: This allocation via to_vec() is unforunate
+                        .map(|(k, _v)| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
+                        .flatten()
+                        .filter(|entry| {
+                            range.matches(entry.key()) && filter.matches(&entry.author())
+                        })
+                        .nth(self.position)
+                        .cloned();
+
+                    let next = match self.selector.as_mut() {
+                        None => next,
+                        Some(selector) => match selector.push(next) {
+                            SelectorRes::Continue => {
+                                self.position += 1;
+                                continue;
+                            }
+                            SelectorRes::Finished => None,
+                            SelectorRes::Some(res) => Some(res),
+                        },
+                    };
+                    let Some(entry) = next else {
+                        break None;
+                    };
+
+                    // final check for empty entries: if the selector is active, the latest
+                    // entry for a key might be empty, so skip it if no empty entries were
+                    // requested
+                    if !self.query.include_empty && entry.is_empty() {
+                        self.position += 1;
+                        continue;
+                    } else {
+                        break Some(entry);
+                    }
+                },
             };
 
-            let offset = self.index;
-            let entry = match self.query.filter_key {
-                KeyMatcher::Any => records
-                    .iter()
-                    .filter(|((a, _), _)| author_check.map(|author| author == a).unwrap_or(true))
-                    .nth(offset),
-                KeyMatcher::Exact(ref key) => records
-                    .iter()
-                    .filter(|((a, k), _)| {
-                        k == key && author_check.map(|author| author == a).unwrap_or(true)
-                    })
-                    .nth(offset),
-                KeyMatcher::Prefix(ref prefix) => records
-                    .iter()
-                    .filter(|((a, k), _)| {
-                        k.starts_with(prefix)
-                            && author_check.map(|author| author == a).unwrap_or(true)
-                    })
-                    .nth(offset),
-            }?;
-            self.index += 1;
-            if entry.1.is_empty() {
+            self.position += 1;
+            self.offset += 1;
+            if (self.offset as u64) <= self.query.limit_offset.offset() {
                 continue;
-            } else {
-                return Some(Ok(entry.1.clone()));
             }
+            self.count += 1;
+            return entry.map(Result::Ok);
         }
     }
 }
@@ -407,7 +468,7 @@ impl Iterator for RecordsIter<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.replica_records.get(&self.namespace)?;
-        let ((author, key), value) = records.iter().nth(self.i)?;
+        let ((author, key), value) = records.by_author.iter().nth(self.i)?;
         let id = RecordIdentifier::new(self.namespace, *author, key);
         self.i += 1;
         Some((id, value.clone()))
@@ -422,9 +483,11 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         Ok(self.with_records(|records| {
             records
                 .and_then(|r| {
-                    r.first_key_value().map(|((author, key), _value)| {
-                        RecordIdentifier::new(self.namespace, *author, key.clone())
-                    })
+                    r.by_author
+                        .first_key_value()
+                        .map(|((author, key), _value)| {
+                            RecordIdentifier::new(self.namespace, *author, key.clone())
+                        })
                 })
                 .unwrap_or_default()
         }))
@@ -433,14 +496,14 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         Ok(self.with_records(|records| {
             records.and_then(|r| {
-                let v = r.get(&(key.author(), key.key().to_vec()))?;
+                let v = r.by_author.get(&(key.author(), key.key().to_vec()))?;
                 Some(v.clone())
             })
         }))
     }
 
     fn len(&self) -> Result<usize, Self::Error> {
-        Ok(self.with_records(|records| records.map(|v| v.len()).unwrap_or_default()))
+        Ok(self.with_records(|records| records.map(|v| v.by_author.len()).unwrap_or_default()))
     }
 
     fn is_empty(&self) -> Result<bool, Self::Error> {
@@ -462,7 +525,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
             records.insert(e.author_bytes(), (e.timestamp(), e.key().to_vec()));
         });
         self.with_records_mut_with_default(|records| {
-            records.insert((e.author_bytes(), e.key().to_vec()), e);
+            records.insert(e);
         });
         Ok(())
     }
@@ -481,9 +544,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
 
     fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         // TODO: what if we are trying to remove with the wrong timestamp?
-        let res = self.with_records_mut(|records| {
-            records.and_then(|records| records.remove(&(key.author(), key.key().to_vec())))
-        });
+        let res = self.with_records_mut(|records| records.and_then(|records| records.remove(&key)));
         Ok(res)
     }
 
@@ -530,7 +591,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
             let Some(records) = records else {
                 return Ok(0);
             };
-            let old_len = records.len();
+            let old_len = records.by_author.len();
             records.retain(|(a, k), v| {
                 !(a == &prefix.author() && k.starts_with(prefix.key()) && predicate(v.entry()))
             });

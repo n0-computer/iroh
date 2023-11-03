@@ -1902,6 +1902,73 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_replica_queries_mem() -> Result<()> {
+        let store = store::memory::Store::default();
+
+        test_replica_queries(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_queries_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_queries(store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_queries<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = Namespace::new(&mut rng);
+        let mut replica = store.new_replica(namespace)?;
+        let namespace = replica.namespace();
+
+        let a1 = store.new_author(&mut rng)?;
+        let a2 = store.new_author(&mut rng)?;
+        let a3 = store.new_author(&mut rng)?;
+
+        let h1 = replica.hash_and_insert("hello/world", &a1, "a1")?;
+        replica.hash_and_insert("hello/moon", &a1, "a1")?;
+        let h2 = replica.hash_and_insert("hello/world", &a2, "a2")?;
+        let h3 = replica.hash_and_insert("hello", &a3, "a3")?;
+
+        let res = get_many_key_hash(&store, namespace, Query::single_latest_per_key());
+        assert_eq!(
+            res,
+            vec![
+                ("hello".to_string(), a3.id(), h3),
+                ("hello/moon".to_string(), a1.id(), h1),
+                ("hello/world".to_string(), a2.id(), h2),
+            ]
+        );
+
+        Ok(())
+    }
+
+    fn get_many_key_hash<S: store::Store>(
+        store: &S,
+        namespace: NamespaceId,
+        query: impl Into<Query>,
+    ) -> Vec<(String, AuthorId, Hash)> {
+        store
+            .get_many(namespace, query)
+            .unwrap()
+            .map(|e| {
+                e.map(|e| {
+                    (
+                        String::from_utf8(e.key().to_vec()).unwrap(),
+                        e.author(),
+                        e.content_hash(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap()
+    }
+
     fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));

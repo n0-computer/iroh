@@ -34,6 +34,8 @@ use super::{
     Query, QueryKind, SortBy, SortDirection,
 };
 
+use super::util::{LatestPerKeySelector, SelectorRes, UseTable};
+
 mod util;
 use util::TableRangeReader;
 
@@ -840,38 +842,10 @@ impl<'a> Iterator for QueryIterator<'a> {
 
 impl<'a> QueryIterator<'a> {
     fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
-        enum UseTable {
-            AuthorKey {
-                range: ByAuthorMatcher,
-                filter: KeyMatcher,
-            },
-            KeyAuthor {
-                range: KeyMatcher,
-                filter: AuthorMatcher,
-                latest_per_key: bool,
-            },
-        }
-        let table_to_use = match query.kind {
-            QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
-                (AuthorMatcher::Any, SortBy::KeyAuthor) => UseTable::KeyAuthor {
-                    range: query.filter_key,
-                    filter: AuthorMatcher::Any,
-                    latest_per_key: false,
-                },
-                _ => UseTable::AuthorKey {
-                    range: query.filter_author.into(),
-                    filter: query.filter_key,
-                },
-            },
-            QueryKind::SingleLatestPerKey(_) => UseTable::KeyAuthor {
-                range: query.filter_key,
-                filter: query.filter_author,
-                latest_per_key: true,
-            },
-        };
+        let table_to_use = UseTable::from(&query);
         let records = match table_to_use {
             UseTable::AuthorKey { range, filter } => {
-                let range = by_author_range(namespace, &range);
+                let range = by_author_range(namespace, &range.into());
                 let range = map_bounds(&range, records_id_ref);
                 let records = TableRangeReader::new(
                     db,
@@ -900,14 +874,15 @@ impl<'a> QueryIterator<'a> {
             }
         };
 
-        Ok(QueryIterator {
+        let res = Ok(QueryIterator {
             records,
             sort_direction: query.sort_direction,
             limit: query.limit_offset,
             include_empty: query.include_empty,
             offset: 0,
             count: 0,
-        })
+        });
+        res
     }
     fn next(&mut self) -> Option<Result<SignedEntry>> {
         if let Some(limit) = self.limit.limit() {
@@ -951,24 +926,26 @@ impl<'a> QueryIterator<'a> {
                         |id, value| into_entry((id.0, id.2, id.1), value),
                     );
 
+                    let next = match next {
+                        Some(Err(err)) => break Some(Err(err)),
+                        Some(Ok(res)) => Some(res),
+                        None => None,
+                    };
+
                     // push the entry into the selector.
                     // if the selector is active, only the latest entry for each key will be
                     // included.
                     let next = match selector {
                         None => next,
                         Some(selector) => match selector.push(next) {
-                            // If the selector returns None, we did not yet reach the end of
-                            // entries for a single key, thus continue.
-                            None => continue,
-                            Some(res) => Some(res),
+                            SelectorRes::Continue => continue,
+                            SelectorRes::Finished => None,
+                            SelectorRes::Some(res) => Some(res),
                         },
                     };
 
-                    let entry = match next {
-                        // we reached the end of the iterator
-                        None => break None,
-                        Some(Err(err)) => break Some(Err(err)),
-                        Some(Ok(entry)) => entry,
+                    let Some(entry) = next else {
+                        break None;
                     };
 
                     // final check for empty entries: if the selector is active, the latest
@@ -993,37 +970,6 @@ impl<'a> QueryIterator<'a> {
             }
             self.count += 1;
             return Some(Ok(entry));
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct LatestPerKeySelector(Option<SignedEntry>);
-
-impl LatestPerKeySelector {
-    fn push(&mut self, entry: Option<Result<SignedEntry>>) -> Option<Result<SignedEntry>> {
-        let entry = match entry {
-            None => return self.0.take().map(Result::Ok),
-            Some(Err(err)) => return Some(Err(err)),
-            Some(Ok(entry)) => entry,
-        };
-        match self.0.take() {
-            None => {
-                self.0 = Some(entry);
-                None
-            }
-            Some(last) if last.key() == entry.key() => {
-                if entry.timestamp() > last.timestamp() {
-                    self.0 = Some(entry);
-                } else {
-                    self.0 = Some(last);
-                }
-                None
-            }
-            Some(last) => {
-                self.0 = Some(entry);
-                Some(Ok(last))
-            }
         }
     }
 }
@@ -1113,6 +1059,27 @@ fn by_author_range(
     }
 }
 
+#[derive(Debug)]
+enum ByAuthorMatcher {
+    Any,
+    SingleAuthor(AuthorId, KeyMatcher),
+}
+
+impl ByAuthorMatcher {
+    pub fn prefix(author: AuthorId, prefix: impl AsRef<[u8]>) -> Self {
+        Self::SingleAuthor(author, KeyMatcher::Prefix(prefix.as_ref().to_vec().into()))
+    }
+}
+
+impl From<AuthorMatcher> for ByAuthorMatcher {
+    fn from(value: AuthorMatcher) -> Self {
+        match value {
+            AuthorMatcher::Any => ByAuthorMatcher::Any,
+            AuthorMatcher::Exact(author) => ByAuthorMatcher::SingleAuthor(author, KeyMatcher::Any),
+        }
+    }
+}
+
 /// Increment a byte string by one, by incrementing the last byte that is not 255 by one.
 ///
 /// Returns false if all bytes are 255.
@@ -1126,26 +1093,6 @@ fn increment_by_one(value: &mut [u8]) -> bool {
         }
     }
     false
-}
-
-enum ByAuthorMatcher {
-    Any,
-    SingleAuthor(AuthorId, KeyMatcher),
-}
-
-impl ByAuthorMatcher {
-    fn prefix(author: AuthorId, prefix: impl AsRef<[u8]>) -> Self {
-        Self::SingleAuthor(author, KeyMatcher::Prefix(prefix.as_ref().to_vec().into()))
-    }
-}
-
-impl From<AuthorMatcher> for ByAuthorMatcher {
-    fn from(value: AuthorMatcher) -> Self {
-        match value {
-            AuthorMatcher::Any => ByAuthorMatcher::Any,
-            AuthorMatcher::Exact(author) => ByAuthorMatcher::SingleAuthor(author, KeyMatcher::Any),
-        }
-    }
 }
 
 fn map_bound<'a, T, U: 'a>(bound: &'a Bound<T>, f: impl Fn(&'a T) -> U) -> Bound<U> {
