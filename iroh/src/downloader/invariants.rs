@@ -21,7 +21,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn chech_concurrency_limits(&self) {
         let ConcurrencyLimits {
             max_concurrent_requests,
-            max_concurrent_requests_per_peer,
+            max_concurrent_requests_per_node: max_concurrent_requests_per_peer,
             max_open_connections,
         } = &self.concurrency_limits;
 
@@ -38,7 +38,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         );
 
         // check the active requests per peer don't exceed the limit
-        for (peer, info) in self.peers.iter() {
+        for (peer, info) in self.nodes.iter() {
             assert!(
                 info.active_requests() <= *max_concurrent_requests_per_peer,
                 "max_concurrent_requests_per_peer exceeded for {peer}"
@@ -59,12 +59,12 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         );
         // check that the count of requests per peer matches the number of requests that have that
         // peer as active
-        let mut real_count: HashMap<PublicKey, usize> = HashMap::with_capacity(self.peers.len());
+        let mut real_count: HashMap<NodeId, usize> = HashMap::with_capacity(self.nodes.len());
         for req_info in self.current_requests.values() {
             // nothing like some classic word count
-            *real_count.entry(req_info.peer).or_default() += 1;
+            *real_count.entry(req_info.node).or_default() += 1;
         }
-        for (peer, info) in self.peers.iter() {
+        for (peer, info) in self.nodes.iter() {
             assert_eq!(
                 info.active_requests(),
                 real_count.get(peer).copied().unwrap_or_default(),
@@ -87,12 +87,12 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     #[track_caller]
     fn check_idle_peer_consistency(&self) {
         let idle_peers = self
-            .peers
+            .nodes
             .values()
             .filter(|info| info.active_requests() == 0)
             .count();
         assert_eq!(
-            self.goodbye_peer_queue.len(),
+            self.goodbye_nodes_queue.len(),
             idle_peers,
             "inconsistent count of idle peers"
         );

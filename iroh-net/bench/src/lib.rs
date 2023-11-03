@@ -3,7 +3,7 @@ use std::{convert::TryInto, net::SocketAddr, num::ParseIntError, str::FromStr};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use iroh_net::{derp::DerpMode, MagicEndpoint, PeerAddr};
+use iroh_net::{derp::DerpMode, MagicEndpoint, NodeAddr};
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
@@ -21,7 +21,7 @@ pub fn configure_tracing_subscriber() {
 }
 
 /// Creates a server endpoint which runs on the given runtime
-pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (PeerAddr, MagicEndpoint) {
+pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, MagicEndpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
         let ep = MagicEndpoint::builder()
@@ -33,14 +33,14 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (PeerAddr, Ma
             .unwrap();
         let addr = ep.local_addr().unwrap();
         let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
-        let addr = PeerAddr::new(ep.peer_id()).with_direct_addresses([addr]);
+        let addr = NodeAddr::new(ep.peer_id()).with_direct_addresses([addr]);
         (addr, ep)
     })
 }
 
 /// Create a client endpoint and client connection
 pub async fn connect_client(
-    server_addr: PeerAddr,
+    server_addr: NodeAddr,
     opt: Opt,
 ) -> Result<(MagicEndpoint, quinn::Connection)> {
     let endpoint = MagicEndpoint::builder()

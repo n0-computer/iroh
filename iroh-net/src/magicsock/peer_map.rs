@@ -21,7 +21,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong},
     key::PublicKey,
-    stun, PeerAddr,
+    stun, NodeAddr,
 };
 
 mod best_addr;
@@ -87,13 +87,13 @@ impl PeerMap {
     /// Get the known peer addresses stored in the map. Peers with empty addressing information are
     /// filtered out.
     #[cfg(test)]
-    pub fn known_peer_addresses(&self) -> Vec<PeerAddr> {
+    pub fn known_peer_addresses(&self) -> Vec<NodeAddr> {
         self.inner.lock().known_peer_addresses().collect()
     }
 
     /// Add the contact information for a peer.
-    pub fn add_peer_addr(&self, peer_addr: PeerAddr) {
-        self.inner.lock().add_peer_addr(peer_addr)
+    pub fn add_peer_addr(&self, node_addr: NodeAddr) {
+        self.inner.lock().add_peer_addr(node_addr)
     }
 
     /// Number of nodes currently listed.
@@ -258,10 +258,10 @@ impl PeerMap {
 impl PeerMapInner {
     /// Get the known peer addresses stored in the map. Peers with empty addressing information are
     /// filtered out.
-    fn known_peer_addresses(&self) -> impl Iterator<Item = PeerAddr> + '_ {
+    fn known_peer_addresses(&self) -> impl Iterator<Item = NodeAddr> + '_ {
         self.by_id.values().filter_map(|endpoint| {
-            let peer_addr = endpoint.peer_addr();
-            (!peer_addr.info.is_empty()).then_some(peer_addr)
+            let node_addr = endpoint.node_addr();
+            (!node_addr.info.is_empty()).then_some(node_addr)
         })
     }
 
@@ -273,21 +273,21 @@ impl PeerMapInner {
         let contents = std::fs::read(path)?;
         let mut slice: &[u8] = &contents;
         while !slice.is_empty() {
-            let (peer_addr, next_contents) =
+            let (node_addr, next_contents) =
                 postcard::take_from_bytes(slice).context("failed to load peer data")?;
-            me.add_peer_addr(peer_addr);
+            me.add_peer_addr(node_addr);
             slice = next_contents;
         }
         Ok(me)
     }
 
     /// Add the contact information for a peer.
-    #[instrument(skip_all, fields(peer = %peer_addr.peer_id.fmt_short()))]
-    fn add_peer_addr(&mut self, peer_addr: PeerAddr) {
-        let PeerAddr { peer_id, info } = peer_addr;
+    #[instrument(skip_all, fields(peer = %node_addr.node_id.fmt_short()))]
+    fn add_peer_addr(&mut self, node_addr: NodeAddr) {
+        let NodeAddr { node_id, info } = node_addr;
 
-        let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&peer_id), || Options {
-            public_key: peer_id,
+        let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&node_id), || Options {
+            public_key: node_id,
             derp_region: info.derp_region,
             active: false,
         });
@@ -568,17 +568,17 @@ mod tests {
         let direct_addresses_a = [addr(4000), addr(4001)];
         let direct_addresses_c = [addr(5000)];
 
-        let peer_addr_a = PeerAddr::new(peer_a)
+        let node_addr_a = NodeAddr::new(peer_a)
             .with_derp_region(region_x)
             .with_direct_addresses(direct_addresses_a);
-        let peer_addr_b = PeerAddr::new(peer_b).with_derp_region(region_y);
-        let peer_addr_c = PeerAddr::new(peer_c).with_direct_addresses(direct_addresses_c);
-        let peer_addr_d = PeerAddr::new(peer_d);
+        let node_addr_b = NodeAddr::new(peer_b).with_derp_region(region_y);
+        let node_addr_c = NodeAddr::new(peer_c).with_direct_addresses(direct_addresses_c);
+        let node_addr_d = NodeAddr::new(peer_d);
 
-        peer_map.add_peer_addr(peer_addr_a);
-        peer_map.add_peer_addr(peer_addr_b);
-        peer_map.add_peer_addr(peer_addr_c);
-        peer_map.add_peer_addr(peer_addr_d);
+        peer_map.add_peer_addr(node_addr_a);
+        peer_map.add_peer_addr(node_addr_b);
+        peer_map.add_peer_addr(node_addr_c);
+        peer_map.add_peer_addr(node_addr_d);
 
         let root = testdir::testdir!();
         let path = root.join("peers.postcard");
@@ -588,13 +588,13 @@ mod tests {
         let loaded: HashMap<PublicKey, AddrInfo> = loaded_peer_map
             .known_peer_addresses()
             .into_iter()
-            .map(|PeerAddr { peer_id, info }| (peer_id, info))
+            .map(|NodeAddr { node_id, info }| (node_id, info))
             .collect();
 
         let og: HashMap<PublicKey, AddrInfo> = peer_map
             .known_peer_addresses()
             .into_iter()
-            .map(|PeerAddr { peer_id, info }| (peer_id, info))
+            .map(|NodeAddr { node_id, info }| (node_id, info))
             .collect();
         // compare the peer maps via their known peers
         assert_eq!(og, loaded);
@@ -624,9 +624,9 @@ mod tests {
         // active adddresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let peer_addr = PeerAddr::new(public_key).with_direct_addresses([addr]);
+            let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
             // add address
-            peer_map.add_peer_addr(peer_addr);
+            peer_map.add_peer_addr(node_addr);
             // make it active
             peer_map.inner.lock().receive_udp(addr);
         }
@@ -634,8 +634,8 @@ mod tests {
         // offline adddresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let peer_addr = PeerAddr::new(public_key).with_direct_addresses([addr]);
-            peer_map.add_peer_addr(peer_addr);
+            let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
+            peer_map.add_peer_addr(node_addr);
         }
 
         let mut peer_map_inner = peer_map.inner.lock();
@@ -670,12 +670,12 @@ mod tests {
         // add one active peer and more than MAX_INACTIVE_PEERS inactive peers
         let active_peer = SecretKey::generate().public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        peer_map.add_peer_addr(PeerAddr::new(active_peer).with_direct_addresses([addr]));
+        peer_map.add_peer_addr(NodeAddr::new(active_peer).with_direct_addresses([addr]));
         peer_map.inner.lock().receive_udp(addr).expect("registered");
 
         for _ in 0..MAX_INACTIVE_PEERS + 1 {
             let peer = SecretKey::generate().public();
-            peer_map.add_peer_addr(PeerAddr::new(peer));
+            peer_map.add_peer_addr(NodeAddr::new(peer));
         }
 
         assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 2);

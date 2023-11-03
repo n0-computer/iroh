@@ -11,7 +11,7 @@ use futures::{
 };
 use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
 use iroh_gossip::net::Gossip;
-use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{
     actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
 };
@@ -143,7 +143,7 @@ impl SyncEngine {
     ///
     /// If `peers` is non-empty, it will both do an initial set-reconciliation sync with each peer,
     /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
-    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::StartSync {
@@ -157,7 +157,7 @@ impl SyncEngine {
     }
 
     /// Join and sync with a set of peers for a document that is already syncing.
-    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::JoinPeers {

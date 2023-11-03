@@ -20,7 +20,7 @@ use iroh_bytes::store::ValidateProgress;
 use iroh_bytes::util::runtime;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
-use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, PeerAddr};
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
 use iroh_sync::{store::Query, AuthorId, Entry, NamespaceId};
 use quic_rpc::message::RpcMsg;
@@ -701,7 +701,7 @@ where
     }
 
     /// Start to sync this document with a list of peers.
-    pub async fn start_sync(&self, peers: Vec<PeerAddr>) -> Result<()> {
+    pub async fn start_sync(&self, peers: Vec<NodeAddr>) -> Result<()> {
         self.ensure_open()?;
         let _res = self
             .rpc(DocStartSyncRequest {

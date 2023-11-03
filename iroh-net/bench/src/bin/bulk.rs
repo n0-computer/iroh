@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use iroh_net::{MagicEndpoint, PeerAddr};
+use iroh_net::{MagicEndpoint, NodeAddr};
 use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
@@ -105,7 +105,7 @@ async fn server(endpoint: MagicEndpoint, opt: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn client(server_addr: PeerAddr, opt: Opt) -> Result<ClientStats> {
+async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
     let (endpoint, connection) = connect_client(server_addr, opt).await?;
 
     let start = Instant::now();

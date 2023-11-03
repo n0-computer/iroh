@@ -13,7 +13,7 @@ use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
     disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
-    net::ip::is_unicast_link_local, stun, util::derp_only_mode, PeerAddr,
+    net::ip::is_unicast_link_local, stun, util::derp_only_mode, NodeAddr,
 };
 
 use crate::magicsock::{
@@ -889,10 +889,10 @@ impl Endpoint {
     }
 
     /// Get the adressing information of this endpoint.
-    pub(super) fn peer_addr(&self) -> PeerAddr {
+    pub(super) fn node_addr(&self) -> NodeAddr {
         let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
-        PeerAddr {
-            peer_id: self.public_key,
+        NodeAddr {
+            node_id: self.public_key,
             info: AddrInfo {
                 derp_region: self.derp_region(),
                 direct_addresses,
@@ -1167,11 +1167,12 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use super::*;
-    use crate::{
-        key::SecretKey,
-        magicsock::peer_map::{best_addr::BestAddr, IpPort, PeerMap, PeerMapInner},
+    use super::{
+        super::{PeerMap, PeerMapInner},
+        best_addr::BestAddr,
+        IpPort, *,
     };
+    use crate::key::SecretKey;
 
     #[test]
     fn test_endpoint_infos() {
