@@ -124,6 +124,7 @@ impl Subscribers {
 #[derive(
     Debug,
     Clone,
+    Copy,
     Serialize,
     Deserialize,
     num_enum::IntoPrimitive,
