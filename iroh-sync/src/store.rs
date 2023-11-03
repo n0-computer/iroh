@@ -383,7 +383,7 @@ pub enum SortBy {
 }
 
 /// Key matching.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, Eq, PartialEq)]
 pub enum KeyMatcher {
     /// Matches any key
     #[default]
@@ -400,14 +400,35 @@ impl<T: AsRef<[u8]>> From<T> for KeyMatcher {
     }
 }
 
+impl KeyMatcher {
+    /// Test if a key is matched by this [`KeyMatcher`].
+    pub fn matches(&self, key: &[u8]) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Exact(k) => &k[..] == key,
+            Self::Prefix(p) => key.starts_with(&p),
+        }
+    }
+}
+
 /// Author matching.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, Eq, PartialEq)]
 pub enum AuthorMatcher {
     /// Matches any author
     #[default]
     Any,
     /// Matches exactly the provided author
     Exact(AuthorId),
+}
+
+impl AuthorMatcher {
+    /// Test if an author is matched by this [`AuthorMatcher`].
+    pub fn matches(&self, author: &AuthorId) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Exact(a) => a == author,
+        }
+    }
 }
 
 impl From<AuthorId> for AuthorMatcher {

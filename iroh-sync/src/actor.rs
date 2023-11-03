@@ -16,8 +16,8 @@ use tracing::{debug, error, error_span, trace, warn};
 use crate::{
     ranger::Message,
     store::{self, Query},
-    Author, AuthorHeads, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace, NamespaceId,
-    PeerIdBytes, Replica, SignedEntry, SyncOutcome,
+    Author, AuthorHeads, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace,
+    NamespaceId, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
 };
 
 #[derive(derive_more::Debug, derive_more::Display)]

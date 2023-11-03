@@ -22,7 +22,7 @@ use redb::{
 use crate::{
     keys::{Author, Namespace},
     ranger::{Fingerprint, Range, RangeEntry},
-    store::Store as _,
+    store::{Store as _},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes,
 };
@@ -295,8 +295,8 @@ impl super::Store for Store {
             {
                 let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
                 let (start, end) = by_key_range(*namespace, &KeyMatcher::Any);
-                let start = map_bound(&start, records_by_key_id_as_ref);
-                let end = map_bound(&end, records_by_key_id_as_ref);
+                let start = map_bound(&start, records_by_key_id_ref);
+                let end = map_bound(&end, records_by_key_id_ref);
                 let _ = table.drain((start, end));
             }
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
@@ -877,7 +877,7 @@ enum QueryRecords<'a> {
     KeyAuthor {
         filter: AuthorMatcher,
         records: TableRangeReader<'a, RecordsByKeyId<'static>, RecordsValue<'static>>,
-        grouper: Option<Grouper>,
+        selector: Option<LatestPerKeySelector>,
     },
 }
 
@@ -888,11 +888,210 @@ impl<'a> Iterator for QueryIterator<'a> {
     }
 }
 
-fn map_bound<'a, T, U: 'a>(bound: &'a Bound<T>, f: impl Fn(&'a T) -> U) -> Bound<U> {
-    match bound {
-        Bound::Unbounded => Bound::Unbounded,
-        Bound::Included(t) => Bound::Included(f(t)),
-        Bound::Excluded(t) => Bound::Excluded(f(t)),
+impl<'a> QueryIterator<'a> {
+    fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
+        enum UseTable {
+            KeyAuthor {
+                range: KeyMatcher,
+                filter: AuthorMatcher,
+                latest_per_key: bool,
+            },
+            AuthorKey {
+                range: AuthorMatcher,
+                filter: KeyMatcher,
+            },
+        }
+        let table_to_use = match query.kind {
+            QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
+                (AuthorMatcher::Any, SortBy::Key) => UseTable::KeyAuthor {
+                    range: query.filter_key,
+                    filter: AuthorMatcher::Any,
+                    latest_per_key: false,
+                },
+                _ => UseTable::AuthorKey {
+                    range: query.filter_author,
+                    filter: query.filter_key,
+                },
+            },
+            QueryKind::SingleLatestPerKey(_) => UseTable::KeyAuthor {
+                range: query.filter_key,
+                filter: query.filter_author,
+                latest_per_key: true,
+            },
+        };
+        let records = match table_to_use {
+            UseTable::AuthorKey { range, filter } => {
+                let range = by_author_range(namespace, &range);
+                let range = map_bounds(&range, records_id_ref);
+                let records = TableRangeReader::new(
+                    &db,
+                    |tx| tx.open_table(RECORDS_TABLE),
+                    |table| table.range(range),
+                )?;
+                QueryRecords::AuthorKey { records, filter }
+            }
+            UseTable::KeyAuthor {
+                range,
+                filter,
+                latest_per_key,
+            } => {
+                let range = by_key_range(namespace, &range);
+                let range = map_bounds(&range, records_by_key_id_ref);
+                let records = TableRangeReader::new(
+                    &db,
+                    |tx| tx.open_table(RECORDS_BY_KEY_TABLE),
+                    |table| table.range(range),
+                )?;
+                QueryRecords::KeyAuthor {
+                    filter,
+                    records,
+                    selector: latest_per_key.then(|| LatestPerKeySelector::default()),
+                }
+            }
+        };
+
+        Ok(QueryIterator {
+            records,
+            reverse: matches!(query.ordering, SortDirection::Desc),
+            limit: query.limit_offset,
+            include_empty: query.include_empty,
+            offset: 0,
+            count: 0,
+        })
+    }
+    fn next(&mut self) -> Option<Result<SignedEntry>> {
+        if let Some(limit) = self.limit.limit() {
+            if self.count >= limit {
+                return None;
+            }
+        }
+        loop {
+            let next = match &mut self.records {
+                QueryRecords::AuthorKey {
+                    records: iter,
+                    filter,
+                } => iter.with_range(|records| loop {
+                    let mut next = match self.reverse {
+                        false => records.next(),
+                        true => records.next_back(),
+                    };
+                    match next.take() {
+                        Some(Ok(ref res)) => {
+                            let id = res.0.value();
+                            let (_namespace, _author, key) = id;
+                            if !filter.matches(&key) {
+                                continue;
+                            }
+                            let value = res.1.value();
+                            if !self.include_empty && value_is_empty(&value) {
+                                continue;
+                            }
+                            let entry = into_entry(id, value);
+                            break Some(Ok(entry));
+                        }
+                        Some(Err(err)) => break Some(Err(err)),
+                        None => break None,
+                    }
+                }),
+                QueryRecords::KeyAuthor {
+                    records: iter,
+                    filter,
+                    selector,
+                } => loop {
+                    let next = iter.with_range(|records| loop {
+                        let next = match self.reverse {
+                            false => records.next(),
+                            true => records.next_back(),
+                        };
+                        match next {
+                            Some(Ok(res)) => {
+                                let (namespace, key, author) = res.0.value();
+                                let value = res.1.value();
+                                if !filter.matches(&(author.into())) {
+                                    continue;
+                                }
+                                if selector.is_none()
+                                    && !self.include_empty
+                                    && value_is_empty(&value)
+                                {
+                                    continue;
+                                }
+                                let id = (namespace, author, key);
+                                let entry = into_entry(id, value);
+                                break Some(Ok(entry));
+                            }
+                            Some(Err(err)) => break Some(Err(err)),
+                            None => break None,
+                        }
+                    });
+
+                    match selector.as_mut() {
+                        None => break next,
+                        Some(grouper) => match next {
+                            None => break grouper.current.take().map(|x| Ok(x)),
+                            Some(Err(err)) => break Some(Err(err)),
+                            Some(Ok(next)) => match grouper.push(next) {
+                                Some(next) => {
+                                    if !self.include_empty && next.is_empty() {
+                                        continue;
+                                    } else {
+                                        break Some(Ok(next));
+                                    }
+                                }
+                                None => continue,
+                            },
+                        },
+                    }
+                },
+            };
+            match next {
+                None => break None,
+                Some(Err(err)) => break Some(Err(err.into())),
+                Some(Ok(entry)) => {
+                    if let Some(offset) = self.limit.limit() {
+                        if self.offset < offset {
+                            self.offset += 1;
+                            continue;
+                        }
+                    }
+                    if let Some(limit) = self.limit.limit() {
+                        if self.count >= limit {
+                            break None;
+                        }
+                    }
+                    self.count += 1;
+                    break Some(Ok(entry));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct LatestPerKeySelector {
+    current: Option<SignedEntry>,
+}
+
+impl LatestPerKeySelector {
+    fn push(&mut self, entry: SignedEntry) -> Option<SignedEntry> {
+        match self.current.take() {
+            None => {
+                self.current = Some(entry);
+                None
+            }
+            Some(current) if current.key() == entry.key() => {
+                if entry.timestamp() > current.timestamp() {
+                    self.current = Some(entry);
+                } else {
+                    self.current = Some(current);
+                }
+                None
+            }
+            Some(current) => {
+                self.current = Some(entry);
+                Some(current)
+            }
+        }
     }
 }
 
@@ -965,226 +1164,32 @@ fn by_author_range(
     }
 }
 
-impl<'a> QueryIterator<'a> {
-    fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
-        let records = match query.kind {
-            QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
-                (AuthorMatcher::Any, SortBy::Key) => {
-                    let (start, end) = by_key_range(namespace, &query.filter_key);
-                    let start = map_bound(&start, records_by_key_id_as_ref);
-                    let end = map_bound(&end, records_by_key_id_as_ref);
-                    let records = TableRangeReader::new(
-                        &db,
-                        |tx| tx.open_table(RECORDS_BY_KEY_TABLE),
-                        |table| table.range((start, end)),
-                    )?;
-                    QueryRecords::KeyAuthor {
-                        filter: AuthorMatcher::Any,
-                        records,
-                        grouper: None,
-                    }
-                }
-                _ => {
-                    let (start, end) = by_author_range(namespace, &query.filter_author);
-                    let start = map_bound(&start, records_id_by_ref);
-                    let end = map_bound(&end, records_id_by_ref);
-                    let records = TableRangeReader::new(
-                        &db,
-                        |tx| tx.open_table(RECORDS_TABLE),
-                        |table| table.range((start, end)),
-                    )?;
-                    QueryRecords::AuthorKey {
-                        records,
-                        filter: query.filter_key,
-                    }
-                }
-            },
-            QueryKind::SingleLatestPerKey(_) => {
-                let (start, end) = by_key_range(namespace, &query.filter_key);
-                let start = map_bound(&start, records_by_key_id_as_ref);
-                let end = map_bound(&end, records_by_key_id_as_ref);
-                let records = TableRangeReader::new(
-                    &db,
-                    |tx| tx.open_table(RECORDS_BY_KEY_TABLE),
-                    |table| table.range((start, end)),
-                )?;
-                QueryRecords::KeyAuthor {
-                    filter: AuthorMatcher::Any,
-                    records,
-                    grouper: Some(Grouper::default()),
-                }
-            }
-        };
-        Ok(QueryIterator {
-            records,
-            reverse: matches!(query.ordering, SortDirection::Desc),
-            limit: query.limit_offset,
-            include_empty: query.include_empty,
-            offset: 0,
-            count: 0,
-        })
-    }
-    fn next(&mut self) -> Option<Result<SignedEntry>> {
-        if let Some(limit) = self.limit.limit() {
-            if self.count >= limit {
-                return None;
-            }
-        }
-        loop {
-            let next = match &mut self.records {
-                QueryRecords::AuthorKey {
-                    records: iter,
-                    filter,
-                } => iter.with_range(|records| loop {
-                    let mut next = match self.reverse {
-                        false => records.next(),
-                        true => records.next_back(),
-                    };
-                    match next.take() {
-                        Some(Ok(ref res)) => {
-                            let id = res.0.value();
-                            let (_namespace, _author, key) = id;
-                            if !match_key(filter, key) {
-                                continue;
-                            }
-                            let value = res.1.value();
-                            if !self.include_empty && value_is_empty(&value) {
-                                continue;
-                            }
-                            let entry = into_entry(id, value);
-                            break Some(Ok(entry));
-                        }
-                        Some(Err(err)) => break Some(Err(err)),
-                        None => break None,
-                    }
-                }),
-                QueryRecords::KeyAuthor {
-                    records: iter,
-                    filter,
-                    grouper,
-                } => loop {
-                    let next = iter.with_range(|records| loop {
-                        let next = match self.reverse {
-                            false => records.next(),
-                            true => records.next_back(),
-                        };
-                        match next {
-                            Some(Ok(res)) => {
-                                let (namespace, key, author) = res.0.value();
-                                let value = res.1.value();
-                                if !match_author(filter, author) {
-                                    continue;
-                                }
-                                if grouper.is_none()
-                                    && !self.include_empty
-                                    && value_is_empty(&value)
-                                {
-                                    continue;
-                                }
-                                let id = (namespace, author, key);
-                                let entry = into_entry(id, value);
-                                break Some(Ok(entry));
-                            }
-                            Some(Err(err)) => break Some(Err(err)),
-                            None => break None,
-                        }
-                    });
-
-                    match grouper.as_mut() {
-                        None => break next,
-                        Some(grouper) => match next {
-                            Some(Err(err)) => break Some(Err(err)),
-                            None => break grouper.current.take().map(|x| Ok(x)),
-                            Some(Ok(next)) => match grouper.push(next) {
-                                Some(next) => {
-                                    if !self.include_empty && next.is_empty() {
-                                        continue;
-                                    } else {
-                                        break Some(Ok(next));
-                                    }
-                                }
-                                None => continue,
-                            },
-                        },
-                    }
-                },
-            };
-            match next {
-                None => break None,
-                Some(Err(err)) => break Some(Err(err.into())),
-                Some(Ok(entry)) => {
-                    if let Some(offset) = self.limit.limit() {
-                        if self.offset < offset {
-                            self.offset += 1;
-                            continue;
-                        }
-                    }
-                    if let Some(limit) = self.limit.limit() {
-                        if self.count >= limit {
-                            break None;
-                        }
-                    }
-                    self.count += 1;
-                    break Some(Ok(entry));
-                }
-            }
-        }
+fn map_bound<'a, T, U: 'a>(bound: &'a Bound<T>, f: impl Fn(&'a T) -> U) -> Bound<U> {
+    match bound {
+        Bound::Unbounded => Bound::Unbounded,
+        Bound::Included(t) => Bound::Included(f(t)),
+        Bound::Excluded(t) => Bound::Excluded(f(t)),
     }
 }
 
-#[derive(Debug, Default)]
-struct Grouper {
-    current: Option<SignedEntry>,
+fn map_bounds<'a, T, U: 'a>(
+    bounds: &'a (Bound<T>, Bound<T>),
+    f: impl Fn(&'a T) -> U,
+) -> (Bound<U>, Bound<U>) {
+    (map_bound(&bounds.0, &f), map_bound(&bounds.1, f))
 }
 
-impl Grouper {
-    fn push(&mut self, entry: SignedEntry) -> Option<SignedEntry> {
-        match self.current.take() {
-            None => {
-                self.current = Some(entry);
-                None
-            }
-            Some(current) if current.key() == entry.key() => {
-                if entry.timestamp() > current.timestamp() {
-                    self.current = Some(entry);
-                } else {
-                    self.current = Some(current);
-                }
-                None
-            }
-            Some(current) => {
-                self.current = Some(entry);
-                Some(current)
-            }
-        }
-    }
-}
-
-fn records_by_key_id_as_ref(id: &RecordsByKeyIdOwned) -> RecordsByKeyId {
+fn records_by_key_id_ref(id: &RecordsByKeyIdOwned) -> RecordsByKeyId {
     (&id.0, &id.1[..], &id.2)
 }
 
-fn records_id_by_ref(id: &RecordsIdOwned) -> RecordsId {
+fn records_id_ref(id: &RecordsIdOwned) -> RecordsId {
     (&id.0, &id.1, &id.2[..])
 }
 
 fn value_is_empty(value: &RecordsValue) -> bool {
     let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value;
     *hash == Hash::EMPTY.as_bytes()
-}
-
-fn match_key<'a>(matcher: &KeyMatcher, key: &'a [u8]) -> bool {
-    match matcher {
-        KeyMatcher::Any => true,
-        KeyMatcher::Exact(k) => k == &key,
-        KeyMatcher::Prefix(k) => key.starts_with(k),
-    }
-}
-fn match_author<'a>(matcher: &AuthorMatcher, author: &'a [u8; 32]) -> bool {
-    match matcher {
-        AuthorMatcher::Any => true,
-        AuthorMatcher::Exact(a) => a.as_bytes() == author,
-    }
 }
 
 fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {

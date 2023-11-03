@@ -672,7 +672,10 @@ where
     }
 
     /// Get entries.
-    pub async fn get_many(&self, query: impl Into<Query>) -> Result<impl Stream<Item = Result<Entry>>> {
+    pub async fn get_many(
+        &self,
+        query: impl Into<Query>,
+    ) -> Result<impl Stream<Item = Result<Entry>>> {
         self.ensure_open()?;
         let stream = self
             .0

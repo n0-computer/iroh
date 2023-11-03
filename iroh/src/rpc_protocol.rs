@@ -20,7 +20,7 @@ use iroh_net::{
 
 use iroh_sync::{
     actor::OpenState,
-    store::{Query},
+    store::Query,
     {AuthorId, NamespaceId, SignedEntry},
 };
 use quic_rpc::{

@@ -8,10 +8,7 @@
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_bytes::util::runtime;
-use iroh_sync::{
-    store::{Query},
-    Entry,
-};
+use iroh_sync::{store::Query, Entry};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
