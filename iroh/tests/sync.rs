@@ -24,7 +24,7 @@ use iroh_bytes::{util::runtime, Hash};
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
     store::{self, Query},
-    AuthorId, ContentStatus, Entry, NamespaceId,
+    AuthorId, ContentStatus, Entry,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
