@@ -418,7 +418,7 @@ impl DocCommands {
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let mut stream = doc.get_many(Query::key(key)).await?;
+                let mut stream = doc.get_many(Query::key_exact(key)).await?;
                 let entry = match stream.try_next().await? {
                     None => {
                         println!("<unable to find entry for key {key_str}>");

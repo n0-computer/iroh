@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use ouroboros::self_referencing;
 use redb::{
@@ -18,6 +18,7 @@ pub struct TableReader<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static>(
 
 #[self_referencing]
 struct TableReaderInner<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> {
+    #[debug("ReadTransaction")]
     read_tx: ReadTransaction<'a>,
     #[borrows(read_tx)]
     #[covariant]
@@ -41,6 +42,12 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableReader<'a, K, V> {
     /// Get a reference to the [`ReadOnlyTable`];
     pub fn table(&self) -> &ReadOnlyTable<K, V> {
         self.0.borrow_table()
+    }
+}
+
+impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for TableReader<'a, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TableReader({:?})", self.table())
     }
 }
 
@@ -76,6 +83,11 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V
             range_fn(table.table()).map_err(anyhow::Error::from)
         })?;
         Ok(Self(reader))
+    }
+
+    /// Get a reference to the [`ReadOnlyTable`];
+    pub fn table(&self) -> &ReadOnlyTable<K, V> {
+        self.0.borrow_table().table()
     }
 
     /// Get a mutable reference to the [`TableRange`].
@@ -116,3 +128,12 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V
         })
     }
 }
+
+impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug
+    for TableRangeReader<'a, K, V>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TableRangeReader({:?})", self.table())
+    }
+}
+

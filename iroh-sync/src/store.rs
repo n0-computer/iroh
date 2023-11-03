@@ -328,18 +328,18 @@ impl Query {
         Default::default()
     }
 
-    /// Create a [Query::all] query filtered by a single author.
+    /// Create a [`Query::all`] query filtered by a single author.
     pub fn author(author: AuthorId) -> QueryBuilder<FlatQuery> {
         Self::all().author(author)
     }
 
-    /// Create a [Query::all] query filtered by a single key.
-    pub fn key(key: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
+    /// Create a [`Query::all`] query filtered by a single key.
+    pub fn key_exact(key: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
         Self::all().key_exact(key)
     }
 
-    /// Create a [Query::all] query filtered by a key prefix.
-    pub fn prefix(prefix: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
+    /// Create a [`Query::all`] query filtered by a key prefix.
+    pub fn key_prefix(prefix: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
         Self::all().key_prefix(prefix)
     }
 }

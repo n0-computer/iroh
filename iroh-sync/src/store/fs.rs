@@ -669,6 +669,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
 /// Iterator over parent entries, i.e. entries with the same namespace and author, and a key which
 /// is a prefix of the key passed to the iterator.
+#[derive(Debug)]
 pub struct ParentIterator<'a> {
     reader: TableReader<'a, RecordsId<'static>, RecordsValue<'static>>,
     namespace: NamespaceId,
@@ -712,6 +713,7 @@ impl Iterator for ParentIterator<'_> {
 }
 
 /// Iterator over all content hashes for the fs store.
+#[derive(Debug)]
 pub struct ContentHashesIterator<'a> {
     reader: RecordsReader<'a>,
 }
@@ -735,6 +737,7 @@ impl Iterator for ContentHashesIterator<'_> {
 }
 
 /// Iterator over the latest entry per author.
+#[derive(Debug)]
 pub struct LatestIterator<'a> {
     records: TableRangeReader<'a, LatestKey<'static>, LatestValue<'static>>,
 }
@@ -767,6 +770,7 @@ impl Iterator for LatestIterator<'_> {
 }
 
 /// Iterator over a range of replica entries.
+#[derive(Debug)]
 pub struct RangeIterator<'a> {
     records: Option<TableRangeReader<'a, RecordsId<'static>, RecordsValue<'static>>>,
 }
@@ -804,6 +808,7 @@ impl Iterator for RangeIterator<'_> {
 }
 
 /// A query iterator for entry queries.
+#[derive(Debug)]
 pub struct QueryIterator<'a> {
     records: QueryRecords<'a>,
     sort_direction: SortDirection,
@@ -813,6 +818,7 @@ pub struct QueryIterator<'a> {
     count: u64,
 }
 
+#[derive(Debug)]
 enum QueryRecords<'a> {
     AuthorKey {
         records: TableRangeReader<'a, RecordsId<'static>, RecordsValue<'static>>,
@@ -1278,7 +1284,7 @@ mod tests {
 
         // get all prefix
         let entries = store
-            .get_many(namespace.id(), Query::prefix("hello-"))?
+            .get_many(namespace.id(), Query::key_prefix("hello-"))?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
 
