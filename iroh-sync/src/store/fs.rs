@@ -15,8 +15,8 @@ use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
 use parking_lot::RwLock;
 use redb::{
-    Database, MultimapTableDefinition, Range as TableRange, ReadOnlyTable, ReadableMultimapTable,
-    ReadableTable, StorageError, Table, TableDefinition,
+    Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
+    StorageError, Table, TableDefinition,
 };
 
 use crate::{
@@ -37,7 +37,7 @@ use super::{
 use super::util::{LatestPerKeySelector, SelectorRes, UseTable};
 
 mod util;
-use util::TableRangeReader;
+use util::{RecordsByKeyRange, TableRangeReader};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -84,17 +84,18 @@ type RecordsIdOwned = ([u8; 32], [u8; 32], Bytes);
 
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 
-type RecordsRange<'a> = TableRange<'a, RecordsId<'static>, RecordsValue<'static>>;
+type RecordsRange<'a> = redb::Range<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 type RecordsReader<'a> = TableRangeReader<'a, RecordsId<'static>, RecordsValue<'static>>;
 
 // Records by key
 // Key: (NamespaceId, Key, AuthorId)
-// Value: same as in RECORDS_TABLE
+// Value: ()
 
-const RECORDS_BY_KEY_TABLE: TableDefinition<RecordsByKeyId, RecordsValue> =
+const RECORDS_BY_KEY_TABLE: TableDefinition<RecordsByKeyId, RecordsByKeyValue> =
     TableDefinition::new("records-by-key-1");
 type RecordsByKeyId<'a> = (&'a [u8; 32], &'a [u8], &'a [u8; 32]);
+type RecordsByKeyValue<'a> = ();
 type RecordsByKeyIdOwned = ([u8; 32], Bytes, [u8; 32]);
 
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
@@ -530,8 +531,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 &id.author().to_bytes(),
                 id.key(),
             );
-            // let binding is needed
-            let hash = e.content_hash();
+            let hash = e.content_hash(); // let binding is needed
             let value = (
                 e.timestamp(),
                 &e.signature().namespace().to_bytes(),
@@ -541,13 +541,14 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             );
             record_table.insert(key, value)?;
 
+            // insert into by key index table
             let mut idx_by_key = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
             let key = (
                 &id.namespace().to_bytes(),
                 id.key(),
                 &id.author().to_bytes(),
             );
-            idx_by_key.insert(key, value)?;
+            idx_by_key.insert(key, ())?;
 
             // insert into latest table
             let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
@@ -563,8 +564,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
             Ordering::Equal => {
-                let start = range_start(&self.namespace);
-                let end = range_end(&self.namespace);
+                let start = namespace_start(&self.namespace);
+                let end = namespace_end(&self.namespace);
                 let r = (start, map_bound(&end, records_id_ref));
                 // iterator for all entries in replica
                 let iter = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
@@ -582,14 +583,15 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 let empty = RangeIterator::empty();
                 iter.chain(empty)
             }
+            // split range: iter1 = start <= t < y, iter2 = x <= t <= end
             Ordering::Greater => {
-                let start = range_start(&self.namespace);
+                let start = namespace_start(&self.namespace);
                 let end = Bound::Excluded(range.y().as_byte_tuple());
                 let r = (start, end);
-                // iterator for entries start to from range.y
+                // iterator for entries from start to range.y
                 let iter = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
                 let start = Bound::Included(range.x().as_byte_tuple());
-                let end = range_end(&self.namespace);
+                let end = namespace_end(&self.namespace);
                 let r = (start, map_bound(&end, records_id_ref));
                 // iterator for entries from range.x to end
                 let iter2 = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
@@ -827,7 +829,7 @@ enum QueryRecords<'a> {
         filter: KeyMatcher,
     },
     KeyAuthor {
-        records: TableRangeReader<'a, RecordsByKeyId<'static>, RecordsValue<'static>>,
+        records: RecordsByKeyRange<'a>,
         filter: AuthorMatcher,
         selector: Option<LatestPerKeySelector>,
     },
@@ -861,11 +863,7 @@ impl<'a> QueryIterator<'a> {
             } => {
                 let range = by_key_range(namespace, &range);
                 let range = map_bounds(&range, records_by_key_id_ref);
-                let records = TableRangeReader::new(
-                    db,
-                    |tx| tx.open_table(RECORDS_BY_KEY_TABLE),
-                    |table| table.range(range),
-                )?;
+                let records = RecordsByKeyRange::new(db, |table| table.range(range))?;
                 QueryRecords::KeyAuthor {
                     filter,
                     records,
@@ -899,7 +897,6 @@ impl<'a> QueryIterator<'a> {
                         // not including empty entries in the query
                         filter.matches(key) && (self.include_empty || !value_is_empty(&value))
                     },
-                    // upcast to SignedEntry
                     into_entry,
                 ),
 
@@ -908,22 +905,11 @@ impl<'a> QueryIterator<'a> {
                     filter,
                     selector,
                 } => loop {
-                    let next = records.next_matching(
-                        &self.sort_direction,
-                        |id, value| {
-                            let (_namespace, _key, author) = id;
-                            // skip entries that do not match the author filter
-                            filter.matches(&(author.into()))
-                                // skip empty entries if not including empty entries, but not if
-                                // doing a latest selection, because then the empty entry could be
-                                // the latest so we need to include it in the selection.
-                                && (selector.is_some()
-                                    || self.include_empty
-                                    || !value_is_empty(&value))
-                        },
-                        // upcast to SignedEntry
-                        |id, value| into_entry((id.0, id.2, id.1), value),
-                    );
+                    let next = records.next_matching(&self.sort_direction, |id, _value| {
+                        let (_namespace, _key, author) = id;
+                        // skip entries that do not match the author filter
+                        filter.matches(&(author.into()))
+                    });
 
                     let next = match next {
                         Some(Err(err)) => break Some(Err(err)),
@@ -1117,11 +1103,11 @@ fn records_id_ref(id: &RecordsIdOwned) -> RecordsId {
     (&id.0, &id.1, &id.2[..])
 }
 
-fn range_start(namespace: &NamespaceId) -> Bound<RecordsId> {
+fn namespace_start(namespace: &NamespaceId) -> Bound<RecordsId> {
     Bound::Included((namespace.as_bytes(), &[0u8; 32], &[]))
 }
 
-fn range_end(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
+fn namespace_end(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
     let mut ns_end = *(namespace.as_bytes());
     if increment_by_one(&mut ns_end) {
         Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
