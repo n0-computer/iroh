@@ -231,11 +231,14 @@ pub struct SingleLatestPerKeyQuery {}
 
 impl QueryBuilder<FlatQuery> {
     /// Set the sort for the query.
+    ///
+    /// The default is to sort by author, then by key, in ascending order.
     pub fn sort_by(mut self, sort_by: SortBy, direction: SortDirection) -> Self {
         self.kind.sort_by = sort_by;
         self.sort_direction = direction;
         self
     }
+
     /// Build the query.
     pub fn build(self) -> Query {
         Query::from(self)
@@ -246,7 +249,8 @@ impl QueryBuilder<SingleLatestPerKeyQuery> {
     /// Set the order direction for the query.
     ///
     /// Ordering is always by key for this query type.
-    pub fn key_ordering(mut self, direction: SortDirection) -> Self {
+    /// Default direction is ascending.
+    pub fn sort_direction(mut self, direction: SortDirection) -> Self {
         self.sort_direction = direction;
         self
     }
@@ -265,7 +269,7 @@ impl From<QueryBuilder<SingleLatestPerKeyQuery>> for Query {
             filter_key,
             limit_offset,
             include_empty,
-            sort_direction: ordering,
+            sort_direction,
         } = builder;
 
         Query {
@@ -274,7 +278,7 @@ impl From<QueryBuilder<SingleLatestPerKeyQuery>> for Query {
             filter_key,
             limit_offset,
             include_empty,
-            ordering,
+            sort_direction,
         }
     }
 }
@@ -287,7 +291,7 @@ impl From<QueryBuilder<FlatQuery>> for Query {
             filter_key,
             limit_offset,
             include_empty,
-            sort_direction: ordering,
+            sort_direction,
         } = builder;
 
         Query {
@@ -296,7 +300,7 @@ impl From<QueryBuilder<FlatQuery>> for Query {
             filter_key,
             limit_offset,
             include_empty,
-            ordering,
+            sort_direction,
         }
     }
 }
@@ -310,7 +314,7 @@ pub struct Query {
     filter_key: KeyMatcher,
     limit_offset: LimitOffset,
     include_empty: bool,
-    ordering: SortDirection,
+    sort_direction: SortDirection,
 }
 
 impl Query {
@@ -375,11 +379,11 @@ enum QueryKind {
 /// Fields by which the query can be sorted
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub enum SortBy {
-    /// Sort by key.
-    Key,
-    /// Sort by author.
+    /// Sort by key, then author.
+    KeyAuthor,
+    /// Sort by author, then key.
     #[default]
-    Author,
+    AuthorKey,
 }
 
 /// Key matching.

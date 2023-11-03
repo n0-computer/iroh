@@ -995,7 +995,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        store::{self, AuthorMatcher, KeyMatcher, OpenError, Query, Store},
+        store::{self, OpenError, Query, Store},
     };
 
     use super::*;

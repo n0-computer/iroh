@@ -6,6 +6,8 @@ use redb::{
     StorageError, TableError,
 };
 
+use crate::store::SortDirection;
+
 /// A [`ReadTransaction`] with a [`ReadOnlyTable`] that can be stored in a struct.
 ///
 /// This uses [`ouroboros::self_referencing`] to store a [`ReadTransaction`] and a [`ReadOnlyTable`]
@@ -79,5 +81,38 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V
     /// Get a mutable reference to the [`TableRange`].
     pub fn with_range<T>(&mut self, f: impl FnMut(&mut TableRange<K, V>) -> T) -> T {
         self.0.with_range_mut(f)
+    }
+
+    pub fn next_mapped<T>(
+        &mut self,
+        map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> T,
+    ) -> Option<anyhow::Result<T>> {
+        self.with_range(|records| {
+            records
+                .next()
+                .map(|r| r.map_err(Into::into).map(|r| map(r.0.value(), r.1.value())))
+        })
+    }
+
+    pub fn next_matching<T>(
+        &mut self,
+        direction: &SortDirection,
+        matcher: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> bool,
+        map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> T,
+    ) -> Option<anyhow::Result<T>> {
+        self.with_range(|records| loop {
+            let next = match direction {
+                SortDirection::Asc => records.next(),
+                SortDirection::Desc => records.next_back(),
+            };
+            match next {
+                None => break None,
+                Some(Err(err)) => break Some(Err(err.into())),
+                Some(Ok(res)) => match matcher(res.0.value(), res.1.value()) {
+                    false => continue,
+                    true => break Some(Ok(map(res.0.value(), res.1.value()))),
+                },
+            }
+        })
     }
 }

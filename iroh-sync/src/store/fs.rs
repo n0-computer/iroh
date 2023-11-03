@@ -22,7 +22,7 @@ use redb::{
 use crate::{
     keys::{Author, Namespace},
     ranger::{Fingerprint, Range, RangeEntry},
-    store::{Store as _},
+    store::Store as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorId, NamespaceId, PeerIdBytes,
 };
@@ -286,19 +286,20 @@ impl super::Store for Store {
         if self.open_replicas.read().contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
-        let start = range_start(namespace);
-        let end = range_end(namespace);
         let write_tx = self.db.begin_write()?;
         {
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
-            record_table.drain(start..=end)?;
-            {
-                let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
-                let (start, end) = by_key_range(*namespace, &KeyMatcher::Any);
-                let start = map_bound(&start, records_by_key_id_ref);
-                let end = map_bound(&end, records_by_key_id_ref);
-                let _ = table.drain((start, end));
-            }
+            let range = by_author_range(*namespace, &ByAuthorMatcher::Any);
+            let range = map_bounds(&range, records_id_ref);
+            record_table.drain(range)?;
+        }
+        {
+            let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
+            let range = by_key_range(*namespace, &KeyMatcher::Any);
+            let range = map_bounds(&range, records_by_key_id_ref);
+            let _ = table.drain(range);
+        }
+        {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
             namespace_table.remove(namespace.as_bytes())?;
         }
@@ -442,47 +443,6 @@ fn get_one(
     }))
 }
 
-/// Increment a byte string by one, by incrementing the last byte that is not 255 by one.
-///
-/// Returns false if all bytes are 255.
-fn increment_by_one(value: &mut [u8]) -> bool {
-    for char in value.iter_mut().rev() {
-        if *char != 255 {
-            *char += 1;
-            return true;
-        } else {
-            *char = 0;
-        }
-    }
-    false
-}
-
-fn increment_by_one_maybe(value: &mut [u8; 32]) -> Option<[u8; 32]> {
-    if increment_by_one(value) {
-        Some(*value)
-    } else {
-        None
-    }
-}
-
-// Get the end point of a prefix range
-//
-// Increments the last byte of the byte represenation of `prefix` and returns it as an owned tuple
-// with the parts of the new [`RecordsId`].
-// Returns `None` if all bytes are equal to 255.
-fn prefix_range_end<'a>(prefix: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
-    let (mut namespace, mut author, mut prefix) = (*prefix.0, *prefix.1, prefix.2.to_vec());
-    if !increment_by_one(&mut prefix)
-        && !increment_by_one(&mut author)
-        && !increment_by_one(&mut namespace)
-    {
-        // we have all-255 keys, so open-ended range
-        None
-    } else {
-        Some((namespace, author, prefix))
-    }
-}
-
 /// [`Namespace`] specific wrapper around the [`Store`].
 #[derive(Debug, Clone)]
 pub struct StoreInstance {
@@ -494,13 +454,6 @@ impl StoreInstance {
     fn new(namespace: NamespaceId, store: Store) -> Self {
         StoreInstance { namespace, store }
     }
-}
-
-fn range_start(namespace: &NamespaceId) -> RecordsId {
-    (namespace.as_bytes(), &[u8::MIN; 32], &[][..])
-}
-fn range_end(namespace: &NamespaceId) -> RecordsId {
-    (namespace.as_bytes(), &[u8::MAX; 32], &[][..])
 }
 
 impl PublicKeyStore for StoreInstance {
@@ -519,9 +472,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
         // TODO: verify this fetches all keys with this namespace
-        let start = range_start(&self.namespace);
-        let end = range_end(&self.namespace);
-        let mut records = record_table.range(start..=end)?;
+        let range = by_author_range(self.namespace, &ByAuthorMatcher::Any);
+        let range = map_bounds(&range, records_id_ref);
+        let mut records = record_table.range(range)?;
 
         let Some(record) = records.next() else {
             return Ok(RecordIdentifier::default());
@@ -541,9 +494,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
         // TODO: verify this fetches all keys with this namespace
-        let start = range_start(&self.namespace);
-        let end = range_end(&self.namespace);
-        let records = record_table.range(start..=end)?;
+        let range = by_author_range(self.namespace, &ByAuthorMatcher::Any);
+        let range = map_bounds(&range, records_id_ref);
+        let records = record_table.range(range)?;
         Ok(records.count())
     }
 
@@ -610,34 +563,34 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             Ordering::Equal => {
                 let start = range_start(&self.namespace);
                 let end = range_end(&self.namespace);
+                let r = (start, map_bound(&end, records_id_ref));
                 // iterator for all entries in replica
-                let iter =
-                    RangeIterator::with_range(&self.store.db, |table| table.range(start..=end))?;
-                let empty = RangeIterator::empty(&self.store.db)?;
+                let iter = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
+                let empty = RangeIterator::empty();
                 iter.chain(empty)
             }
             // regular range: iter1 = x <= t < y, iter2 = none
             Ordering::Less => {
-                let start = range.x().as_byte_tuple();
-                let end = range.y().as_byte_tuple();
+                let start = Bound::Included(range.x().as_byte_tuple());
+                let end = Bound::Excluded(range.y().as_byte_tuple());
+                let r = (start, end);
                 // iterator for entries from range.x to range.y
-                let iter =
-                    RangeIterator::with_range(&self.store.db, |table| table.range(start..end))?;
+                let iter = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
                 // wrap-around range: iter1 = y <= t, iter2 = x >= t
-                let empty = RangeIterator::empty(&self.store.db)?;
+                let empty = RangeIterator::empty();
                 iter.chain(empty)
             }
             Ordering::Greater => {
                 let start = range_start(&self.namespace);
-                let end = range.y().as_byte_tuple();
+                let end = Bound::Excluded(range.y().as_byte_tuple());
+                let r = (start, end);
                 // iterator for entries start to from range.y
-                let iter =
-                    RangeIterator::with_range(&self.store.db, |table| table.range(start..end))?;
-                let start = range.x().as_byte_tuple();
+                let iter = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
+                let start = Bound::Included(range.x().as_byte_tuple());
                 let end = range_end(&self.namespace);
+                let r = (start, map_bound(&end, records_id_ref));
                 // iterator for entries from range.x to end
-                let iter2 =
-                    RangeIterator::with_range(&self.store.db, |table| table.range(start..=end))?;
+                let iter2 = RangeIterator::with_range(&self.store.db, |table| table.range(r))?;
                 iter.chain(iter2)
             }
         };
@@ -661,7 +614,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn all(&self) -> Result<Self::RangeIterator<'_>> {
         let iter = RangeIterator::namespace(&self.store.db, &self.namespace)?;
-        let iter2 = RangeIterator::empty(&self.store.db)?;
+        let iter2 = RangeIterator::empty();
         Ok(iter.chain(iter2))
     }
 
@@ -675,24 +628,27 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         )
     }
 
-    fn prefixed_by(&self, prefix: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
-        let start = prefix.as_byte_tuple();
-        let end = prefix_range_end(&start);
-        let iter = RangeIterator::with_range(&self.store.db, |table| match end {
-            Some(end) => table.range(start..(&end.0, &end.1, &end.2)),
-            None => table.range(start..),
-        })?;
-        let iter2 = RangeIterator::empty(&self.store.db)?;
+    fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
+        let range = by_author_range(
+            id.namespace(),
+            &ByAuthorMatcher::prefix(id.author(), id.key()),
+        );
+        let range = map_bounds(&range, records_id_ref);
+        let iter = RangeIterator::with_range(&self.store.db, |table| table.range(range))?;
+        let iter2 = RangeIterator::empty();
         Ok(iter.chain(iter2))
     }
 
     fn remove_prefix_filtered(
         &mut self,
-        prefix: &RecordIdentifier,
+        id: &RecordIdentifier,
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize> {
-        let start = prefix.as_byte_tuple();
-        let end = prefix_range_end(&start);
+        let range = by_author_range(
+            id.namespace(),
+            &ByAuthorMatcher::prefix(id.author(), id.key()),
+        );
+        let range = map_bounds(&range, records_id_ref);
 
         let write_tx = self.store.db.begin_write()?;
         let count = {
@@ -703,10 +659,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
                 predicate(&record)
             };
-            let iter = match end {
-                Some(end) => table.drain_filter(start..(&end.0, &end.1, &end.2), cb)?,
-                None => table.drain_filter(start.., cb)?,
-            };
+            let iter = table.drain_filter(range, cb)?;
             iter.count()
         };
         write_tx.commit()?;
@@ -774,13 +727,9 @@ impl Iterator for ContentHashesIterator<'_> {
     type Item = Result<Hash>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.reader.with_range(|range| match range.next() {
-            None => None,
-            Some(Err(err)) => Some(Err(err.into())),
-            Some(Ok((_key, value))) => {
-                let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value.value();
-                Some(Ok(Hash::from(hash)))
-            }
+        self.reader.next_mapped(|_key, value| {
+            let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value;
+            Hash::from(hash)
         })
     }
 }
@@ -809,21 +758,17 @@ impl Iterator for LatestIterator<'_> {
     type Item = Result<(AuthorId, u64, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.records.with_range(|range| match range.next() {
-            None => None,
-            Some(Err(err)) => Some(Err(err.into())),
-            Some(Ok((key, value))) => {
-                let (_namespace, author) = key.value();
-                let (timestamp, key) = value.value();
-                Some(Ok((author.into(), timestamp, key.to_vec())))
-            }
+        self.records.next_mapped(|key, value| {
+            let (_namespace, author) = key;
+            let (timestamp, key) = value;
+            (author.into(), timestamp, key.to_vec())
         })
     }
 }
 
 /// Iterator over a range of replica entries.
 pub struct RangeIterator<'a> {
-    records: TableRangeReader<'a, RecordsId<'static>, RecordsValue<'static>>,
+    records: Option<TableRangeReader<'a, RecordsId<'static>, RecordsValue<'static>>>,
 }
 
 impl<'a> RangeIterator<'a> {
@@ -832,37 +777,36 @@ impl<'a> RangeIterator<'a> {
         range_fn: impl for<'this> FnOnce(&'this RecordsTable<'this>) -> DbResult<RecordsRange<'this>>,
     ) -> anyhow::Result<Self> {
         let records = TableRangeReader::new(db, |tx| tx.open_table(RECORDS_TABLE), range_fn)?;
-        Ok(Self { records })
+        Ok(Self {
+            records: Some(records),
+        })
     }
 
     fn namespace(db: &'a Arc<Database>, namespace: &NamespaceId) -> anyhow::Result<Self> {
-        let start = range_start(namespace);
-        let end = range_end(namespace);
-        Self::with_range(db, |table| table.range(start..=end))
+        let range = by_author_range(*namespace, &ByAuthorMatcher::Any);
+        let range = map_bounds(&range, records_id_ref);
+        Self::with_range(db, |table| table.range(range))
     }
 
-    fn empty(db: &'a Arc<Database>) -> anyhow::Result<Self> {
-        let start = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
-        let end = (&[0u8; 32], &[0u8; 32], &[0u8][..]);
-        Self::with_range(db, |table| table.range(start..end))
+    fn empty() -> Self {
+        Self { records: None }
     }
 }
+
 impl Iterator for RangeIterator<'_> {
     type Item = Result<SignedEntry>;
-
     fn next(&mut self) -> Option<Self::Item> {
-        self.records.with_range(|records| match records.next() {
+        match self.records.as_mut() {
             None => None,
-            Some(Err(err)) => Some(Err(err.into())),
-            Some(Ok(next)) => Some(Ok(into_entry(next.0.value(), next.1.value()))),
-        })
+            Some(records) => records.next_mapped(into_entry),
+        }
     }
 }
 
 /// A query iterator for entry queries.
 pub struct QueryIterator<'a> {
     records: QueryRecords<'a>,
-    reverse: bool,
+    sort_direction: SortDirection,
     limit: LimitOffset,
     include_empty: bool,
     offset: u64,
@@ -871,12 +815,12 @@ pub struct QueryIterator<'a> {
 
 enum QueryRecords<'a> {
     AuthorKey {
-        filter: KeyMatcher,
         records: TableRangeReader<'a, RecordsId<'static>, RecordsValue<'static>>,
+        filter: KeyMatcher,
     },
     KeyAuthor {
-        filter: AuthorMatcher,
         records: TableRangeReader<'a, RecordsByKeyId<'static>, RecordsValue<'static>>,
+        filter: AuthorMatcher,
         selector: Option<LatestPerKeySelector>,
     },
 }
@@ -891,25 +835,25 @@ impl<'a> Iterator for QueryIterator<'a> {
 impl<'a> QueryIterator<'a> {
     fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
         enum UseTable {
+            AuthorKey {
+                range: ByAuthorMatcher,
+                filter: KeyMatcher,
+            },
             KeyAuthor {
                 range: KeyMatcher,
                 filter: AuthorMatcher,
                 latest_per_key: bool,
             },
-            AuthorKey {
-                range: AuthorMatcher,
-                filter: KeyMatcher,
-            },
         }
         let table_to_use = match query.kind {
             QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
-                (AuthorMatcher::Any, SortBy::Key) => UseTable::KeyAuthor {
+                (AuthorMatcher::Any, SortBy::KeyAuthor) => UseTable::KeyAuthor {
                     range: query.filter_key,
                     filter: AuthorMatcher::Any,
                     latest_per_key: false,
                 },
                 _ => UseTable::AuthorKey {
-                    range: query.filter_author,
+                    range: query.filter_author.into(),
                     filter: query.filter_key,
                 },
             },
@@ -952,7 +896,7 @@ impl<'a> QueryIterator<'a> {
 
         Ok(QueryIterator {
             records,
-            reverse: matches!(query.ordering, SortDirection::Desc),
+            sort_direction: query.sort_direction,
             limit: query.limit_offset,
             include_empty: query.include_empty,
             offset: 0,
@@ -967,129 +911,112 @@ impl<'a> QueryIterator<'a> {
         }
         loop {
             let next = match &mut self.records {
-                QueryRecords::AuthorKey {
-                    records: iter,
-                    filter,
-                } => iter.with_range(|records| loop {
-                    let mut next = match self.reverse {
-                        false => records.next(),
-                        true => records.next_back(),
-                    };
-                    match next.take() {
-                        Some(Ok(ref res)) => {
-                            let id = res.0.value();
-                            let (_namespace, _author, key) = id;
-                            if !filter.matches(&key) {
-                                continue;
-                            }
-                            let value = res.1.value();
-                            if !self.include_empty && value_is_empty(&value) {
-                                continue;
-                            }
-                            let entry = into_entry(id, value);
-                            break Some(Ok(entry));
-                        }
-                        Some(Err(err)) => break Some(Err(err)),
-                        None => break None,
-                    }
-                }),
+                QueryRecords::AuthorKey { records, filter } => records.next_matching(
+                    &self.sort_direction,
+                    |id, value| {
+                        let (_namespace, _author, key) = id;
+                        // skip entries that do not match the key filter, and empty entries if
+                        // not including empty entries in the query
+                        filter.matches(&key) && (self.include_empty || !value_is_empty(&value))
+                    },
+                    // upcast to SignedEntry
+                    into_entry,
+                ),
+
                 QueryRecords::KeyAuthor {
-                    records: iter,
+                    records,
                     filter,
                     selector,
                 } => loop {
-                    let next = iter.with_range(|records| loop {
-                        let next = match self.reverse {
-                            false => records.next(),
-                            true => records.next_back(),
-                        };
-                        match next {
-                            Some(Ok(res)) => {
-                                let (namespace, key, author) = res.0.value();
-                                let value = res.1.value();
-                                if !filter.matches(&(author.into())) {
-                                    continue;
-                                }
-                                if selector.is_none()
-                                    && !self.include_empty
-                                    && value_is_empty(&value)
-                                {
-                                    continue;
-                                }
-                                let id = (namespace, author, key);
-                                let entry = into_entry(id, value);
-                                break Some(Ok(entry));
-                            }
-                            Some(Err(err)) => break Some(Err(err)),
-                            None => break None,
-                        }
-                    });
-
-                    match selector.as_mut() {
-                        None => break next,
-                        Some(grouper) => match next {
-                            None => break grouper.current.take().map(|x| Ok(x)),
-                            Some(Err(err)) => break Some(Err(err)),
-                            Some(Ok(next)) => match grouper.push(next) {
-                                Some(next) => {
-                                    if !self.include_empty && next.is_empty() {
-                                        continue;
-                                    } else {
-                                        break Some(Ok(next));
-                                    }
-                                }
-                                None => continue,
-                            },
+                    let next = records.next_matching(
+                        &self.sort_direction,
+                        |id, value| {
+                            let (_namespace, _key, author) = id;
+                            // skip entries that do not match the author filter
+                            filter.matches(&(author.into()))
+                                // skip empty entries if not including empty entries, but not if
+                                // doing a latest selection, because then the empty entry could be
+                                // the latest so we need to include it in the selection.
+                                && (selector.is_some()
+                                    || self.include_empty
+                                    || !value_is_empty(&value))
                         },
+                        // upcast to SignedEntry
+                        |id, value| into_entry((id.0, id.2, id.1), value),
+                    );
+
+                    // push the entry into the selector.
+                    // if the selector is active, only the latest entry for each key will be
+                    // included.
+                    let next = match selector {
+                        None => next,
+                        Some(selector) => match selector.push(next) {
+                            // If the selector returns None, we did not yet reach the end of
+                            // entries for a single key, thus continue.
+                            None => continue,
+                            Some(res) => Some(res),
+                        },
+                    };
+
+                    let entry = match next {
+                        // we reached the end of the iterator
+                        None => break None,
+                        Some(Err(err)) => break Some(Err(err)),
+                        Some(Ok(entry)) => entry,
+                    };
+
+                    // final check for empty entries: if the selector is active, the latest
+                    // entry for a key might be empty, so skip it if no empty entries were
+                    // requested
+                    if !self.include_empty && entry.is_empty() {
+                        continue;
+                    } else {
+                        break Some(Ok(entry));
                     }
                 },
             };
-            match next {
-                None => break None,
-                Some(Err(err)) => break Some(Err(err.into())),
-                Some(Ok(entry)) => {
-                    if let Some(offset) = self.limit.limit() {
-                        if self.offset < offset {
-                            self.offset += 1;
-                            continue;
-                        }
-                    }
-                    if let Some(limit) = self.limit.limit() {
-                        if self.count >= limit {
-                            break None;
-                        }
-                    }
-                    self.count += 1;
-                    break Some(Ok(entry));
-                }
+            let entry = match next? {
+                Err(err) => return Some(Err(err)),
+                Ok(entry) => entry,
+            };
+
+            // skip the entry if we didn't get past the requested offset yet.
+            if self.offset < self.limit.offset() {
+                self.offset += 1;
+                continue;
             }
+            self.count += 1;
+            return Some(Ok(entry));
         }
     }
 }
 
 #[derive(Debug, Default)]
-struct LatestPerKeySelector {
-    current: Option<SignedEntry>,
-}
+struct LatestPerKeySelector(Option<SignedEntry>);
 
 impl LatestPerKeySelector {
-    fn push(&mut self, entry: SignedEntry) -> Option<SignedEntry> {
-        match self.current.take() {
+    fn push(&mut self, entry: Option<Result<SignedEntry>>) -> Option<Result<SignedEntry>> {
+        let entry = match entry {
+            None => return self.0.take().map(Result::Ok),
+            Some(Err(err)) => return Some(Err(err)),
+            Some(Ok(entry)) => entry,
+        };
+        match self.0.take() {
             None => {
-                self.current = Some(entry);
+                self.0 = Some(entry);
                 None
             }
-            Some(current) if current.key() == entry.key() => {
-                if entry.timestamp() > current.timestamp() {
-                    self.current = Some(entry);
+            Some(last) if last.key() == entry.key() => {
+                if entry.timestamp() > last.timestamp() {
+                    self.0 = Some(entry);
                 } else {
-                    self.current = Some(current);
+                    self.0 = Some(last);
                 }
                 None
             }
-            Some(current) => {
-                self.current = Some(entry);
-                Some(current)
+            Some(last) => {
+                self.0 = Some(entry);
+                Some(Ok(last))
             }
         }
     }
@@ -1103,10 +1030,10 @@ fn by_key_range<'a>(
     match matcher {
         KeyMatcher::Any => {
             let start = (*ns, Bytes::new(), [0u8; 32]);
-            let mut ns2 = *ns;
-            let end = match increment_by_one_maybe(&mut ns2) {
-                Some(ns) => Bound::Excluded((ns, Bytes::new(), [0u8; 32])),
-                None => Bound::Unbounded,
+            let mut ns_end = *ns;
+            let end = match increment_by_one(&mut ns_end) {
+                true => Bound::Excluded((ns_end, Bytes::new(), [0u8; 32])),
+                false => Bound::Unbounded,
             };
             (Bound::Included(start), end)
         }
@@ -1133,11 +1060,11 @@ fn by_key_range<'a>(
 
 fn by_author_range(
     ns: NamespaceId,
-    matcher: &AuthorMatcher,
+    matcher: &ByAuthorMatcher,
 ) -> (Bound<RecordsIdOwned>, Bound<RecordsIdOwned>) {
     let ns = *(ns.as_bytes());
     match matcher {
-        AuthorMatcher::Any => {
+        ByAuthorMatcher::Any => {
             let start = (ns, [0u8; 32], Bytes::new());
             let mut ns_end = ns;
             let end = if increment_by_one(&mut ns_end) {
@@ -1147,19 +1074,70 @@ fn by_author_range(
             };
             (Bound::Included(start), end)
         }
-        AuthorMatcher::Exact(author) => {
+        ByAuthorMatcher::SingleAuthor(author, key_matcher) => {
             let author_start = *(author.as_bytes());
+            let key_start = match key_matcher {
+                KeyMatcher::Any => Bytes::new(),
+                KeyMatcher::Exact(key) => key.clone(),
+                KeyMatcher::Prefix(prefix) => prefix.clone(),
+            };
             let mut author_end = author_start;
             let mut ns_end = ns;
-            let start = (ns, author_start, Bytes::new());
-            let end = if increment_by_one(&mut author_end) {
-                Bound::Excluded((ns, author_end, Bytes::new()))
-            } else if increment_by_one(&mut ns_end) {
-                Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
-            } else {
-                Bound::Unbounded
+            let mut key_end = key_start.to_vec();
+
+            let start = (ns, author_start, key_start);
+
+            let end = match key_matcher {
+                KeyMatcher::Exact(_) => Bound::Included(start.clone()),
+                _ => {
+                    if increment_by_one(&mut key_end) {
+                        Bound::Excluded((ns, author_end, key_end.into()))
+                    } else if increment_by_one(&mut author_end) {
+                        Bound::Excluded((ns, author_end, Bytes::new()))
+                    } else if increment_by_one(&mut ns_end) {
+                        Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
+                    } else {
+                        Bound::Unbounded
+                    }
+                }
             };
+
             (Bound::Included(start), end)
+        }
+    }
+}
+
+/// Increment a byte string by one, by incrementing the last byte that is not 255 by one.
+///
+/// Returns false if all bytes are 255.
+fn increment_by_one(value: &mut [u8]) -> bool {
+    for char in value.iter_mut().rev() {
+        if *char != 255 {
+            *char += 1;
+            return true;
+        } else {
+            *char = 0;
+        }
+    }
+    false
+}
+
+enum ByAuthorMatcher {
+    Any,
+    SingleAuthor(AuthorId, KeyMatcher),
+}
+
+impl ByAuthorMatcher {
+    fn prefix(author: AuthorId, prefix: impl AsRef<[u8]>) -> Self {
+        Self::SingleAuthor(author, KeyMatcher::Prefix(prefix.as_ref().to_vec().into()))
+    }
+}
+
+impl From<AuthorMatcher> for ByAuthorMatcher {
+    fn from(value: AuthorMatcher) -> Self {
+        match value {
+            AuthorMatcher::Any => ByAuthorMatcher::Any,
+            AuthorMatcher::Exact(author) => ByAuthorMatcher::SingleAuthor(author, KeyMatcher::Any),
         }
     }
 }
@@ -1185,6 +1163,19 @@ fn records_by_key_id_ref(id: &RecordsByKeyIdOwned) -> RecordsByKeyId {
 
 fn records_id_ref(id: &RecordsIdOwned) -> RecordsId {
     (&id.0, &id.1, &id.2[..])
+}
+
+fn range_start(namespace: &NamespaceId) -> Bound<RecordsId> {
+    Bound::Included((namespace.as_bytes(), &[0u8; 32], &[]))
+}
+
+fn range_end(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
+    let mut ns_end = *(namespace.as_bytes());
+    if increment_by_one(&mut ns_end) {
+        Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
+    } else {
+        Bound::Unbounded
+    }
 }
 
 fn value_is_empty(value: &RecordsValue) -> bool {
