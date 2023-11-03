@@ -15,7 +15,7 @@ use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
     Database, MultimapTableDefinition, Range as TableRange, ReadOnlyTable, ReadTransaction,
-    ReadableMultimapTable, ReadableTable, StorageError, Table, TableDefinition,
+    ReadableMultimapTable, ReadableTable, StorageError, Table, TableDefinition, TableHandle,
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
 };
 
 use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
@@ -125,6 +125,26 @@ fn migration_001_populate_latest_table(
     Ok(())
 }
 
+/// Migrate the namespaces table from V1 to V2.
+fn migration_002_namespaces_v2(
+    namespaces_v1: Table<&[u8; 32], &[u8; 32]>,
+    namespaces_v2: &mut Table<&[u8; 32], (u8, &[u8; 32])>,
+) -> Result<()> {
+    tracing::info!("Starting migration: 002_namespaces_v2");
+    let mut entries = 0;
+    for res in namespaces_v1.iter()? {
+        let db_value = res?.1;
+        let secret_bytes = db_value.value();
+        let capability = Capability::Write(NamespaceSecret::from_bytes(secret_bytes));
+        let id = capability.id().to_bytes();
+        let (raw_kind, raw_bytes) = capability.raw();
+        namespaces_v2.insert(&id, (raw_kind, &raw_bytes))?;
+        entries += 1;
+    }
+    tracing::info!("Migration finished ({entries} entries)");
+    Ok(())
+}
+
 impl Store {
     /// Create or open a store from a `path` to a database file.
     ///
@@ -136,7 +156,11 @@ impl Store {
         let write_tx = db.begin_write()?;
         {
             let records_table = write_tx.open_table(RECORDS_TABLE)?;
-            let _table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let namespaces_v1_exists = write_tx
+                .list_tables()?
+                .find(|handle| handle.name() == NAMESPACES_TABLE_V1.name())
+                .is_some();
+            let mut namespaces_v2 = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
@@ -144,6 +168,13 @@ impl Store {
             // migration 001: populate latest table if it was empty before
             if latest_table.is_empty()? && !records_table.is_empty()? {
                 migration_001_populate_latest_table(&records_table, &mut latest_table)?;
+            }
+
+            // migration 002: update namespaces from V1 to V2
+            if namespaces_v1_exists {
+                let namespaces_v1 = write_tx.open_table(NAMESPACES_TABLE_V1)?;
+                migration_002_namespaces_v2(namespaces_v1, &mut namespaces_v2)?;
+                write_tx.delete_table(NAMESPACES_TABLE_V1)?;
             }
         }
         write_tx.commit()?;
@@ -1032,7 +1063,6 @@ impl Iterator for RangeIterator<'_> {
 mod tests {
     use crate::ranger::Store as _;
     use crate::store::{GetFilter, Store as _};
-    use crate::NamespaceSecret;
 
     use super::*;
 
