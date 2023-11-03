@@ -6,7 +6,7 @@ use super::{AuthorMatcher, KeyMatcher, Query, QueryKind, SortBy};
 
 /// A helper for stores that have by-author and by-key indexes for records.
 #[derive(Debug)]
-pub enum UseTable {
+pub enum IndexKind {
     AuthorKey {
         range: AuthorMatcher,
         filter: KeyMatcher,
@@ -18,21 +18,21 @@ pub enum UseTable {
     },
 }
 
-impl From<&Query> for UseTable {
+impl From<&Query> for IndexKind {
     fn from(query: &Query) -> Self {
         match &query.kind {
             QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
-                (AuthorMatcher::Any, SortBy::KeyAuthor) => UseTable::KeyAuthor {
+                (AuthorMatcher::Any, SortBy::KeyAuthor) => IndexKind::KeyAuthor {
                     range: query.filter_key.clone(),
                     filter: AuthorMatcher::Any,
                     latest_per_key: false,
                 },
-                _ => UseTable::AuthorKey {
+                _ => IndexKind::AuthorKey {
                     range: query.filter_author.clone(),
                     filter: query.filter_key.clone(),
                 },
             },
-            QueryKind::SingleLatestPerKey(_) => UseTable::KeyAuthor {
+            QueryKind::SingleLatestPerKey(_) => IndexKind::KeyAuthor {
                 range: query.filter_key.clone(),
                 filter: query.filter_author.clone(),
                 latest_per_key: true,

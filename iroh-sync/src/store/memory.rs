@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     pubkeys::MemPublicKeyStore,
-    util::{LatestPerKeySelector, SelectorRes, UseTable},
+    util::{IndexKind, LatestPerKeySelector, SelectorRes},
     OpenError, PublicKeyStore, Query,
 };
 
@@ -277,7 +277,7 @@ pub struct QueryIterator<'a> {
     records: ReplicaRecords<'a>,
     namespace: NamespaceId,
     query: Query,
-    table: UseTable,
+    index: IndexKind,
     selector: Option<LatestPerKeySelector>,
     // current iterator index
     position: usize,
@@ -289,9 +289,9 @@ pub struct QueryIterator<'a> {
 
 impl<'a> QueryIterator<'a> {
     fn new(records: ReplicaRecords<'a>, namespace: NamespaceId, query: Query) -> Self {
-        let table = UseTable::from(&query);
-        let selector = match table {
-            UseTable::KeyAuthor { latest_per_key, .. } if latest_per_key => {
+        let index = IndexKind::from(&query);
+        let selector = match index {
+            IndexKind::KeyAuthor { latest_per_key, .. } if latest_per_key => {
                 Some(LatestPerKeySelector::default())
             }
             _ => None,
@@ -301,7 +301,7 @@ impl<'a> QueryIterator<'a> {
             records,
             namespace,
             query,
-            table,
+            index,
             selector,
             position: 0,
             offset: 0,
@@ -323,8 +323,8 @@ impl<'a> Iterator for QueryIterator<'a> {
 
             let records = self.records.get(&self.namespace)?;
 
-            let entry = match &self.table {
-                UseTable::AuthorKey { range, filter } => records
+            let entry = match &self.index {
+                IndexKind::AuthorKey { range, filter } => records
                     .by_author
                     .iter()
                     .filter(|(_key, entry)| {
@@ -335,7 +335,7 @@ impl<'a> Iterator for QueryIterator<'a> {
                     .map(|(_key, entry)| entry)
                     .nth(self.position)
                     .cloned(),
-                UseTable::KeyAuthor { range, filter, .. } => loop {
+                IndexKind::KeyAuthor { range, filter, .. } => loop {
                     let next = records
                         .by_key
                         .keys()
