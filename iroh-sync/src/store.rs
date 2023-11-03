@@ -410,7 +410,7 @@ impl KeyMatcher {
         match self {
             Self::Any => true,
             Self::Exact(k) => &k[..] == key,
-            Self::Prefix(p) => key.starts_with(&p),
+            Self::Prefix(p) => key.starts_with(p),
         }
     }
 }

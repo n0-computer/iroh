@@ -874,7 +874,7 @@ impl<'a> QueryIterator<'a> {
                 let range = by_author_range(namespace, &range);
                 let range = map_bounds(&range, records_id_ref);
                 let records = TableRangeReader::new(
-                    &db,
+                    db,
                     |tx| tx.open_table(RECORDS_TABLE),
                     |table| table.range(range),
                 )?;
@@ -888,14 +888,14 @@ impl<'a> QueryIterator<'a> {
                 let range = by_key_range(namespace, &range);
                 let range = map_bounds(&range, records_by_key_id_ref);
                 let records = TableRangeReader::new(
-                    &db,
+                    db,
                     |tx| tx.open_table(RECORDS_BY_KEY_TABLE),
                     |table| table.range(range),
                 )?;
                 QueryRecords::KeyAuthor {
                     filter,
                     records,
-                    selector: latest_per_key.then(|| LatestPerKeySelector::default()),
+                    selector: latest_per_key.then(LatestPerKeySelector::default),
                 }
             }
         };
@@ -923,7 +923,7 @@ impl<'a> QueryIterator<'a> {
                         let (_namespace, _author, key) = id;
                         // skip entries that do not match the key filter, and empty entries if
                         // not including empty entries in the query
-                        filter.matches(&key) && (self.include_empty || !value_is_empty(&value))
+                        filter.matches(key) && (self.include_empty || !value_is_empty(&value))
                     },
                     // upcast to SignedEntry
                     into_entry,
@@ -1028,7 +1028,7 @@ impl LatestPerKeySelector {
     }
 }
 
-fn by_key_range<'a>(
+fn by_key_range(
     ns: NamespaceId,
     matcher: &KeyMatcher,
 ) -> (Bound<RecordsByKeyIdOwned>, Bound<RecordsByKeyIdOwned>) {

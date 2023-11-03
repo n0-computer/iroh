@@ -305,23 +305,20 @@ impl<'a> Iterator for RangeIterator<'a> {
                 KeyMatcher::Any => records
                     .iter()
                     .filter(|((a, _), _)| author_check.map(|author| author == a).unwrap_or(true))
-                    .skip(offset)
-                    .next(),
+                    .nth(offset),
                 KeyMatcher::Exact(ref key) => records
                     .iter()
                     .filter(|((a, k), _)| {
                         k == key && author_check.map(|author| author == a).unwrap_or(true)
                     })
-                    .skip(offset)
-                    .next(),
+                    .nth(offset),
                 KeyMatcher::Prefix(ref prefix) => records
                     .iter()
                     .filter(|((a, k), _)| {
                         k.starts_with(prefix)
                             && author_check.map(|author| author == a).unwrap_or(true)
                     })
-                    .skip(offset)
-                    .next(),
+                    .nth(offset),
             }?;
             self.index += 1;
             if entry.1.is_empty() {

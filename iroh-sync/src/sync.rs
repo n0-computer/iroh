@@ -1072,7 +1072,7 @@ mod tests {
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::key_exact(b"/cool/path".to_vec()))?
+            .get_many(my_replica.namespace(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
@@ -1098,13 +1098,13 @@ mod tests {
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::key_exact(b"/cool/path".to_vec()))?
+            .get_many(my_replica.namespace(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::key_prefix(b"/cool".to_vec()))?
+            .get_many(my_replica.namespace(), Query::key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
@@ -1112,7 +1112,7 @@ mod tests {
         let entries: Vec<_> = store
             .get_many(
                 my_replica.namespace(),
-                Query::author(alice.id()).key_prefix(b"/cool".to_vec()),
+                Query::author(alice.id()).key_prefix(b"/cool"),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);

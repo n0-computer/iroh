@@ -136,4 +136,3 @@ impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug
         write!(f, "TableRangeReader({:?})", self.table())
     }
 }
-
