@@ -1,8 +1,6 @@
 //! Utilities useful across different store impls.
 
-use anyhow::Result;
-
-use crate::{AuthorId, SignedEntry};
+use crate::SignedEntry;
 
 use super::{AuthorMatcher, KeyMatcher, Query, QueryKind, SortBy};
 
@@ -30,7 +28,7 @@ impl From<&Query> for UseTable {
                     latest_per_key: false,
                 },
                 _ => UseTable::AuthorKey {
-                    range: query.filter_author.clone().into(),
+                    range: query.filter_author.clone(),
                     filter: query.filter_key.clone(),
                 },
             },

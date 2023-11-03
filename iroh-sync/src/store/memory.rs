@@ -3,7 +3,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::Infallible,
-    ops::{RangeBounds, RangeFull},
     sync::Arc,
 };
 
@@ -22,7 +21,7 @@ use crate::{
 use super::{
     pubkeys::MemPublicKeyStore,
     util::{LatestPerKeySelector, SelectorRes, UseTable},
-    AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query,
+    OpenError, PublicKeyStore, Query,
 };
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
@@ -43,9 +42,6 @@ pub struct Store {
 }
 
 type Key = Vec<u8>;
-type Rid = (AuthorId, Vec<u8>);
-type Rvalue = SignedEntry;
-// type RecordMap = BTreeMap<Rid, Rvalue>;
 type ReplicaRecordsOwned = BTreeMap<NamespaceId, RecordMap>;
 
 #[derive(Debug, Default)]
@@ -166,7 +162,6 @@ impl super::Store for Store {
         query: impl Into<Query>,
     ) -> Result<Self::GetIter<'_>> {
         let query = query.into();
-        let index = usize::try_from(query.limit_offset.offset())?;
         let records = self.replica_records.read();
         Ok(QueryIterator::new(records, namespace, query))
     }
@@ -342,11 +337,7 @@ impl<'a> Iterator for QueryIterator<'a> {
                     .cloned(),
                 UseTable::KeyAuthor { range, filter, .. } => loop {
                     let next = records
-                        .by_key
-                        .iter()
-                        // TODO: This allocation via to_vec() is unforunate
-                        .map(|(k, _v)| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
-                        .flatten()
+                        .by_key.keys().flat_map(|k| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
                         .filter(|entry| {
                             range.matches(entry.key()) && filter.matches(&entry.author())
                         })
@@ -544,7 +535,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
 
     fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         // TODO: what if we are trying to remove with the wrong timestamp?
-        let res = self.with_records_mut(|records| records.and_then(|records| records.remove(&key)));
+        let res = self.with_records_mut(|records| records.and_then(|records| records.remove(key)));
         Ok(res)
     }
 

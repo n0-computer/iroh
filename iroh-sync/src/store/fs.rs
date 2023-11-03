@@ -31,7 +31,7 @@ use self::util::TableReader;
 
 use super::{
     pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, LimitOffset, OpenError, PublicKeyStore,
-    Query, QueryKind, SortBy, SortDirection,
+    Query, SortDirection,
 };
 
 use super::util::{LatestPerKeySelector, SelectorRes, UseTable};
@@ -874,15 +874,15 @@ impl<'a> QueryIterator<'a> {
             }
         };
 
-        let res = Ok(QueryIterator {
+        
+        Ok(QueryIterator {
             records,
             sort_direction: query.sort_direction,
             limit: query.limit_offset,
             include_empty: query.include_empty,
             offset: 0,
             count: 0,
-        });
-        res
+        })
     }
     fn next(&mut self) -> Option<Result<SignedEntry>> {
         if let Some(limit) = self.limit.limit() {
