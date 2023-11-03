@@ -60,9 +60,10 @@ impl SyncEngine {
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
-        self.sync.import_namespace(namespace.clone()).await?;
-        self.sync.open(namespace.id(), Default::default()).await?;
-        Ok(DocCreateResponse { id: namespace.id() })
+        let id = namespace.id();
+        self.sync.import_namespace(namespace.into()).await?;
+        self.sync.open(id, Default::default()).await?;
+        Ok(DocCreateResponse { id })
     }
 
     pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
@@ -83,8 +84,10 @@ impl SyncEngine {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream()
-            .map(|r| r.map(|id| DocListResponse { id }).map_err(Into::into))
+        rx.into_stream().map(|r| {
+            r.map(|(id, capability)| DocListResponse { id, capability })
+                .map_err(Into::into)
+        })
     }
 
     pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
@@ -104,17 +107,16 @@ impl SyncEngine {
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
         let me = self.endpoint.my_addr().await?;
-        let key = match req.mode {
-            ShareMode::Read => {
-                // TODO: support readonly docs
-                // *replica.namespace().as_bytes()
-                return Err(anyhow!("creating read-only shares is not yet supported").into());
+        let capability = match req.mode {
+            ShareMode::Read => iroh_sync::Capability::Read(req.doc_id),
+            ShareMode::Write => {
+                let secret = self.sync.get_capability(req.doc_id).await?;
+                iroh_sync::Capability::Write(secret)
             }
-            ShareMode::Write => self.sync.get_capability(req.doc_id).await?.to_bytes(),
         };
         self.start_sync(req.doc_id, vec![]).await?;
         Ok(DocShareResponse(DocTicket {
-            capability: key,
+            capability,
             nodes: vec![me],
         }))
     }
@@ -131,9 +133,11 @@ impl SyncEngine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket { capability: key, nodes: peers }) = req;
-        let namespace = NamespaceSecret::from_bytes(&key);
-        let doc_id = self.sync.import_namespace(namespace).await?;
+        let DocImportRequest(DocTicket {
+            capability,
+            nodes: peers,
+        }) = req;
+        let doc_id = self.sync.import_namespace(capability).await?;
         self.sync.open(doc_id, Default::default()).await?;
         self.start_sync(doc_id, peers).await?;
         Ok(DocImportResponse { doc_id })

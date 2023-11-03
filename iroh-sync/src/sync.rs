@@ -120,6 +120,25 @@ impl Subscribers {
     }
 }
 
+/// Kind of capability of the namespace.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    num_enum::IntoPrimitive,
+    num_enum::TryFromPrimitive,
+    strum::Display,
+)]
+#[repr(u8)]
+#[strum(serialize_all = "snake_case")]
+pub enum CapabilityKind {
+    /// A writable replica.
+    Write = 1,
+    /// A readable replica.
+    Read = 2,
+}
+
 /// The capability of the namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From)]
 pub enum Capability {
@@ -146,6 +165,40 @@ impl Capability {
             Capability::Read(_) => Err(ReadOnly),
         }
     }
+
+    /// Get the kind of capability.
+    pub fn kind(&self) -> CapabilityKind {
+        match self {
+            Capability::Write(_) => CapabilityKind::Write,
+            Capability::Read(_) => CapabilityKind::Read,
+        }
+    }
+
+    /// Get the raw representation of this namespace capability.
+    pub fn raw(&self) -> (u8, [u8; 32]) {
+        let capability_repr: u8 = self.kind().into();
+        let bytes = match self {
+            Capability::Write(secret) => secret.to_bytes(),
+            Capability::Read(id) => id.to_bytes(),
+        };
+        (capability_repr, bytes)
+    }
+
+    /// Create a [`Capability`] from its raw representation.
+    pub fn from_raw(kind: u8, bytes: &[u8; 32]) -> anyhow::Result<Self> {
+        let kind: CapabilityKind = kind.try_into()?;
+        let capability = match kind {
+            CapabilityKind::Write => {
+                let secret = NamespaceSecret::from_bytes(bytes);
+                Capability::Write(secret)
+            }
+            CapabilityKind::Read => {
+                let id = NamespaceId::from(bytes);
+                Capability::Read(id)
+            }
+        };
+        Ok(capability)
+    }
 }
 
 /// Local representation of a mutable, synchronizable key-value store.
@@ -160,10 +213,10 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
-    /// Create a new write replica.
-    pub fn new(secret: NamespaceSecret, store: S) -> Self {
+    /// Create a new replica.
+    pub fn new(capability: Capability, store: S) -> Self {
         Replica {
-            capability: secret.into(),
+            capability,
             peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),

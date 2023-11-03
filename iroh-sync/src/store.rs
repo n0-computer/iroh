@@ -12,7 +12,7 @@ use crate::{
     keys::{Author, NamespaceSecret},
     ranger,
     sync::{Replica, SignedEntry},
-    AuthorId, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
@@ -57,7 +57,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Iterator over replica namespaces in the store, returned from [`Self::list_namespaces`]
-    type NamespaceIter<'a>: Iterator<Item = Result<NamespaceId>>
+    type NamespaceIter<'a>: Iterator<Item = Result<(NamespaceId, CapabilityKind)>>
     where
         Self: 'a;
 
@@ -81,12 +81,12 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Create a new replica for `namespace` and persist in this store.
     fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<Self::Instance>> {
         let id = namespace.id();
-        self.import_namespace(namespace)?;
+        self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
     }
 
     /// Import a new replica namespace.
-    fn import_namespace(&self, namespace: NamespaceSecret) -> Result<()>;
+    fn import_namespace(&self, capability: Capability) -> Result<()>;
 
     /// List all replica namespaces in this store.
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;

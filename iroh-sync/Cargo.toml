@@ -23,6 +23,7 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.11"
 iroh-bytes = { version = "0.9.0", path = "../iroh-bytes" }
 iroh-metrics = { version = "0.9.0", path = "../iroh-metrics", optional = true }
+num_enum = "0.7"
 once_cell = "1.18.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8.5"

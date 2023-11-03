@@ -19,11 +19,11 @@ use redb::{
 };
 
 use crate::{
-    keys::{Author, NamespaceSecret},
+    keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
 };
 
 use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
@@ -48,8 +48,15 @@ const AUTHORS_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> = TableDefinition::ne
 // Table
 // Key: [u8; 32] # NamespaceId
 // Value: #[u8; 32] # Namespace
-const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
+const NAMESPACES_TABLE_V1: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("namespaces-1");
+
+// Namespaces
+// Table
+// Key: [u8; 32] # NamespaceId
+// Value: #[u8; 32] # Namespace
+const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
+    TableDefinition::new("namespaces-2");
 
 // Records
 // Table
@@ -149,11 +156,13 @@ impl Store {
     }
 
     /// Stores a new namespace
-    fn insert_namespace(&self, namespace: NamespaceSecret) -> Result<()> {
+    fn insert_namespace(&self, capability: Capability) -> Result<()> {
         let write_tx = self.db.begin_write()?;
         {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-            namespace_table.insert(namespace.id().as_bytes(), &namespace.to_bytes())?;
+            let id = capability.id().to_bytes();
+            let (kind, bytes) = capability.raw();
+            namespace_table.insert(&id, (kind, &bytes))?;
         }
         write_tx.commit()?;
 
@@ -178,7 +187,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type LatestIter<'a> = LatestIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(
@@ -193,13 +202,14 @@ impl super::Store for Store {
         let namespace_table = read_tx
             .open_table(NAMESPACES_TABLE)
             .map_err(anyhow::Error::from)?;
-        let Some(namespace) = namespace_table
+        let Some(db_value) = namespace_table
             .get(namespace_id.as_bytes())
             .map_err(anyhow::Error::from)?
         else {
             return Err(OpenError::NotFound);
         };
-        let namespace = NamespaceSecret::from_bytes(namespace.value());
+        let (raw_kind, raw_bytes) = db_value.value();
+        let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
         self.open_replicas.write().insert(*namespace_id);
         Ok(replica)
@@ -216,9 +226,13 @@ impl super::Store for Store {
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
         let namespaces: Vec<_> = namespace_table
             .iter()?
-            .map(|res| match res {
-                Ok((_key, value)) => Ok(NamespaceSecret::from_bytes(value.value()).id()),
-                Err(err) => Err(err.into()),
+            .map(|res| {
+                let val = res?.1;
+                let (raw_kind, raw_bytes) = val.value();
+                let capability = Capability::from_raw(raw_kind, raw_bytes)?;
+                let kind = capability.kind();
+                let id = capability.id();
+                Ok((id, kind))
             })
             .collect();
         Ok(namespaces.into_iter())
@@ -255,8 +269,8 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn import_namespace(&self, namespace: NamespaceSecret) -> Result<()> {
-        self.insert_namespace(namespace.clone())?;
+    fn import_namespace(&self, capability: Capability) -> Result<()> {
+        self.insert_namespace(capability)?;
         Ok(())
     }
 
@@ -1018,6 +1032,7 @@ impl Iterator for RangeIterator<'_> {
 mod tests {
     use crate::ranger::Store as _;
     use crate::store::{GetFilter, Store as _};
+    use crate::NamespaceSecret;
 
     use super::*;
 
