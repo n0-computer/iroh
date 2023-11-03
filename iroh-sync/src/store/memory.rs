@@ -337,7 +337,9 @@ impl<'a> Iterator for QueryIterator<'a> {
                     .cloned(),
                 UseTable::KeyAuthor { range, filter, .. } => loop {
                     let next = records
-                        .by_key.keys().flat_map(|k| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
+                        .by_key
+                        .keys()
+                        .flat_map(|k| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
                         .filter(|entry| {
                             range.matches(entry.key()) && filter.matches(&entry.author())
                         })

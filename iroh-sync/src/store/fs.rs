@@ -874,7 +874,6 @@ impl<'a> QueryIterator<'a> {
             }
         };
 
-        
         Ok(QueryIterator {
             records,
             sort_direction: query.sort_direction,
