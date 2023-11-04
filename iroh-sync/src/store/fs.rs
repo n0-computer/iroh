@@ -158,8 +158,7 @@ impl Store {
             let records_table = write_tx.open_table(RECORDS_TABLE)?;
             let namespaces_v1_exists = write_tx
                 .list_tables()?
-                .find(|handle| handle.name() == NAMESPACES_TABLE_V1.name())
-                .is_some();
+                .any(|handle| handle.name() == NAMESPACES_TABLE_V1.name());
             let mut namespaces_v2 = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
