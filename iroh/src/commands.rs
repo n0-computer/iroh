@@ -19,7 +19,7 @@ use iroh::rpc_protocol::*;
 use iroh::ticket::blob::Ticket;
 use iroh_bytes::{protocol::RequestToken, util::runtime, BlobFormat, Hash, Tag};
 use iroh_net::magicsock::DirectAddrInfo;
-use iroh_net::PeerAddr;
+use iroh_net::NodeAddr;
 use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
@@ -263,7 +263,7 @@ impl FullCommands {
                         rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
-                            peer: PeerAddr::from_parts(peer, region, addrs),
+                            peer: NodeAddr::from_parts(peer, region, addrs),
                             keylog,
                             derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
@@ -395,7 +395,7 @@ impl NodeCommands {
             Self::Status => {
                 let response = iroh.node.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
-                println!("Node public key: {}", response.addr.peer_id);
+                println!("Node public key: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
             }
         }
@@ -498,6 +498,91 @@ pub struct BlobAddOptions {
     no_ticket: bool,
 }
 
+/// An argument that can be either "none" or a value of type `T`.
+#[derive(Debug, Clone)]
+pub enum Optional<T: FromStr> {
+    None,
+    Some(T),
+}
+
+impl<T: FromStr> FromStr for Optional<T> {
+    type Err = <T as FromStr>::Err;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            _ => T::from_str(s).map(Self::Some),
+        }
+    }
+}
+
+// Helper struct to model a ticket or the arguments that would make a ticket. This works as a
+// subcommand.
+#[derive(Subcommand, Debug, Clone)]
+pub enum TicketOrArgs {
+    /// Use a blob ticket to download the data.
+    #[command(arg_required_else_help = true)]
+    Ticket {
+        /// Ticket to use.
+        ticket: Ticket,
+        /// Additonal socket address to use to contact the node. Can be used multiple times.
+        #[clap(long)]
+        address: Vec<SocketAddr>,
+        /// Override the Derp region to use to contact the node.
+        #[clap(long, value_name = "\"none\" | DERP_REGION")]
+        derp_region: Option<Optional<u16>>,
+        /// Override to treat the blob as a raw blob or a hash sequence.
+        #[clap(long)]
+        recursive: Option<bool>,
+        /// Override the ticket token.
+        #[clap(long, value_name = "\"none\" | TOKEN")]
+        request_token: Option<Optional<RequestToken>>,
+        /// If set, the ticket's direct addresses will not be used.
+        #[clap(long)]
+        override_addresses: bool,
+        #[command(flatten)]
+        ops: DownloadOps,
+    },
+    /// Supply the content and node-addressing information directly to perform a download.
+    #[command(arg_required_else_help = true)]
+    Hash {
+        /// Hash of the content to download.
+        hash: Hash,
+        /// NodeId of the provider.
+        #[clap(long, required = true)]
+        node: PublicKey,
+        /// Additonal socket address to use to contact the node. Can be used multiple times.
+        /// Necessary if no derp region provided.
+        #[clap(long, required_unless_present = "derp_region")]
+        address: Vec<SocketAddr>,
+        /// Derp region to use to contact the node. Necessary if no addresses provided.
+        #[clap(long, required_unless_present = "address")]
+        derp_region: Option<u16>,
+        /// Whether to treat the blob as a raw blob or a hash sequence.
+        #[clap(long)]
+        recursive: bool,
+        /// Token to use.
+        #[clap(long)]
+        request_token: Option<RequestToken>,
+        #[command(flatten)]
+        ops: DownloadOps,
+    },
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct DownloadOps {
+    /// Directory or file in which to save the file(s).
+    #[clap(long, short, global = true, value_name = "PATH")]
+    out: Option<PathBuf>,
+    /// If set, the data will be moved to the output directory, and iroh will assume that it
+    /// will not change.
+    #[clap(long, default_value_t = false, global = true)]
+    stable: bool,
+    /// Tag to tag the data with.
+    #[clap(long, global = true)]
+    tag: Option<String>,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
@@ -508,46 +593,8 @@ pub enum BlobCommands {
     /// In addition to downloading the data, you can also specify an optional output directory
     /// where the data will be exported to after it has been downloaded.
     Download {
-        /// Hash to get, required unless ticket is specified
-        #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
-        hash: Option<Hash>,
-        /// treat as collection, required unless ticket is specified
-        #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
-        recursive: Option<bool>,
-        /// PeerID of the provider
-        #[clap(
-            long,
-            short,
-            conflicts_with = "ticket",
-            required_unless_present = "ticket"
-        )]
-        peer: Option<PublicKey>,
-        /// Addresses of the provider
-        #[clap(
-            long,
-            short,
-            conflicts_with = "ticket",
-            required_unless_present = "ticket"
-        )]
-        addr: Vec<SocketAddr>,
-        /// base32-encoded Request token to use for authentication, if any
-        #[clap(long, conflicts_with = "ticket")]
-        token: Option<RequestToken>,
-        /// base32-encoded Request token to use for authentication, if any
-        #[clap(long, conflicts_with = "ticket")]
-        derp_region: Option<u16>,
-        #[clap(long, conflicts_with_all = &["peer", "hash", "recursive"])]
-        ticket: Option<Ticket>,
-        /// Directory in which to save the file(s)
-        #[clap(long, short)]
-        out: Option<PathBuf>,
-        /// If this is set to true, the data will be moved to the output directory,
-        /// and iroh will assume that it will not change.
-        #[clap(long, default_value_t = false)]
-        stable: bool,
-        /// Tag to tag the data with
-        #[clap(long)]
-        tag: Option<String>,
+        #[clap(subcommand)]
+        command: TicketOrArgs,
     },
     /// List availble content on the node.
     #[clap(subcommand)]
@@ -586,45 +633,101 @@ pub enum BlobCommands {
 impl BlobCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::Download {
-                hash,
-                recursive,
-                peer,
-                addr,
-                token,
-                ticket,
-                derp_region,
-                mut out,
-                stable: in_place,
-                tag,
-            } => {
-                if let Some(out) = out.as_mut() {
-                    tracing::info!("canonicalizing output path");
-                    let absolute = std::env::current_dir()?.join(&out);
-                    tracing::info!("output path is {} -> {}", out.display(), absolute.display());
-                    *out = absolute;
-                }
-                let (peer, hash, format, token) = if let Some(ticket) = ticket {
-                    ticket.into_parts()
-                } else {
-                    let format = match recursive {
-                        Some(false) | None => BlobFormat::Raw,
-                        Some(true) => BlobFormat::HashSeq,
-                    };
-                    (
-                        PeerAddr::from_parts(peer.unwrap(), derp_region, addr),
-                        hash.unwrap(),
-                        format,
-                        token,
-                    )
+            Self::Download { command } => {
+                let (node_addr, hash, format, token, ops) = match command {
+                    TicketOrArgs::Ticket {
+                        ticket,
+                        mut address,
+                        derp_region,
+                        recursive,
+                        request_token,
+                        override_addresses,
+                        ops,
+                    } => {
+                        let (node_addr, hash, blob_format, maybe_token) = ticket.into_parts();
+
+                        // create the node address with the appropriate overrides
+                        let node_addr = {
+                            let NodeAddr { node_id, info } = node_addr;
+                            let addresses = if override_addresses {
+                                // use only the cli supplied ones
+                                address
+                            } else {
+                                // use both the cli supploes ones and the ticket ones
+                                address.extend(info.direct_addresses.into_iter());
+                                address
+                            };
+                            let region = match derp_region {
+                                Some(Optional::None) => None,
+                                Some(Optional::Some(region)) => Some(region),
+                                None => info.derp_region,
+                            };
+                            NodeAddr::from_parts(node_id, region, addresses)
+                        };
+
+                        // check if the blob format has an override
+                        let format = match recursive {
+                            Some(true) => BlobFormat::HashSeq,
+                            Some(false) => BlobFormat::Raw,
+                            None => blob_format,
+                        };
+
+                        // check if the token has an override
+                        let token = match request_token {
+                            Some(Optional::None) => None,
+                            Some(Optional::Some(token)) => Some(token),
+                            None => maybe_token,
+                        };
+
+                        (node_addr, hash, format, token, ops)
+                    }
+                    TicketOrArgs::Hash {
+                        hash,
+                        node,
+                        address,
+                        derp_region,
+                        recursive,
+                        request_token,
+                        ops,
+                    } => {
+                        let format = if recursive {
+                            BlobFormat::HashSeq
+                        } else {
+                            BlobFormat::Raw
+                        };
+                        let node_addr = NodeAddr::from_parts(node, derp_region, address);
+                        (node_addr, hash, format, request_token, ops)
+                    }
                 };
+
+                if node_addr.info.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no derp region provided and no direct addresses provided"
+                    ));
+                }
+
+                let DownloadOps {
+                    out,
+                    stable: in_place,
+                    tag,
+                } = ops;
+
                 let out = match out {
                     None => DownloadLocation::Internal,
-                    Some(path) => DownloadLocation::External {
-                        path: path.display().to_string(),
-                        in_place,
-                    },
+                    Some(path) => {
+                        let absolute = std::env::current_dir()?.join(&path);
+                        tracing::info!(
+                            "output path is {} -> {}",
+                            path.display(),
+                            absolute.display()
+                        );
+                        DownloadLocation::External {
+                            path: absolute.display().to_string(),
+                            in_place,
+                        }
+                    }
                 };
+
                 let tag = match tag {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,
@@ -634,15 +737,14 @@ impl BlobCommands {
                     .download(BlobDownloadRequest {
                         hash,
                         format,
-                        peer,
+                        peer: node_addr,
                         token,
                         out,
                         tag,
                     })
                     .await?;
 
-                show_download_progress(hash, &mut stream).await?;
-                Ok(())
+                show_download_progress(hash, &mut stream).await
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
@@ -662,11 +764,11 @@ impl BlobCommands {
             } => {
                 let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
                 let node_addr = if no_derp {
-                    PeerAddr::new(addr.peer_id)
+                    NodeAddr::new(addr.node_id)
                         .with_direct_addresses(addr.direct_addresses().copied())
                 } else if derp_only {
                     if let Some(region) = addr.derp_region() {
-                        PeerAddr::new(addr.peer_id).with_derp_region(region)
+                        NodeAddr::new(addr.node_id).with_derp_region(region)
                     } else {
                         addr
                     }

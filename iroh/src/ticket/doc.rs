@@ -1,6 +1,6 @@
 //! Tickets for [`iroh-sync`] documents.
 
-use iroh_net::PeerAddr;
+use iroh_net::NodeAddr;
 use iroh_sync::Capability;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,7 @@ pub struct Ticket {
     /// either a public or private key
     pub capability: Capability,
     /// A list of nodes to contact.
-    pub nodes: Vec<PeerAddr>,
+    pub nodes: Vec<NodeAddr>,
 }
 
 impl IrohTicket for Ticket {
@@ -22,7 +22,7 @@ impl IrohTicket for Ticket {
 
 impl Ticket {
     /// Create a new doc ticket
-    pub fn new(capability: Capability, peers: Vec<PeerAddr>) -> Self {
+    pub fn new(capability: Capability, peers: Vec<NodeAddr>) -> Self {
         Self {
             capability,
             nodes: peers,

@@ -15,7 +15,7 @@ use iroh_bytes::util::{BlobFormat, Tag};
 pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, Hash};
 use iroh_net::{
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, PeerAddr},
+    magic_endpoint::{ConnectionInfo, NodeAddr},
 };
 
 use iroh_sync::{
@@ -100,7 +100,7 @@ pub struct BlobDownloadRequest {
     /// well.
     pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: PeerAddr,
+    pub peer: NodeAddr,
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,
@@ -342,7 +342,7 @@ impl RpcMsg<ProviderService> for NodeStatusRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusResponse {
     /// The peer id and socket addresses of this node.
-    pub addr: PeerAddr,
+    pub addr: NodeAddr,
     /// The bound listening addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
@@ -584,7 +584,7 @@ pub struct DocStartSyncRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// List of peers to join
-    pub peers: Vec<PeerAddr>,
+    pub peers: Vec<NodeAddr>,
 }
 
 impl RpcMsg<ProviderService> for DocStartSyncRequest {

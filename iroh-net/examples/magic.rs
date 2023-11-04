@@ -6,7 +6,7 @@ use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
     magic_endpoint::accept_conn,
-    MagicEndpoint, PeerAddr,
+    MagicEndpoint, NodeAddr,
 };
 use tracing::{debug, info};
 use url::Url;
@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
             derp_region,
         } => {
             let addr =
-                PeerAddr::from_parts(peer_id.parse()?, derp_region, addrs.unwrap_or_default());
+                NodeAddr::from_parts(peer_id.parse()?, derp_region, addrs.unwrap_or_default());
             let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
             info!("connected");
 

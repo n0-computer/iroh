@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
-    println!("node PeerID:     {}", ticket.node_addr().peer_id);
+    println!("node NodeId:     {}", ticket.node_addr().node_id);
     println!("node listening addresses:");
     for addr in ticket.node_addr().direct_addresses() {
         println!("\t{:?}", addr);

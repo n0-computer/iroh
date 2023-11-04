@@ -24,7 +24,7 @@ use iroh_net::{
     magicsock::EndpointInfo,
     netcheck, portmapper,
     util::AbortingJoinHandle,
-    MagicEndpoint, PeerAddr,
+    MagicEndpoint, NodeAddr, NodeId,
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
@@ -289,7 +289,7 @@ struct Gui {
 }
 
 impl Gui {
-    fn new(endpoint: MagicEndpoint, peer_id: PublicKey) -> Self {
+    fn new(endpoint: MagicEndpoint, node_id: NodeId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
@@ -314,7 +314,7 @@ impl Gui {
         let counter_task = AbortingJoinHandle(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &peer_id).await;
+                Self::update_connection_info(&conn_info, &endpoint, &node_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }));
@@ -332,13 +332,13 @@ impl Gui {
     async fn update_connection_info(
         target: &ProgressBar,
         endpoint: &MagicEndpoint,
-        peer_id: &PublicKey,
+        node_id: &NodeId,
     ) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.connection_info(*peer_id).await {
+        let msg = match endpoint.connection_info(*node_id).await {
             Ok(Some(EndpointInfo {
                 derp_region,
                 conn_type,
@@ -611,7 +611,7 @@ async fn make_endpoint(
 }
 
 async fn connect(
-    peer_id: PublicKey,
+    node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
     derp_region: Option<u16>,
@@ -619,9 +619,9 @@ async fn connect(
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, derp_map).await?;
 
-    tracing::info!("dialing {:?}", peer_id);
-    let peer_addr = PeerAddr::from_parts(peer_id, derp_region, direct_addresses);
-    let conn = endpoint.connect(peer_addr, &DR_DERP_ALPN).await;
+    tracing::info!("dialing {:?}", node_id);
+    let node_addr = NodeAddr::from_parts(node_id, derp_region, direct_addresses);
+    let conn = endpoint.connect(node_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
             if let Err(cause) = passive_side(endpoint.clone(), connection).await {
@@ -629,7 +629,7 @@ async fn connect(
             }
         }
         Err(cause) => {
-            eprintln!("unable to connect to {peer_id}: {cause}");
+            eprintln!("unable to connect to {node_id}: {cause}");
         }
     }
 
