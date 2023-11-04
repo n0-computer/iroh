@@ -41,16 +41,25 @@ impl From<&Query> for IndexKind {
     }
 }
 
+/// Helper to extract the latest entry per key from an iterator that yields [`SignedEntry`] items.
+///
+/// Items must be pushed in key-sorted order.
 #[derive(Debug, Default)]
 pub struct LatestPerKeySelector(Option<SignedEntry>);
 
 pub enum SelectorRes {
+    /// The iterator is finished.
     Finished,
+    /// The selection is not yet finished, keep pushing more items.
     Continue,
+    /// The selection yielded an entry.
     Some(SignedEntry),
 }
 
 impl LatestPerKeySelector {
+    /// Push an entry into the selector.
+    ///
+    /// Entries must be sorted by key beforehand.
     pub fn push(&mut self, entry: Option<SignedEntry>) -> SelectorRes {
         let Some(entry) = entry else {
             return match self.0.take() {
