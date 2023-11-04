@@ -383,8 +383,6 @@ impl SyncHandle {
         key: Bytes,
     ) -> Result<Option<SignedEntry>> {
         let (reply, rx) = oneshot::channel();
-        let author = author;
-        let key = key;
         let action = ReplicaAction::GetOne { author, key, reply };
         self.send_replica(namespace, action).await?;
         rx.await?

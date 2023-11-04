@@ -857,6 +857,11 @@ impl RecordIdentifier {
         &self.0[KEY_BYTES]
     }
 
+    /// Get the key of this record as [`Bytes`].
+    pub fn key_bytes(&self) -> Bytes {
+        self.0.slice(KEY_BYTES)
+    }
+
     /// Get the [`NamespaceId`] of this record as byte array.
     pub fn namespace(&self) -> NamespaceId {
         let value: &[u8; 32] = &self.0[NAMESPACE_BYTES].try_into().unwrap();

@@ -2,15 +2,14 @@ use std::{fmt, sync::Arc};
 
 use ouroboros::self_referencing;
 use redb::{
-    Database, Range as TableRange, ReadOnlyTable, ReadTransaction, ReadableTable, RedbKey,
-    RedbValue, StorageError, TableError,
+    Database, Range, ReadOnlyTable, ReadTransaction, ReadableTable, RedbKey, RedbValue,
+    StorageError, TableError,
 };
 
 use crate::{store::SortDirection, SignedEntry};
 
 use super::{
-    into_entry, RecordsByKeyId, RecordsByKeyValue, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE,
-    RECORDS_TABLE,
+    into_entry, RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
 };
 
 /// A [`ReadTransaction`] with a [`ReadOnlyTable`] that can be stored in a struct.
@@ -56,11 +55,11 @@ impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for Tabl
     }
 }
 
-/// A range reader for a [`redb::ReadOnlyTable`] that can be stored in a struct.
+/// A range reader for a [`ReadOnlyTable`] that can be stored in a struct.
 ///
 /// This uses [`ouroboros::self_referencing`] to store a [`ReadTransaction`], a [`ReadOnlyTable`]
-/// and a [`TableRange`] together. Useful to build iterators with.
-pub struct TableRangeReader<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static>(
+/// and a [`Range`] together. Useful to build iterators with.
+pub struct TableRange<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static>(
     TableRangeReaderInner<'a, K, V>,
 );
 
@@ -73,20 +72,16 @@ struct TableRangeReaderInner<'a, K: RedbKey + 'static, V: redb::RedbValue + 'sta
     table: ReadOnlyTable<'this, K, V>,
     #[covariant]
     #[borrows(table)]
-    range: TableRange<'this, K, V>,
+    range: Range<'this, K, V>,
 }
 
-impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V> {
+impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRange<'a, K, V> {
     /// Create a new [`TableReader`]
-    pub fn new(
-        db: &'a Arc<Database>,
-        table_fn: impl for<'this> FnOnce(
-            &'this ReadTransaction<'this>,
-        ) -> Result<ReadOnlyTable<K, V>, TableError>,
-        range_fn: impl for<'this> FnOnce(
-            &'this ReadOnlyTable<'this, K, V>,
-        ) -> Result<TableRange<'this, K, V>, StorageError>,
-    ) -> anyhow::Result<Self> {
+    pub fn new<TF, RF>(db: &'a Arc<Database>, table_fn: TF, range_fn: RF) -> anyhow::Result<Self>
+    where
+        TF: for<'s> FnOnce(&'s ReadTransaction<'s>) -> Result<ReadOnlyTable<K, V>, TableError>,
+        RF: for<'s> FnOnce(&'s ReadOnlyTable<'s, K, V>) -> Result<Range<'s, K, V>, StorageError>,
+    {
         let reader = TableRangeReaderInner::try_new(
             db.begin_read()?,
             |tx| table_fn(tx).map_err(anyhow_err),
@@ -111,10 +106,10 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V
         })
     }
 
-    pub fn next_matching<T>(
+    pub fn next_filtered<T>(
         &mut self,
         direction: &SortDirection,
-        matcher: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> bool,
+        filter: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> bool,
         map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> T,
     ) -> Option<anyhow::Result<T>> {
         self.0.with_range_mut(|records| loop {
@@ -125,7 +120,7 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V
             match next {
                 None => break None,
                 Some(Err(err)) => break Some(Err(err.into())),
-                Some(Ok(res)) => match matcher(res.0.value(), res.1.value()) {
+                Some(Ok(res)) => match filter(res.0.value(), res.1.value()) {
                     false => continue,
                     true => break Some(Ok(map(res.0.value(), res.1.value()))),
                 },
@@ -134,9 +129,7 @@ impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRangeReader<'a, K, V
     }
 }
 
-impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug
-    for TableRangeReader<'a, K, V>
-{
+impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for TableRange<'a, K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TableRangeReader({:?})", self.table())
     }
@@ -157,23 +150,20 @@ struct RecordsByKeyRangeInner<'a> {
 
     #[covariant]
     #[borrows(read_tx)]
-    by_key_table: ReadOnlyTable<'this, RecordsByKeyId<'static>, RecordsByKeyValue<'static>>,
+    by_key_table: ReadOnlyTable<'this, RecordsByKeyId<'static>, ()>,
 
     #[borrows(by_key_table)]
     #[covariant]
-    by_key_range: TableRange<'this, RecordsByKeyId<'static>, RecordsByKeyValue<'static>>,
+    by_key_range: Range<'this, RecordsByKeyId<'static>, ()>,
 }
 
 impl<'a> RecordsByKeyRange<'a> {
-    pub fn new(
-        db: &'a Arc<Database>,
-        range_fn: impl for<'this> FnOnce(
-            &'this ReadOnlyTable<'this, RecordsByKeyId<'static>, RecordsByKeyValue<'static>>,
-        ) -> Result<
-            TableRange<'this, RecordsByKeyId<'static>, RecordsByKeyValue<'static>>,
-            StorageError,
-        >,
-    ) -> anyhow::Result<Self> {
+    pub fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
+    where
+        RF: for<'s> FnOnce(
+            &'s ReadOnlyTable<'s, RecordsByKeyId<'static>, ()>,
+        ) -> Result<Range<'s, RecordsByKeyId<'static>, ()>, StorageError>,
+    {
         let inner = RecordsByKeyRangeInner::try_new(
             db.begin_read()?,
             |tx| tx.open_table(RECORDS_TABLE).map_err(anyhow_err),
@@ -186,10 +176,10 @@ impl<'a> RecordsByKeyRange<'a> {
     /// Get the next item in the range.
     ///
     /// Omit items for which the `matcher` function returns false.
-    pub fn next_matching(
+    pub fn next_filtered(
         &mut self,
         direction: &SortDirection,
-        matcher: impl for<'x> Fn(RecordsByKeyId<'x>, RecordsByKeyValue<'x>) -> bool,
+        filter: impl for<'x> Fn(RecordsByKeyId<'x>) -> bool,
     ) -> Option<anyhow::Result<SignedEntry>> {
         self.0.with_mut(|fields| {
             let by_key_id = loop {
@@ -198,17 +188,17 @@ impl<'a> RecordsByKeyRange<'a> {
                     SortDirection::Desc => fields.by_key_range.next_back(),
                 };
                 match next {
-                    None => return None,
-                    Some(Err(err)) => return Some(Err(err.into())),
-                    Some(Ok(res)) => match matcher(res.0.value(), res.1.value()) {
+                    Some(Ok(res)) => match filter(res.0.value()) {
                         false => continue,
                         true => break res.0,
                     },
+                    Some(Err(err)) => return Some(Err(err.into())),
+                    None => return None,
                 }
             };
 
             let (namespace, key, author) = by_key_id.value();
-            let records_id = (namespace, author, &key[..]);
+            let records_id = (namespace, author, key);
             let entry = fields.records_table.get(&records_id);
             match entry {
                 Ok(Some(entry)) => Some(Ok(into_entry(records_id, entry.value()))),

@@ -220,13 +220,13 @@ impl<K> QueryBuilder<K> {
     }
 }
 
-/// Query type for a [Query::flat]
+/// Query on all entries without aggregation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlatQuery {
     sort_by: SortBy,
 }
 
-/// Query type for a [Query::single_latest_per_key]
+/// Query that only returns the latest entry for a key which has entries from multiple authors.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SingleLatestPerKeyQuery {}
 
@@ -342,6 +342,16 @@ impl Query {
     /// Create a [`Query::all`] query filtered by a key prefix.
     pub fn key_prefix(prefix: impl AsRef<[u8]>) -> QueryBuilder<FlatQuery> {
         Self::all().key_prefix(prefix)
+    }
+
+    /// Get the limit for this query (max. number of entries to emit).
+    pub fn limit(&self) -> Option<u64> {
+        self.limit_offset.limit()
+    }
+
+    /// Get the offset for this query (number of entries to skip at the beginning).
+    pub fn offset(&self) -> u64 {
+        self.limit_offset.offset()
     }
 }
 
