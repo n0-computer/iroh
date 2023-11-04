@@ -315,7 +315,7 @@ impl<'a> Iterator for QueryIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(limit) = self.query.limit_offset.limit() {
+            if let Some(limit) = self.query.limit() {
                 if self.count as u64 >= limit {
                     return None;
                 }
@@ -375,7 +375,7 @@ impl<'a> Iterator for QueryIterator<'a> {
 
             self.position += 1;
             self.offset += 1;
-            if (self.offset as u64) <= self.query.limit_offset.offset() {
+            if (self.offset as u64) <= self.query.offset() {
                 continue;
             }
             self.count += 1;

@@ -2,18 +2,18 @@
 
 use crate::SignedEntry;
 
-use super::{AuthorMatcher, KeyMatcher, Query, QueryKind, SortBy};
+use super::{AuthorFilter, KeyFilter, Query, QueryKind, SortBy};
 
 /// A helper for stores that have by-author and by-key indexes for records.
 #[derive(Debug)]
 pub enum IndexKind {
     AuthorKey {
-        range: AuthorMatcher,
-        filter: KeyMatcher,
+        range: AuthorFilter,
+        filter: KeyFilter,
     },
     KeyAuthor {
-        range: KeyMatcher,
-        filter: AuthorMatcher,
+        range: KeyFilter,
+        filter: AuthorFilter,
         latest_per_key: bool,
     },
 }
@@ -22,9 +22,9 @@ impl From<&Query> for IndexKind {
     fn from(query: &Query) -> Self {
         match &query.kind {
             QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
-                (AuthorMatcher::Any, SortBy::KeyAuthor) => IndexKind::KeyAuthor {
+                (AuthorFilter::Any, SortBy::KeyAuthor) => IndexKind::KeyAuthor {
                     range: query.filter_key.clone(),
-                    filter: AuthorMatcher::Any,
+                    filter: AuthorFilter::Any,
                     latest_per_key: false,
                 },
                 _ => IndexKind::AuthorKey {

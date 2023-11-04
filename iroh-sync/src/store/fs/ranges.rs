@@ -135,6 +135,51 @@ impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for Tabl
     }
 }
 
+#[derive(Debug)]
+pub struct RecordsRange<'a>(TableRange<'a, RecordsId<'static>, RecordsValue<'static>>);
+impl<'a> RecordsRange<'a> {
+    pub fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
+    where
+        RF: for<'s> FnOnce(
+            &'s ReadOnlyTable<'s, RecordsId<'static>, RecordsValue<'static>>,
+        ) -> Result<
+            Range<'s, RecordsId<'static>, RecordsValue<'static>>,
+            StorageError,
+        >,
+    {
+        Ok(Self(TableRange::new(
+            db,
+            |tx| tx.open_table(RECORDS_TABLE),
+            range_fn,
+        )?))
+    }
+
+    /// Get the next item in the range.
+    ///
+    /// Omit items for which the `matcher` function returns false.
+    pub fn next_filtered(
+        &mut self,
+        direction: &SortDirection,
+        filter: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> bool,
+    ) -> Option<anyhow::Result<SignedEntry>> {
+        self.0.next_filtered(direction, filter, into_entry)
+    }
+
+    pub fn next_mapped<T>(
+        &mut self,
+        map: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> T,
+    ) -> Option<anyhow::Result<T>> {
+        self.0.next_mapped(map)
+    }
+}
+
+impl<'a> Iterator for RecordsRange<'a> {
+    type Item = anyhow::Result<SignedEntry>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next_mapped(into_entry)
+    }
+}
+
 #[derive(derive_more::Debug)]
 #[debug("RecordsIndexReader")]
 pub struct RecordsByKeyRange<'a>(RecordsByKeyRangeInner<'a>);

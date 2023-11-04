@@ -180,9 +180,10 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 #[derive(Debug, Default)]
 pub struct QueryBuilder<K> {
     kind: K,
-    filter_author: AuthorMatcher,
-    filter_key: KeyMatcher,
-    limit_offset: LimitOffset,
+    filter_author: AuthorFilter,
+    filter_key: KeyFilter,
+    limit: Option<u64>,
+    offset: u64,
     include_empty: bool,
     sort_direction: SortDirection,
 }
@@ -195,27 +196,27 @@ impl<K> QueryBuilder<K> {
     }
     /// Filter by exact key match.
     pub fn key_exact(mut self, key: impl AsRef<[u8]>) -> Self {
-        self.filter_key = KeyMatcher::Exact(key.as_ref().to_vec().into());
+        self.filter_key = KeyFilter::Exact(key.as_ref().to_vec().into());
         self
     }
     /// Filter by key prefix.
     pub fn key_prefix(mut self, key: impl AsRef<[u8]>) -> Self {
-        self.filter_key = KeyMatcher::Prefix(key.as_ref().to_vec().into());
+        self.filter_key = KeyFilter::Prefix(key.as_ref().to_vec().into());
         self
     }
     /// Filter by author.
     pub fn author(mut self, author: AuthorId) -> Self {
-        self.filter_author = AuthorMatcher::Exact(author);
+        self.filter_author = AuthorFilter::Exact(author);
         self
     }
     /// Set the maximum number of entries to be returned.
     pub fn limit(mut self, limit: u64) -> Self {
-        self.limit_offset.limit = Some(limit);
+        self.limit = Some(limit);
         self
     }
     /// Set the offset within the result set from where to start returning results.
     pub fn offset(mut self, offset: u64) -> Self {
-        self.limit_offset.offset = Some(offset);
+        self.offset = offset;
         self
     }
 }
@@ -264,44 +265,28 @@ impl QueryBuilder<SingleLatestPerKeyQuery> {
 
 impl From<QueryBuilder<SingleLatestPerKeyQuery>> for Query {
     fn from(builder: QueryBuilder<SingleLatestPerKeyQuery>) -> Query {
-        let QueryBuilder {
-            kind,
-            filter_author,
-            filter_key,
-            limit_offset,
-            include_empty,
-            sort_direction,
-        } = builder;
-
         Query {
-            kind: QueryKind::SingleLatestPerKey(kind),
-            filter_author,
-            filter_key,
-            limit_offset,
-            include_empty,
-            sort_direction,
+            kind: QueryKind::SingleLatestPerKey(builder.kind),
+            filter_author: builder.filter_author,
+            filter_key: builder.filter_key,
+            limit: builder.limit,
+            offset: builder.offset,
+            include_empty: builder.include_empty,
+            sort_direction: builder.sort_direction,
         }
     }
 }
 
 impl From<QueryBuilder<FlatQuery>> for Query {
     fn from(builder: QueryBuilder<FlatQuery>) -> Query {
-        let QueryBuilder {
-            kind,
-            filter_author,
-            filter_key,
-            limit_offset,
-            include_empty,
-            sort_direction,
-        } = builder;
-
         Query {
-            kind: QueryKind::Flat(kind),
-            filter_author,
-            filter_key,
-            limit_offset,
-            include_empty,
-            sort_direction,
+            kind: QueryKind::Flat(builder.kind),
+            filter_author: builder.filter_author,
+            filter_key: builder.filter_key,
+            limit: builder.limit,
+            offset: builder.offset,
+            include_empty: builder.include_empty,
+            sort_direction: builder.sort_direction,
         }
     }
 }
@@ -311,9 +296,10 @@ impl From<QueryBuilder<FlatQuery>> for Query {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Query {
     kind: QueryKind,
-    filter_author: AuthorMatcher,
-    filter_key: KeyMatcher,
-    limit_offset: LimitOffset,
+    filter_author: AuthorFilter,
+    filter_key: KeyFilter,
+    limit: Option<u64>,
+    offset: u64,
     include_empty: bool,
     sort_direction: SortDirection,
 }
@@ -346,12 +332,12 @@ impl Query {
 
     /// Get the limit for this query (max. number of entries to emit).
     pub fn limit(&self) -> Option<u64> {
-        self.limit_offset.limit()
+        self.limit
     }
 
     /// Get the offset for this query (number of entries to skip at the beginning).
     pub fn offset(&self) -> u64 {
-        self.limit_offset.offset()
+        self.offset
     }
 }
 
@@ -363,22 +349,6 @@ pub enum SortDirection {
     Asc,
     /// Sort descending
     Desc,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct LimitOffset {
-    limit: Option<u64>,
-    offset: Option<u64>,
-}
-
-impl LimitOffset {
-    fn offset(&self) -> u64 {
-        self.offset.unwrap_or(0)
-    }
-
-    fn limit(&self) -> Option<u64> {
-        self.limit
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -399,23 +369,23 @@ pub enum SortBy {
 
 /// Key matching.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, Eq, PartialEq)]
-pub enum KeyMatcher {
-    /// Matches any key
+pub enum KeyFilter {
+    /// Matches any key.
     #[default]
     Any,
     /// Only keys that are exactly the provided value.
     Exact(Bytes),
-    /// All keys matching the provided value.
+    /// All keys that start with the provided value.
     Prefix(Bytes),
 }
 
-impl<T: AsRef<[u8]>> From<T> for KeyMatcher {
+impl<T: AsRef<[u8]>> From<T> for KeyFilter {
     fn from(value: T) -> Self {
-        KeyMatcher::Exact(Bytes::copy_from_slice(value.as_ref()))
+        KeyFilter::Exact(Bytes::copy_from_slice(value.as_ref()))
     }
 }
 
-impl KeyMatcher {
+impl KeyFilter {
     /// Test if a key is matched by this [`KeyMatcher`].
     pub fn matches(&self, key: &[u8]) -> bool {
         match self {
@@ -428,15 +398,15 @@ impl KeyMatcher {
 
 /// Author matching.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, Eq, PartialEq)]
-pub enum AuthorMatcher {
-    /// Matches any author
+pub enum AuthorFilter {
+    /// Matches any author.
     #[default]
     Any,
-    /// Matches exactly the provided author
+    /// Matches exactly the provided author.
     Exact(AuthorId),
 }
 
-impl AuthorMatcher {
+impl AuthorFilter {
     /// Test if an author is matched by this [`AuthorMatcher`].
     pub fn matches(&self, author: &AuthorId) -> bool {
         match self {
@@ -446,8 +416,8 @@ impl AuthorMatcher {
     }
 }
 
-impl From<AuthorId> for AuthorMatcher {
+impl From<AuthorId> for AuthorFilter {
     fn from(value: AuthorId) -> Self {
-        AuthorMatcher::Exact(value)
+        AuthorFilter::Exact(value)
     }
 }
