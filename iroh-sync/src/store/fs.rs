@@ -30,10 +30,10 @@ use crate::{
 use self::util::TableReader;
 
 use super::{
-    pubkeys::MemPublicKeyStore, AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query,
+    pubkeys::MemPublicKeyStore,
+    util::{IndexKind, LatestPerKeySelector, SelectorRes},
+    AuthorMatcher, KeyMatcher, OpenError, PublicKeyStore, Query,
 };
-
-use super::util::{IndexKind, LatestPerKeySelector, SelectorRes};
 
 mod util;
 use util::{RecordsByKeyRange, TableRange};
@@ -993,16 +993,14 @@ impl RecordsBounds {
 
                 let end = if key_is_exact {
                     Bound::Included(start.clone())
+                } else if increment_by_one(&mut key_end) {
+                    Bound::Excluded((ns, author_end, key_end.into()))
+                } else if increment_by_one(&mut author_end) {
+                    Bound::Excluded((ns, author_end, Bytes::new()))
+                } else if increment_by_one(&mut ns_end) {
+                    Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
                 } else {
-                    if increment_by_one(&mut key_end) {
-                        Bound::Excluded((ns, author_end, key_end.into()))
-                    } else if increment_by_one(&mut author_end) {
-                        Bound::Excluded((ns, author_end, Bytes::new()))
-                    } else if increment_by_one(&mut ns_end) {
-                        Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
-                    } else {
-                        Bound::Unbounded
-                    }
+                    Bound::Unbounded
                 };
 
                 Self((Bound::Included(start), end))
