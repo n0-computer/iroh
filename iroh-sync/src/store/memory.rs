@@ -21,7 +21,7 @@ use crate::{
 use super::{
     pubkeys::MemPublicKeyStore,
     util::{IndexKind, LatestPerKeySelector, SelectorRes},
-    OpenError, PublicKeyStore, Query,
+    OpenError, PublicKeyStore, Query, SortDirection,
 };
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
@@ -324,27 +324,40 @@ impl<'a> Iterator for QueryIterator<'a> {
             let records = self.records.get(&self.namespace)?;
 
             let entry = match &self.index {
-                IndexKind::AuthorKey { range, key_filter: filter } => records
-                    .by_author
-                    .iter()
-                    .filter(|(_key, entry)| {
-                        range.matches(&entry.author())
-                            && filter.matches(entry.key())
-                            && (self.query.include_empty || !entry.is_empty())
-                    })
-                    .map(|(_key, entry)| entry)
-                    .nth(self.position)
-                    .cloned(),
-                IndexKind::KeyAuthor { range, author_filter: filter, .. } => loop {
-                    let next = records
+                IndexKind::AuthorKey { range, key_filter } => {
+                    let mut iter = records
+                        .by_author
+                        .iter()
+                        .filter(|(_key, entry)| {
+                            range.matches(&entry.author())
+                                && key_filter.matches(entry.key())
+                                && (self.query.include_empty || !entry.is_empty())
+                        })
+                        .map(|(_key, entry)| entry);
+
+                    let next = match self.query.sort_direction {
+                        SortDirection::Asc => iter.nth(self.position),
+                        SortDirection::Desc => iter.nth_back(self.position),
+                    };
+                    next.cloned()
+                }
+                IndexKind::KeyAuthor {
+                    range,
+                    author_filter,
+                    ..
+                } => loop {
+                    let mut iter = records
                         .by_key
                         .keys()
                         .flat_map(|k| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
                         .filter(|entry| {
-                            range.matches(entry.key()) && filter.matches(&entry.author())
-                        })
-                        .nth(self.position)
-                        .cloned();
+                            range.matches(entry.key()) && author_filter.matches(&entry.author())
+                        });
+                    let next = match self.query.sort_direction {
+                        SortDirection::Asc => iter.nth(self.position),
+                        SortDirection::Desc => iter.nth_back(self.position),
+                    };
+                    let next = next.cloned();
 
                     let next = match self.selector.as_mut() {
                         None => next,

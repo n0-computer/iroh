@@ -1009,7 +1009,7 @@ mod tests {
 
     use crate::{
         ranger::{Range, Store as _},
-        store::{self, OpenError, Query, Store},
+        store::{self, OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;
@@ -1944,41 +1944,63 @@ mod tests {
         let a2 = store.new_author(&mut rng)?;
         let a3 = store.new_author(&mut rng)?;
 
-        let h1 = replica.hash_and_insert("hello/world", &a1, "a1")?;
+        replica.hash_and_insert("hello/world", &a2, "a2")?;
+        replica.hash_and_insert("hello/world", &a1, "a1")?;
         replica.hash_and_insert("hello/moon", &a1, "a1")?;
-        let h2 = replica.hash_and_insert("hello/world", &a2, "a2")?;
-        let h3 = replica.hash_and_insert("hello", &a3, "a3")?;
+        replica.hash_and_insert("hello", &a3, "a3")?;
 
-        let res = get_many_key_hash(&store, namespace, Query::single_latest_per_key());
+        let res = get_many_key_author(&store, namespace, Query::single_latest_per_key());
         assert_eq!(
             res,
             vec![
-                ("hello".to_string(), a3.id(), h3),
-                ("hello/moon".to_string(), a1.id(), h1),
-                ("hello/world".to_string(), a2.id(), h2),
+                ("hello".to_string(), a3.id()),
+                ("hello/moon".to_string(), a1.id()),
+                ("hello/world".to_string(), a1.id()),
+            ]
+        );
+
+        let res = get_many_key_author(
+            &store,
+            namespace,
+            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Asc),
+        );
+        assert_eq!(
+            res,
+            vec![
+                ("hello".to_string(), a3.id()),
+                ("hello/moon".to_string(), a1.id()),
+                ("hello/world".to_string(), a1.id()),
+                ("hello/world".to_string(), a2.id()),
+            ]
+        );
+
+        let res = get_many_key_author(
+            &store,
+            namespace,
+            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Desc),
+        );
+        assert_eq!(
+            res,
+            vec![
+                ("hello/world".to_string(), a2.id()),
+                ("hello/world".to_string(), a1.id()),
+                ("hello/moon".to_string(), a1.id()),
+                ("hello".to_string(), a3.id()),
             ]
         );
 
         Ok(())
     }
 
-    fn get_many_key_hash<S: store::Store>(
+    fn get_many_key_author<S: store::Store>(
         store: &S,
         namespace: NamespaceId,
         query: impl Into<Query>,
-    ) -> Vec<(String, AuthorId, Hash)> {
+    ) -> Vec<(String, AuthorId)> {
         store
             .get_many(namespace, query)
             .unwrap()
-            .map(|e| {
-                e.map(|e| {
-                    (
-                        String::from_utf8(e.key().to_vec()).unwrap(),
-                        e.author(),
-                        e.content_hash(),
-                    )
-                })
-            })
+            .map(|e| e.map(|e| (String::from_utf8(e.key().to_vec()).unwrap(), e.author())))
             .collect::<Result<Vec<_>>>()
             .unwrap()
     }
