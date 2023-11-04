@@ -47,13 +47,13 @@ type ReplicaRecordsOwned = BTreeMap<NamespaceId, RecordMap>;
 #[derive(Debug, Default)]
 struct RecordMap {
     by_author: BTreeMap<(AuthorId, Key), SignedEntry>,
-    by_key: BTreeMap<(Key, AuthorId), u64>,
+    by_key: BTreeMap<(Key, AuthorId), ()>,
 }
 
 impl RecordMap {
     fn insert(&mut self, entry: SignedEntry) {
         self.by_key
-            .insert((entry.key().to_vec(), entry.author()), entry.timestamp());
+            .insert((entry.key().to_vec(), entry.author()), ());
         self.by_author
             .insert((entry.author(), entry.key().to_vec()), entry);
     }
@@ -282,9 +282,9 @@ pub struct QueryIterator<'a> {
     // current iterator index
     position: usize,
     // number of entries returned from the iterator
-    count: usize,
+    count: u64,
     // number of entries skipped at the beginning
-    offset: usize,
+    offset: u64,
 }
 
 impl<'a> QueryIterator<'a> {
@@ -315,10 +315,8 @@ impl<'a> Iterator for QueryIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(limit) = self.query.limit() {
-                if self.count as u64 >= limit {
-                    return None;
-                }
+            if matches!(self.query.limit(), Some(limit) if self.count >= limit) {
+                return None;
             }
 
             let records = self.records.get(&self.namespace)?;
@@ -388,7 +386,7 @@ impl<'a> Iterator for QueryIterator<'a> {
 
             self.position += 1;
             self.offset += 1;
-            if (self.offset as u64) <= self.query.offset() {
+            if self.offset <= self.query.offset() {
                 continue;
             }
             self.count += 1;
