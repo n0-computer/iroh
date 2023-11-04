@@ -303,8 +303,7 @@ impl Endpoint {
     #[instrument("disco", skip_all, fields(peer = %self.public_key.fmt_short()))]
     pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {
-            // TODO: not warn?
-            warn!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
+            debug!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
                 SendAddr::Udp(addr) => {
                     if let Some(ep_state) = self.direct_addr_state.get_mut(&addr.into()) {
