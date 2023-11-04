@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
@@ -41,7 +42,7 @@ pub struct Store {
     peers_per_doc: SyncPeersCache,
 }
 
-type Key = Vec<u8>;
+type Key = Bytes;
 type ReplicaRecordsOwned = BTreeMap<NamespaceId, RecordMap>;
 
 #[derive(Debug, Default)]
@@ -53,13 +54,13 @@ struct RecordMap {
 impl RecordMap {
     fn insert(&mut self, entry: SignedEntry) {
         self.by_key
-            .insert((entry.key().to_vec(), entry.author()), ());
+            .insert((entry.id().key_bytes(), entry.author()), ());
         self.by_author
-            .insert((entry.author(), entry.key().to_vec()), entry);
+            .insert((entry.author(), entry.id().key_bytes()), entry);
     }
     fn remove(&mut self, id: &RecordIdentifier) -> Option<SignedEntry> {
-        let entry = self.by_author.remove(&(id.author(), id.key().to_vec()));
-        self.by_key.remove(&(id.key().to_vec(), id.author()));
+        let entry = self.by_author.remove(&(id.author(), id.key_bytes()));
+        self.by_key.remove(&(id.key_bytes(), id.author()));
         entry
     }
     fn len(&self) -> usize {
@@ -176,7 +177,9 @@ impl super::Store for Store {
         let Some(records) = inner.get(&namespace) else {
             return Ok(None);
         };
-        let entry = records.by_author.get(&(author, key.as_ref().to_vec()));
+        let entry = records
+            .by_author
+            .get(&(author, key.as_ref().to_vec().into()));
         Ok(entry.and_then(|entry| match entry.is_empty() {
             true => None,
             false => Some(entry.clone()),
@@ -347,7 +350,7 @@ impl<'a> Iterator for QueryIterator<'a> {
                     let mut iter = records
                         .by_key
                         .keys()
-                        .flat_map(|k| records.by_author.get(&(k.1, k.0.to_vec())).into_iter())
+                        .flat_map(|k| records.by_author.get(&(k.1, k.0.clone())).into_iter())
                         .filter(|entry| {
                             range.matches(entry.key()) && author_filter.matches(&entry.author())
                         });
@@ -497,10 +500,10 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
         }))
     }
 
-    fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
+    fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
         Ok(self.with_records(|records| {
             records.and_then(|r| {
-                let v = r.by_author.get(&(key.author(), key.key().to_vec()))?;
+                let v = r.by_author.get(&(id.author(), id.key_bytes()))?;
                 Some(v.clone())
             })
         }))
