@@ -1,12 +1,6 @@
 //! On disk storage for replicas.
 
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    ops::Bound,
-    path::Path,
-    sync::Arc,
-};
+use std::{cmp::Ordering, collections::HashSet, ops::Bound, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
@@ -15,7 +9,7 @@ use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_bytes::Hash;
 use parking_lot::RwLock;
 use redb::{
-    Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable, Table,
+    Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
     TableDefinition,
 };
 
@@ -34,6 +28,7 @@ use super::{
 };
 
 mod bounds;
+mod migrations;
 mod ranges;
 use self::bounds::{ByKeyBounds, RecordsBounds};
 use self::ranges::{RecordsByKeyRange, RecordsRange, TableRange, TableReader};
@@ -102,37 +97,6 @@ type Nanos = u64;
 const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
     MultimapTableDefinition::new("sync-peers-1");
 
-/// migration 001: populate the latest table (which did not exist before)
-fn migration_001_populate_latest_table(
-    records_table: &Table<RecordsId<'static>, RecordsValue<'static>>,
-    latest_table: &mut Table<LatestKey<'static>, LatestValue<'static>>,
-) -> Result<()> {
-    tracing::info!("Starting migration: 001_populate_latest_table");
-    #[allow(clippy::type_complexity)]
-    let mut heads: HashMap<([u8; 32], [u8; 32]), (u64, Vec<u8>)> = HashMap::new();
-    let iter = records_table.iter()?;
-
-    for next in iter {
-        let next = next?;
-        let (namespace, author, key) = next.0.value();
-        let (timestamp, _namespace_sig, _author_sig, _len, _hash) = next.1.value();
-        heads
-            .entry((*namespace, *author))
-            .and_modify(|e| {
-                if timestamp >= e.0 {
-                    *e = (timestamp, key.to_vec());
-                }
-            })
-            .or_insert_with(|| (timestamp, key.to_vec()));
-    }
-    let len = heads.len();
-    for ((namespace, author), (timestamp, key)) in heads {
-        latest_table.insert((&namespace, &author), (timestamp, key.as_slice()))?;
-    }
-    tracing::info!("Migration finished (inserted {} entries)", len);
-    Ok(())
-}
-
 impl Store {
     /// Create or open a store from a `path` to a database file.
     ///
@@ -148,11 +112,15 @@ impl Store {
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            let _table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
+            let mut by_key_table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
 
             // migration 001: populate latest table if it was empty before
             if latest_table.is_empty()? && !records_table.is_empty()? {
-                migration_001_populate_latest_table(&records_table, &mut latest_table)?;
+                migrations::migration_001_populate_latest_table(&records_table, &mut latest_table)?;
+            }
+            // migration 002: populate by_key table if it was empty before
+            if by_key_table.is_empty()? && !records_table.is_empty()? {
+                migrations::migration_002_populate_by_key_index(&records_table, &mut by_key_table)?;
             }
         }
         write_tx.commit()?;
