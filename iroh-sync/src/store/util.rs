@@ -9,11 +9,11 @@ use super::{AuthorFilter, KeyFilter, Query, QueryKind, SortBy};
 pub enum IndexKind {
     AuthorKey {
         range: AuthorFilter,
-        filter: KeyFilter,
+        key_filter: KeyFilter,
     },
     KeyAuthor {
         range: KeyFilter,
-        filter: AuthorFilter,
+        author_filter: AuthorFilter,
         latest_per_key: bool,
     },
 }
@@ -24,17 +24,17 @@ impl From<&Query> for IndexKind {
             QueryKind::Flat(details) => match (&query.filter_author, details.sort_by) {
                 (AuthorFilter::Any, SortBy::KeyAuthor) => IndexKind::KeyAuthor {
                     range: query.filter_key.clone(),
-                    filter: AuthorFilter::Any,
+                    author_filter: AuthorFilter::Any,
                     latest_per_key: false,
                 },
                 _ => IndexKind::AuthorKey {
                     range: query.filter_author.clone(),
-                    filter: query.filter_key.clone(),
+                    key_filter: query.filter_key.clone(),
                 },
             },
             QueryKind::SingleLatestPerKey(_) => IndexKind::KeyAuthor {
                 range: query.filter_key.clone(),
-                filter: query.filter_author.clone(),
+                author_filter: query.filter_author.clone(),
                 latest_per_key: true,
             },
         }

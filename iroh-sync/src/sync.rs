@@ -852,6 +852,15 @@ impl RecordIdentifier {
         )
     }
 
+    /// Get this [`RecordIdentifier`] as a tuple of bytes.
+    pub fn to_byte_tuple(&self) -> ([u8; 32], [u8; 32], Bytes) {
+        (
+            self.0[NAMESPACE_BYTES].try_into().unwrap(),
+            self.0[AUTHOR_BYTES].try_into().unwrap(),
+            self.0.slice(KEY_BYTES),
+        )
+    }
+
     /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
         &self.0[KEY_BYTES]

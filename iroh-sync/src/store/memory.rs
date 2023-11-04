@@ -324,7 +324,7 @@ impl<'a> Iterator for QueryIterator<'a> {
             let records = self.records.get(&self.namespace)?;
 
             let entry = match &self.index {
-                IndexKind::AuthorKey { range, filter } => records
+                IndexKind::AuthorKey { range, key_filter: filter } => records
                     .by_author
                     .iter()
                     .filter(|(_key, entry)| {
@@ -335,7 +335,7 @@ impl<'a> Iterator for QueryIterator<'a> {
                     .map(|(_key, entry)| entry)
                     .nth(self.position)
                     .cloned(),
-                IndexKind::KeyAuthor { range, filter, .. } => loop {
+                IndexKind::KeyAuthor { range, author_filter: filter, .. } => loop {
                     let next = records
                         .by_key
                         .keys()

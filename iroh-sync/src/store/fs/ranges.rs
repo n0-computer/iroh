@@ -1,3 +1,10 @@
+//! Ranges on [`redb`] tables
+//!
+//! Because the [`redb`] types all contain references, this uses [`ouroboros`] to create
+//! self-referential structs so that we can embed the [`Range`] iterator together with the
+//! [`ReadonlyTable`] and the [`ReadTransaction`] in a struct for our iterators returned from the
+//! store.
+
 use std::{fmt, sync::Arc};
 
 use ouroboros::self_referencing;
@@ -9,6 +16,7 @@ use redb::{
 use crate::{store::SortDirection, SignedEntry};
 
 use super::{
+    bounds::{ByKeyBounds, RecordsBounds},
     into_entry, RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
 };
 
@@ -154,6 +162,10 @@ impl<'a> RecordsRange<'a> {
         )?))
     }
 
+    pub fn with_bounds(db: &'a Arc<Database>, bounds: RecordsBounds) -> anyhow::Result<Self> {
+        Self::new(db, |table| table.range(bounds.as_ref()))
+    }
+
     /// Get the next item in the range.
     ///
     /// Omit items for which the `matcher` function returns false.
@@ -216,6 +228,10 @@ impl<'a> RecordsByKeyRange<'a> {
             |table| range_fn(table).map_err(Into::into),
         )?;
         Ok(Self(inner))
+    }
+
+    pub fn with_bounds(db: &'a Arc<Database>, bounds: ByKeyBounds) -> anyhow::Result<Self> {
+        Self::new(db, |table| table.range(bounds.as_ref()))
     }
 
     /// Get the next item in the range.
