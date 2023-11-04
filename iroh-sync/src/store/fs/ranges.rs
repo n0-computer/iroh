@@ -143,10 +143,11 @@ impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for Tabl
     }
 }
 
+/// An iterator over a range of entries from the records table.
 #[derive(Debug)]
 pub struct RecordsRange<'a>(TableRange<'a, RecordsId<'static>, RecordsValue<'static>>);
 impl<'a> RecordsRange<'a> {
-    pub fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
+    pub(super) fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
     where
         RF: for<'s> FnOnce(
             &'s ReadOnlyTable<'s, RecordsId<'static>, RecordsValue<'static>>,
@@ -162,14 +163,17 @@ impl<'a> RecordsRange<'a> {
         )?))
     }
 
-    pub fn with_bounds(db: &'a Arc<Database>, bounds: RecordsBounds) -> anyhow::Result<Self> {
+    pub(super) fn with_bounds(
+        db: &'a Arc<Database>,
+        bounds: RecordsBounds,
+    ) -> anyhow::Result<Self> {
         Self::new(db, |table| table.range(bounds.as_ref()))
     }
 
     /// Get the next item in the range.
     ///
     /// Omit items for which the `matcher` function returns false.
-    pub fn next_filtered(
+    pub(super) fn next_filtered(
         &mut self,
         direction: &SortDirection,
         filter: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> bool,
@@ -177,7 +181,7 @@ impl<'a> RecordsRange<'a> {
         self.0.next_filtered(direction, filter, into_entry)
     }
 
-    pub fn next_mapped<T>(
+    pub(super) fn next_mapped<T>(
         &mut self,
         map: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> T,
     ) -> Option<anyhow::Result<T>> {

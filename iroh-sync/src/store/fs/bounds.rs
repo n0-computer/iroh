@@ -12,7 +12,11 @@ use super::{RecordsByKeyId, RecordsByKeyIdOwned, RecordsId, RecordsIdOwned};
 pub struct RecordsBounds((Bound<RecordsIdOwned>, Bound<RecordsIdOwned>));
 
 impl RecordsBounds {
-    pub fn bounded(ns: NamespaceId, author: AuthorId, key_matcher: KeyFilter) -> Self {
+    pub fn new(start: Bound<RecordsIdOwned>, end: Bound<RecordsIdOwned>) -> Self {
+        Self((start, end))
+    }
+
+    pub fn author_key(ns: NamespaceId, author: AuthorId, key_matcher: KeyFilter) -> Self {
         let key_is_exact = matches!(key_matcher, KeyFilter::Exact(_));
         let key = match key_matcher {
             KeyFilter::Any => Bytes::new(),
@@ -43,29 +47,31 @@ impl RecordsBounds {
     }
 
     pub fn author_prefix(ns: NamespaceId, author: AuthorId, prefix: Bytes) -> Self {
-        RecordsBounds::bounded(ns, author, KeyFilter::Prefix(prefix))
+        RecordsBounds::author_key(ns, author, KeyFilter::Prefix(prefix))
     }
 
     pub fn namespace(ns: NamespaceId) -> Self {
         let start = Bound::Included((ns.to_bytes(), [0u8; 32], Bytes::new()));
         let end = namespace_end(&ns);
-        Self((start, end))
+        Self::new(start, end)
     }
 
     pub fn from_start(ns: &NamespaceId, end: Bound<RecordsIdOwned>) -> Self {
-        Self((namespace_start(ns), end))
+        Self::new(namespace_start(ns), end)
     }
 
     pub fn to_end(ns: &NamespaceId, start: Bound<RecordsIdOwned>) -> Self {
-        Self((start, namespace_end(ns)))
-    }
-
-    pub fn with_bounds(start: Bound<RecordsIdOwned>, end: Bound<RecordsIdOwned>) -> Self {
-        Self((start, end))
+        Self::new(start, namespace_end(ns))
     }
 
     pub fn as_ref(&self) -> (Bound<RecordsId>, Bound<RecordsId>) {
         map_bounds(&self.0, records_id_ref)
+    }
+}
+
+impl From<(Bound<RecordsIdOwned>, Bound<RecordsIdOwned>)> for RecordsBounds {
+    fn from(value: (Bound<RecordsIdOwned>, Bound<RecordsIdOwned>)) -> Self {
+        Self::new(value.0, value.1)
     }
 }
 

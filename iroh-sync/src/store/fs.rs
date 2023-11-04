@@ -1,6 +1,13 @@
 //! On disk storage for replicas.
 
-use std::{cmp::Ordering, collections::HashSet, ops::Bound, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    iter::{Chain, Flatten},
+    ops::Bound,
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
@@ -31,7 +38,9 @@ mod bounds;
 mod migrations;
 mod ranges;
 use self::bounds::{ByKeyBounds, RecordsBounds};
-use self::ranges::{RecordsByKeyRange, RecordsRange, TableRange, TableReader};
+use self::ranges::{RecordsByKeyRange, TableRange, TableReader};
+
+pub use self::ranges::RecordsRange;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -391,16 +400,11 @@ fn get_one(
     key: impl AsRef<[u8]>,
     include_empty: bool,
 ) -> Result<Option<SignedEntry>> {
-    let table_key = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
-    let record = record_table.get(table_key)?;
-    Ok(record.and_then(|r| {
-        let entry = into_entry(table_key, r.value());
-        if !include_empty && entry.is_empty() {
-            None
-        } else {
-            Some(entry)
-        }
-    }))
+    let id = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
+    let record = record_table.get(id)?;
+    Ok(record
+        .map(|r| into_entry(id, r.value()))
+        .filter(|entry| include_empty || !entry.is_empty()))
 }
 
 /// [`Namespace`] specific wrapper around the [`Store`].
@@ -424,7 +428,8 @@ impl PublicKeyStore for StoreInstance {
 
 impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
-    type RangeIterator<'a> = std::iter::Chain<RangeIterator<'a>, RangeIterator<'a>>;
+    type RangeIterator<'a> =
+        Chain<RecordsRange<'a>, Flatten<std::option::IntoIter<RecordsRange<'a>>>>;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
@@ -458,7 +463,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn is_empty(&self) -> Result<bool> {
-        Ok(self.len()? == 0)
+        let read_tx = self.store.db.begin_read()?;
+        let record_table = read_tx.open_table(RECORDS_TABLE)?;
+        Ok(record_table.is_empty()?)
     }
 
     fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
@@ -520,33 +527,31 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             Ordering::Equal => {
                 // iterator for all entries in replica
                 let bounds = RecordsBounds::namespace(self.namespace);
-                let iter = RangeIterator::with_bounds(&self.store.db, bounds)?;
-                let empty = RangeIterator::empty();
-                iter.chain(empty)
+                let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+                chain_none(iter)
             }
             // regular range: iter1 = x <= t < y, iter2 = none
             Ordering::Less => {
                 // iterator for entries from range.x to range.y
                 let start = Bound::Included(range.x().to_byte_tuple());
                 let end = Bound::Excluded(range.y().to_byte_tuple());
-                let bounds = RecordsBounds::with_bounds(start, end);
-                let iter = RangeIterator::with_bounds(&self.store.db, bounds)?;
-                let empty = RangeIterator::empty();
-                iter.chain(empty)
+                let bounds = RecordsBounds::new(start, end);
+                let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+                chain_none(iter)
             }
             // split range: iter1 = start <= t < y, iter2 = x <= t <= end
             Ordering::Greater => {
                 // iterator for entries from start to range.y
                 let end = Bound::Excluded(range.y().to_byte_tuple());
                 let bounds = RecordsBounds::from_start(&self.namespace, end);
-                let iter = RangeIterator::with_bounds(&self.store.db, bounds)?;
+                let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
 
                 // iterator for entries from range.x to end
                 let start = Bound::Included(range.x().to_byte_tuple());
                 let bounds = RecordsBounds::to_end(&self.namespace, start);
-                let iter2 = RangeIterator::with_bounds(&self.store.db, bounds)?;
+                let iter2 = RecordsRange::with_bounds(&self.store.db, bounds)?;
 
-                iter.chain(iter2)
+                iter.chain(Some(iter2).into_iter().flatten())
             }
         };
         Ok(iter)
@@ -572,9 +577,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn all(&self) -> Result<Self::RangeIterator<'_>> {
         let bounds = RecordsBounds::namespace(self.namespace);
-        let iter = RangeIterator::with_bounds(&self.store.db, bounds)?;
-        let iter2 = RangeIterator::empty();
-        Ok(iter.chain(iter2))
+        let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+        Ok(chain_none(iter))
     }
 
     type ParentIterator<'a> = ParentIterator<'a>;
@@ -589,9 +593,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        let iter = RangeIterator::with_bounds(&self.store.db, bounds)?;
-        let iter2 = RangeIterator::empty();
-        Ok(iter.chain(iter2))
+        let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+        Ok(chain_none(iter))
     }
 
     fn remove_prefix_filtered(
@@ -615,6 +618,12 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         write_tx.commit()?;
         Ok(count)
     }
+}
+
+fn chain_none<'a, I: Iterator<Item = T> + 'a, T>(
+    iter: I,
+) -> Chain<I, Flatten<std::option::IntoIter<I>>> {
+    iter.chain(None.into_iter().flatten())
 }
 
 /// Iterator over parent entries, i.e. entries with the same namespace and author, and a key which
@@ -714,30 +723,6 @@ impl Iterator for LatestIterator<'_> {
     }
 }
 
-/// Iterator over a range of replica entries.
-///
-/// This wraps the [`RecordsRange`] iterator in an option because we have to optionally chain these iterators for the split range
-/// in [`StoreInstance::get_range`].
-#[derive(Debug)]
-pub struct RangeIterator<'a>(Option<RecordsRange<'a>>);
-
-impl<'a> RangeIterator<'a> {
-    fn with_bounds(db: &'a Arc<Database>, bounds: RecordsBounds) -> anyhow::Result<Self> {
-        Ok(Self(Some(RecordsRange::with_bounds(db, bounds)?)))
-    }
-
-    fn empty() -> Self {
-        Self(None)
-    }
-}
-
-impl Iterator for RangeIterator<'_> {
-    type Item = Result<SignedEntry>;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.as_mut()?.next()
-    }
-}
-
 /// A query iterator for entry queries.
 #[derive(Debug)]
 pub struct QueryIterator<'a> {
@@ -769,7 +754,7 @@ impl<'a> QueryIterator<'a> {
                     // single author: both author and key are selected via the range. therefore
                     // set `filter` to `Any`.
                     AuthorFilter::Exact(author) => (
-                        RecordsBounds::bounded(namespace, author, key_filter),
+                        RecordsBounds::author_key(namespace, author, key_filter),
                         KeyFilter::Any,
                     ),
                     // no author set => full table scan with the provided key filter
