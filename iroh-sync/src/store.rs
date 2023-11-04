@@ -386,7 +386,7 @@ impl<T: AsRef<[u8]>> From<T> for KeyFilter {
 }
 
 impl KeyFilter {
-    /// Test if a key is matched by this [`KeyMatcher`].
+    /// Test if a key is matched by this [`KeyFilter`].
     pub fn matches(&self, key: &[u8]) -> bool {
         match self {
             Self::Any => true,
@@ -407,7 +407,7 @@ pub enum AuthorFilter {
 }
 
 impl AuthorFilter {
-    /// Test if an author is matched by this [`AuthorMatcher`].
+    /// Test if an author is matched by this [`AuthorFilter`].
     pub fn matches(&self, author: &AuthorId) -> bool {
         match self {
             Self::Any => true,

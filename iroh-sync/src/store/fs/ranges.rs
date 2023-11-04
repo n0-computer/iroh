@@ -2,7 +2,7 @@
 //!
 //! Because the [`redb`] types all contain references, this uses [`ouroboros`] to create
 //! self-referential structs so that we can embed the [`Range`] iterator together with the
-//! [`ReadonlyTable`] and the [`ReadTransaction`] in a struct for our iterators returned from the
+//! [`ReadableTable`] and the [`ReadTransaction`] in a struct for our iterators returned from the
 //! store.
 
 use std::{fmt, sync::Arc};
@@ -197,12 +197,11 @@ impl<'a> Iterator for RecordsRange<'a> {
 }
 
 #[derive(derive_more::Debug)]
-#[debug("RecordsIndexReader")]
+#[debug("RecordsByKeyRange")]
 pub struct RecordsByKeyRange<'a>(RecordsByKeyRangeInner<'a>);
 
 #[self_referencing]
 struct RecordsByKeyRangeInner<'a> {
-    #[debug("ReadTransaction")]
     read_tx: ReadTransaction<'a>,
 
     #[covariant]

@@ -6,7 +6,7 @@ use crate::{store::KeyFilter, AuthorId, NamespaceId};
 
 use super::{RecordsByKeyId, RecordsByKeyIdOwned, RecordsId, RecordsIdOwned};
 
-/// Bounds on the recors table.
+/// Bounds on the records table.
 ///
 /// Supports bounds by author, key
 pub struct RecordsBounds((Bound<RecordsIdOwned>, Bound<RecordsIdOwned>));
