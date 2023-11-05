@@ -263,7 +263,7 @@ impl MagicEndpointBuilder {
             secret_key,
             derp_map,
             callbacks: self.callbacks,
-            peers_path: self.peers_path,
+            nodes_path: self.peers_path,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
@@ -394,7 +394,7 @@ impl MagicEndpoint {
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
-    /// to the internal addressbook through [`MagicEndpoint::add_peer_addr`]), so these connections
+    /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
     /// are not necessarily active connections.
     pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
         self.msock.tracked_endpoints().await
@@ -423,7 +423,7 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        self.add_peer_addr(node_addr.clone())?;
+        self.add_node_addr(node_addr.clone())?;
 
         let NodeAddr { node_id, info } = node_addr;
         let addr = self.msock.get_mapping_addr(&node_id).await;
@@ -478,8 +478,8 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     // TODO: Make sync
-    pub fn add_peer_addr(&self, node_addr: NodeAddr) -> Result<()> {
-        self.msock.add_peer_addr(node_addr);
+    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        self.msock.add_node_addr(node_addr);
         Ok(())
     }
 
@@ -693,7 +693,7 @@ mod tests {
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
-        endpoint.add_peer_addr(node_addr).unwrap();
+        endpoint.add_node_addr(node_addr).unwrap();
 
         info!("closing endpoint");
         // close the endpoint and restart it
