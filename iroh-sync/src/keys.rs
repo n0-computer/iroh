@@ -130,10 +130,8 @@ impl NamespaceSecret {
     }
 }
 
-/// Identifier for a [`NamespaceSecret`]
-///
-/// This is the corresponding [`VerifyingKey`] for a [`NamespaceSecret`]. It is used as an identifier, and can
-/// be used to verify [`Signature`]s.
+/// The corresponding [`VerifyingKey`] for a [`NamespaceSecret`].
+/// It is used as an identifier, and can be used to verify [`Signature`]s.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
 pub struct NamespacePublicKey(VerifyingKey);
 

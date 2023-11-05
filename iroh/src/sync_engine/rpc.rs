@@ -110,7 +110,7 @@ impl SyncEngine {
         let capability = match req.mode {
             ShareMode::Read => iroh_sync::Capability::Read(req.doc_id),
             ShareMode::Write => {
-                let secret = self.sync.get_capability(req.doc_id).await?;
+                let secret = self.sync.export_secret_key(req.doc_id).await?;
                 iroh_sync::Capability::Write(secret)
             }
         };
