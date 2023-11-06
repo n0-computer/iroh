@@ -754,7 +754,7 @@ impl Subscribers {
     async fn send(&mut self, event: Event) -> bool {
         let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
         let res = futures::future::join_all(futs).await;
-        for (i, res) in res.into_iter().enumerate() {
+        for (i, res) in res.into_iter().enumerate().rev() {
             if res.is_err() {
                 self.0.remove(i);
             }
