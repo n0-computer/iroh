@@ -26,7 +26,7 @@ use crate::{
     AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, ImportNamespaceOutcome, OpenError, PublicKeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -54,7 +54,7 @@ const NAMESPACES_TABLE_V1: TableDefinition<&[u8; 32], &[u8; 32]> =
 // Namespaces
 // Table
 // Key: [u8; 32] # NamespaceId
-// Value: #[u8; 32] # Namespace
+// Value: (u8, [u8; 32]) # (CapabilityKind, Capability)
 const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
     TableDefinition::new("namespaces-2");
 
@@ -185,29 +185,6 @@ impl Store {
         })
     }
 
-    /// Stores a new namespace
-    fn insert_namespace(&self, capability: Capability) -> Result<()> {
-        let write_tx = self.db.begin_write()?;
-        {
-            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-            let capability = {
-                let existing = namespace_table.get(capability.id().as_bytes())?;
-                if let Some(existing) = existing {
-                    let existing = parse_capability(existing.value())?;
-                    capability.merge(existing)?
-                } else {
-                    capability
-                }
-            };
-            let id = capability.id().to_bytes();
-            let (kind, bytes) = capability.raw();
-            namespace_table.insert(&id, (kind, &bytes))?;
-        }
-        write_tx.commit()?;
-
-        Ok(())
-    }
-
     fn insert_author(&self, author: Author) -> Result<()> {
         let write_tx = self.db.begin_write()?;
         {
@@ -304,9 +281,31 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn import_namespace(&self, capability: Capability) -> Result<()> {
-        self.insert_namespace(capability)?;
-        Ok(())
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
+        let write_tx = self.db.begin_write()?;
+        let outcome = {
+            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let (capability, outcome) = {
+                let existing = namespace_table.get(capability.id().as_bytes())?;
+                if let Some(existing) = existing {
+                    let mut existing = parse_capability(existing.value())?;
+                    let outcome = if existing.merge(capability)? {
+                        ImportNamespaceOutcome::Upgraded
+                    } else {
+                        ImportNamespaceOutcome::NoChange
+                    };
+                    (existing, outcome)
+                } else {
+                    (capability, ImportNamespaceOutcome::Inserted)
+                }
+            };
+            let id = capability.id().to_bytes();
+            let (kind, bytes) = capability.raw();
+            namespace_table.insert(&id, (kind, &bytes))?;
+            outcome
+        };
+        write_tx.commit()?;
+        Ok(outcome)
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {

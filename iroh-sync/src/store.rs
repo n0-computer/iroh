@@ -86,7 +86,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     }
 
     /// Import a new replica namespace.
-    fn import_namespace(&self, capability: Capability) -> Result<()>;
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome>;
 
     /// List all replica namespaces in this store.
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;
@@ -170,6 +170,17 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get peers to use for syncing a document.
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
+}
+
+/// Outcome of [`Store::import_namespace`]
+#[derive(Debug, Clone, Copy)]
+pub enum ImportNamespaceOutcome {
+    /// The namespace did not exist before and is now inserted.
+    Inserted,
+    /// The namespace existed and now has an upgraded capability.
+    Upgraded,
+    /// The namespace existed and its capability remains unchanged.
+    NoChange,
 }
 
 /// Filter a get query onto a namespace

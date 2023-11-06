@@ -203,17 +203,20 @@ impl Capability {
 
     /// Merge this capability with another capability.
     ///
-    /// Will return the highest capability level obtainable from the two capabilities.
-    /// I.e. if one of them is a [`Capability::Write`], it will return a [`Capability::Write`], and
-    /// otherwise a [`Capability::Read`].
-    pub fn merge(self, other: Capability) -> Result<Self, CapabilityError> {
+    /// Will return an error if `other` is not a capability for the same namespace.
+    ///
+    /// Returns `true` if the capability was changed, `false` otherwise.
+    pub fn merge(&mut self, other: Capability) -> Result<bool, CapabilityError> {
         if other.id() != self.id() {
             return Err(CapabilityError::NamespaceMismatch);
         }
-        match (&self, &other) {
-            (Capability::Write(_), _) => Ok(self),
-            (_, Capability::Write(_)) => Ok(other),
-            _ => Ok(self),
+
+        // the only capability upgrade is from read-only (self) to writable (other)
+        if matches!(self, Capability::Read(_)) && matches!(other, Capability::Write(_)) {
+            let _ = std::mem::replace(self, other);
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 }
@@ -309,6 +312,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// [`store::Store::remove_replica`]
     pub fn closed(&self) -> bool {
         self.closed
+    }
+
+    /// Merge a capability.
+    ///
+    /// The capability must refer to the the same namespace, otherwise an error will be returned.
+    ///
+    /// This will upgrade the replica's capability when passing a `Capability::Write`.
+    /// It is a no-op if `capability` is a Capability::Read`.
+    pub fn merge_capability(&mut self, capability: Capability) -> Result<bool, CapabilityError> {
+        self.capability.merge(capability)
     }
 
     /// Insert a new record at the given key.
@@ -1112,6 +1125,7 @@ mod tests {
     use rand_core::SeedableRng;
 
     use crate::{
+        actor::SyncHandle,
         ranger::{Range, Store as _},
         store::{self, GetFilter, OpenError, Store},
     };
@@ -1953,9 +1967,21 @@ mod tests {
     }
 
     #[test]
-    fn test_replica_capability() -> Result<()> {
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+    fn test_replica_capability_memory() -> Result<()> {
         let store = store::memory::Store::default();
+        test_replica_capability(store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_capability_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_capability(store)
+    }
+
+    fn test_replica_capability<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = store.new_author(&mut rng)?;
         let namespace = NamespaceSecret::new(&mut rng);
 
@@ -1969,6 +1995,8 @@ mod tests {
         // import write capability - insert must succeed
         let capability = Capability::Write(namespace.clone());
         store.import_namespace(capability)?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(matches!(res, Err(InsertError::ReadOnly)));
         store.close_replica(replica);
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
@@ -1981,6 +2009,60 @@ mod tests {
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(matches!(res, Ok(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_actor_capability_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_actor_capability(store).await
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[tokio::test]
+    async fn test_actor_capability_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_actor_capability(store).await
+    }
+
+    async fn test_actor_capability<S: store::Store>(store: S) -> Result<()> {
+        // test with actor
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let author = Author::new(&mut rng);
+        let handle = SyncHandle::spawn(store, None, "test".into());
+        let author = handle.import_author(author).await?;
+        let namespace = NamespaceSecret::new(&mut rng);
+        let id = namespace.id();
+
+        // import read capability - insert must fail
+        let capability = Capability::Read(namespace.id());
+        handle.import_namespace(capability).await?;
+        handle.open(namespace.id(), Default::default()).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_err());
+
+        // import write capability - insert must succeed
+        let capability = Capability::Write(namespace.clone());
+        handle.import_namespace(capability).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_ok());
+
+        // close and reopen - must still succeed
+        handle.close(namespace.id()).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_err());
+        handle.open(namespace.id(), Default::default()).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_ok());
         Ok(())
     }
 

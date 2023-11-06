@@ -15,7 +15,7 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{self, GetFilter},
+    store::{self, GetFilter, ImportNamespaceOutcome},
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
     SyncOutcome,
@@ -485,13 +485,16 @@ impl<S: store::Store> Actor<S> {
                 let id = author.id();
                 send_reply(reply, self.store.import_author(author).map(|_| id))
             }
-            Action::ImportNamespace {
-                capability: namespace,
-                reply,
-            } => {
-                let id = namespace.id();
-                send_reply(reply, self.store.import_namespace(namespace).map(|_| id))
-            }
+            Action::ImportNamespace { capability, reply } => send_reply_with(reply, self, |this| {
+                let id = capability.id();
+                let outcome = this.store.import_namespace(capability.clone())?;
+                if let ImportNamespaceOutcome::Upgraded = outcome {
+                    if let Ok(replica) = this.states.replica(&id) {
+                        replica.merge_capability(capability)?;
+                    }
+                }
+                Ok(id)
+            }),
             Action::ListAuthors { reply } => iter_to_channel(
                 reply,
                 self.store

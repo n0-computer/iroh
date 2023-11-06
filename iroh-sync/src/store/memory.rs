@@ -18,7 +18,7 @@ use crate::{
     AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes, Record,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, ImportNamespaceOutcome, OpenError, PublicKeyStore};
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
 
@@ -107,16 +107,19 @@ impl super::Store for Store {
             .into_iter())
     }
 
-    fn import_namespace(&self, capability: Capability) -> Result<()> {
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
         let mut table = self.namespaces.write();
-        let existing = table.remove(&capability.id());
-        let capability = if let Some(existing) = existing {
-            capability.merge(existing)?
+        let (capability, outcome) = if let Some(mut existing) = table.remove(&capability.id()) {
+            if existing.merge(capability)? {
+                (existing, ImportNamespaceOutcome::Upgraded)
+            } else {
+                (existing, ImportNamespaceOutcome::NoChange)
+            }
         } else {
-            capability
+            (capability, ImportNamespaceOutcome::Inserted)
         };
         table.insert(capability.id(), capability);
-        Ok(())
+        Ok(outcome)
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
