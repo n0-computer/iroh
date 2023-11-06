@@ -35,7 +35,7 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
-    DocDelResponse, DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
+    DocDelResponse, DocDropRequest, DocGetExactRequest, DocGetManyRequest, DocImportRequest,
     DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetHashRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
     DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
@@ -669,7 +669,7 @@ where
     ) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocGetOneRequest {
+            .rpc(DocGetExactRequest {
                 author,
                 key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),

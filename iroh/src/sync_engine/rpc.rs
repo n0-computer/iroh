@@ -10,13 +10,13 @@ use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
-        DocDelResponse, DocDropRequest, DocDropResponse, DocGetManyRequest, DocGetManyResponse,
-        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
-        DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
-        DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
-        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
-        DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
-        ShareMode,
+        DocDelResponse, DocDropRequest, DocDropResponse, DocGetExactRequest, DocGetExactResponse,
+        DocGetManyRequest, DocGetManyResponse, DocImportRequest, DocImportResponse,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest,
+        DocOpenResponse, DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse,
+        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
+        DocStatusRequest, DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
+        RpcResult, ShareMode,
     },
     sync_engine::SyncEngine,
 };
@@ -223,8 +223,8 @@ impl SyncEngine {
         })
     }
 
-    pub async fn doc_get_exact(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
-        let DocGetOneRequest {
+    pub async fn doc_get_exact(&self, req: DocGetExactRequest) -> RpcResult<DocGetExactResponse> {
+        let DocGetExactRequest {
             doc_id,
             author,
             key,
@@ -234,6 +234,6 @@ impl SyncEngine {
             .sync
             .get_exact(doc_id, author, key, include_empty)
             .await?;
-        Ok(DocGetOneResponse { entry })
+        Ok(DocGetExactResponse { entry })
     }
 }

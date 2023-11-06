@@ -1374,7 +1374,9 @@ mod tests {
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
-        let res = store.get_exact(namespace.id(), author.id(), key, false)?.unwrap();
+        let res = store
+            .get_exact(namespace.id(), author.id(), key, false)?
+            .unwrap();
         assert_eq!(res, entry);
 
         let entry2 = {
@@ -1386,7 +1388,9 @@ mod tests {
 
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
         assert!(matches!(res, Err(InsertError::NewerEntryExists)));
-        let res = store.get_exact(namespace.id(), author.id(), key, false)?.unwrap();
+        let res = store
+            .get_exact(namespace.id(), author.id(), key, false)?
+            .unwrap();
         assert_eq!(res, entry);
 
         Ok(())
@@ -1599,9 +1603,18 @@ mod tests {
         // delete
         let deleted = replica.delete_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
-        assert_eq!(store.get_exact(myspace.id(), alice.id(), b"foobar", false)?, None);
-        assert_eq!(store.get_exact(myspace.id(), alice.id(), b"fooboo", false)?, None);
-        assert_eq!(store.get_exact(myspace.id(), alice.id(), b"foo", false)?, None);
+        assert_eq!(
+            store.get_exact(myspace.id(), alice.id(), b"foobar", false)?,
+            None
+        );
+        assert_eq!(
+            store.get_exact(myspace.id(), alice.id(), b"fooboo", false)?,
+            None
+        );
+        assert_eq!(
+            store.get_exact(myspace.id(), alice.id(), b"foo", false)?,
+            None
+        );
 
         Ok(())
     }

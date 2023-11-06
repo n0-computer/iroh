@@ -140,7 +140,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
-        include_empty: bool
+        include_empty: bool,
     ) -> Result<Option<SignedEntry>>;
 
     /// Get all content hashes of all replicas in the store.
