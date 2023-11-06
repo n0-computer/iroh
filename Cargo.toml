@@ -7,7 +7,6 @@ members = [
   "iroh-net",
   "iroh-sync",
   "iroh-test",
-  "examples/tracker",
   "iroh-net/bench"
 ]
 resolver = "2"

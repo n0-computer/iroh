@@ -3159,23 +3159,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
-name = "pkarr"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "178fff5a1cce6c245ec8f9d78c06cc137dda0fd5d41f415a1f10c43d565f163b"
-dependencies = [
- "bytes",
- "ed25519-dalek",
- "rand",
- "reqwest",
- "self_cell",
- "simple-dns",
- "thiserror",
- "url",
- "z32",
-]
-
-[[package]]
 name = "pkcs1"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4439,29 +4422,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-dns"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cae9a3fcdadafb6d97f4c0e007e4247b114ee0f119f650c3cbf3a8b3a1479694"
-dependencies = [
- "bitflags 2.4.1",
-]
-
-[[package]]
-name = "simple-mdns"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "253138b1b321977599543914b4658e1fdf7b966a58e2f69944da85f184ca78a8"
-dependencies = [
- "lazy_static",
- "log",
- "radix_trie",
- "simple-dns",
- "socket2 0.5.5",
- "tokio",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5051,18 +5011,6 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd79e69d3b627db300ff956027cc6c3798cef26d22526befdfcd12feeb6d2257"
-dependencies = [
- "serde",
- "serde_spanned",
- "toml_datetime",
- "toml_edit 0.19.15",
-]
-
-[[package]]
-name = "toml"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ef75d881185fd2df4a040793927c153d863651108a93c7e17a9e591baa95cc6"
@@ -5089,8 +5037,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
 dependencies = [
  "indexmap 2.0.2",
- "serde",
- "serde_spanned",
  "toml_datetime",
  "winnow",
 ]
@@ -5238,38 +5184,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "tracker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bao-tree",
- "bytes",
- "clap",
- "derive_more",
- "dirs-next",
- "futures",
- "hex",
- "humantime",
- "iroh",
- "iroh-bytes",
- "iroh-net",
- "pkarr",
- "postcard",
- "quinn",
- "rand",
- "serde",
- "serde_json",
- "simple-mdns",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml 0.7.8",
- "tracing",
- "tracing-subscriber",
- "ttl_cache",
 ]
 
 [[package]]
@@ -5877,12 +5791,6 @@ checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
 dependencies = [
  "time",
 ]
-
-[[package]]
-name = "z32"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4e62ec361f7259399a83b7983270dd0249067d94600c50475e65dca64e24083"
 
 [[package]]
 name = "zerocopy"
