@@ -803,7 +803,7 @@ impl Debug for RecordIdentifier {
 
 impl RangeKey for RecordIdentifier {
     fn is_prefix_of(&self, other: &Self) -> bool {
-        other.as_bytes().starts_with(self.as_bytes())
+        other.as_ref().starts_with(self.as_ref())
     }
 }
 
@@ -833,13 +833,8 @@ impl RecordIdentifier {
         out.extend_from_slice(&self.0);
     }
 
-    /// Get this [`RecordIdentifier`] as a byte slices.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
     /// Get this [`RecordIdentifier`] as [Bytes].
-    pub fn to_bytes(&self) -> Bytes {
+    pub fn as_bytes(&self) -> Bytes {
         self.0.clone()
     }
 
@@ -881,6 +876,12 @@ impl RecordIdentifier {
     pub fn author(&self) -> AuthorId {
         let value: &[u8; 32] = &self.0[AUTHOR_BYTES].try_into().unwrap();
         value.into()
+    }
+}
+
+impl AsRef<[u8]> for RecordIdentifier {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
