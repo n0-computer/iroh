@@ -18,7 +18,7 @@ pub const CONFIG_DEFAULTS_FILE: &str = "config.defaults.toml";
 pub const CONFIG_FILE: &str = "config.toml";
 pub const SERVER_KEY_FILE: &str = "server.key";
 pub const CLIENT_KEY_FILE: &str = "client.key";
-pub const TRACKER_HOME_ENV_VAR: &str =  "IROH_TRACKER_HOME";
+pub const TRACKER_HOME_ENV_VAR: &str = "IROH_TRACKER_HOME";
 
 /// Data format of the announce data file.
 ///

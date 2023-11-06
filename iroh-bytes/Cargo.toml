@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bytes"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
@@ -10,6 +10,9 @@ repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
+
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -36,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 thiserror = "1"
-tokio = { version = "1" }
+tokio = { version = "1", features = ["fs"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"
@@ -51,4 +54,4 @@ tokio = { version = "1", features = ["macros", "test-util"] }
 
 [features]
 default = ["flat-db"]
-flat-db = ["reflink-copy", "tokio/fs"]
+flat-db = ["reflink-copy"]

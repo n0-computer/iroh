@@ -2074,7 +2074,7 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bytes"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2236,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "erased_set",
  "hyper",
@@ -2249,7 +2249,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.2.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-sync"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2389,7 +2389,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3285,9 +3285,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b559898e0b4931ed2d3b959ab0c2da4d99cc644c4b0b1a35b4d344027f474023"
+checksum = "3bccab0e7fd7cc19f820a1c8c91720af652d0c88dc9664dd72aef2614f04af3b"
 
 [[package]]
 name = "positioned-io"

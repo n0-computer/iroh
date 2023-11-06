@@ -24,7 +24,7 @@ use iroh_net::{
     magicsock::EndpointInfo,
     netcheck, portmapper,
     util::AbortingJoinHandle,
-    MagicEndpoint, PeerAddr,
+    MagicEndpoint, NodeAddr, NodeId,
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
@@ -256,8 +256,8 @@ async fn report(
     stun_port: u16,
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::default().await;
-    let mut client = netcheck::Client::new(Some(port_mapper)).await?;
+    let port_mapper = portmapper::Client::default();
+    let mut client = netcheck::Client::new(Some(port_mapper))?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -289,7 +289,7 @@ struct Gui {
 }
 
 impl Gui {
-    fn new(endpoint: MagicEndpoint, peer_id: PublicKey) -> Self {
+    fn new(endpoint: MagicEndpoint, node_id: NodeId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
@@ -314,7 +314,7 @@ impl Gui {
         let counter_task = AbortingJoinHandle(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &peer_id).await;
+                Self::update_connection_info(&conn_info, &endpoint, &node_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }));
@@ -332,13 +332,13 @@ impl Gui {
     async fn update_connection_info(
         target: &ProgressBar,
         endpoint: &MagicEndpoint,
-        peer_id: &PublicKey,
+        node_id: &NodeId,
     ) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.connection_info(*peer_id).await {
+        let msg = match endpoint.connection_info(*node_id).await {
             Ok(Some(EndpointInfo {
                 derp_region,
                 conn_type,
@@ -535,7 +535,7 @@ async fn passive_side(
     endpoint: MagicEndpoint,
     connection: quinn::Connection,
 ) -> anyhow::Result<()> {
-    let remote_peer_id = magic_endpoint::get_peer_id(&connection).await?;
+    let remote_peer_id = magic_endpoint::get_peer_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
     loop {
         match connection.accept_bi().await {
@@ -611,7 +611,7 @@ async fn make_endpoint(
 }
 
 async fn connect(
-    peer_id: PublicKey,
+    node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
     derp_region: Option<u16>,
@@ -619,9 +619,9 @@ async fn connect(
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, derp_map).await?;
 
-    tracing::info!("dialing {:?}", peer_id);
-    let peer_addr = PeerAddr::from_parts(peer_id, derp_region, direct_addresses);
-    let conn = endpoint.connect(peer_addr, &DR_DERP_ALPN).await;
+    tracing::info!("dialing {:?}", node_id);
+    let node_addr = NodeAddr::from_parts(node_id, derp_region, direct_addresses);
+    let conn = endpoint.connect(node_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
             if let Err(cause) = passive_side(endpoint.clone(), connection).await {
@@ -629,7 +629,7 @@ async fn connect(
             }
         }
         Err(cause) => {
-            eprintln!("unable to connect to {peer_id}: {cause}");
+            eprintln!("unable to connect to {node_id}: {cause}");
         }
     }
 
@@ -663,7 +663,7 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(derp_region) = endpoint.my_derp().await {
+    if let Some(derp_region) = endpoint.my_derp() {
         println!(
             "iroh doctor connect {} --derp-region {}",
             secret_key.public(),
@@ -679,8 +679,7 @@ async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = magic_endpoint::get_peer_id(&connection).await
-                        else {
+                        let Ok(remote_peer_id) = magic_endpoint::get_peer_id(&connection) else {
                             return;
                         };
                         println!("Accepted connection from {}", remote_peer_id);
@@ -726,7 +725,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
         enable_pcp,
         enable_nat_pmp,
     };
-    let port_mapper = portmapper::Client::new(config).await;
+    let port_mapper = portmapper::Client::new(config);
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
@@ -748,7 +747,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
 
 async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     println!("probing port mapping protocols with {config:?}");
-    let port_mapper = portmapper::Client::new(config).await;
+    let port_mapper = portmapper::Client::new(config);
     let probe_rx = port_mapper.probe();
     let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
     println!("{probe}");

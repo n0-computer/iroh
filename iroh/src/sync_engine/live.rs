@@ -2,12 +2,12 @@
 
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::downloader::{DownloadKind, Downloader, PeerRole};
+use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
-use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{
     actor::{OpenOpts, SyncHandle},
     net::{
@@ -52,13 +52,13 @@ pub struct SyncReport {
 pub enum ToLiveActor {
     StartSync {
         namespace: NamespaceId,
-        peers: Vec<PeerAddr>,
+        peers: Vec<NodeAddr>,
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
     JoinPeers {
         namespace: NamespaceId,
-        peers: Vec<PeerAddr>,
+        peers: Vec<NodeAddr>,
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
@@ -321,7 +321,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         let endpoint = self.endpoint.clone();
         let sync = self.sync.clone();
         let fut = async move {
-            let res = connect_and_sync(&endpoint, &sync, namespace, PeerAddr::new(peer)).await;
+            let res = connect_and_sync(&endpoint, &sync, namespace, NodeAddr::new(peer)).await;
             (namespace, peer, reason, res)
         }
         .instrument(Span::current());
@@ -341,7 +341,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         Ok(())
     }
 
-    async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<PeerAddr>) -> Result<()> {
+    async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<NodeAddr>) -> Result<()> {
         // update state to allow sync
         if !self.state.is_syncing(&namespace) {
             let opts = OpenOpts::default()
@@ -356,18 +356,18 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 // no peers for this document
             }
             Ok(Some(known_useful_peers)) => {
-                let as_peer_addr = known_useful_peers.into_iter().filter_map(|peer_id_bytes| {
+                let as_node_addr = known_useful_peers.into_iter().filter_map(|peer_id_bytes| {
                     // peers are stored as bytes, don't fail the operation if they can't be
                     // decoded: simply ignore the peer
                     match PublicKey::from_bytes(&peer_id_bytes) {
-                        Ok(public_key) => Some(PeerAddr::new(public_key)),
+                        Ok(public_key) => Some(NodeAddr::new(public_key)),
                         Err(_signing_error) => {
                             warn!("potential db corruption: peers per doc can't be decoded");
                             None
                         }
                     }
                 });
-                peers.extend(as_peer_addr);
+                peers.extend(as_node_addr);
             }
             Err(e) => {
                 // try to continue if peers per doc can't be read since they are not vital for sync
@@ -404,14 +404,14 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     async fn join_peers(
         &mut self,
         namespace: NamespaceId,
-        peers: Vec<PeerAddr>,
+        peers: Vec<NodeAddr>,
     ) -> anyhow::Result<()> {
-        let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.peer_id).collect();
+        let peer_ids: Vec<PublicKey> = peers.iter().map(|p| p.node_id).collect();
 
         // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
-            let peer_id = peer.peer_id;
-            if let Err(err) = self.endpoint.add_peer_addr(peer).await {
+            let peer_id = peer.node_id;
+            if let Err(err) = self.endpoint.add_node_addr(peer) {
                 warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
             }
         }
@@ -637,8 +637,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
                     let from = PublicKey::from_bytes(&from)?;
                     let role = match content_status {
-                        ContentStatus::Complete => PeerRole::Provider,
-                        _ => PeerRole::Candidate,
+                        ContentStatus::Complete => Role::Provider,
+                        _ => Role::Candidate,
                     };
                     let handle = self
                         .downloader

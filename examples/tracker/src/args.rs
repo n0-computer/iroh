@@ -55,7 +55,7 @@ impl ContentArg {
         match self {
             ContentArg::Hash(_) => None,
             ContentArg::HashAndFormat(_) => None,
-            ContentArg::Ticket(ticket) => Some(ticket.node_addr().peer_id),
+            ContentArg::Ticket(ticket) => Some(ticket.node_addr().node_id),
         }
     }
 }

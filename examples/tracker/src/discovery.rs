@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use futures::{future, future::BoxFuture, FutureExt};
-use iroh_net::{AddrInfo, PeerAddr};
+use iroh_net::{AddrInfo, NodeAddr};
 use pkarr::{
     dns::rdata::{RData, A, AAAA, TXT},
     dns::{Name, Packet, ResourceRecord, CLASS},
@@ -59,7 +59,7 @@ fn filter_u16(rr: &ResourceRecord) -> Option<u16> {
     }
 }
 
-fn packet_to_node_addr(peer_id: &NodeId, packet: &SignedPacket) -> PeerAddr {
+fn packet_to_node_addr(node_id: &NodeId, packet: &SignedPacket) -> NodeAddr {
     let direct_addresses = packet
         .resource_records("@")
         .filter_map(filter_txt)
@@ -68,8 +68,8 @@ fn packet_to_node_addr(peer_id: &NodeId, packet: &SignedPacket) -> PeerAddr {
     let derp_region = packet
         .resource_records(DERP_REGION_KEY)
         .find_map(filter_u16);
-    PeerAddr {
-        peer_id: *peer_id,
+    NodeAddr {
+        node_id: *node_id,
         info: AddrInfo {
             derp_region,
             direct_addresses,

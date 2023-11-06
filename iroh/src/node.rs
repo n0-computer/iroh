@@ -41,7 +41,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMode,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, PeerAddr,
+    tls, MagicEndpoint, NodeAddr,
 };
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -331,7 +331,7 @@ where
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone()).await;
+        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone());
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             rt.clone(),
@@ -743,7 +743,7 @@ impl<D: ReadableStore> Node<D> {
 
     /// Return a client to control this node over an in-memory channel.
     pub fn client(&self) -> crate::client::mem::Iroh {
-        crate::client::Iroh::new(self.controller())
+        crate::client::Iroh::new(self.controller(), self.inner.rt.clone())
     }
 
     /// Return a single token containing everything needed to get a hash.
@@ -755,14 +755,14 @@ impl<D: ReadableStore> Node<D> {
         Ticket::new(me, hash, format, None)
     }
 
-    /// Return the [`PeerAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<PeerAddr> {
+    /// Return the [`NodeAddr`] for this node.
+    pub async fn my_addr(&self) -> Result<NodeAddr> {
         self.inner.endpoint.my_addr().await
     }
 
     /// Get the DERP region we are connected to.
-    pub async fn my_derp(&self) -> Option<u16> {
-        self.inner.endpoint.my_derp().await
+    pub fn my_derp(&self) -> Option<u16> {
+        self.inner.endpoint.my_derp()
     }
 
     /// Aborts the node.
@@ -1216,6 +1216,7 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
+    #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
         let res = Ok(NodeStatsResponse {
@@ -1239,6 +1240,8 @@ impl<D: BaoStore> RpcHandler<D> {
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
     }
+
+    #[allow(clippy::unused_async)]
     async fn node_shutdown(self, request: NodeShutdownRequest) {
         if request.force {
             info!("hard shutdown requested");
@@ -1584,7 +1587,7 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             DocSubscribe(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
-                    async move { handler.inner.sync.doc_subscribe(req).await }.flatten_stream()
+                    async move { handler.inner.sync.doc_subscribe(req) }.flatten_stream()
                 })
                 .await
             }
@@ -1684,6 +1687,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
+        let _guard = iroh_test::logging::setup();
+
         let rt = test_runtime();
         let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
@@ -1702,6 +1707,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         use std::io::Cursor;
         let rt = runtime::Handle::from_current(1)?;
         let db = iroh_bytes::store::mem::Store::new(rt);
@@ -1726,6 +1733,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let rt = runtime::Handle::from_current(1)?;
         let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();

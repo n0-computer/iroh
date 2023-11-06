@@ -1,8 +1,6 @@
 use std::{
-    fmt,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
-    str::FromStr,
     sync::Arc,
 };
 
@@ -28,7 +26,7 @@ use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
 #[derive(Debug)]
 pub struct StartOptions {
     pub addr: SocketAddr,
-    pub rpc_port: RpcPort,
+    pub rpc_port: u16,
     pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
@@ -136,7 +134,7 @@ async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Sto
     for ep in eps {
         println!("  {}", ep.addr);
     }
-    let region = provider.my_derp().await;
+    let region = provider.my_derp();
     println!(
         "DERP Region: {}",
         region.map_or("None".to_string(), |r| r.to_string())
@@ -174,40 +172,4 @@ fn make_rpc_endpoint(
     let rpc_endpoint =
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
     Ok(rpc_endpoint)
-}
-
-#[derive(Debug, Clone)]
-pub enum RpcPort {
-    Enabled(u16),
-    Disabled,
-}
-
-impl From<RpcPort> for Option<u16> {
-    fn from(value: RpcPort) -> Self {
-        match value {
-            RpcPort::Enabled(port) => Some(port),
-            RpcPort::Disabled => None,
-        }
-    }
-}
-
-impl fmt::Display for RpcPort {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RpcPort::Enabled(port) => write!(f, "{port}"),
-            RpcPort::Disabled => write!(f, "disabled"),
-        }
-    }
-}
-
-impl FromStr for RpcPort {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "disabled" {
-            Ok(RpcPort::Disabled)
-        } else {
-            Ok(RpcPort::Enabled(s.parse()?))
-        }
-    }
 }

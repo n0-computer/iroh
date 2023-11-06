@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use anyhow::{ensure, Result};
 use iroh_bytes::{protocol::RequestToken, BlobFormat, Hash};
-use iroh_net::{derp::DerpMap, key::SecretKey, PeerAddr};
+use iroh_net::{derp::DerpMap, key::SecretKey, NodeAddr};
 use serde::{Deserialize, Serialize};
 
 use crate::dial::Options;
@@ -18,7 +18,7 @@ use super::*;
 #[display("{}", IrohTicket::serialize(self))]
 pub struct Ticket {
     /// The provider to get a file from.
-    node: PeerAddr,
+    node: NodeAddr,
     /// The format of the blob.
     format: BlobFormat,
     /// The hash to retrieve.
@@ -31,8 +31,8 @@ impl IrohTicket for Ticket {
     const KIND: Kind = Kind::Blob;
 
     fn verify(&self) -> std::result::Result<(), &'static str> {
-        if self.node.info.direct_addresses.is_empty() {
-            return Err("Invalid address list in ticket");
+        if self.node.info.is_empty() {
+            return Err("addressing info cannot be empty");
         }
         Ok(())
     }
@@ -49,15 +49,12 @@ impl FromStr for Ticket {
 impl Ticket {
     /// Creates a new ticket.
     pub fn new(
-        peer: PeerAddr,
+        peer: NodeAddr,
         hash: Hash,
         format: BlobFormat,
         token: Option<RequestToken>,
     ) -> Result<Self> {
-        ensure!(
-            !peer.info.direct_addresses.is_empty(),
-            "addrs list can not be empty"
-        );
+        ensure!(!peer.info.is_empty(), "addressing info cannot be empty");
         Ok(Self {
             hash,
             format,
@@ -71,8 +68,8 @@ impl Ticket {
         self.hash
     }
 
-    /// The [`PeerAddr`] of the provider for this ticket.
-    pub fn node_addr(&self) -> &PeerAddr {
+    /// The [`NodeAddr`] of the provider for this ticket.
+    pub fn node_addr(&self) -> &NodeAddr {
         &self.node
     }
 
@@ -97,7 +94,7 @@ impl Ticket {
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (PeerAddr, Hash, BlobFormat, Option<RequestToken>) {
+    pub fn into_parts(self) -> (NodeAddr, Hash, BlobFormat, Option<RequestToken>) {
         let Ticket {
             node: peer,
             hash,
@@ -163,7 +160,7 @@ mod tests {
         let derp_region = Some(0);
         Ticket {
             hash,
-            node: PeerAddr::from_parts(peer, derp_region, vec![addr]),
+            node: NodeAddr::from_parts(peer, derp_region, vec![addr]),
             token: Some(token),
             format: BlobFormat::HashSeq,
         }

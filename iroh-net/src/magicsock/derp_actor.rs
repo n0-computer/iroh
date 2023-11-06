@@ -470,7 +470,7 @@ impl DerpActor {
                         // We're closing anyway; return to stop dialing.
                         return None;
                     }
-                    conn.get_derp_region(region_id).await
+                    conn.get_derp_region(region_id)
                 })
             })
             .build(self.conn.secret_key.clone())

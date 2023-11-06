@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, MagicEndpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error_span, trace, Instrument};
 
@@ -30,10 +30,10 @@ pub async fn connect_and_sync(
     endpoint: &MagicEndpoint,
     sync: &SyncHandle,
     namespace: NamespaceId,
-    peer: PeerAddr,
+    peer: NodeAddr,
 ) -> Result<SyncFinished, ConnectError> {
     let t_start = Instant::now();
-    let peer_id = peer.peer_id;
+    let peer_id = peer.node_id;
     trace!("connect");
     let connection = endpoint
         .connect(peer, SYNC_ALPN)
@@ -115,9 +115,7 @@ where
 {
     let t_start = Instant::now();
     let connection = connecting.await.map_err(AcceptError::connect)?;
-    let peer = get_peer_id(&connection)
-        .await
-        .map_err(AcceptError::connect)?;
+    let peer = get_peer_id(&connection).map_err(AcceptError::connect)?;
     let (mut send_stream, mut recv_stream) = connection
         .accept_bi()
         .await

@@ -6,7 +6,7 @@ use super::actor::NetworkMessage;
 pub(super) struct RouteMonitor {}
 
 impl RouteMonitor {
-    pub(super) async fn new(_sender: flume::Sender<NetworkMessage>) -> Result<Self> {
+    pub(super) fn new(_sender: flume::Sender<NetworkMessage>) -> Result<Self> {
         // Very sad monitor. Android doesn't allow us to do this
 
         Ok(RouteMonitor {})

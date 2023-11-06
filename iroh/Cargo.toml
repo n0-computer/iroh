@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -12,6 +12,9 @@ default-run = "iroh"
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
@@ -22,14 +25,14 @@ flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
-iroh-bytes = { version = "0.8.0", path = "../iroh-bytes" }
+iroh-bytes = { version = "0.9.0", path = "../iroh-bytes" }
 iroh-io = { version = "0.3.0", features = ["stats"] }
-iroh-metrics = { version = "0.8.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.8.0", path = "../iroh-net" }
+iroh-metrics = { version = "0.9.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.9.0", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-sync = { version = "0.8.0", path = "../iroh-sync" }
-iroh-gossip = { version = "0.8.0", path = "../iroh-gossip" }
+iroh-sync = { version = "0.9.0", path = "../iroh-sync" }
+iroh-gossip = { version = "0.9.0", path = "../iroh-gossip" }
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }

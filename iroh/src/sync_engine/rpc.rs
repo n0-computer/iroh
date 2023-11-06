@@ -119,7 +119,7 @@ impl SyncEngine {
         }))
     }
 
-    pub async fn doc_subscribe(
+    pub fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {

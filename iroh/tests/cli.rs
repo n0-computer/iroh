@@ -342,12 +342,13 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
                 "--addr",
                 ADDR,
                 "--rpc-port",
-                "disabled",
+                "0",
                 path.to_str().unwrap(),
                 "--wrap",
             ],
         )
         .env("IROH_DATA_DIR", &iroh_data_dir)
+        .env_remove("RUST_LOG")
         .stdin_null()
         .stderr_capture()
         .reader()
@@ -410,6 +411,7 @@ fn cli_provide_addresses() -> Result<()> {
 
     // test output
     let get_output = cmd(iroh_bin(), ["--rpc-port", RPC_PORT, "node", "status"])
+        .env_remove("RUST_LOG")
         // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
         .stdout_capture()
         .run()?;
@@ -476,7 +478,7 @@ fn make_provider_in(
         "--addr",
         addr.unwrap_or(ADDR),
         "--rpc-port",
-        rpc_port.unwrap_or("disabled"),
+        rpc_port.unwrap_or("0"),
     ];
     if wrap {
         args.push("--wrap");
@@ -486,6 +488,7 @@ fn make_provider_in(
         // .stderr_null()
         // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
         // .env("RUST_LOG", "iroh_bytes=debug,iroh_net=warn,iroh=debug,warn")
+        .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir);
 
     let provider = match input {
@@ -548,6 +551,7 @@ fn make_get_cmd(ticket: &str, out: Option<PathBuf>) -> duct::Expression {
     } else {
         cmd(iroh_bin(), ["get", "--ticket", ticket])
     }
+    .env_remove("RUST_LOG")
     .stdout_capture()
     .stderr_capture()
 }
@@ -631,7 +635,7 @@ fn test_provide_get_loop_single(
         .direct_addresses()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
-    let peer = ticket.node_addr().peer_id.to_string();
+    let peer = ticket.node_addr().node_id.to_string();
     let region = ticket
         .node_addr()
         .derp_region()
@@ -653,6 +657,7 @@ fn test_provide_get_loop_single(
     let hash_str = hash.to_string();
     args.push(&hash_str);
     let cmd = cmd(iroh_bin(), args)
+        .env_remove("RUST_LOG")
         .stdout_capture()
         .stderr_capture()
         .unchecked();

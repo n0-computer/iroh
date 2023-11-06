@@ -1,11 +1,10 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, HashSet},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
-use futures::future::BoxFuture;
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
@@ -13,8 +12,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
-    config, disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
-    net::ip::is_unicast_link_local, stun, util::derp_only_mode, PeerAddr,
+    disco, key::PublicKey, magic_endpoint::AddrInfo, magicsock::Timer,
+    net::ip::is_unicast_link_local, stun, util::derp_only_mode, NodeAddr,
 };
 
 use crate::magicsock::{
@@ -24,7 +23,7 @@ use crate::magicsock::{
 use super::best_addr::{self, BestAddr, ClearReason};
 use super::IpPort;
 
-/// Number of addresses that are not active that we keep around per peer.
+/// Number of addresses that are not active that we keep around per node.
 ///
 /// See [`Endpoint::prune_direct_addresses`].
 pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 5;
@@ -75,14 +74,14 @@ pub enum PingRole {
     Reactivate,
 }
 
-/// A conneciton endpoint that picks the best available path to communicate with a peer,
-/// based on network conditions and what the peer supports.
+/// A conneciton endpoint that picks the best available path to communicate with a node,
+/// based on network conditions and what the node supports.
 #[derive(Debug)]
 pub(super) struct Endpoint {
     id: usize,
-    /// The UDP address used on the QUIC-layer to address this peer.
+    /// The UDP address used on the QUIC-layer to address this node.
     quic_mapped_addr: QuicMappedAddr,
-    /// Peer pub(super)lic key (for UDP + DERP)
+    /// Node pub(super)lic key (for UDP + DERP)
     public_key: PublicKey,
     /// Last time we pinged all endpoints
     last_full_ping: Option<Instant>,
@@ -91,24 +90,14 @@ pub(super) struct Endpoint {
     derp_region: Option<(u16, EndpointState)>,
     /// Best non-DERP path.
     best_addr: BestAddr,
-    /// [`EndpointState`] for this peer's direct addresses.
+    /// [`EndpointState`] for this node's direct addresses.
     direct_addr_state: HashMap<IpPort, EndpointState>,
-    is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
-    /// Any outstanding "tailscale ping" commands running
-    pending_cli_pings: Vec<PendingCliPing>,
     sent_ping: HashMap<stun::TransactionId, SentPing>,
-    /// Last time this peer was used.
+    /// Last time this node was used.
     ///
-    /// A peer is marked as in use when an endpoint to contact them is requested or if UDP activity
+    /// A node is marked as in use when an endpoint to contact them is requested or if UDP activity
     /// is registered.
     last_used: Option<Instant>,
-}
-
-#[derive(derive_more::Debug)]
-pub struct PendingCliPing {
-    pub res: config::PingResult,
-    #[debug("cb: Box<..>")]
-    pub cb: Box<dyn Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
 }
 
 #[derive(Debug)]
@@ -124,7 +113,7 @@ impl Endpoint {
         let quic_mapped_addr = QuicMappedAddr::generate();
 
         if options.derp_region.is_some() {
-            // we potentially have a relay connection to the peer
+            // we potentially have a relay connection to the node
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
 
@@ -139,8 +128,6 @@ impl Endpoint {
             best_addr: Default::default(),
             sent_ping: HashMap::new(),
             direct_addr_state: HashMap::new(),
-            is_call_me_maybe_ep: HashMap::new(),
-            pending_cli_pings: Vec::new(),
             last_used: options.active.then(Instant::now),
         }
     }
@@ -312,70 +299,11 @@ impl Endpoint {
         }
     }
 
-    /// Starts a ping for the "ping" command.
-    /// `res` is value to call cb with, already partially filled.
-    #[allow(unused)]
-    pub(super) async fn cli_ping<F>(
-        &mut self,
-        mut res: config::PingResult,
-        cb: F,
-    ) -> Vec<PingAction>
-    where
-        F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
-    {
-        self.pending_cli_pings.push(PendingCliPing {
-            res,
-            cb: Box::new(cb),
-        });
-
-        let now = Instant::now();
-        let mut msgs = Vec::new();
-        let (udp_addr, derp_region, _should_ping) = self.addr_for_send(&now);
-        if let Some(derp_region) = derp_region {
-            if let Some(msg) = self.start_ping(SendAddr::Derp(derp_region), DiscoPingPurpose::Cli) {
-                msgs.push(PingAction::SendPing(msg));
-            }
-        }
-        if let Some(udp_addr) = udp_addr {
-            if let best_addr::State::Valid(_) = self.best_addr.state(now) {
-                // Already have an active session, so just ping the address we're using.
-                // Otherwise "tailscale ping" results to a node on the local network
-                // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
-                // IPv6 address, both 1ms away, and it's random who replies first.
-                if let Some(msg) = self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::Cli) {
-                    msgs.push(PingAction::SendPing(msg));
-                }
-            } else {
-                let eps: Vec<_> = self.direct_addr_state.keys().cloned().collect();
-                for ep in eps {
-                    if let Some(msg) =
-                        self.start_ping(SendAddr::Udp(ep.into()), DiscoPingPurpose::Cli)
-                    {
-                        msgs.push(PingAction::SendPing(msg));
-                    }
-                }
-            }
-        }
-        // NOTE: this should be checked for before dialing
-        // In our current set up, there is no way to report an error.
-        // TODO(ramfox): figure out method of reporting dial errors this far down into the stack
-        if udp_addr.is_none() && derp_region.is_none() {
-            tracing::error!(
-                "unable to ping endpoint {} {:?}, no UDP or DERP addresses known.",
-                self.id,
-                self.public_key
-            );
-        }
-
-        msgs
-    }
-
     /// Cleanup the expired ping for the passed in txid.
-    #[instrument("disco", skip_all, fields(peer = %self.public_key.fmt_short()))]
+    #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {
-            // TODO: not warn?
-            warn!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
+            debug!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
                 SendAddr::Udp(addr) => {
                     if let Some(ep_state) = self.direct_addr_state.get_mut(&addr.into()) {
@@ -430,29 +358,27 @@ impl Endpoint {
         trace!(%to, tx = %hex::encode(tx_id), ?purpose, "record ping sent");
 
         let now = Instant::now();
-        if purpose != DiscoPingPurpose::Cli {
-            let mut ep_found = false;
-            match to {
-                SendAddr::Udp(addr) => {
-                    if let Some(st) = self.direct_addr_state.get_mut(&addr.into()) {
-                        st.last_ping.replace(now);
+        let mut ep_found = false;
+        match to {
+            SendAddr::Udp(addr) => {
+                if let Some(st) = self.direct_addr_state.get_mut(&addr.into()) {
+                    st.last_ping.replace(now);
+                    ep_found = true
+                }
+            }
+            SendAddr::Derp(region) => {
+                if let Some((home_derp, relay_state)) = self.derp_region.as_mut() {
+                    if *home_derp == region {
+                        relay_state.last_ping.replace(now);
                         ep_found = true
                     }
                 }
-                SendAddr::Derp(region) => {
-                    if let Some((home_derp, relay_state)) = self.derp_region.as_mut() {
-                        if *home_derp == region {
-                            relay_state.last_ping.replace(now);
-                            ep_found = true
-                        }
-                    }
-                }
             }
-            if !ep_found {
-                // Shouldn't happen. But don't ping an endpoint that's not active for us.
-                warn!(%to, ?purpose, "unexpected attempt to ping no longer live endpoint");
-                return;
-            }
+        }
+        if !ep_found {
+            // Shouldn't happen. But don't ping an endpoint that's not active for us.
+            warn!(%to, ?purpose, "unexpected attempt to ping no longer live endpoint");
+            return;
         }
 
         let id = self.id;
@@ -480,7 +406,7 @@ impl Endpoint {
         // queue a ping to our derper, if needed.
         if let Some((region, state)) = self.derp_region.as_ref() {
             if state.needs_ping(&now) {
-                debug!(?region, "peer's derp region needs ping");
+                debug!(?region, "node's derp region needs ping");
                 if let Some(msg) =
                     self.start_ping(SendAddr::Derp(*region), DiscoPingPurpose::Discovery)
                 {
@@ -534,7 +460,7 @@ impl Endpoint {
             if let Some((derp_region, _state)) = self.derp_region.as_ref() {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
                 // it doesn't know already) and then send a CallMeMaybe
-                // message to our peer via DERP informing them that we've
+                // message to our node via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
                 debug!(?derp_region, "queue call-me-maybe");
@@ -583,8 +509,8 @@ impl Endpoint {
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
-    #[instrument(skip_all, fields(peer = %self.public_key.fmt_short()))]
-    fn reset(&mut self) {
+    #[instrument(skip_all, fields(node = %self.public_key.fmt_short()))]
+    pub(super) fn reset(&mut self) {
         self.last_full_ping = None;
         self.best_addr
             .clear(ClearReason::Reset, self.derp_region.is_some());
@@ -606,7 +532,7 @@ impl Endpoint {
             SendAddr::Udp(addr) => match self.direct_addr_state.entry(addr.into()) {
                 Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) => {
-                    info!(%addr, "new direct addr for peer");
+                    info!(%addr, "new direct addr for node");
                     vacant.insert(EndpointState::with_ping(tx_id, now));
                     PingRole::NewEndpoint
                 }
@@ -614,15 +540,15 @@ impl Endpoint {
             SendAddr::Derp(region) => {
                 match self.derp_region.as_mut() {
                     Some((home_region, _state)) if *home_region != region => {
-                        // either the peer changed regions or we didn't have a relay address for the
-                        // peer. In both cases, trust the new confirmed region
-                        info!(%region, "new relay addr for peer");
+                        // either the node changed regions or we didn't have a relay address for the
+                        // node. In both cases, trust the new confirmed region
+                        info!(%region, "new relay addr for node");
                         self.derp_region = Some((region, EndpointState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
                     Some((_home_region, state)) => state.handle_ping(tx_id, now),
                     None => {
-                        info!(%region, "new relay addr for peer");
+                        info!(%region, "new relay addr for node");
                         self.derp_region = Some((region, EndpointState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
@@ -661,13 +587,13 @@ impl Endpoint {
         // used ones) last
         prune_candidates.sort_unstable_by_key(|(_ip_port, last_active)| *last_active);
         prune_candidates.truncate(prune_count);
-        let peer = self.public_key.fmt_short();
+        let node = self.public_key.fmt_short();
         for (ip_port, last_seen) in prune_candidates.into_iter() {
             self.direct_addr_state.remove(&ip_port);
 
             match last_seen.map(|instant| instant.elapsed()) {
-                Some(last_seen) => trace!(%peer, %ip_port, ?last_seen, "pruning address"),
-                None => trace!(%peer, %ip_port, last_seen=%"never", "pruning address"),
+                Some(last_seen) => trace!(%node, %ip_port, ?last_seen, "pruning address"),
+                None => trace!(%node, %ip_port, last_seen=%"never", "pruning address"),
             }
 
             self.best_addr.clear_if_equals(
@@ -680,7 +606,7 @@ impl Endpoint {
 
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
-    #[instrument("disco", skip_all, fields(peer = %self.public_key.fmt_short()))]
+    #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self) {
         trace!("connectivity changed");
         self.best_addr.clear_trust();
@@ -712,7 +638,7 @@ impl Endpoint {
             Some(sp) => {
                 sp.timer.abort();
 
-                let mut peer_map_insert = None;
+                let mut node_map_insert = None;
 
                 let now = Instant::now();
                 let latency = now - sp.at;
@@ -734,10 +660,10 @@ impl Endpoint {
                             None => {
                                 info!("ignoring pong: no state for src addr");
                                 // This is no longer an endpoint we care about.
-                                return peer_map_insert;
+                                return node_map_insert;
                             }
                             Some(st) => {
-                                peer_map_insert = Some((addr, key));
+                                node_map_insert = Some((addr, key));
                                 st.add_pong_reply(PongReply {
                                     latency,
                                     pong_at: now,
@@ -766,28 +692,6 @@ impl Endpoint {
                     },
                 }
 
-                if !self.pending_cli_pings.is_empty() {
-                    let ep = sp.to;
-                    // FIXME: this creates a deadlock as it needs to interact with the run loop in the conn::Actor
-                    // let region_code = self.get_derp_region(region_id).await.map(|r| r.region_code);
-
-                    for PendingCliPing { mut res, cb } in self.pending_cli_pings.drain(..) {
-                        res.latency_seconds = Some(latency.as_secs_f64());
-                        match ep {
-                            SendAddr::Udp(addr) => {
-                                res.endpoint = Some(addr);
-                            }
-                            SendAddr::Derp(region) => {
-                                res.derp_region_id = Some(region);
-                                // res.derp_region_code = region_code.clone();
-                            }
-                        }
-                        tokio::task::spawn(async move {
-                            cb(res).await;
-                        });
-                    }
-                }
-
                 // Promote this pong response to our current best address if it's lower latency.
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
@@ -801,21 +705,18 @@ impl Endpoint {
                     );
                 }
 
-                peer_map_insert
+                node_map_insert
             }
         }
     }
 
     /// Handles a CallMeMaybe discovery message via DERP. The contract for use of
-    /// this message is that the peer has already sent to us via UDP, so their stateful firewall should be
+    /// this message is that the node has already sent to us via UDP, so their stateful firewall should be
     /// open. Now we can Ping back and make it through.
     pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
         let now = Instant::now();
-        for el in self.is_call_me_maybe_ep.values_mut() {
-            *el = false;
-        }
-
         let mut new_eps = Vec::new();
+        let mut call_me_maybe_eps = HashSet::new();
 
         for ep in &m.my_number {
             if let IpAddr::V6(ip) = ep.ip() {
@@ -825,8 +726,8 @@ impl Endpoint {
                     continue;
                 }
             }
-            self.is_call_me_maybe_ep.insert(*ep, true);
             let ep = IpPort::from(*ep);
+            call_me_maybe_eps.insert(ep);
             if let Some(es) = self.direct_addr_state.get_mut(&ep) {
                 es.call_me_maybe_time.replace(now);
             } else {
@@ -840,6 +741,7 @@ impl Endpoint {
                 new_eps.push(ep);
             }
         }
+
         if !new_eps.is_empty() {
             debug!(
                 ?new_eps,
@@ -847,31 +749,29 @@ impl Endpoint {
             );
         }
 
-        // Delete any prior CallMeMaybe endpoints that weren't included in this message.
-        self.is_call_me_maybe_ep.retain(|ep, want| {
-            if !*want {
-                self.best_addr.clear_if_equals(
-                    *ep,
-                    ClearReason::PruneCallMeMaybe,
-                    self.derp_region.is_some(),
-                );
-                false
-            } else {
-                true
-            }
-        });
-
         // Zero out all the last_ping times to force send_pings to send new ones,
         // even if it's been less than 5 seconds ago.
-        for st in self.direct_addr_state.values_mut() {
+        // Also clear pongs for endpoints not included in the updated set.
+        for (ipp, st) in self.direct_addr_state.iter_mut() {
             st.last_ping = None;
+            if !call_me_maybe_eps.contains(ipp) {
+                st.recent_pong = None;
+            }
         }
-        self.send_pings(Instant::now(), false)
+        // Clear trust on our best_addr if it is not included in the updated set.
+        if let Some(addr) = self.best_addr.addr() {
+            let ipp: IpPort = addr.into();
+            if !call_me_maybe_eps.contains(&ipp) {
+                self.best_addr.clear_trust();
+            }
+        }
+
+        self.send_pings(now, false)
     }
 
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let Some(state) = self.direct_addr_state.get_mut(&addr) else {
-            debug_assert!(false, "peer map inconsistency by_ip_port <-> direct addr");
+            debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
             return;
         };
         state.last_payload_msg = Some(now);
@@ -892,15 +792,6 @@ impl Endpoint {
             }
         }
         self.last_used = Some(now);
-    }
-
-    /// Stops timers associated with de and resets its state back to zero.
-    /// It's called when a discovery endpoint is no longer present in the
-    /// NetworkMap, or when magicsock is transitioning from running to
-    /// stopped state (via `set_secret_key(None)`).
-    pub(super) fn stop_and_reset(&mut self) {
-        self.reset();
-        self.pending_cli_pings.clear();
     }
 
     pub(super) fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
@@ -925,9 +816,9 @@ impl Endpoint {
         }
     }
 
-    /// Send a heartbeat to the peer to keep the connection alive, or trigger a full ping
+    /// Send a heartbeat to the node to keep the connection alive, or trigger a full ping
     /// if necessary.
-    #[instrument("disco", skip_all, fields(peer = %self.public_key.fmt_short()))]
+    #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(super) fn stayin_alive(&mut self) -> Vec<PingAction> {
         trace!("stayin_alive");
         let now = Instant::now();
@@ -969,7 +860,7 @@ impl Endpoint {
         Vec::new()
     }
 
-    #[instrument("get_send_addrs", skip_all, fields(peer = %self.public_key.fmt_short()))]
+    #[instrument("get_send_addrs", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(crate) fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<u16>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
@@ -997,10 +888,10 @@ impl Endpoint {
     }
 
     /// Get the adressing information of this endpoint.
-    pub(super) fn peer_addr(&self) -> PeerAddr {
+    pub(super) fn node_addr(&self) -> NodeAddr {
         let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
-        PeerAddr {
-            peer_id: self.public_key,
+        NodeAddr {
+            node_id: self.public_key,
             info: AddrInfo {
                 derp_region: self.derp_region(),
                 direct_addresses,
@@ -1200,18 +1091,16 @@ pub(super) struct SentPing {
 pub enum DiscoPingPurpose {
     /// The purpose of a ping was to see if a path was valid.
     Discovery,
-    /// The user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
-    Cli,
     /// Ping to ensure the current route is still valid.
     StayinAlive,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
 pub enum ControlMsg {
-    /// We received a Ping from the peer.
+    /// We received a Ping from the node.
     #[display("ping←")]
     Ping,
-    /// We received a Pong from the peer.
+    /// We received a Pong from the node.
     #[display("pong←")]
     Pong,
     /// We received a CallMeMaybe.
@@ -1226,16 +1115,16 @@ pub struct DirectAddrInfo {
     pub addr: SocketAddr,
     /// The latency to the address, if any.
     pub latency: Option<Duration>,
-    /// Last control message received by this peer.
+    /// Last control message received by this node.
     pub last_control: Option<(Duration, ControlMsg)>,
-    /// How long ago was the last payload message for this peer.
+    /// How long ago was the last payload message for this node.
     pub last_payload: Option<Duration>,
 }
 
 /// Details about an Endpoint
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointInfo {
-    /// The id in the peer_map
+    /// The id in the node_map
     pub id: usize,
     /// The public key of the endpoint.
     pub public_key: PublicKey,
@@ -1244,11 +1133,11 @@ pub struct EndpointInfo {
     /// List of addresses at which this node might be reachable, plus any latency information we
     /// have about that address and the last time the address was used.
     pub addrs: Vec<DirectAddrInfo>,
-    /// The type of connection we have to the peer, either direct or over relay.
+    /// The type of connection we have to the node, either direct or over relay.
     pub conn_type: ConnectionType,
     /// The latency of the `conn_type`.
     pub latency: Option<Duration>,
-    /// Duration since the last time this peer was used.
+    /// Duration since the last time this node was used.
     pub last_used: Option<Duration>,
 }
 
@@ -1277,11 +1166,12 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use super::*;
-    use crate::{
-        key::SecretKey,
-        magicsock::peer_map::{best_addr::BestAddr, IpPort, PeerMap, PeerMapInner},
+    use super::{
+        super::{NodeMap, NodeMapInner},
+        best_addr::BestAddr,
+        IpPort, *,
     };
+    use crate::key::SecretKey;
 
     #[test]
     fn test_endpoint_infos() {
@@ -1325,8 +1215,6 @@ mod tests {
                         now + Duration::from_secs(100),
                     ),
                     direct_addr_state: endpoint_state,
-                    is_call_me_maybe_ep: HashMap::new(),
-                    pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
                     last_used: Some(now),
                 },
@@ -1351,8 +1239,6 @@ mod tests {
                 derp_region: Some((0, relay_state)),
                 best_addr: BestAddr::default(),
                 direct_addr_state: HashMap::default(),
-                is_call_me_maybe_ep: HashMap::new(),
-                pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
                 last_used: Some(now),
             }
@@ -1371,8 +1257,6 @@ mod tests {
                 derp_region: new_relay_and_state(Some(0)),
                 best_addr: BestAddr::default(),
                 direct_addr_state: endpoint_state,
-                is_call_me_maybe_ep: HashMap::new(),
-                pending_cli_pings: Vec::new(),
                 sent_ping: HashMap::new(),
                 last_used: Some(now),
             }
@@ -1412,8 +1296,6 @@ mod tests {
                         expired,
                     ),
                     direct_addr_state: endpoint_state,
-                    is_call_me_maybe_ep: HashMap::new(),
-                    pending_cli_pings: Vec::new(),
                     sent_ping: HashMap::new(),
                     last_used: Some(now),
                 },
@@ -1469,7 +1351,7 @@ mod tests {
             },
         ]);
 
-        let peer_map = PeerMap::from_inner(PeerMapInner {
+        let node_map = NodeMap::from_inner(NodeMapInner {
             by_node_key: HashMap::from([
                 (a_endpoint.public_key, a_endpoint.id),
                 (b_endpoint.public_key, b_endpoint.id),
@@ -1494,7 +1376,7 @@ mod tests {
             ]),
             next_id: 5,
         });
-        let mut got = peer_map.endpoint_infos(later);
+        let mut got = node_map.endpoint_infos(later);
         got.sort_by_key(|p| p.id);
         assert_eq!(expect, got);
     }

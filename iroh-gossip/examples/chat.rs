@@ -12,7 +12,7 @@ use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    MagicEndpoint, PeerAddr,
+    MagicEndpoint, NodeAddr,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
                 if endpoints.is_empty() {
                     return;
                 }
-                // send our updated endpoints to the gossip protocol to be sent as PeerAddr to peers
+                // send our updated endpoints to the gossip protocol to be sent as NodeAddr to peers
                 if let Some(gossip) = gossip_cell.get() {
                     gossip.update_endpoints(endpoints).ok();
                 }
@@ -153,14 +153,14 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
     // join the gossip topic by connecting to known peers, if any
-    let peer_ids = peers.iter().map(|p| p.peer_id).collect();
+    let peer_ids = peers.iter().map(|p| p.node_id).collect();
     if peers.is_empty() {
         println!("> waiting for peers to join us...");
     } else {
         println!("> trying to connect to {} peers...", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
         for peer in peers.into_iter() {
-            endpoint.add_peer_addr(peer).await?;
+            endpoint.add_node_addr(peer)?;
         }
     };
     gossip.join(topic, peer_ids).await?.await?;
@@ -289,7 +289,7 @@ enum Message {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ticket {
     topic: TopicId,
-    peers: Vec<PeerAddr>,
+    peers: Vec<NodeAddr>,
 }
 impl Ticket {
     /// Deserializes from bytes.

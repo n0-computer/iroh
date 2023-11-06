@@ -17,7 +17,7 @@ use io::CONFIG_DEFAULTS_FILE;
 use iroh::util::fs::load_secret_key;
 use iroh_net::{
     magic_endpoint::{get_alpn, get_peer_id},
-    AddrInfo, MagicEndpoint, PeerAddr,
+    AddrInfo, MagicEndpoint, NodeAddr,
 };
 use tokio_util::task::LocalPoolHandle;
 
@@ -91,7 +91,7 @@ pub async fn accept_conn(
     tracing::info!("awaiting conn");
     let conn = conn.await?;
     tracing::info!("got conn");
-    let peer_id = get_peer_id(&conn).await?;
+    let peer_id = get_peer_id(&conn)?;
     Ok((peer_id, alpn, conn))
 }
 
@@ -120,12 +120,12 @@ async fn server(args: ServerArgs) -> anyhow::Result<()> {
     await_derp_region(&endpoint).await?;
     let addr = endpoint.my_addr().await?;
     log!("listening on {:?}", addr);
-    log!("tracker addr: {}\n", addr.peer_id);
+    log!("tracker addr: {}\n", addr.node_id);
     log!("usage:");
-    log!("tracker announce --tracker {} <tickets>", addr.peer_id);
+    log!("tracker announce --tracker {} <tickets>", addr.node_id);
     log!(
         "tracker query --tracker {} <hash> or <ticket>",
-        addr.peer_id
+        addr.node_id
     );
     log!();
     let db2 = db.clone();
@@ -159,8 +159,8 @@ async fn announce(args: AnnounceArgs) -> anyhow::Result<()> {
     let endpoint = create_endpoint(key, 11112).await?;
     log!("announce {:?}", args);
     log!("trying to connect to {:?}", args.tracker);
-    let info = PeerAddr {
-        peer_id: args.tracker,
+    let info = NodeAddr {
+        node_id: args.tracker,
         info: AddrInfo {
             derp_region: Some(2),
             direct_addresses: Default::default(),
@@ -219,8 +219,8 @@ async fn query(args: QueryArgs) -> anyhow::Result<()> {
             verified: args.verified,
         },
     };
-    let info = PeerAddr {
-        peer_id: args.tracker,
+    let info = NodeAddr {
+        node_id: args.tracker,
         info: AddrInfo {
             derp_region: Some(2),
             direct_addresses: Default::default(),
