@@ -18,6 +18,7 @@ pub const CONFIG_DEFAULTS_FILE: &str = "config.defaults.toml";
 pub const CONFIG_FILE: &str = "config.toml";
 pub const SERVER_KEY_FILE: &str = "server.key";
 pub const CLIENT_KEY_FILE: &str = "client.key";
+pub const TRACKER_HOME_ENV_VAR: &str =  "IROH_TRACKER_HOME";
 
 /// Data format of the announce data file.
 ///
@@ -159,7 +160,7 @@ pub fn setup_logging() {
 }
 
 pub fn tracker_home() -> anyhow::Result<PathBuf> {
-    Ok(if let Some(val) = env::var_os("IROH_TRACKER_HOME") {
+    Ok(if let Some(val) = env::var_os(TRACKER_HOME_ENV_VAR) {
         PathBuf::from(val)
     } else {
         dirs_next::data_dir()
