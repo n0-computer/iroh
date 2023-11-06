@@ -754,6 +754,7 @@ impl Subscribers {
     async fn send(&mut self, event: Event) -> bool {
         let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
         let res = futures::future::join_all(futs).await;
+        // reverse the order so removing does not shift remaining indices
         for (i, res) in res.into_iter().enumerate().rev() {
             if res.is_err() {
                 self.0.remove(i);
@@ -780,5 +781,23 @@ fn fmt_accept_namespace(res: &Result<SyncFinished, AcceptError>) -> String {
             .namespace()
             .map(|x| x.fmt_short())
             .unwrap_or_else(|| "unknown".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_sync_remove() {
+        let pk = PublicKey::from_bytes(&[1; 32]).unwrap();
+        let (a_tx, a_rx) = flume::unbounded();
+        let (b_tx, b_rx) = flume::unbounded();
+        let mut subscribers = Subscribers::default();
+        subscribers.subscribe(a_tx);
+        subscribers.subscribe(b_tx);
+        drop(a_rx);
+        drop(b_rx);
+        subscribers.send(Event::NeighborUp(pk)).await;
     }
 }
