@@ -658,15 +658,22 @@ where
         Ok(removed)
     }
 
-    /// Get the latest entry for a key and author.
-    pub async fn get_exact(&self, author: AuthorId, key: impl AsRef<[u8]>, include_empty: bool) -> Result<Option<Entry>> {
+    /// Get an entry for a key and author.
+    ///
+    /// Optionally also get the entry if it is empty (i.e. a deletion marker).
+    pub async fn get_exact(
+        &self,
+        author: AuthorId,
+        key: impl AsRef<[u8]>,
+        include_empty: bool,
+    ) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
             .rpc(DocGetOneRequest {
                 author,
                 key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
-                include_empty
+                include_empty,
             })
             .await??;
         Ok(res.entry.map(|entry| entry.into()))
@@ -687,6 +694,11 @@ where
             })
             .await?;
         Ok(flatten(stream).map_ok(|res| res.entry.into()))
+    }
+
+    /// Get a single entry.
+    pub async fn get_one(&self, query: impl Into<Query>) -> Result<Option<Entry>> {
+        self.get_many(query).await?.next().await.transpose()
     }
 
     /// Share this document with peers over a ticket.
