@@ -318,8 +318,10 @@ impl<'a> Iterator for QueryIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if matches!(self.query.limit(), Some(limit) if self.count >= limit) {
-                return None;
+            if let Some(limit) = self.query.limit() {
+                if self.count >= limit {
+                    return None;
+                }
             }
 
             let records = self.records.get(&self.namespace)?;

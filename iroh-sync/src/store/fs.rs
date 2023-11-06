@@ -796,8 +796,10 @@ impl<'a> Iterator for QueryIterator<'a> {
 
     fn next(&mut self) -> Option<Result<SignedEntry>> {
         // early-return if we reached the query limit.
-        if matches!(self.query.limit(), Some(limit) if self.count >= limit) {
-            return None;
+        if let Some(limit) = self.query.limit() {
+            if self.count >= limit {
+                return None;
+            }
         }
         loop {
             let next = match &mut self.range {
@@ -852,6 +854,7 @@ impl<'a> Iterator for QueryIterator<'a> {
                 continue;
             }
 
+            self.count += 1;
             return next;
         }
     }

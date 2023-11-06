@@ -351,9 +351,11 @@ pub enum SortDirection {
     Desc,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(derive_more::Debug, Clone, Serialize, Deserialize)]
 enum QueryKind {
+    #[debug("Flat {{ sort_by: {:?}}}", _0)]
     Flat(FlatQuery),
+    #[debug("SingleLatestPerKey")]
     SingleLatestPerKey(SingleLatestPerKeyQuery),
 }
 

@@ -1943,56 +1943,167 @@ mod tests {
         let a1 = store.new_author(&mut rng)?;
         let a2 = store.new_author(&mut rng)?;
         let a3 = store.new_author(&mut rng)?;
+        println!(
+            "a1 {} a2 {} a3 {}",
+            a1.id().fmt_short(),
+            a2.id().fmt_short(),
+            a3.id().fmt_short()
+        );
 
-        replica.hash_and_insert("hello/world", &a2, "a2")?;
-        replica.hash_and_insert("hello/world", &a1, "a1")?;
-        replica.hash_and_insert("hello/moon", &a1, "a1")?;
-        replica.hash_and_insert("hello", &a3, "a3")?;
+        replica.hash_and_insert("hi/world", &a2, "a2")?;
+        replica.hash_and_insert("hi/world", &a1, "a1")?;
+        replica.hash_and_insert("hi/moon", &a2, "a1")?;
+        replica.hash_and_insert("hi", &a3, "a3")?;
 
-        let res = get_many_key_author(&store, namespace, Query::single_latest_per_key());
+        let expect = |rows: &[(&str, &Author)]| {
+            rows.into_iter()
+                .map(|(key, author)| (key.to_string(), author.id()))
+                .collect::<Vec<_>>()
+        };
+
         assert_eq!(
-            res,
-            vec![
-                ("hello".to_string(), a3.id()),
-                ("hello/moon".to_string(), a1.id()),
-                ("hello/world".to_string(), a1.id()),
-            ]
+            query(&store, namespace, Query::all()),
+            expect(&[
+                ("hi/world", &a1),
+                ("hi/moon", &a2),
+                ("hi/world", &a2),
+                ("hi", &a3),
+            ]),
         );
 
-        let res = get_many_key_author(
-            &store,
-            namespace,
-            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Asc),
-        );
         assert_eq!(
-            res,
-            vec![
-                ("hello".to_string(), a3.id()),
-                ("hello/moon".to_string(), a1.id()),
-                ("hello/world".to_string(), a1.id()),
-                ("hello/world".to_string(), a2.id()),
-            ]
+            query(&store, namespace, Query::single_latest_per_key()),
+            expect(&[("hi", &a3), ("hi/moon", &a2), ("hi/world", &a1)]),
         );
 
-        let res = get_many_key_author(
-            &store,
-            namespace,
-            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Desc),
-        );
         assert_eq!(
-            res,
-            vec![
-                ("hello/world".to_string(), a2.id()),
-                ("hello/world".to_string(), a1.id()),
-                ("hello/moon".to_string(), a1.id()),
-                ("hello".to_string(), a3.id()),
-            ]
+            query(
+                &store,
+                namespace,
+                Query::single_latest_per_key().sort_direction(SortDirection::Desc)
+            ),
+            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::single_latest_per_key().key_prefix("hi/")
+            ),
+            expect(&[("hi/moon", &a2), ("hi/world", &a1)]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::single_latest_per_key()
+                    .key_prefix("hi/")
+                    .sort_direction(SortDirection::Desc)
+            ),
+            expect(&[("hi/world", &a1), ("hi/moon", &a2)]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+            ),
+            expect(&[
+                ("hi", &a3),
+                ("hi/moon", &a2),
+                ("hi/world", &a1),
+                ("hi/world", &a2),
+            ]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Desc)
+            ),
+            expect(&[
+                ("hi/world", &a2),
+                ("hi/world", &a1),
+                ("hi/moon", &a2),
+                ("hi", &a3),
+            ]),
+        );
+
+        assert_eq!(
+            query(&store, namespace, Query::all().key_prefix("hi/")),
+            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2),]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::all()
+                    .key_prefix("hi/")
+                    .sort_by(SortBy::KeyAuthor, SortDirection::Desc)
+            ),
+            expect(&[("hi/world", &a2), ("hi/world", &a1), ("hi/moon", &a2),]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::all()
+                    .key_prefix("hi/")
+                    .sort_by(SortBy::AuthorKey, SortDirection::Asc)
+            ),
+            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2),]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::all()
+                    .key_prefix("hi/")
+                    .sort_by(SortBy::AuthorKey, SortDirection::Desc)
+            ),
+            expect(&[("hi/world", &a2), ("hi/moon", &a2), ("hi/world", &a1)]),
+        );
+
+        assert_eq!(
+            query(
+                &store,
+                namespace,
+                Query::all()
+                    .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+                    .limit(2)
+                    .offset(1)
+            ),
+            expect(&[("hi/moon", &a2), ("hi/world", &a1)]),
+        );
+
+        replica.delete_prefix("hi/world", &a2)?;
+
+        assert_eq!(
+            query(&store, namespace, Query::all()),
+            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)]),
+        );
+
+        assert_eq!(
+            query(&store, namespace, Query::all().include_empty()),
+            expect(&[
+                ("hi/world", &a1),
+                ("hi/moon", &a2),
+                ("hi/world", &a2),
+                ("hi", &a3),
+            ]),
         );
 
         Ok(())
     }
 
-    fn get_many_key_author<S: store::Store>(
+    fn query<S: store::Store>(
         store: &S,
         namespace: NamespaceId,
         query: impl Into<Query>,
