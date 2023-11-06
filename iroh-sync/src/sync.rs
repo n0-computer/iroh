@@ -1956,165 +1956,150 @@ mod tests {
         replica.hash_and_insert("hi/moon", &a2, "a1")?;
         replica.hash_and_insert("hi", &a3, "a3")?;
 
-        let expect = |rows: &[(&str, &Author)]| {
-            rows.into_iter()
-                .map(|(key, author)| (key.to_string(), author.id()))
-                .collect::<Vec<_>>()
+        struct QueryTester<'a, S: store::Store> {
+            store: &'a S,
+            namespace: NamespaceId,
+        }
+        impl<'a, S: store::Store> QueryTester<'a, S> {
+            fn assert(&self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
+                let query = query.into();
+                let actual = self
+                    .store
+                    .get_many(self.namespace, query.clone())
+                    .unwrap()
+                    .map(|e| e.map(|e| (String::from_utf8(e.key().to_vec()).unwrap(), e.author())))
+                    .collect::<Result<Vec<_>>>()
+                    .unwrap();
+                let expected = expected
+                    .into_iter()
+                    .map(|(key, author)| (key.to_string(), author.id()))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "query: {query:#?}")
+            }
+        }
+
+        let qt = QueryTester {
+            store: &store,
+            namespace,
         };
 
-        assert_eq!(
-            query(&store, namespace, Query::all()),
-            expect(&[
+        qt.assert(
+            Query::all(),
+            vec![
                 ("hi/world", &a1),
                 ("hi/moon", &a2),
                 ("hi/world", &a2),
                 ("hi", &a3),
-            ]),
+            ],
         );
 
-        assert_eq!(
-            query(&store, namespace, Query::single_latest_per_key()),
-            expect(&[("hi", &a3), ("hi/moon", &a2), ("hi/world", &a1)]),
+        qt.assert(
+            Query::single_latest_per_key(),
+            vec![("hi", &a3), ("hi/moon", &a2), ("hi/world", &a1)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::single_latest_per_key().sort_direction(SortDirection::Desc)
-            ),
-            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)]),
+        qt.assert(
+            Query::single_latest_per_key().sort_direction(SortDirection::Desc),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::single_latest_per_key().key_prefix("hi/")
-            ),
-            expect(&[("hi/moon", &a2), ("hi/world", &a1)]),
+        qt.assert(
+            Query::single_latest_per_key().key_prefix("hi/"),
+            vec![("hi/moon", &a2), ("hi/world", &a1)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::single_latest_per_key()
-                    .key_prefix("hi/")
-                    .sort_direction(SortDirection::Desc)
-            ),
-            expect(&[("hi/world", &a1), ("hi/moon", &a2)]),
+        qt.assert(
+            Query::single_latest_per_key()
+                .key_prefix("hi/")
+                .sort_direction(SortDirection::Desc),
+            vec![("hi/world", &a1), ("hi/moon", &a2)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Asc)
-            ),
-            expect(&[
+        qt.assert(
+            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Asc),
+            vec![
                 ("hi", &a3),
                 ("hi/moon", &a2),
                 ("hi/world", &a1),
                 ("hi/world", &a2),
-            ]),
+            ],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Desc)
-            ),
-            expect(&[
+        qt.assert(
+            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Desc),
+            vec![
                 ("hi/world", &a2),
                 ("hi/world", &a1),
                 ("hi/moon", &a2),
                 ("hi", &a3),
-            ]),
+            ],
         );
 
-        assert_eq!(
-            query(&store, namespace, Query::all().key_prefix("hi/")),
-            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2),]),
+        qt.assert(
+            Query::all().key_prefix("hi/"),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::all()
-                    .key_prefix("hi/")
-                    .sort_by(SortBy::KeyAuthor, SortDirection::Desc)
-            ),
-            expect(&[("hi/world", &a2), ("hi/world", &a1), ("hi/moon", &a2),]),
+        qt.assert(
+            Query::all().key_prefix("hi/").offset(1).limit(1),
+            vec![("hi/moon", &a2)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::all()
-                    .key_prefix("hi/")
-                    .sort_by(SortBy::AuthorKey, SortDirection::Asc)
-            ),
-            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2),]),
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::KeyAuthor, SortDirection::Desc),
+            vec![("hi/world", &a2), ("hi/world", &a1), ("hi/moon", &a2)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::all()
-                    .key_prefix("hi/")
-                    .sort_by(SortBy::AuthorKey, SortDirection::Desc)
-            ),
-            expect(&[("hi/world", &a2), ("hi/moon", &a2), ("hi/world", &a1)]),
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::KeyAuthor, SortDirection::Desc)
+                .offset(1).limit(1),
+            vec![("hi/world", &a1)],
         );
 
-        assert_eq!(
-            query(
-                &store,
-                namespace,
-                Query::all()
-                    .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
-                    .limit(2)
-                    .offset(1)
-            ),
-            expect(&[("hi/moon", &a2), ("hi/world", &a1)]),
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::AuthorKey, SortDirection::Asc),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2)],
+        );
+
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::AuthorKey, SortDirection::Desc),
+            vec![("hi/world", &a2), ("hi/moon", &a2), ("hi/world", &a1)],
+        );
+
+        qt.assert(
+            Query::all()
+                .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+                .limit(2)
+                .offset(1),
+            vec![("hi/moon", &a2), ("hi/world", &a1)],
         );
 
         replica.delete_prefix("hi/world", &a2)?;
 
-        assert_eq!(
-            query(&store, namespace, Query::all()),
-            expect(&[("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)]),
+        qt.assert(
+            Query::all(),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)],
         );
 
-        assert_eq!(
-            query(&store, namespace, Query::all().include_empty()),
-            expect(&[
+        qt.assert(
+            Query::all().include_empty(),
+            vec![
                 ("hi/world", &a1),
                 ("hi/moon", &a2),
                 ("hi/world", &a2),
                 ("hi", &a3),
-            ]),
+            ],
         );
 
         Ok(())
-    }
-
-    fn query<S: store::Store>(
-        store: &S,
-        namespace: NamespaceId,
-        query: impl Into<Query>,
-    ) -> Vec<(String, AuthorId)> {
-        store
-            .get_many(namespace, query)
-            .unwrap()
-            .map(|e| e.map(|e| (String::from_utf8(e.key().to_vec()).unwrap(), e.author())))
-            .collect::<Result<Vec<_>>>()
-            .unwrap()
     }
 
     fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
