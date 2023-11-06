@@ -2365,6 +2365,7 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "lru",
+ "num_enum",
  "once_cell",
  "ouroboros",
  "parking_lot",

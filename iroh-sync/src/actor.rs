@@ -15,9 +15,10 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{self, GetFilter},
-    Author, AuthorHeads, AuthorId, ContentStatus, ContentStatusCallback, Event, Namespace,
-    NamespaceId, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
+    store::{self, GetFilter, ImportNamespaceOutcome},
+    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
+    ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
+    SyncOutcome,
 };
 
 #[derive(derive_more::Debug, derive_more::Display)]
@@ -30,7 +31,7 @@ enum Action {
     },
     #[display("NewReplica")]
     ImportNamespace {
-        namespace: Namespace,
+        capability: Capability,
         #[debug("reply")]
         reply: oneshot::Sender<Result<NamespaceId>>,
     },
@@ -42,7 +43,7 @@ enum Action {
     #[display("ListReplicas")]
     ListReplicas {
         #[debug("reply")]
-        reply: flume::Sender<Result<NamespaceId>>,
+        reply: flume::Sender<Result<(NamespaceId, CapabilityKind)>>,
     },
     #[display("Replica({}, {})", _0.fmt_short(), _1)]
     Replica(NamespaceId, ReplicaAction),
@@ -134,7 +135,7 @@ enum ReplicaAction {
         reply: oneshot::Sender<Result<()>>,
     },
     ExportSecretKey {
-        reply: oneshot::Sender<Result<Namespace>>,
+        reply: oneshot::Sender<Result<NamespaceSecret>>,
     },
     HasNewsForUs {
         heads: AuthorHeads,
@@ -396,7 +397,7 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<Namespace> {
+    pub async fn export_secret_key(&self, namespace: NamespaceId) -> Result<NamespaceSecret> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::ExportSecretKey { reply };
         self.send_replica(namespace, action).await?;
@@ -418,7 +419,10 @@ impl SyncHandle {
         self.send(Action::ListAuthors { reply }).await
     }
 
-    pub async fn list_replicas(&self, reply: flume::Sender<Result<NamespaceId>>) -> Result<()> {
+    pub async fn list_replicas(
+        &self,
+        reply: flume::Sender<Result<(NamespaceId, CapabilityKind)>>,
+    ) -> Result<()> {
         self.send(Action::ListReplicas { reply }).await
     }
 
@@ -428,9 +432,9 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn import_namespace(&self, namespace: Namespace) -> Result<NamespaceId> {
+    pub async fn import_namespace(&self, capability: Capability) -> Result<NamespaceId> {
         let (reply, rx) = oneshot::channel();
-        self.send(Action::ImportNamespace { namespace, reply })
+        self.send(Action::ImportNamespace { capability, reply })
             .await?;
         rx.await?
     }
@@ -481,10 +485,16 @@ impl<S: store::Store> Actor<S> {
                 let id = author.id();
                 send_reply(reply, self.store.import_author(author).map(|_| id))
             }
-            Action::ImportNamespace { namespace, reply } => {
-                let id = namespace.id();
-                send_reply(reply, self.store.import_namespace(namespace).map(|_| id))
-            }
+            Action::ImportNamespace { capability, reply } => send_reply_with(reply, self, |this| {
+                let id = capability.id();
+                let outcome = this.store.import_namespace(capability.clone())?;
+                if let ImportNamespaceOutcome::Upgraded = outcome {
+                    if let Ok(replica) = this.states.replica(&id) {
+                        replica.merge_capability(capability)?;
+                    }
+                }
+                Ok(id)
+            }),
             Action::ListAuthors { reply } => iter_to_channel(
                 reply,
                 self.store
@@ -603,7 +613,10 @@ impl<S: store::Store> Actor<S> {
                 this.store.remove_replica(&namespace)
             }),
             ReplicaAction::ExportSecretKey { reply } => {
-                let res = self.states.replica(&namespace).map(|r| r.secret_key());
+                let res = self
+                    .states
+                    .replica(&namespace)
+                    .and_then(|r| Ok(r.secret_key()?.clone()));
                 send_reply(reply, res)
             }
             ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {
@@ -787,12 +800,13 @@ mod tests {
     async fn open_close() -> anyhow::Result<()> {
         let store = store::memory::Store::default();
         let sync = SyncHandle::spawn(store, None, "foo".into());
-        let namespace = Namespace::new(&mut rand::rngs::OsRng {});
-        sync.import_namespace(namespace.clone()).await?;
-        sync.open(namespace.id(), Default::default()).await?;
+        let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
+        let id = namespace.id();
+        sync.import_namespace(namespace.into()).await?;
+        sync.open(id, Default::default()).await?;
         let (tx, rx) = flume::bounded(10);
-        sync.subscribe(namespace.id(), tx).await?;
-        sync.close(namespace.id()).await?;
+        sync.subscribe(id, tx).await?;
+        sync.close(id).await?;
         assert!(rx.recv_async().await.is_err());
         Ok(())
     }

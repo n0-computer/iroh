@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     heads::AuthorHeads,
-    keys::{Author, Namespace},
+    keys::{Author, NamespaceSecret},
     ranger,
     sync::{Replica, SignedEntry},
-    AuthorId, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
@@ -43,7 +43,7 @@ pub enum OpenError {
 
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
-    /// The specialized instance scoped to a `Namespace`.
+    /// The specialized instance scoped to a `NamespaceSecret`.
     type Instance: ranger::Store<SignedEntry> + PublicKeyStore + Send + Sync + 'static + Clone;
 
     /// Iterator over entries in the store, returned from [`Self::get_many`]
@@ -57,7 +57,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Iterator over replica namespaces in the store, returned from [`Self::list_namespaces`]
-    type NamespaceIter<'a>: Iterator<Item = Result<NamespaceId>>
+    type NamespaceIter<'a>: Iterator<Item = Result<(NamespaceId, CapabilityKind)>>
     where
         Self: 'a;
 
@@ -79,14 +79,14 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
         Self: 'a;
 
     /// Create a new replica for `namespace` and persist in this store.
-    fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
+    fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<Self::Instance>> {
         let id = namespace.id();
-        self.import_namespace(namespace)?;
+        self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
     }
 
     /// Import a new replica namespace.
-    fn import_namespace(&self, namespace: Namespace) -> Result<()>;
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome>;
 
     /// List all replica namespaces in this store.
     fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>>;
@@ -170,6 +170,17 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get peers to use for syncing a document.
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
+}
+
+/// Outcome of [`Store::import_namespace`]
+#[derive(Debug, Clone, Copy)]
+pub enum ImportNamespaceOutcome {
+    /// The namespace did not exist before and is now inserted.
+    Inserted,
+    /// The namespace existed and now has an upgraded capability.
+    Upgraded,
+    /// The namespace existed and its capability remains unchanged.
+    NoChange,
 }
 
 /// Filter a get query onto a namespace
