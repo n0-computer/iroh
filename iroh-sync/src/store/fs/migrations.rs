@@ -31,13 +31,13 @@ where
     Ok(())
 }
 
-pub enum MigrateOutcome {
+enum MigrateOutcome {
     Skip,
     Execute(usize),
 }
 
 /// migration 001: populate the latest table (which did not exist before)
-pub fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let mut latest_table = tx.open_table(LATEST_TABLE)?;
     let records_table = tx.open_table(RECORDS_TABLE)?;
     if !latest_table.is_empty()? || records_table.is_empty()? {
@@ -69,7 +69,7 @@ pub fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<Migr
 }
 
 /// migration 002: populate the by_key index table(which did not exist before)
-pub fn migration_002_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+fn migration_002_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let mut by_key_table = tx.open_table(RECORDS_BY_KEY_TABLE)?;
     let records_table = tx.open_table(RECORDS_TABLE)?;
     if !by_key_table.is_empty()? || records_table.is_empty()? {
