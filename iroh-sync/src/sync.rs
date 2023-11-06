@@ -2056,7 +2056,8 @@ mod tests {
             Query::all()
                 .key_prefix("hi/")
                 .sort_by(SortBy::KeyAuthor, SortDirection::Desc)
-                .offset(1).limit(1),
+                .offset(1)
+                .limit(1),
             vec![("hi/world", &a1)],
         );
 
