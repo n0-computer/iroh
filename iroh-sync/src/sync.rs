@@ -2000,7 +2000,7 @@ mod tests {
         store.close_replica(replica);
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
-        assert!(matches!(res, Ok(_)));
+        assert!(res.is_ok());
 
         // import read capability again - insert must stil succeed
         let capability = Capability::Read(namespace.id());
@@ -2008,7 +2008,7 @@ mod tests {
         store.close_replica(replica);
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
-        assert!(matches!(res, Ok(_)));
+        assert!(res.is_ok());
         Ok(())
     }
 
