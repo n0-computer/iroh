@@ -35,7 +35,7 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
-    DocDelResponse, DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
+    DocDelResponse, DocDropRequest, DocGetExactRequest, DocGetManyRequest, DocImportRequest,
     DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetHashRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
     DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
@@ -658,14 +658,22 @@ where
         Ok(removed)
     }
 
-    /// Get the latest entry for a key and author.
-    pub async fn get_one(&self, author: AuthorId, key: impl AsRef<[u8]>) -> Result<Option<Entry>> {
+    /// Get an entry for a key and author.
+    ///
+    /// Optionally also get the entry if it is empty (i.e. a deletion marker).
+    pub async fn get_exact(
+        &self,
+        author: AuthorId,
+        key: impl AsRef<[u8]>,
+        include_empty: bool,
+    ) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocGetOneRequest {
+            .rpc(DocGetExactRequest {
                 author,
                 key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
+                include_empty,
             })
             .await??;
         Ok(res.entry.map(|entry| entry.into()))
@@ -686,6 +694,11 @@ where
             })
             .await?;
         Ok(flatten(stream).map_ok(|res| res.entry.into()))
+    }
+
+    /// Get a single entry.
+    pub async fn get_one(&self, query: impl Into<Query>) -> Result<Option<Entry>> {
+        self.get_many(query).await?.next().await.transpose()
     }
 
     /// Share this document with peers over a ticket.

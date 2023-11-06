@@ -276,15 +276,16 @@ impl super::Store for Store {
         QueryIterator::new(&self.db, namespace, query.into())
     }
 
-    fn get_one(
+    fn get_exact(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
+        include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
-        get_one(&record_table, namespace, author, key, false)
+        get_exact(&record_table, namespace, author, key, include_empty)
     }
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
@@ -385,7 +386,7 @@ impl super::Store for Store {
     }
 }
 
-fn get_one(
+fn get_exact(
     record_table: &RecordsTable,
     namespace: NamespaceId,
     author: AuthorId,
@@ -443,7 +444,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        self.store.get_one(id.namespace(), id.author(), id.key())
+        self.store
+            .get_exact(id.namespace(), id.author(), id.key(), true)
     }
 
     fn len(&self) -> Result<usize> {
@@ -651,7 +653,7 @@ impl Iterator for ParentIterator<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let records_table = self.reader.table();
         while !self.key.is_empty() {
-            let entry = get_one(records_table, self.namespace, self.author, &self.key, false);
+            let entry = get_exact(records_table, self.namespace, self.author, &self.key, false);
             self.key.pop();
             match entry {
                 Err(err) => return Some(Err(err)),

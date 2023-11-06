@@ -121,9 +121,10 @@ enum ReplicaAction {
         #[debug("reply")]
         reply: oneshot::Sender<Result<()>>,
     },
-    GetOne {
+    GetExact {
         author: AuthorId,
         key: Bytes,
+        include_empty: bool,
         reply: oneshot::Sender<Result<Option<SignedEntry>>>,
     },
     GetMany {
@@ -376,14 +377,20 @@ impl SyncHandle {
         Ok(())
     }
 
-    pub async fn get_one(
+    pub async fn get_exact(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
         key: Bytes,
+        include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
         let (reply, rx) = oneshot::channel();
-        let action = ReplicaAction::GetOne { author, key, reply };
+        let action = ReplicaAction::GetExact {
+            author,
+            key,
+            include_empty,
+            reply,
+        };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -584,12 +591,15 @@ impl<S: store::Store> Actor<S> {
                 let res = self.store.register_useful_peer(namespace, peer);
                 send_reply(reply, res)
             }
-            ReplicaAction::GetOne { author, key, reply } => {
-                send_reply_with(reply, self, move |this| {
-                    this.states.ensure_open(&namespace)?;
-                    this.store.get_one(namespace, author, key)
-                })
-            }
+            ReplicaAction::GetExact {
+                author,
+                key,
+                include_empty,
+                reply,
+            } => send_reply_with(reply, self, move |this| {
+                this.states.ensure_open(&namespace)?;
+                this.store.get_exact(namespace, author, key, include_empty)
+            }),
             ReplicaAction::GetMany { query, reply } => {
                 let iter = self
                     .states
