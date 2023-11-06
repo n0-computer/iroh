@@ -116,23 +116,16 @@ impl Store {
         // Setup all tables
         let write_tx = db.begin_write()?;
         {
-            let records_table = write_tx.open_table(RECORDS_TABLE)?;
+            let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
-            let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
+            let _table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            let mut by_key_table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
-
-            // migration 001: populate latest table if it was empty before
-            if latest_table.is_empty()? && !records_table.is_empty()? {
-                migrations::migration_001_populate_latest_table(&records_table, &mut latest_table)?;
-            }
-            // migration 002: populate by_key table if it was empty before
-            if by_key_table.is_empty()? && !records_table.is_empty()? {
-                migrations::migration_002_populate_by_key_index(&records_table, &mut by_key_table)?;
-            }
+            let _table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
         }
         write_tx.commit()?;
+
+        migrations::run_migrations(&db)?;
 
         Ok(Store {
             db: Arc::new(db),
