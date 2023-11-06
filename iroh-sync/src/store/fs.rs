@@ -190,6 +190,15 @@ impl Store {
         let write_tx = self.db.begin_write()?;
         {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let capability = {
+                let existing = namespace_table.get(capability.id().as_bytes())?;
+                if let Some(existing) = existing {
+                    let existing = parse_capability(existing.value())?;
+                    capability.merge(existing)?
+                } else {
+                    capability
+                }
+            };
             let id = capability.id().to_bytes();
             let (kind, bytes) = capability.raw();
             namespace_table.insert(&id, (kind, &bytes))?;
@@ -257,12 +266,8 @@ impl super::Store for Store {
         let namespaces: Vec<_> = namespace_table
             .iter()?
             .map(|res| {
-                let val = res?.1;
-                let (raw_kind, raw_bytes) = val.value();
-                let capability = Capability::from_raw(raw_kind, raw_bytes)?;
-                let kind = capability.kind();
-                let id = capability.id();
-                Ok((id, kind))
+                let capability = parse_capability(res?.1.value())?;
+                Ok((capability.id(), capability.kind()))
             })
             .collect();
         Ok(namespaces.into_iter())
@@ -444,6 +449,10 @@ impl super::Store for Store {
             Ok(Some(peers.into_iter()))
         }
     }
+}
+
+fn parse_capability((raw_kind, raw_bytes): (u8, &[u8; 32])) -> Result<Capability> {
+    Capability::from_raw(raw_kind, raw_bytes)
 }
 
 fn get_one(

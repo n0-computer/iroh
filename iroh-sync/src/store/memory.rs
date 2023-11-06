@@ -108,7 +108,14 @@ impl super::Store for Store {
     }
 
     fn import_namespace(&self, capability: Capability) -> Result<()> {
-        self.namespaces.write().insert(capability.id(), capability);
+        let mut table = self.namespaces.write();
+        let existing = table.remove(&capability.id());
+        let capability = if let Some(existing) = existing {
+            capability.merge(existing)?
+        } else {
+            capability
+        };
+        table.insert(capability.id(), capability);
         Ok(())
     }
 

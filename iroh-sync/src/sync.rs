@@ -200,6 +200,30 @@ impl Capability {
         };
         Ok(capability)
     }
+
+    /// Merge this capability with another capability.
+    ///
+    /// Will return the highest capability level obtainable from the two capabilities.
+    /// I.e. if one of them is a [`Capability::Write`], it will return a [`Capability::Write`], and
+    /// otherwise a [`Capability::Read`].
+    pub fn merge(self, other: Capability) -> Result<Self, CapabilityError> {
+        if other.id() != self.id() {
+            return Err(CapabilityError::NamespaceMismatch);
+        }
+        match (&self, &other) {
+            (Capability::Write(_), _) => Ok(self),
+            (_, Capability::Write(_)) => Ok(other),
+            _ => Ok(self),
+        }
+    }
+}
+
+/// Errors for capability operations
+#[derive(Debug, thiserror::Error)]
+pub enum CapabilityError {
+    /// Namespaces are not the same
+    #[error("Namespaces are not the same")]
+    NamespaceMismatch,
 }
 
 /// Local representation of a mutable, synchronizable key-value store.
@@ -408,7 +432,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> anyhow::Result<Hash> {
+    ) -> Result<Hash, InsertError<S>> {
         self.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
@@ -1925,6 +1949,38 @@ mod tests {
             namespace.id(),
             vec![vec![1u8, 0u8], vec![1u8, 2u8], vec![0u8, 255u8]],
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_replica_capability() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let store = store::memory::Store::default();
+        let author = store.new_author(&mut rng)?;
+        let namespace = NamespaceSecret::new(&mut rng);
+
+        // import read capability - insert must fail
+        let capability = Capability::Read(namespace.id());
+        store.import_namespace(capability)?;
+        let mut replica = store.open_replica(&namespace.id())?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(matches!(res, Err(InsertError::ReadOnly)));
+
+        // import write capability - insert must succeed
+        let capability = Capability::Write(namespace.clone());
+        store.import_namespace(capability)?;
+        store.close_replica(replica);
+        let mut replica = store.open_replica(&namespace.id())?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(matches!(res, Ok(_)));
+
+        // import read capability again - insert must stil succeed
+        let capability = Capability::Read(namespace.id());
+        store.import_namespace(capability)?;
+        store.close_replica(replica);
+        let mut replica = store.open_replica(&namespace.id())?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(matches!(res, Ok(_)));
         Ok(())
     }
 
