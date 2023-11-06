@@ -167,7 +167,7 @@ impl super::Store for Store {
         Ok(QueryIterator::new(records, namespace, query))
     }
 
-    fn get_one(
+    fn get_exact(
         &self,
         namespace: NamespaceId,
         author: AuthorId,

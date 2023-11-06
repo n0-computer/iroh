@@ -377,7 +377,7 @@ impl SyncHandle {
         Ok(())
     }
 
-    pub async fn get_one(
+    pub async fn get_exact(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
@@ -589,7 +589,7 @@ impl<S: store::Store> Actor<S> {
             ReplicaAction::GetOne { author, key, include_empty, reply } => {
                 send_reply_with(reply, self, move |this| {
                     this.states.ensure_open(&namespace)?;
-                    this.store.get_one(namespace, author, key, include_empty)
+                    this.store.get_exact(namespace, author, key, include_empty)
                 })
             }
             ReplicaAction::GetMany { query, reply } => {

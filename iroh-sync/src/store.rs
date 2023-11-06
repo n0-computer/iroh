@@ -135,7 +135,7 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     ) -> Result<Self::GetIter<'_>>;
 
     /// Get an entry by key and author.
-    fn get_one(
+    fn get_exact(
         &self,
         namespace: NamespaceId,
         author: AuthorId,

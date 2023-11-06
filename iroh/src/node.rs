@@ -1563,7 +1563,7 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             DocGetOne(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_get_one(req).await
+                    handler.inner.sync.doc_get_exact(req).await
                 })
                 .await
             }

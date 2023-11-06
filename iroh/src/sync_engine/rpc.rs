@@ -172,7 +172,7 @@ impl SyncEngine {
             .await?;
         let entry = self
             .sync
-            .get_one(doc_id, author_id, key, false)
+            .get_exact(doc_id, author_id, key, false)
             .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
@@ -223,7 +223,7 @@ impl SyncEngine {
         })
     }
 
-    pub async fn doc_get_one(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
+    pub async fn doc_get_exact(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
         let DocGetOneRequest {
             doc_id,
             author,
@@ -232,7 +232,7 @@ impl SyncEngine {
         } = req;
         let entry = self
             .sync
-            .get_one(doc_id, author, key, include_empty)
+            .get_exact(doc_id, author, key, include_empty)
             .await?;
         Ok(DocGetOneResponse { entry })
     }
