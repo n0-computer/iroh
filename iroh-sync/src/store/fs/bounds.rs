@@ -34,7 +34,7 @@ impl RecordsBounds {
         let end = if key_is_exact {
             Bound::Included(start.clone())
         } else if increment_by_one(&mut key_end) {
-            Bound::Excluded((ns, author_end, key_end.into()))
+            Bound::Excluded((ns, author, key_end.into()))
         } else if increment_by_one(&mut author_end) {
             Bound::Excluded((ns, author_end, Bytes::new()))
         } else if increment_by_one(&mut ns_end) {
@@ -51,21 +51,32 @@ impl RecordsBounds {
     }
 
     pub fn namespace(ns: NamespaceId) -> Self {
-        let start = Bound::Included((ns.to_bytes(), [0u8; 32], Bytes::new()));
-        let end = namespace_end(&ns);
-        Self::new(start, end)
+        Self::new(Self::namespace_start(&ns), Self::namespace_end(&ns))
     }
 
     pub fn from_start(ns: &NamespaceId, end: Bound<RecordsIdOwned>) -> Self {
-        Self::new(namespace_start(ns), end)
+        Self::new(Self::namespace_start(ns), end)
     }
 
     pub fn to_end(ns: &NamespaceId, start: Bound<RecordsIdOwned>) -> Self {
-        Self::new(start, namespace_end(ns))
+        Self::new(start, Self::namespace_end(ns))
     }
 
     pub fn as_ref(&self) -> (Bound<RecordsId>, Bound<RecordsId>) {
         map_bounds(&self.0, records_id_ref)
+    }
+
+    fn namespace_start(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
+        Bound::Included((namespace.to_bytes(), [0u8; 32], Bytes::new()))
+    }
+
+    fn namespace_end(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
+        let mut ns_end = namespace.to_bytes();
+        if increment_by_one(&mut ns_end) {
+            Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
+        } else {
+            Bound::Unbounded
+        }
     }
 }
 
@@ -81,41 +92,39 @@ impl From<(Bound<RecordsIdOwned>, Bound<RecordsIdOwned>)> for RecordsBounds {
 pub struct ByKeyBounds((Bound<RecordsByKeyIdOwned>, Bound<RecordsByKeyIdOwned>));
 impl ByKeyBounds {
     pub fn new(ns: NamespaceId, matcher: &KeyFilter) -> Self {
-        let ns = ns.as_bytes();
-        let bounds = match matcher {
-            KeyFilter::Any => {
-                let start = (*ns, Bytes::new(), [0u8; 32]);
-                let mut ns_end = *ns;
-                let end = match increment_by_one(&mut ns_end) {
-                    true => Bound::Excluded((ns_end, Bytes::new(), [0u8; 32])),
-                    false => Bound::Unbounded,
-                };
-                (Bound::Included(start), end)
-            }
+        match matcher {
+            KeyFilter::Any => Self::namespace(ns),
             KeyFilter::Exact(key) => {
-                let start = (*ns, key.clone(), [0u8; 32]);
-                let end = (*ns, key.clone(), [255u8; 32]);
-                (Bound::Included(start), Bound::Included(end))
+                let start = (ns.to_bytes(), key.clone(), [0u8; 32]);
+                let end = (ns.to_bytes(), key.clone(), [255u8; 32]);
+                Self((Bound::Included(start), Bound::Included(end)))
             }
             KeyFilter::Prefix(ref prefix) => {
-                let start = (*ns, prefix.clone(), [0u8; 32]);
+                let start = Bound::Included((ns.to_bytes(), prefix.clone(), [0u8; 32]));
+
+                let mut ns_end = ns.to_bytes();
                 let mut key_end = prefix.to_vec();
-                let mut ns_end = *ns;
                 let end = if increment_by_one(&mut key_end) {
-                    Bound::Excluded((*ns, key_end.into(), [0u8; 32]))
+                    Bound::Excluded((ns.to_bytes(), key_end.into(), [0u8; 32]))
                 } else if increment_by_one(&mut ns_end) {
                     Bound::Excluded((ns_end, Bytes::new(), [0u8; 32]))
                 } else {
                     Bound::Unbounded
                 };
-                (Bound::Included(start), end)
+                Self((start, end))
             }
-        };
-        Self(bounds)
+        }
     }
 
     pub fn namespace(ns: NamespaceId) -> Self {
-        Self::new(ns, &KeyFilter::Any)
+        let start = Bound::Included((ns.to_bytes(), Bytes::new(), [0u8; 32]));
+        let mut ns_end = ns.to_bytes();
+        let end = if increment_by_one(&mut ns_end) {
+            Bound::Excluded((ns_end, Bytes::new(), [0u8; 32]))
+        } else {
+            Bound::Unbounded
+        };
+        Self((start, end))
     }
 
     pub fn as_ref(&self) -> (Bound<RecordsByKeyId>, Bound<RecordsByKeyId>) {
@@ -159,17 +168,4 @@ fn records_by_key_id_ref(id: &RecordsByKeyIdOwned) -> RecordsByKeyId {
 
 fn records_id_ref(id: &RecordsIdOwned) -> RecordsId {
     (&id.0, &id.1, &id.2[..])
-}
-
-fn namespace_start(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
-    Bound::Included((namespace.to_bytes(), [0u8; 32], Bytes::new()))
-}
-
-fn namespace_end(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
-    let mut ns_end = *(namespace.as_bytes());
-    if increment_by_one(&mut ns_end) {
-        Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
-    } else {
-        Bound::Unbounded
-    }
 }
