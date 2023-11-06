@@ -1055,7 +1055,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_one(my_replica.namespace(), alice.id(), format!("/{i}"))?
+                .get_one(my_replica.namespace(), alice.id(), format!("/{i}"), false)?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -1065,12 +1065,12 @@ mod tests {
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_one(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_one(my_replica.namespace(), alice.id(), "/cool/path", false)?
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_one(my_replica.namespace(), alice.id(), "/cool/path")?
+            .get_one(my_replica.namespace(), alice.id(), "/cool/path", false)?
             .unwrap();
 
         // Get All by author
@@ -1374,7 +1374,7 @@ mod tests {
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
-        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
+        let res = store.get_one(namespace.id(), author.id(), key, false)?.unwrap();
         assert_eq!(res, entry);
 
         let entry2 = {
@@ -1386,7 +1386,7 @@ mod tests {
 
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
         assert!(matches!(res, Err(InsertError::NewerEntryExists)));
-        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
+        let res = store.get_one(namespace.id(), author.id(), key, false)?.unwrap();
         assert_eq!(res, entry);
 
         Ok(())
@@ -1599,9 +1599,9 @@ mod tests {
         // delete
         let deleted = replica.delete_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
-        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
-        assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
-        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foo")?, None);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar", false)?, None);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo", false)?, None);
+        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foo", false)?, None);
 
         Ok(())
     }
@@ -2126,7 +2126,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
-            .get_one(namespace, author, key)?
+            .get_one(namespace, author, key, true)?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(entry)
     }
@@ -2138,7 +2138,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<Option<Hash>> {
         let hash = store
-            .get_one(namespace, author, key)?
+            .get_one(namespace, author, key, false)?
             .map(|e| e.content_hash());
         Ok(hash)
     }
@@ -2174,7 +2174,7 @@ mod tests {
         set: &[&str],
     ) -> Result<()> {
         for el in set {
-            store.get_one(*namespace, author.id(), el)?;
+            store.get_one(*namespace, author.id(), el, false)?;
         }
         Ok(())
     }

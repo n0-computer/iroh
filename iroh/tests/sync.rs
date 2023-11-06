@@ -755,7 +755,7 @@ async fn doc_delete() -> Result<()> {
     let deleted = doc.del(author, b"foo".to_vec()).await?;
     assert_eq!(deleted, 1);
 
-    let entry = doc.get_one(author, b"foo".to_vec()).await?;
+    let entry = doc.get_one(author, b"foo".to_vec(), false).await?;
     assert!(entry.is_none());
 
     // wait for gc
@@ -785,7 +785,7 @@ async fn sync_drop_doc() -> Result<()> {
     assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
 
     client.docs.drop_doc(doc.id()).await?;
-    let res = doc.get_one(author, b"foo".to_vec()).await;
+    let res = doc.get_one(author, b"foo".to_vec(), true).await;
     assert!(res.is_err());
     let res = doc
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())

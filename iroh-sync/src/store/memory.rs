@@ -172,6 +172,7 @@ impl super::Store for Store {
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
+        include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
         let Some(records) = inner.get(&namespace) else {
@@ -180,10 +181,11 @@ impl super::Store for Store {
         let entry = records
             .by_author
             .get(&(author, key.as_ref().to_vec().into()));
-        Ok(entry.and_then(|entry| match entry.is_empty() {
-            true => None,
-            false => Some(entry.clone()),
-        }))
+        Ok(match entry {
+            Some(entry) if !include_empty && entry.is_empty() => None,
+            Some(entry) => Some(entry.clone()),
+            None => None,
+        })
     }
 
     /// Get all content hashes of all replicas in the store.

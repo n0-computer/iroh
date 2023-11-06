@@ -172,7 +172,7 @@ impl SyncEngine {
             .await?;
         let entry = self
             .sync
-            .get_one(doc_id, author_id, key)
+            .get_one(doc_id, author_id, key, false)
             .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
@@ -228,8 +228,12 @@ impl SyncEngine {
             doc_id,
             author,
             key,
+            include_empty,
         } = req;
-        let entry = self.sync.get_one(doc_id, author, key).await?;
+        let entry = self
+            .sync
+            .get_one(doc_id, author, key, include_empty)
+            .await?;
         Ok(DocGetOneResponse { entry })
     }
 }

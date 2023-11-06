@@ -659,13 +659,14 @@ where
     }
 
     /// Get the latest entry for a key and author.
-    pub async fn get_one(&self, author: AuthorId, key: impl AsRef<[u8]>) -> Result<Option<Entry>> {
+    pub async fn get_one(&self, author: AuthorId, key: impl AsRef<[u8]>, include_empty: bool) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
             .rpc(DocGetOneRequest {
                 author,
                 key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
+                include_empty
             })
             .await??;
         Ok(res.entry.map(|entry| entry.into()))

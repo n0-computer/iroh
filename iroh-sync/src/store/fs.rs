@@ -281,10 +281,11 @@ impl super::Store for Store {
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
+        include_empty: bool
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
-        get_one(&record_table, namespace, author, key, false)
+        get_one(&record_table, namespace, author, key, include_empty)
     }
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
@@ -443,7 +444,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        self.store.get_one(id.namespace(), id.author(), id.key())
+        self.store.get_one(id.namespace(), id.author(), id.key(), true)
     }
 
     fn len(&self) -> Result<usize> {

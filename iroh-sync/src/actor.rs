@@ -124,6 +124,7 @@ enum ReplicaAction {
     GetOne {
         author: AuthorId,
         key: Bytes,
+        include_empty: bool,
         reply: oneshot::Sender<Result<Option<SignedEntry>>>,
     },
     GetMany {
@@ -381,9 +382,10 @@ impl SyncHandle {
         namespace: NamespaceId,
         author: AuthorId,
         key: Bytes,
+        include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
         let (reply, rx) = oneshot::channel();
-        let action = ReplicaAction::GetOne { author, key, reply };
+        let action = ReplicaAction::GetOne { author, key, include_empty, reply };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -584,10 +586,10 @@ impl<S: store::Store> Actor<S> {
                 let res = self.store.register_useful_peer(namespace, peer);
                 send_reply(reply, res)
             }
-            ReplicaAction::GetOne { author, key, reply } => {
+            ReplicaAction::GetOne { author, key, include_empty, reply } => {
                 send_reply_with(reply, self, move |this| {
                     this.states.ensure_open(&namespace)?;
-                    this.store.get_one(namespace, author, key)
+                    this.store.get_one(namespace, author, key, include_empty)
                 })
             }
             ReplicaAction::GetMany { query, reply } => {

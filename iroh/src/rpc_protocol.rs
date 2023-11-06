@@ -726,6 +726,8 @@ pub struct DocGetOneRequest {
     pub key: Bytes,
     /// Author matcher
     pub author: AuthorId,
+    /// Whether to include empty entries (prefix deletion markers)
+    pub include_empty: bool
 }
 
 impl RpcMsg<ProviderService> for DocGetOneRequest {
