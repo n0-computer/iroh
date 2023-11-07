@@ -75,7 +75,7 @@ fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateO
     Ok(MigrateOutcome::Execute(len))
 }
 
-/// Migrate the namespaces table from V1 to V2.
+/// Copy the namespaces data from V1 to V2.
 fn migration_002_namespaces_populate_v2(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let namespaces_v1_exists = tx
         .list_tables()?
