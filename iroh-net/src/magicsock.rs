@@ -2013,6 +2013,15 @@ impl Actor {
             if let Some(ref cb) = self.inner.on_endpoints {
                 cb(&eps[..]);
             }
+            if let Some(ref discovery) = self.inner.discovery {
+                let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
+                let derp_region = Some(self.inner.my_derp()).filter(|x| *x != 0);
+                let info = AddrInfo {
+                    derp_region,
+                    direct_addresses,
+                };
+                discovery.publish(&info);
+            }
             self.inner.send_queued_call_me_maybes();
         }
     }

@@ -427,9 +427,10 @@ impl MagicEndpoint {
         self.msock.tracked_endpoint(node_id).await
     }
 
-    async fn resolve(&self, peer_id: &PublicKey) -> Result<AddrInfo> {
+    async fn resolve(&self, node_id: &PublicKey) -> Result<AddrInfo> {
         if let Some(discovery) = self.msock.discovery() {
-            discovery.resolve(peer_id).await
+            debug!("no mapping address for {node_id}, resolving via {discovery:?}");
+            discovery.resolve(node_id).await
         } else {
             anyhow::bail!("no discovery mechanism configured");
         }
