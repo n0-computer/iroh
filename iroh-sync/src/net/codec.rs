@@ -295,8 +295,8 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        keys::{AuthorId, NamespaceSecret},
-        store::{self, GetFilter, Store},
+        store::{self, Query, Store},
+        AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
     use iroh_bytes::Hash;
@@ -330,7 +330,7 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(bob_replica.id(), GetFilter::All)
+                .get_many(bob_replica.id(), Query::all(),)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -339,7 +339,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(alice_replica.id(), GetFilter::All)
+                .get_many(alice_replica.id(), Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -396,7 +396,7 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(namespace.id(), GetFilter::All)
+                .get_many(namespace.id(), Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -405,7 +405,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(namespace.id(), GetFilter::All)
+                .get_many(namespace.id(), Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -461,7 +461,7 @@ mod tests {
 
     fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
-            .get_many(namespace, GetFilter::All)
+            .get_many(namespace, Query::all())
             .unwrap()
             .map(|entry| {
                 entry.map(|entry| {

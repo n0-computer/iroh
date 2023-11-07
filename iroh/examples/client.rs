@@ -8,7 +8,7 @@
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_bytes::util::runtime;
-use iroh_sync::{store::GetFilter, Entry};
+use iroh_sync::{store::Query, Entry};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let key = b"hello".to_vec();
     let value = b"world".to_vec();
     doc.set_bytes(author, key.clone(), value).await?;
-    let mut stream = doc.get_many(GetFilter::All).await?;
+    let mut stream = doc.get_many(Query::all()).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
         let content = doc.read_to_bytes(&entry).await?;

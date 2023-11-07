@@ -824,12 +824,12 @@ impl EntrySignature {
     }
 
     #[cfg(feature = "fs-store")]
-    pub(crate) fn author_signature(&self) -> &Signature {
+    pub(crate) fn author(&self) -> &Signature {
         &self.author_signature
     }
 
     #[cfg(feature = "fs-store")]
-    pub(crate) fn namespace_signature(&self) -> &Signature {
+    pub(crate) fn namespace(&self) -> &Signature {
         &self.namespace_signature
     }
 }
@@ -939,7 +939,7 @@ impl Debug for RecordIdentifier {
 
 impl RangeKey for RecordIdentifier {
     fn is_prefix_of(&self, other: &Self) -> bool {
-        other.as_bytes().starts_with(self.as_bytes())
+        other.as_ref().starts_with(self.as_ref())
     }
 }
 
@@ -969,9 +969,9 @@ impl RecordIdentifier {
         out.extend_from_slice(&self.0);
     }
 
-    /// Get this [`RecordIdentifier`] as a byte slices.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
+    /// Get this [`RecordIdentifier`] as [Bytes].
+    pub fn as_bytes(&self) -> Bytes {
+        self.0.clone()
     }
 
     /// Get this [`RecordIdentifier`] as a tuple of byte slices.
@@ -983,9 +983,23 @@ impl RecordIdentifier {
         )
     }
 
+    /// Get this [`RecordIdentifier`] as a tuple of bytes.
+    pub fn to_byte_tuple(&self) -> ([u8; 32], [u8; 32], Bytes) {
+        (
+            self.0[NAMESPACE_BYTES].try_into().unwrap(),
+            self.0[AUTHOR_BYTES].try_into().unwrap(),
+            self.0.slice(KEY_BYTES),
+        )
+    }
+
     /// Get the key of this record.
     pub fn key(&self) -> &[u8] {
         &self.0[KEY_BYTES]
+    }
+
+    /// Get the key of this record as [`Bytes`].
+    pub fn key_bytes(&self) -> Bytes {
+        self.0.slice(KEY_BYTES)
     }
 
     /// Get the [`NamespaceId`] of this record as byte array.
@@ -998,6 +1012,12 @@ impl RecordIdentifier {
     pub fn author(&self) -> AuthorId {
         let value: &[u8; 32] = &self.0[AUTHOR_BYTES].try_into().unwrap();
         value.into()
+    }
+}
+
+impl AsRef<[u8]> for RecordIdentifier {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -1127,7 +1147,7 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{self, GetFilter, OpenError, Store},
+        store::{self, OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;
@@ -1172,7 +1192,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_one(my_replica.id(), alice.id(), format!("/{i}"))?
+                .get_exact(my_replica.id(), alice.id(), format!("/{i}"), false)?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -1182,35 +1202,35 @@ mod tests {
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_one(my_replica.id(), alice.id(), "/cool/path")?
+            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_one(my_replica.id(), alice.id(), "/cool/path")?
+            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Author(alice.id()))?
+            .get_many(my_replica.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Author(bob.id()))?
+            .get_many(my_replica.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Key(b"/cool/path".to_vec()))?
+            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::All)?
+            .get_many(my_replica.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
@@ -1219,24 +1239,24 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Author(alice.id()))?
+            .get_many(my_replica.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Author(bob.id()))?
+            .get_many(my_replica.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Key(b"/cool/path".to_vec()))?
+            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::Prefix(b"/cool".to_vec()))?
+            .get_many(my_replica.id(), Query::key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
@@ -1244,7 +1264,7 @@ mod tests {
         let entries: Vec<_> = store
             .get_many(
                 my_replica.id(),
-                GetFilter::AuthorAndPrefix(alice.id(), b"/cool".to_vec()),
+                Query::author(alice.id()).key_prefix(b"/cool"),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
@@ -1252,14 +1272,14 @@ mod tests {
         let entries: Vec<_> = store
             .get_many(
                 my_replica.id(),
-                GetFilter::AuthorAndPrefix(bob.id(), b"/cool".to_vec()),
+                Query::author(bob.id()).key_prefix(b"/cool"),
             )?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), GetFilter::All)?
+            .get_many(my_replica.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
@@ -1491,7 +1511,9 @@ mod tests {
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
-        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
+        let res = store
+            .get_exact(namespace.id(), author.id(), key, false)?
+            .unwrap();
         assert_eq!(res, entry);
 
         let entry2 = {
@@ -1503,7 +1525,9 @@ mod tests {
 
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
         assert!(matches!(res, Err(InsertError::NewerEntryExists)));
-        let res = store.get_one(namespace.id(), author.id(), key)?.unwrap();
+        let res = store
+            .get_exact(namespace.id(), author.id(), key, false)?
+            .unwrap();
         assert_eq!(res, entry);
 
         Ok(())
@@ -1716,9 +1740,18 @@ mod tests {
         // delete
         let deleted = replica.delete_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
-        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foobar")?, None);
-        assert_eq!(store.get_one(myspace.id(), alice.id(), b"fooboo")?, None);
-        assert_eq!(store.get_one(myspace.id(), alice.id(), b"foo")?, None);
+        assert_eq!(
+            store.get_exact(myspace.id(), alice.id(), b"foobar", false)?,
+            None
+        );
+        assert_eq!(
+            store.get_exact(myspace.id(), alice.id(), b"fooboo", false)?,
+            None
+        );
+        assert_eq!(
+            store.get_exact(myspace.id(), alice.id(), b"foo", false)?,
+            None
+        );
 
         Ok(())
     }
@@ -1797,7 +1830,7 @@ mod tests {
         // insert entry
         let hash = replica.hash_and_insert(b"foo", &author, b"bar")?;
         let res = store
-            .get_many(namespace.id(), GetFilter::All)?
+            .get_many(namespace.id(), Query::all())?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 1);
 
@@ -1808,7 +1841,7 @@ mod tests {
         store.close_replica(replica);
         store.remove_replica(&namespace.id())?;
         let res = store
-            .get_many(namespace.id(), GetFilter::All)?
+            .get_many(namespace.id(), Query::all())?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 0);
 
@@ -1820,7 +1853,7 @@ mod tests {
         let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(b"foo", &author, hash, 3)?;
         let res = store
-            .get_many(namespace.id(), GetFilter::All)?
+            .get_many(namespace.id(), Query::all())?
             .collect::<Vec<_>>();
         assert_eq!(res.len(), 1);
         Ok(())
@@ -2134,6 +2167,192 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_replica_queries_mem() -> Result<()> {
+        let store = store::memory::Store::default();
+
+        test_replica_queries(store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_queries_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_queries(store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_queries<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = NamespaceSecret::new(&mut rng);
+        let mut replica = store.new_replica(namespace)?;
+        let namespace = replica.id();
+
+        let a1 = store.new_author(&mut rng)?;
+        let a2 = store.new_author(&mut rng)?;
+        let a3 = store.new_author(&mut rng)?;
+        println!(
+            "a1 {} a2 {} a3 {}",
+            a1.id().fmt_short(),
+            a2.id().fmt_short(),
+            a3.id().fmt_short()
+        );
+
+        replica.hash_and_insert("hi/world", &a2, "a2")?;
+        replica.hash_and_insert("hi/world", &a1, "a1")?;
+        replica.hash_and_insert("hi/moon", &a2, "a1")?;
+        replica.hash_and_insert("hi", &a3, "a3")?;
+
+        struct QueryTester<'a, S: store::Store> {
+            store: &'a S,
+            namespace: NamespaceId,
+        }
+        impl<'a, S: store::Store> QueryTester<'a, S> {
+            fn assert(&self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
+                let query = query.into();
+                let actual = self
+                    .store
+                    .get_many(self.namespace, query.clone())
+                    .unwrap()
+                    .map(|e| e.map(|e| (String::from_utf8(e.key().to_vec()).unwrap(), e.author())))
+                    .collect::<Result<Vec<_>>>()
+                    .unwrap();
+                let expected = expected
+                    .into_iter()
+                    .map(|(key, author)| (key.to_string(), author.id()))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "query: {query:#?}")
+            }
+        }
+
+        let qt = QueryTester {
+            store: &store,
+            namespace,
+        };
+
+        qt.assert(
+            Query::all(),
+            vec![
+                ("hi/world", &a1),
+                ("hi/moon", &a2),
+                ("hi/world", &a2),
+                ("hi", &a3),
+            ],
+        );
+
+        qt.assert(
+            Query::single_latest_per_key(),
+            vec![("hi", &a3), ("hi/moon", &a2), ("hi/world", &a1)],
+        );
+
+        qt.assert(
+            Query::single_latest_per_key().sort_direction(SortDirection::Desc),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)],
+        );
+
+        qt.assert(
+            Query::single_latest_per_key().key_prefix("hi/"),
+            vec![("hi/moon", &a2), ("hi/world", &a1)],
+        );
+
+        qt.assert(
+            Query::single_latest_per_key()
+                .key_prefix("hi/")
+                .sort_direction(SortDirection::Desc),
+            vec![("hi/world", &a1), ("hi/moon", &a2)],
+        );
+
+        qt.assert(
+            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Asc),
+            vec![
+                ("hi", &a3),
+                ("hi/moon", &a2),
+                ("hi/world", &a1),
+                ("hi/world", &a2),
+            ],
+        );
+
+        qt.assert(
+            Query::all().sort_by(SortBy::KeyAuthor, SortDirection::Desc),
+            vec![
+                ("hi/world", &a2),
+                ("hi/world", &a1),
+                ("hi/moon", &a2),
+                ("hi", &a3),
+            ],
+        );
+
+        qt.assert(
+            Query::all().key_prefix("hi/"),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2)],
+        );
+
+        qt.assert(
+            Query::all().key_prefix("hi/").offset(1).limit(1),
+            vec![("hi/moon", &a2)],
+        );
+
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::KeyAuthor, SortDirection::Desc),
+            vec![("hi/world", &a2), ("hi/world", &a1), ("hi/moon", &a2)],
+        );
+
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::KeyAuthor, SortDirection::Desc)
+                .offset(1)
+                .limit(1),
+            vec![("hi/world", &a1)],
+        );
+
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::AuthorKey, SortDirection::Asc),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi/world", &a2)],
+        );
+
+        qt.assert(
+            Query::all()
+                .key_prefix("hi/")
+                .sort_by(SortBy::AuthorKey, SortDirection::Desc),
+            vec![("hi/world", &a2), ("hi/moon", &a2), ("hi/world", &a1)],
+        );
+
+        qt.assert(
+            Query::all()
+                .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+                .limit(2)
+                .offset(1),
+            vec![("hi/moon", &a2), ("hi/world", &a1)],
+        );
+
+        replica.delete_prefix("hi/world", &a2)?;
+
+        qt.assert(
+            Query::all(),
+            vec![("hi/world", &a1), ("hi/moon", &a2), ("hi", &a3)],
+        );
+
+        qt.assert(
+            Query::all().include_empty(),
+            vec![
+                ("hi/world", &a1),
+                ("hi/moon", &a2),
+                ("hi/world", &a2),
+                ("hi", &a3),
+            ],
+        );
+
+        Ok(())
+    }
+
     fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));
@@ -2141,7 +2360,7 @@ mod tests {
 
     fn get_keys_sorted<S: store::Store>(store: &S, namespace: NamespaceId) -> Vec<Vec<u8>> {
         let mut res = store
-            .get_many(namespace, GetFilter::All)
+            .get_many(namespace, Query::all())
             .unwrap()
             .map(|e| e.map(|e| e.key().to_vec()))
             .collect::<Result<Vec<_>>>()
@@ -2157,7 +2376,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<SignedEntry> {
         let entry = store
-            .get_one(namespace, author, key)?
+            .get_exact(namespace, author, key, true)?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(entry)
     }
@@ -2169,7 +2388,7 @@ mod tests {
         key: &[u8],
     ) -> anyhow::Result<Option<Hash>> {
         let hash = store
-            .get_one(namespace, author, key)?
+            .get_exact(namespace, author, key, false)?
             .map(|e| e.content_hash());
         Ok(hash)
     }
@@ -2205,7 +2424,7 @@ mod tests {
         set: &[&str],
     ) -> Result<()> {
         for el in set {
-            store.get_one(*namespace, author.id(), el)?;
+            store.get_exact(*namespace, author.id(), el, false)?;
         }
         Ok(())
     }

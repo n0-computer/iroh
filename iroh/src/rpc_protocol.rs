@@ -20,9 +20,8 @@ use iroh_net::{
 
 use iroh_sync::{
     actor::OpenState,
-    store::GetFilter,
-    sync::SignedEntry,
-    CapabilityKind, {AuthorId, NamespaceId},
+    store::Query,
+    {AuthorId, CapabilityKind, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -701,8 +700,8 @@ pub struct DocSetHashResponse {}
 pub struct DocGetManyRequest {
     /// The document id
     pub doc_id: NamespaceId,
-    /// Filter entries by this [`GetFilter`]
-    pub filter: GetFilter,
+    /// Query to run
+    pub query: Query,
 }
 
 impl Msg<ProviderService> for DocGetManyRequest {
@@ -722,22 +721,24 @@ pub struct DocGetManyResponse {
 
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetOneRequest {
+pub struct DocGetExactRequest {
     /// The document id
     pub doc_id: NamespaceId,
-    /// Key
+    /// Key matcher
     pub key: Bytes,
-    /// Author
+    /// Author matcher
     pub author: AuthorId,
+    /// Whether to include empty entries (prefix deletion markers)
+    pub include_empty: bool,
 }
 
-impl RpcMsg<ProviderService> for DocGetOneRequest {
-    type Response = RpcResult<DocGetOneResponse>;
+impl RpcMsg<ProviderService> for DocGetExactRequest {
+    type Response = RpcResult<DocGetExactResponse>;
 }
 
-/// Response to [`DocGetOneRequest`]
+/// Response to [`DocGetExactRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetOneResponse {
+pub struct DocGetExactResponse {
     /// The document entry
     pub entry: Option<SignedEntry>,
 }
@@ -866,7 +867,7 @@ pub enum ProviderRequest {
     DocSet(DocSetRequest),
     DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
-    DocGetOne(DocGetOneRequest),
+    DocGetExact(DocGetExactRequest),
     DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocLeave(DocLeaveRequest),
@@ -911,7 +912,7 @@ pub enum ProviderResponse {
     DocSet(RpcResult<DocSetResponse>),
     DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
-    DocGetOne(RpcResult<DocGetOneResponse>),
+    DocGetExact(RpcResult<DocGetExactResponse>),
     DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),

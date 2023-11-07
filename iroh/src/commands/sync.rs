@@ -21,7 +21,10 @@ use iroh::{
     util::fs::{path_content_info, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
-use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
+use iroh_sync::{
+    store::{Query, SortDirection},
+    AuthorId, Entry, NamespaceId,
+};
 
 use crate::config::ConsoleEnv;
 
@@ -140,6 +143,12 @@ pub enum DocCommands {
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
+        /// How to sort the entries
+        #[clap(long, default_value_t=Sorting::Author)]
+        sort: Sorting,
+        /// Sort in descending order
+        #[clap(long)]
+        desc: bool,
         /// How to show the contents of the keys.
         #[clap(short, long, default_value_t=DisplayContentMode::Hash)]
         mode: DisplayContentMode,
@@ -216,6 +225,24 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `doc switch`.
         doc: Option<NamespaceId>,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum Sorting {
+    /// Sort by author, then key
+    #[default]
+    Author,
+    /// Sort by key, then author
+    Key,
+}
+impl From<Sorting> for iroh_sync::store::SortBy {
+    fn from(value: Sorting) -> Self {
+        match value {
+            Sorting::Author => Self::AuthorKey,
+            Sorting::Key => Self::KeyAuthor,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -324,22 +351,15 @@ impl DocCommands {
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
-                let filter = match (author, prefix) {
-                    (None, false) => GetFilter::Key(key),
-                    (None, true) => GetFilter::Prefix(key),
-                    (Some(author), true) => GetFilter::AuthorAndPrefix(author, key),
-                    (Some(author), false) => {
-                        // Special case: Author and key, this means single entry.
-                        let entry = doc
-                            .get_one(author, key)
-                            .await?
-                            .ok_or_else(|| anyhow!("Entry not found"))?;
-                        println!("{}", fmt_entry(&doc, &entry, mode).await);
-                        return Ok(());
-                    }
+                let query = Query::all();
+                let query = match (author, prefix) {
+                    (None, false) => query.key_exact(key),
+                    (None, true) => query.key_prefix(key),
+                    (Some(author), true) => query.author(author).key_prefix(key),
+                    (Some(author), false) => query.author(author).key_exact(key),
                 };
 
-                let mut stream = doc.get_many(filter).await?;
+                let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -349,11 +369,23 @@ impl DocCommands {
                 prefix,
                 author,
                 mode,
+                sort,
+                desc,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let filter = GetFilter::author_prefix(author, prefix);
-
-                let mut stream = doc.get_many(filter).await?;
+                let mut query = Query::all();
+                if let Some(author) = author {
+                    query = query.author(author);
+                }
+                if let Some(prefix) = prefix {
+                    query = query.key_prefix(prefix);
+                }
+                let direction = match desc {
+                    true => SortDirection::Desc,
+                    false => SortDirection::Asc,
+                };
+                query = query.sort_by(sort.into(), direction);
+                let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -420,8 +452,8 @@ impl DocCommands {
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let stream = doc.get_many(GetFilter::Key(key)).await?;
-                let entry = match get_latest(stream).await? {
+                let mut stream = doc.get_many(Query::key_exact(key)).await?;
+                let entry = match stream.try_next().await? {
                     None => {
                         println!("<unable to find entry for key {key_str}>");
                         return Ok(());
@@ -842,24 +874,4 @@ impl ImportProgressBar {
     fn all_done(self) {
         self.mp.clear().ok();
     }
-}
-
-/// Get the latest entry for a key. If `None`, then an entry of the given key
-/// could not be found.
-async fn get_latest(stream: impl Stream<Item = Result<Entry>>) -> Result<Option<Entry>> {
-    let entry = stream
-        .try_fold(None, |acc: Option<Entry>, cur: Entry| async move {
-            match acc {
-                None => Ok(Some(cur)),
-                Some(prev) => {
-                    if cur.timestamp() > prev.timestamp() {
-                        Ok(Some(cur))
-                    } else {
-                        Ok(Some(prev))
-                    }
-                }
-            }
-        })
-        .await?;
-    Ok(entry)
 }
