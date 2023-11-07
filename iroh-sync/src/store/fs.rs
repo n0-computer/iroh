@@ -61,7 +61,7 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
     TableDefinition::new("namespaces-2");
 
 /// Table: Records
-/// Key:   ([u8; 32], [u8; 32], &[u8]) 
+/// Key:   ([u8; 32], [u8; 32], &[u8])
 ///      # (NamespaceId, AuthorId, Key)
 /// Value: (u64, [u8; 32], [u8; 32], u64, [u8; 32])
 ///      # (timestamp, signature_namespace, signature_author, len, hash)
@@ -74,10 +74,10 @@ type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'stat
 /// Table: Latest per author
 /// Key:   ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
 /// Value: (u64, Vec<u8>)       # (Timestamp, Key)
-const LATEST_TABLE: TableDefinition<LatestKey, LatestValue> =
+const LATEST_PER_AUTHOR_TABLE: TableDefinition<LatestPerAuthorKey, LatestPerAuthorValue> =
     TableDefinition::new("latest-by-author-1");
-type LatestKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
-type LatestValue<'a> = (u64, &'a [u8]);
+type LatestPerAuthorKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
+type LatestPerAuthorValue<'a> = (u64, &'a [u8]);
 
 /// Table: Records by key
 /// Key:   ([u8; 32, &[u8], [u8; 32]]) # (NamespaceId, Key, AuthorId)
@@ -118,7 +118,7 @@ impl Store {
         {
             let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
-            let _table = write_tx.open_table(LATEST_TABLE)?;
+            let _table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
         }
         write_tx.commit()?;
@@ -516,7 +516,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             idx_by_key.insert(key, ())?;
 
             // insert into latest table
-            let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
+            let mut latest_table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
             let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
             let value = (e.timestamp(), e.id().key());
             latest_table.insert(key, value)?;
@@ -698,13 +698,15 @@ impl Iterator for ContentHashesIterator<'_> {
 
 /// Iterator over the latest entry per author.
 #[derive(Debug)]
-pub struct LatestIterator<'a>(TableRange<'a, LatestKey<'static>, LatestValue<'static>>);
+pub struct LatestIterator<'a>(
+    TableRange<'a, LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
+);
 
 impl<'a> LatestIterator<'a> {
     fn new(db: &'a Arc<Database>, namespace: NamespaceId) -> anyhow::Result<Self> {
         Ok(Self(TableRange::new(
             db,
-            |tx| tx.open_table(LATEST_TABLE),
+            |tx| tx.open_table(LATEST_PER_AUTHOR_TABLE),
             |table| {
                 let start = (namespace.as_bytes(), &[u8::MIN; 32]);
                 let end = (namespace.as_bytes(), &[u8::MAX; 32]);
@@ -883,7 +885,7 @@ mod tests {
 
         // create a copy of our db file with the latest table deleted.
         let dbfile_before_migration = copy_and_modify(dbfile.path(), |tx| {
-            tx.delete_table(LATEST_TABLE)?;
+            tx.delete_table(LATEST_PER_AUTHOR_TABLE)?;
             Ok(())
         })?;
 

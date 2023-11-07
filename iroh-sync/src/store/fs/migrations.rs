@@ -7,7 +7,8 @@ use tracing::{debug, info};
 use crate::{Capability, NamespaceSecret};
 
 use super::{
-    LATEST_TABLE, NAMESPACES_TABLE, NAMESPACES_TABLE_V1, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
+    LATEST_PER_AUTHOR_TABLE, NAMESPACES_TABLE, NAMESPACES_TABLE_V1, RECORDS_BY_KEY_TABLE,
+    RECORDS_TABLE,
 };
 
 /// Run all database migrations, if needed.
@@ -43,7 +44,7 @@ enum MigrateOutcome {
 
 /// migration 001: populate the latest table (which did not exist before)
 fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateOutcome> {
-    let mut latest_table = tx.open_table(LATEST_TABLE)?;
+    let mut latest_table = tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
     let records_table = tx.open_table(RECORDS_TABLE)?;
     if !latest_table.is_empty()? || records_table.is_empty()? {
         return Ok(MigrateOutcome::Skip);
