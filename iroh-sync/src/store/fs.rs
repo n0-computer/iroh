@@ -43,58 +43,53 @@ pub use self::ranges::RecordsRange;
 
 // Table Definitions
 
-// Authors
-// Table
-// Key: [u8; 32] # AuthorId
-// Value: #[u8; 32] # Author
+/// Table: Authors
+/// Key:   [u8; 32] # AuthorId
+/// Value: [u8; 32] # Author
 const AUTHORS_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> = TableDefinition::new("authors-1");
 
-// Namespaces v1 (unused, replaced by Namespaces v2 in migration )
-// Table
-// Key: [u8; 32] # NamespaceId
-// Value: [u8; 32] # NamespaceSecret
+/// Table: Namespaces v1 (replaced by Namespaces v2 in migration )
+/// Key:   [u8; 32] # NamespaceId
+/// Value: [u8; 32] # NamespaceSecret
 const NAMESPACES_TABLE_V1: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("namespaces-1");
 
-// Namespaces v2
-// Table
-// Key: [u8; 32] # NamespaceId
-// Value: (u8, [u8; 32]) # (CapabilityKind, Capability)
+/// Table: Namespaces v2
+/// Key:   [u8; 32]       # NamespaceId
+/// Value: (u8, [u8; 32]) # (CapabilityKind, Capability)
 const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
     TableDefinition::new("namespaces-2");
 
-// Records
-// Table
-// Key: ([u8; 32], [u8; 32], Vec<u8>) # (NamespaceId, AuthorId, Key)
-// Value:
-//    (u64, [u8; 32], [u8; 32], u64, [u8; 32])
-//  # (timestamp, signature_namespace, signature_author, len, hash)
+/// Table: Records
+/// Key:   ([u8; 32], [u8; 32], &[u8]) 
+///      # (NamespaceId, AuthorId, Key)
+/// Value: (u64, [u8; 32], [u8; 32], u64, [u8; 32])
+///      # (timestamp, signature_namespace, signature_author, len, hash)
 const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsIdOwned = ([u8; 32], [u8; 32], Bytes);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 
-// Latest by author
-// Table
-// Key: ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
-// Value: (u64, Vec<u8>) # (Timestamp, Key)
+/// Table: Latest per author
+/// Key:   ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
+/// Value: (u64, Vec<u8>)       # (Timestamp, Key)
 const LATEST_TABLE: TableDefinition<LatestKey, LatestValue> =
     TableDefinition::new("latest-by-author-1");
 type LatestKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
 type LatestValue<'a> = (u64, &'a [u8]);
 
-// Records by key
-// Key: (NamespaceId, Key, AuthorId)
-// Value: ()
+/// Table: Records by key
+/// Key:   ([u8; 32, &[u8], [u8; 32]]) # (NamespaceId, Key, AuthorId)
+/// Value: ()
 const RECORDS_BY_KEY_TABLE: TableDefinition<RecordsByKeyId, ()> =
     TableDefinition::new("records-by-key-1");
 type RecordsByKeyId<'a> = (&'a [u8; 32], &'a [u8], &'a [u8; 32]);
 type RecordsByKeyIdOwned = ([u8; 32], Bytes, [u8; 32]);
 
-/// Peers stored per document.
-/// - Key: [`NamespaceId::as_bytes`]
-/// - Value: ([`Nanos`], &[`PeerIdBytes`]) representing the last time a peer was used.
+/// Table: Peers per document.
+/// Key:   [u8; 32]        # NamespaceId
+/// Value: (u64, [u8; 32]) # ([`Nanos`], &[`PeerIdBytes`]) representing the last time a peer was used.
 const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
     MultimapTableDefinition::new("sync-peers-1");
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
@@ -136,17 +131,6 @@ impl Store {
             open_replicas: Default::default(),
             pubkeys: Default::default(),
         })
-    }
-
-    fn insert_author(&self, author: Author) -> Result<()> {
-        let write_tx = self.db.begin_write()?;
-        {
-            let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
-            author_table.insert(author.id().as_bytes(), &author.to_bytes())?;
-        }
-        write_tx.commit()?;
-
-        Ok(())
     }
 }
 
@@ -215,7 +199,12 @@ impl super::Store for Store {
     }
 
     fn import_author(&self, author: Author) -> Result<()> {
-        self.insert_author(author)?;
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
+            author_table.insert(author.id().as_bytes(), &author.to_bytes())?;
+        }
+        write_tx.commit()?;
         Ok(())
     }
 
@@ -420,7 +409,7 @@ fn get_exact(
         .filter(|entry| include_empty || !entry.is_empty()))
 }
 
-/// [`NamespaceSecret`] specific wrapper around the [`Store`].
+/// A wrapper around [`Store`] for a specific [`NamespaceId`]
 #[derive(Debug, Clone)]
 pub struct StoreInstance {
     namespace: NamespaceId,
