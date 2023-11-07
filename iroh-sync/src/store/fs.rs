@@ -44,26 +44,26 @@ pub use self::ranges::RecordsRange;
 // Table Definitions
 
 /// Table: Authors
-/// Key:   [u8; 32] # AuthorId
-/// Value: [u8; 32] # Author
+/// Key:   `[u8; 32]` # AuthorId
+/// Value: `[u8; 32]` # Author
 const AUTHORS_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> = TableDefinition::new("authors-1");
 
 /// Table: Namespaces v1 (replaced by Namespaces v2 in migration )
-/// Key:   [u8; 32] # NamespaceId
-/// Value: [u8; 32] # NamespaceSecret
+/// Key:   `[u8; 32]` # NamespaceId
+/// Value: `[u8; 32]` # NamespaceSecret
 const NAMESPACES_TABLE_V1: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("namespaces-1");
 
 /// Table: Namespaces v2
-/// Key:   [u8; 32]       # NamespaceId
-/// Value: (u8, [u8; 32]) # (CapabilityKind, Capability)
+/// Key:   `[u8; 32]`       # NamespaceId
+/// Value: `(u8, [u8; 32])` # (CapabilityKind, Capability)
 const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
     TableDefinition::new("namespaces-2");
 
 /// Table: Records
-/// Key:   ([u8; 32], [u8; 32], &[u8])
+/// Key:   `([u8; 32], [u8; 32], &[u8])`
 ///      # (NamespaceId, AuthorId, Key)
-/// Value: (u64, [u8; 32], [u8; 32], u64, [u8; 32])
+/// Value: `(u64, [u8; 32], [u8; 32], u64, [u8; 32])`
 ///      # (timestamp, signature_namespace, signature_author, len, hash)
 const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
@@ -72,24 +72,24 @@ type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
 
 /// Table: Latest per author
-/// Key:   ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
-/// Value: (u64, [u8])       # (Timestamp, Key)
+/// Key:   `([u8; 32], [u8; 32])`    # (NamespaceId, AuthorId)
+/// Value: `(u64, Vec<u8>)`          # (Timestamp, Key)
 const LATEST_PER_AUTHOR_TABLE: TableDefinition<LatestPerAuthorKey, LatestPerAuthorValue> =
     TableDefinition::new("latest-by-author-1");
 type LatestPerAuthorKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
 type LatestPerAuthorValue<'a> = (u64, &'a [u8]);
 
 /// Table: Records by key
-/// Key:   ([u8; 32], [u8], [u8; 32]]) # (NamespaceId, Key, AuthorId)
-/// Value: ()
+/// Key:   `([u8; 32], Vec<u8>, [u8; 32]])` # (NamespaceId, Key, AuthorId)
+/// Value: `()`
 const RECORDS_BY_KEY_TABLE: TableDefinition<RecordsByKeyId, ()> =
     TableDefinition::new("records-by-key-1");
 type RecordsByKeyId<'a> = (&'a [u8; 32], &'a [u8], &'a [u8; 32]);
 type RecordsByKeyIdOwned = ([u8; 32], Bytes, [u8; 32]);
 
 /// Table: Peers per document.
-/// Key:   [u8; 32]        # NamespaceId
-/// Value: (u64, [u8; 32]) # ([`Nanos`], &[`PeerIdBytes`]) representing the last time a peer was used.
+/// Key:   `[u8; 32]`        # NamespaceId
+/// Value: `(u64, [u8; 32])` # ([`Nanos`], &[`PeerIdBytes`]) representing the last time a peer was used.
 const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
     MultimapTableDefinition::new("sync-peers-1");
 /// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
