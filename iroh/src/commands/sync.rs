@@ -21,7 +21,10 @@ use iroh::{
     util::fs::{path_content_info, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
-use iroh_sync::{store::Query, AuthorId, Entry, NamespaceId};
+use iroh_sync::{
+    store::{Query, SortDirection},
+    AuthorId, Entry, NamespaceId,
+};
 
 use crate::config::ConsoleEnv;
 
@@ -140,6 +143,12 @@ pub enum DocCommands {
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
+        /// How to sort the entries
+        #[clap(long, default_value_t=Sorting::Author)]
+        sort: Sorting,
+        /// Sort in descending order
+        #[clap(long)]
+        desc: bool,
         /// How to show the contents of the keys.
         #[clap(short, long, default_value_t=DisplayContentMode::Hash)]
         mode: DisplayContentMode,
@@ -216,6 +225,24 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `doc switch`.
         doc: Option<NamespaceId>,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum Sorting {
+    /// Sort by author, then key
+    #[default]
+    Author,
+    /// Sort by key, then author
+    Key,
+}
+impl From<Sorting> for iroh_sync::store::SortBy {
+    fn from(value: Sorting) -> Self {
+        match value {
+            Sorting::Author => Self::AuthorKey,
+            Sorting::Key => Self::KeyAuthor,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -342,6 +369,8 @@ impl DocCommands {
                 prefix,
                 author,
                 mode,
+                sort,
+                desc,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let mut query = Query::all();
@@ -351,6 +380,11 @@ impl DocCommands {
                 if let Some(prefix) = prefix {
                     query = query.key_prefix(prefix);
                 }
+                let direction = match desc {
+                    true => SortDirection::Desc,
+                    false => SortDirection::Asc,
+                };
+                query = query.sort_by(sort.into(), direction);
                 let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
