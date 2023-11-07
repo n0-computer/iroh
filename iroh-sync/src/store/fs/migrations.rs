@@ -14,8 +14,9 @@ use super::{
 /// Run all database migrations, if needed.
 pub fn run_migrations(db: &Database) -> Result<()> {
     run_migration(db, migration_001_populate_latest_table)?;
-    run_migration(db, migration_002_namespaces_v2)?;
-    run_migration(db, migration_003_populate_by_key_index)?;
+    run_migration(db, migration_002_namespaces_populate_v2)?;
+    run_migration(db, migration_003_namespaces_delete_v1)?;
+    run_migration(db, migration_004_populate_by_key_index)?;
     Ok(())
 }
 
@@ -75,11 +76,10 @@ fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateO
 }
 
 /// Migrate the namespaces table from V1 to V2.
-fn migration_002_namespaces_v2(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+fn migration_002_namespaces_populate_v2(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let namespaces_v1_exists = tx
         .list_tables()?
         .any(|handle| handle.name() == NAMESPACES_TABLE_V1.name());
-    // migration 002: update namespaces from V1 to V2
     if !namespaces_v1_exists {
         return Ok(MigrateOutcome::Skip);
     }
@@ -95,12 +95,23 @@ fn migration_002_namespaces_v2(tx: &WriteTransaction) -> Result<MigrateOutcome> 
         namespaces_v2.insert(&id, (raw_kind, &raw_bytes))?;
         entries += 1;
     }
-    tx.delete_table(NAMESPACES_TABLE_V1)?;
     Ok(MigrateOutcome::Execute(entries))
 }
 
+/// Delete the v1 namespaces table.
+fn migration_003_namespaces_delete_v1(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+    let namespaces_v1_exists = tx
+        .list_tables()?
+        .any(|handle| handle.name() == NAMESPACES_TABLE_V1.name());
+    if !namespaces_v1_exists {
+        return Ok(MigrateOutcome::Skip);
+    }
+    tx.delete_table(NAMESPACES_TABLE_V1)?;
+    Ok(MigrateOutcome::Execute(1))
+}
+
 /// migration 003: populate the by_key index table(which did not exist before)
-fn migration_003_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+fn migration_004_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let mut by_key_table = tx.open_table(RECORDS_BY_KEY_TABLE)?;
     let records_table = tx.open_table(RECORDS_TABLE)?;
     if !by_key_table.is_empty()? || records_table.is_empty()? {
