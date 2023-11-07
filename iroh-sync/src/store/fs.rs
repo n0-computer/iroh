@@ -73,14 +73,14 @@ type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'stat
 
 /// Table: Latest per author
 /// Key:   ([u8; 32], [u8; 32]) # (NamespaceId, AuthorId)
-/// Value: (u64, Vec<u8>)       # (Timestamp, Key)
+/// Value: (u64, [u8])       # (Timestamp, Key)
 const LATEST_PER_AUTHOR_TABLE: TableDefinition<LatestPerAuthorKey, LatestPerAuthorValue> =
     TableDefinition::new("latest-by-author-1");
 type LatestPerAuthorKey<'a> = (&'a [u8; 32], &'a [u8; 32]);
 type LatestPerAuthorValue<'a> = (u64, &'a [u8]);
 
 /// Table: Records by key
-/// Key:   ([u8; 32, &[u8], [u8; 32]]) # (NamespaceId, Key, AuthorId)
+/// Key:   ([u8; 32], [u8], [u8; 32]]) # (NamespaceId, Key, AuthorId)
 /// Value: ()
 const RECORDS_BY_KEY_TABLE: TableDefinition<RecordsByKeyId, ()> =
     TableDefinition::new("records-by-key-1");
