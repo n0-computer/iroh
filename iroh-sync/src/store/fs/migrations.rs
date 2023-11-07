@@ -1,15 +1,20 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use redb::{Database, ReadableTable, WriteTransaction};
+use redb::{Database, ReadableTable, TableHandle, WriteTransaction};
 use tracing::{debug, info};
 
-use super::{LATEST_TABLE, RECORDS_BY_KEY_TABLE, RECORDS_TABLE};
+use crate::{Capability, NamespaceSecret};
+
+use super::{
+    LATEST_TABLE, NAMESPACES_TABLE, NAMESPACES_TABLE_V1, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
+};
 
 /// Run all database migrations, if needed.
 pub fn run_migrations(db: &Database) -> Result<()> {
     run_migration(db, migration_001_populate_latest_table)?;
-    run_migration(db, migration_002_populate_by_key_index)?;
+    run_migration(db, migration_002_namespaces_v2)?;
+    run_migration(db, migration_003_populate_by_key_index)?;
     Ok(())
 }
 
@@ -68,8 +73,33 @@ fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateO
     Ok(MigrateOutcome::Execute(len))
 }
 
-/// migration 002: populate the by_key index table(which did not exist before)
-fn migration_002_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+/// Migrate the namespaces table from V1 to V2.
+fn migration_002_namespaces_v2(tx: &WriteTransaction) -> Result<MigrateOutcome> {
+    let namespaces_v1_exists = tx
+        .list_tables()?
+        .any(|handle| handle.name() == NAMESPACES_TABLE_V1.name());
+    // migration 002: update namespaces from V1 to V2
+    if !namespaces_v1_exists {
+        return Ok(MigrateOutcome::Skip);
+    }
+    let namespaces_v1 = tx.open_table(NAMESPACES_TABLE_V1)?;
+    let mut namespaces_v2 = tx.open_table(NAMESPACES_TABLE)?;
+    let mut entries = 0;
+    for res in namespaces_v1.iter()? {
+        let db_value = res?.1;
+        let secret_bytes = db_value.value();
+        let capability = Capability::Write(NamespaceSecret::from_bytes(secret_bytes));
+        let id = capability.id().to_bytes();
+        let (raw_kind, raw_bytes) = capability.raw();
+        namespaces_v2.insert(&id, (raw_kind, &raw_bytes))?;
+        entries += 1;
+    }
+    tx.delete_table(NAMESPACES_TABLE_V1)?;
+    Ok(MigrateOutcome::Execute(entries))
+}
+
+/// migration 003: populate the by_key index table(which did not exist before)
+fn migration_003_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let mut by_key_table = tx.open_table(RECORDS_BY_KEY_TABLE)?;
     let records_table = tx.open_table(RECORDS_TABLE)?;
     if !by_key_table.is_empty()? || records_table.is_empty()? {

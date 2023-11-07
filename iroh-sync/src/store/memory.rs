@@ -13,16 +13,16 @@ use iroh_bytes::Hash;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
 use crate::{
-    keys::{Author, Namespace},
+    keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId, PeerIdBytes, Record,
+    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes, Record,
 };
 
 use super::{
     pubkeys::MemPublicKeyStore,
     util::{IndexKind, LatestPerKeySelector, SelectorRes},
-    OpenError, PublicKeyStore, Query, SortDirection,
+    ImportNamespaceOutcome, OpenError, PublicKeyStore, Query, SortDirection,
 };
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
@@ -31,7 +31,7 @@ type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes,
 #[derive(Debug, Clone, Default)]
 pub struct Store {
     open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
-    namespaces: Arc<RwLock<HashMap<NamespaceId, Namespace>>>,
+    namespaces: Arc<RwLock<HashMap<NamespaceId, Capability>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
@@ -86,7 +86,7 @@ impl super::Store for Store {
     type GetIter<'a> = QueryIterator<'a>;
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
     type LatestIter<'a> = LatestIterator<'a>;
 
@@ -114,9 +114,8 @@ impl super::Store for Store {
         Ok(self
             .namespaces
             .read()
-            .keys()
-            .cloned()
-            .map(Ok)
+            .iter()
+            .map(|(id, capability)| Ok((*id, capability.kind())))
             .collect::<Vec<_>>()
             .into_iter())
     }
@@ -143,9 +142,19 @@ impl super::Store for Store {
             .into_iter())
     }
 
-    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
-        self.namespaces.write().insert(namespace.id(), namespace);
-        Ok(())
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
+        let mut table = self.namespaces.write();
+        let (capability, outcome) = if let Some(mut existing) = table.remove(&capability.id()) {
+            if existing.merge(capability)? {
+                (existing, ImportNamespaceOutcome::Upgraded)
+            } else {
+                (existing, ImportNamespaceOutcome::NoChange)
+            }
+        } else {
+            (capability, ImportNamespaceOutcome::Inserted)
+        };
+        table.insert(capability.id(), capability);
+        Ok(outcome)
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {

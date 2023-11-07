@@ -30,34 +30,34 @@ mod endpoint;
 pub use endpoint::{ConnectionType, DirectAddrInfo, EndpointInfo};
 pub(super) use endpoint::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
-/// Number of peers that are inactive for which we keep info about. This limit is enforced
-/// periodically via [`PeerMap::prune_inactive`].
-const MAX_INACTIVE_PEERS: usize = 30;
+/// Number of nodes that are inactive for which we keep info about. This limit is enforced
+/// periodically via [`NodeMap::prune_inactive`].
+const MAX_INACTIVE_NODES: usize = 30;
 
-/// Map of the [`Endpoint`] information for all the known peers.
+/// Map of the [`Endpoint`] information for all the known nodes.
 ///
-/// The peers can be looked up by:
+/// The nodes can be looked up by:
 ///
-/// - The peer's ID in this map, only useful if you know the ID from an insert or lookup.
+/// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
 ///   This is static and never changes.
 ///
-/// - The [`QuicMappedAddr`] which internally identifies the peer to the QUIC stack.  This
+/// - The [`QuicMappedAddr`] which internally identifies the node to the QUIC stack.  This
 ///   is static and never changes.
 ///
-/// - The peers's public key, aka `PublicKey` or "node_key".  This is static and never changes,
-///   however a peer could be added when this is not yet known.
+/// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
+///   however a node could be added when this is not yet known.
 ///
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
-///   These come and go as the peer moves around on the internet
+///   These come and go as the node moves around on the internet
 ///
-/// An index of peerInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
+/// An index of nodeInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
 #[derive(Default, Debug)]
-pub(super) struct PeerMap {
-    inner: Mutex<PeerMapInner>,
+pub(super) struct NodeMap {
+    inner: Mutex<NodeMapInner>,
 }
 
 #[derive(Default, Debug)]
-pub(super) struct PeerMapInner {
+pub(super) struct NodeMapInner {
     by_node_key: HashMap<PublicKey, usize>,
     by_ip_port: HashMap<IpPort, usize>,
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
@@ -72,28 +72,28 @@ enum EndpointId<'a> {
     IpPort(&'a IpPort),
 }
 
-impl PeerMap {
-    /// Create a new [`PeerMap`] from data stored in `path`.
+impl NodeMap {
+    /// Create a new [`NodeMap`] from data stored in `path`.
     pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Ok(Self::from_inner(PeerMapInner::load_from_file(path)?))
+        Ok(Self::from_inner(NodeMapInner::load_from_file(path)?))
     }
 
-    fn from_inner(inner: PeerMapInner) -> Self {
+    fn from_inner(inner: NodeMapInner) -> Self {
         Self {
             inner: Mutex::new(inner),
         }
     }
 
-    /// Get the known peer addresses stored in the map. Peers with empty addressing information are
+    /// Get the known node addresses stored in the map. Nodes with empty addressing information are
     /// filtered out.
     #[cfg(test)]
-    pub fn known_peer_addresses(&self) -> Vec<NodeAddr> {
-        self.inner.lock().known_peer_addresses().collect()
+    pub fn known_node_addresses(&self) -> Vec<NodeAddr> {
+        self.inner.lock().known_node_addresses().collect()
     }
 
-    /// Add the contact information for a peer.
-    pub fn add_peer_addr(&self, node_addr: NodeAddr) {
-        self.inner.lock().add_peer_addr(node_addr)
+    /// Add the contact information for a node.
+    pub fn add_node_addr(&self, node_addr: NodeAddr) {
+        self.inner.lock().add_node_addr(node_addr)
     }
 
     /// Number of nodes currently listed.
@@ -138,7 +138,7 @@ impl PeerMap {
             .map(|ep| *ep.quic_mapped_addr())
     }
 
-    /// Insert a received ping into the peer map, and return whether a ping with this tx_id was already
+    /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
     /// received.
     pub fn handle_ping(&self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
         self.inner.lock().handle_ping(sender, src, tx_id)
@@ -198,19 +198,19 @@ impl PeerMap {
         self.inner.lock().endpoint_info(public_key)
     }
 
-    /// Saves the known peer info to the given path, returning the number of peers persisted.
+    /// Saves the known node info to the given path, returning the number of nodes persisted.
     pub async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         ensure!(!path.is_dir(), "{} must be a file", path.display());
 
         // So, not sure what to do here.
-        let mut known_peers = self
+        let mut known_nodes = self
             .inner
             .lock()
-            .known_peer_addresses()
+            .known_node_addresses()
             .collect::<Vec<_>>()
             .into_iter()
             .peekable();
-        if known_peers.peek().is_none() {
+        if known_nodes.peek().is_none() {
             // prevent file handling if unnecesary
             return Ok(0);
         }
@@ -232,58 +232,58 @@ impl PeerMap {
             .context("failed creating tmp file")?;
 
         let mut count = 0;
-        for peer_addr in known_peers {
-            let ser = postcard::to_stdvec(&peer_addr).context("failed to serialize peer data")?;
+        for node_addr in known_nodes {
+            let ser = postcard::to_stdvec(&node_addr).context("failed to serialize node data")?;
             tmp.write_all(&ser)
                 .await
-                .context("failed to persist peer data")?;
+                .context("failed to persist node data")?;
             count += 1;
         }
-        tmp.flush().await.context("failed to flush peer data")?;
+        tmp.flush().await.context("failed to flush node data")?;
         drop(tmp);
 
         // move the file
         tokio::fs::rename(tmp_path, path)
             .await
-            .context("failed renaming peer data file")?;
+            .context("failed renaming node data file")?;
         Ok(count)
     }
 
-    /// Prunes peers without recent activity so that at most [`MAX_INACTIVE_PEERS`] are kept.
+    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     pub fn prune_inactive(&self) {
         self.inner.lock().prune_inactive();
     }
 }
 
-impl PeerMapInner {
-    /// Get the known peer addresses stored in the map. Peers with empty addressing information are
+impl NodeMapInner {
+    /// Get the known node addresses stored in the map. Nodes with empty addressing information are
     /// filtered out.
-    fn known_peer_addresses(&self) -> impl Iterator<Item = NodeAddr> + '_ {
+    fn known_node_addresses(&self) -> impl Iterator<Item = NodeAddr> + '_ {
         self.by_id.values().filter_map(|endpoint| {
             let node_addr = endpoint.node_addr();
             (!node_addr.info.is_empty()).then_some(node_addr)
         })
     }
 
-    /// Create a new [`PeerMap`] from data stored in `path`.
+    /// Create a new [`NodeMap`] from data stored in `path`.
     fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
         ensure!(path.is_file(), "{} is not a file", path.display());
-        let mut me = PeerMapInner::default();
+        let mut me = NodeMapInner::default();
         let contents = std::fs::read(path)?;
         let mut slice: &[u8] = &contents;
         while !slice.is_empty() {
             let (node_addr, next_contents) =
-                postcard::take_from_bytes(slice).context("failed to load peer data")?;
-            me.add_peer_addr(node_addr);
+                postcard::take_from_bytes(slice).context("failed to load node data")?;
+            me.add_node_addr(node_addr);
             slice = next_contents;
         }
         Ok(me)
     }
 
-    /// Add the contact information for a peer.
-    #[instrument(skip_all, fields(peer = %node_addr.node_id.fmt_short()))]
-    fn add_peer_addr(&mut self, node_addr: NodeAddr) {
+    /// Add the contact information for a node.
+    #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
+    fn add_node_addr(&mut self, node_addr: NodeAddr) {
         let NodeAddr { node_id, info } = node_addr;
 
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&node_id), || Options {
@@ -329,11 +329,11 @@ impl PeerMapInner {
         self.by_id.len()
     }
 
-    /// Marks the peer we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
+    /// Marks the node we believe to be at `ipp` as recently used, returning the [`Endpoint`] if found.
     fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(endpoint) = self.get_mut(EndpointId::IpPort(&ip_port)) else {
-            info!(src=%udp_addr, "receive_udp: no peer_map state found for addr, ignore");
+            info!(src=%udp_addr, "receive_udp: no node_map state found for addr, ignore");
             return None;
         };
         endpoint.receive_udp(ip_port, Instant::now());
@@ -342,7 +342,7 @@ impl PeerMapInner {
 
     fn receive_derp(&mut self, region_id: u16, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
-            info!(peer=%src.fmt_short(), "receive_derp: packets from unknown peer, insert into peer map");
+            info!(node=%src.fmt_short(), "receive_derp: packets from unknown node, insert into node map");
             Options {
                 public_key: *src,
                 derp_region: Some(region_id),
@@ -380,7 +380,7 @@ impl PeerMapInner {
             }
             debug!(?insert, "received pong")
         } else {
-            warn!("received pong: peer unknown, ignore")
+            warn!("received pong: node unknown, ignore")
         }
     }
 
@@ -389,7 +389,7 @@ impl PeerMapInner {
         match self.get_mut(EndpointId::NodeKey(&sender)) {
             None => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
-                debug!("received call-me-maybe: ignore, peer is unknown");
+                debug!("received call-me-maybe: ignore, node is unknown");
                 vec![]
             }
             Some(ep) => {
@@ -401,7 +401,7 @@ impl PeerMapInner {
 
     fn handle_ping(&mut self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&sender), || {
-            debug!("received ping: peer unknown, add to peer map");
+            debug!("received ping: node unknown, add to node map");
             Options {
                 public_key: sender,
                 derp_region: src.derp_region(),
@@ -418,9 +418,9 @@ impl PeerMapInner {
         role
     }
 
-    /// Inserts a new endpoint into the [`PeerMap`].
+    /// Inserts a new endpoint into the [`NodeMap`].
     fn insert_endpoint(&mut self, options: Options) -> &mut Endpoint {
-        info!(peer = %options.public_key.fmt_short(), derp_region = ?options.derp_region, "inserting new peer endpoint in PeerMap");
+        info!(node = %options.public_key.fmt_short(), derp_region = ?options.derp_region, "inserting new node endpoint in NodeMap");
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let ep = Endpoint::new(id, options);
@@ -433,7 +433,7 @@ impl PeerMapInner {
         self.by_id.get_mut(&id).expect("just inserted")
     }
 
-    /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
+    /// Makes future node lookups by ipp return the same endpoint as a lookup by nk.
     ///
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
@@ -458,17 +458,17 @@ impl PeerMapInner {
         self.by_ip_port.insert(ipp, id);
     }
 
-    /// Prunes peers without recent activity so that at most [`MAX_INACTIVE_PEERS`] are kept.
+    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     fn prune_inactive(&mut self) {
         let now = Instant::now();
         let mut prune_candidates: Vec<_> = self
             .by_id
             .values()
-            .filter(|peer| !peer.is_active(&now))
-            .map(|peer| (*peer.public_key(), peer.last_used()))
+            .filter(|node| !node.is_active(&now))
+            .map(|node| (*node.public_key(), node.last_used()))
             .collect();
 
-        let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_PEERS);
+        let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_NODES);
         if prune_count == 0 {
             // within limits
             return;
@@ -477,10 +477,10 @@ impl PeerMapInner {
         prune_candidates.sort_unstable_by_key(|(_pk, last_used)| *last_used);
         prune_candidates.truncate(prune_count);
         for (public_key, last_used) in prune_candidates.into_iter() {
-            let peer = public_key.fmt_short();
+            let node = public_key.fmt_short();
             match last_used.map(|instant| instant.elapsed()) {
-                Some(last_used) => trace!(%peer, ?last_used, "pruning inactive"),
-                None => trace!(%peer, last_used=%"never", "pruning inactive"),
+                Some(last_used) => trace!(%node, ?last_used, "pruning inactive"),
+                None => trace!(%node, last_used=%"never", "pruning inactive"),
             }
 
             let Some(id) = self.by_node_key.remove(&public_key) else {
@@ -546,17 +546,17 @@ mod tests {
     use crate::{key::SecretKey, magic_endpoint::AddrInfo};
     use std::net::Ipv4Addr;
 
-    /// Test persisting and loading of known peers.
+    /// Test persisting and loading of known nodes.
     #[tokio::test]
-    async fn load_save_peer_data() {
+    async fn load_save_node_data() {
         let _guard = iroh_test::logging::setup();
 
-        let peer_map = PeerMap::default();
+        let node_map = NodeMap::default();
 
-        let peer_a = SecretKey::generate().public();
-        let peer_b = SecretKey::generate().public();
-        let peer_c = SecretKey::generate().public();
-        let peer_d = SecretKey::generate().public();
+        let node_a = SecretKey::generate().public();
+        let node_b = SecretKey::generate().public();
+        let node_c = SecretKey::generate().public();
+        let node_d = SecretKey::generate().public();
 
         let region_x = 1;
         let region_y = 2;
@@ -568,35 +568,35 @@ mod tests {
         let direct_addresses_a = [addr(4000), addr(4001)];
         let direct_addresses_c = [addr(5000)];
 
-        let node_addr_a = NodeAddr::new(peer_a)
+        let node_addr_a = NodeAddr::new(node_a)
             .with_derp_region(region_x)
             .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(peer_b).with_derp_region(region_y);
-        let node_addr_c = NodeAddr::new(peer_c).with_direct_addresses(direct_addresses_c);
-        let node_addr_d = NodeAddr::new(peer_d);
+        let node_addr_b = NodeAddr::new(node_b).with_derp_region(region_y);
+        let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
+        let node_addr_d = NodeAddr::new(node_d);
 
-        peer_map.add_peer_addr(node_addr_a);
-        peer_map.add_peer_addr(node_addr_b);
-        peer_map.add_peer_addr(node_addr_c);
-        peer_map.add_peer_addr(node_addr_d);
+        node_map.add_node_addr(node_addr_a);
+        node_map.add_node_addr(node_addr_b);
+        node_map.add_node_addr(node_addr_c);
+        node_map.add_node_addr(node_addr_d);
 
         let root = testdir::testdir!();
-        let path = root.join("peers.postcard");
-        peer_map.save_to_file(&path).await.unwrap();
+        let path = root.join("nodes.postcard");
+        node_map.save_to_file(&path).await.unwrap();
 
-        let loaded_peer_map = PeerMap::load_from_file(&path).unwrap();
-        let loaded: HashMap<PublicKey, AddrInfo> = loaded_peer_map
-            .known_peer_addresses()
+        let loaded_node_map = NodeMap::load_from_file(&path).unwrap();
+        let loaded: HashMap<PublicKey, AddrInfo> = loaded_node_map
+            .known_node_addresses()
             .into_iter()
             .map(|NodeAddr { node_id, info }| (node_id, info))
             .collect();
 
-        let og: HashMap<PublicKey, AddrInfo> = peer_map
-            .known_peer_addresses()
+        let og: HashMap<PublicKey, AddrInfo> = node_map
+            .known_node_addresses()
             .into_iter()
             .map(|NodeAddr { node_id, info }| (node_id, info))
             .collect();
-        // compare the peer maps via their known peers
+        // compare the node maps via their known nodes
         assert_eq!(og, loaded);
     }
 
@@ -604,9 +604,9 @@ mod tests {
     fn test_prune_direct_addresses() {
         let _guard = iroh_test::logging::setup();
 
-        let peer_map = PeerMap::default();
+        let node_map = NodeMap::default();
         let public_key = SecretKey::generate().public();
-        let id = peer_map
+        let id = node_map
             .inner
             .lock()
             .insert_endpoint(Options {
@@ -626,20 +626,20 @@ mod tests {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
             // add address
-            peer_map.add_peer_addr(node_addr);
+            node_map.add_node_addr(node_addr);
             // make it active
-            peer_map.inner.lock().receive_udp(addr);
+            node_map.inner.lock().receive_udp(addr);
         }
 
         // offline adddresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
-            peer_map.add_peer_addr(node_addr);
+            node_map.add_node_addr(node_addr);
         }
 
-        let mut peer_map_inner = peer_map.inner.lock();
-        let endpoint = peer_map_inner.by_id.get_mut(&id).unwrap();
+        let mut node_map_inner = node_map.inner.lock();
+        let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
 
         // online but inactive addresses discovered via ping
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
@@ -666,25 +666,25 @@ mod tests {
 
     #[test]
     fn test_prune_inactive() {
-        let peer_map = PeerMap::default();
-        // add one active peer and more than MAX_INACTIVE_PEERS inactive peers
-        let active_peer = SecretKey::generate().public();
+        let node_map = NodeMap::default();
+        // add one active node and more than MAX_INACTIVE_NODES inactive nodes
+        let active_node = SecretKey::generate().public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        peer_map.add_peer_addr(NodeAddr::new(active_peer).with_direct_addresses([addr]));
-        peer_map.inner.lock().receive_udp(addr).expect("registered");
+        node_map.add_node_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
+        node_map.inner.lock().receive_udp(addr).expect("registered");
 
-        for _ in 0..MAX_INACTIVE_PEERS + 1 {
-            let peer = SecretKey::generate().public();
-            peer_map.add_peer_addr(NodeAddr::new(peer));
+        for _ in 0..MAX_INACTIVE_NODES + 1 {
+            let node = SecretKey::generate().public();
+            node_map.add_node_addr(NodeAddr::new(node));
         }
 
-        assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 2);
-        peer_map.prune_inactive();
-        assert_eq!(peer_map.node_count(), MAX_INACTIVE_PEERS + 1);
-        peer_map
+        assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 2);
+        node_map.prune_inactive();
+        assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 1);
+        node_map
             .inner
             .lock()
-            .get(EndpointId::NodeKey(&active_peer))
+            .get(EndpointId::NodeKey(&active_node))
             .expect("should not be pruned");
     }
 }

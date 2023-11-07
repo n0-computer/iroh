@@ -21,7 +21,7 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::Query,
-    {AuthorId, NamespaceId, SignedEntry},
+    {AuthorId, CapabilityKind, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -477,6 +477,8 @@ impl ServerStreamingMsg<ProviderService> for DocListRequest {
 pub struct DocListResponse {
     /// The document id
     pub id: NamespaceId,
+    /// The capability over the document.
+    pub capability: CapabilityKind,
 }
 
 /// Create a new document

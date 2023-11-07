@@ -296,7 +296,7 @@ mod tests {
     use crate::{
         actor::OpenOpts,
         store::{self, Query, Store},
-        AuthorId, Namespace,
+        AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
     use iroh_bytes::Hash;
@@ -315,7 +315,7 @@ mod tests {
         // For now uses same author on both sides.
         let author = alice_store.new_author(&mut rng).unwrap();
 
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
 
         let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
         alice_replica
@@ -491,7 +491,7 @@ mod tests {
 
                 let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
                 let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
-                let namespace = Namespace::new(&mut rng);
+                let namespace = NamespaceSecret::new(&mut rng);
 
                 let mut all_messages = vec![];
 
@@ -634,7 +634,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
         let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
 

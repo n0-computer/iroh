@@ -21,14 +21,14 @@ use redb::{
 };
 
 use crate::{
-    keys::{Author, Namespace},
+    keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore, Query};
+use super::{pubkeys::MemPublicKeyStore, ImportNamespaceOutcome, OpenError, PublicKeyStore, Query};
 
 mod bounds;
 mod migrations;
@@ -41,14 +41,6 @@ use self::ranges::{TableRange, TableReader};
 
 pub use self::ranges::RecordsRange;
 
-/// Manages the replicas and authors for an instance.
-#[derive(Debug, Clone)]
-pub struct Store {
-    db: Arc<Database>,
-    open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
-    pubkeys: MemPublicKeyStore,
-}
-
 // Table Definitions
 
 // Authors
@@ -57,12 +49,19 @@ pub struct Store {
 // Value: #[u8; 32] # Author
 const AUTHORS_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> = TableDefinition::new("authors-1");
 
-// Namespaces
+// Namespaces v1 (unused, replaced by Namespaces v2 in migration )
 // Table
 // Key: [u8; 32] # NamespaceId
-// Value: #[u8; 32] # Namespace
-const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
+// Value: [u8; 32] # NamespaceSecret
+const NAMESPACES_TABLE_V1: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("namespaces-1");
+
+// Namespaces v2
+// Table
+// Key: [u8; 32] # NamespaceId
+// Value: (u8, [u8; 32]) # (CapabilityKind, Capability)
+const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
+    TableDefinition::new("namespaces-2");
 
 // Records
 // Table
@@ -88,22 +87,29 @@ type LatestValue<'a> = (u64, &'a [u8]);
 // Records by key
 // Key: (NamespaceId, Key, AuthorId)
 // Value: ()
-
 const RECORDS_BY_KEY_TABLE: TableDefinition<RecordsByKeyId, ()> =
     TableDefinition::new("records-by-key-1");
 type RecordsByKeyId<'a> = (&'a [u8; 32], &'a [u8], &'a [u8; 32]);
 type RecordsByKeyIdOwned = ([u8; 32], Bytes, [u8; 32]);
 
-/// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
-/// last time a peer was useful in a document.
-// NOTE: resolution is nanoseconds, stored as a u64 since this covers ~500years from unix epoch,
-// which should be more than enough
-type Nanos = u64;
 /// Peers stored per document.
 /// - Key: [`NamespaceId::as_bytes`]
 /// - Value: ([`Nanos`], &[`PeerIdBytes`]) representing the last time a peer was used.
 const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdBytes)> =
     MultimapTableDefinition::new("sync-peers-1");
+/// Number of seconds elapsed since [`std::time::SystemTime::UNIX_EPOCH`]. Used to register the
+/// last time a peer was useful in a document.
+// NOTE: resolution is nanoseconds, stored as a u64 since this covers ~500years from unix epoch,
+// which should be more than enough
+type Nanos = u64;
+
+/// Manages the replicas and authors for an instance.
+#[derive(Debug, Clone)]
+pub struct Store {
+    db: Arc<Database>,
+    open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
+    pubkeys: MemPublicKeyStore,
+}
 
 impl Store {
     /// Create or open a store from a `path` to a database file.
@@ -117,13 +123,12 @@ impl Store {
         {
             let _table = write_tx.open_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
-            let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let _table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            let _table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
         }
         write_tx.commit()?;
 
+        // Run database migrations
         migrations::run_migrations(&db)?;
 
         Ok(Store {
@@ -131,18 +136,6 @@ impl Store {
             open_replicas: Default::default(),
             pubkeys: Default::default(),
         })
-    }
-
-    /// Stores a new namespace
-    fn insert_namespace(&self, namespace: Namespace) -> Result<()> {
-        let write_tx = self.db.begin_write()?;
-        {
-            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-            namespace_table.insert(namespace.id().as_bytes(), &namespace.to_bytes())?;
-        }
-        write_tx.commit()?;
-
-        Ok(())
     }
 
     fn insert_author(&self, author: Author) -> Result<()> {
@@ -163,7 +156,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type LatestIter<'a> = LatestIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(
@@ -178,13 +171,14 @@ impl super::Store for Store {
         let namespace_table = read_tx
             .open_table(NAMESPACES_TABLE)
             .map_err(anyhow::Error::from)?;
-        let Some(namespace) = namespace_table
+        let Some(db_value) = namespace_table
             .get(namespace_id.as_bytes())
             .map_err(anyhow::Error::from)?
         else {
             return Err(OpenError::NotFound);
         };
-        let namespace = Namespace::from_bytes(namespace.value());
+        let (raw_kind, raw_bytes) = db_value.value();
+        let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
         self.open_replicas.write().insert(*namespace_id);
         Ok(replica)
@@ -201,9 +195,9 @@ impl super::Store for Store {
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
         let namespaces: Vec<_> = namespace_table
             .iter()?
-            .map(|res| match res {
-                Ok((_key, value)) => Ok(Namespace::from_bytes(value.value()).id()),
-                Err(err) => Err(err.into()),
+            .map(|res| {
+                let capability = parse_capability(res?.1.value())?;
+                Ok((capability.id(), capability.kind()))
             })
             .collect();
         Ok(namespaces.into_iter())
@@ -240,9 +234,31 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
-        self.insert_namespace(namespace.clone())?;
-        Ok(())
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
+        let write_tx = self.db.begin_write()?;
+        let outcome = {
+            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let (capability, outcome) = {
+                let existing = namespace_table.get(capability.id().as_bytes())?;
+                if let Some(existing) = existing {
+                    let mut existing = parse_capability(existing.value())?;
+                    let outcome = if existing.merge(capability)? {
+                        ImportNamespaceOutcome::Upgraded
+                    } else {
+                        ImportNamespaceOutcome::NoChange
+                    };
+                    (existing, outcome)
+                } else {
+                    (capability, ImportNamespaceOutcome::Inserted)
+                }
+            };
+            let id = capability.id().to_bytes();
+            let (kind, bytes) = capability.raw();
+            namespace_table.insert(&id, (kind, &bytes))?;
+            outcome
+        };
+        write_tx.commit()?;
+        Ok(outcome)
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
@@ -386,6 +402,10 @@ impl super::Store for Store {
     }
 }
 
+fn parse_capability((raw_kind, raw_bytes): (u8, &[u8; 32])) -> Result<Capability> {
+    Capability::from_raw(raw_kind, raw_bytes)
+}
+
 fn get_exact(
     record_table: &RecordsTable,
     namespace: NamespaceId,
@@ -400,7 +420,7 @@ fn get_exact(
         .filter(|entry| include_empty || !entry.is_empty()))
 }
 
-/// [`Namespace`] specific wrapper around the [`Store`].
+/// [`NamespaceSecret`] specific wrapper around the [`Store`].
 #[derive(Debug, Clone)]
 pub struct StoreInstance {
     namespace: NamespaceId,
@@ -740,7 +760,7 @@ mod tests {
         let store = Store::new(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let mut replica = store.new_replica(namespace)?;
 
         // test author prefix relation for all-255 keys
@@ -767,7 +787,7 @@ mod tests {
         let store = Store::new(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
         store.close_replica(replica);
         let replica = store.open_replica(&namespace.id())?;
@@ -849,7 +869,7 @@ mod tests {
     #[test]
     fn test_migration_001_populate_latest_table() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
 
         // create a store and add some data
         let expected = {

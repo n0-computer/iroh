@@ -22,7 +22,7 @@ use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
-use iroh_sync::{store::Query, AuthorId, Entry, NamespaceId};
+use iroh_sync::{store::Query, AuthorId, CapabilityKind, Entry, NamespaceId};
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -165,9 +165,9 @@ where
     }
 
     /// List all documents.
-    pub async fn list(&self) -> Result<impl Stream<Item = Result<NamespaceId>>> {
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<(NamespaceId, CapabilityKind)>>> {
         let stream = self.rpc.server_streaming(DocListRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| res.id))
+        Ok(flatten(stream).map_ok(|res| (res.id, res.capability)))
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.

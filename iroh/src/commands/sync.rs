@@ -268,8 +268,8 @@ impl DocCommands {
             }
             Self::List => {
                 let mut stream = iroh.docs.list().await?;
-                while let Some(id) = stream.try_next().await? {
-                    println!("{}", id)
+                while let Some((id, kind)) = stream.try_next().await? {
+                    println!("{id} {kind}")
                 }
             }
             Self::Share { doc, mode } => {

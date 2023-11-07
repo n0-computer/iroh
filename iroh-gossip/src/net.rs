@@ -131,7 +131,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_addr`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_node_addr`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
@@ -553,7 +553,7 @@ impl Actor {
                     Ok(info) => {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
-                        if let Err(err) = self.endpoint.add_peer_addr(node_addr) {
+                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
                             debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
@@ -730,8 +730,8 @@ mod test {
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
         let addr1 = NodeAddr::new(pi1).with_derp_region(derp_region);
-        ep2.add_peer_addr(addr1.clone()).unwrap();
-        ep3.add_peer_addr(addr1).unwrap();
+        ep2.add_node_addr(addr1.clone()).unwrap();
+        ep3.add_node_addr(addr1).unwrap();
 
         debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed

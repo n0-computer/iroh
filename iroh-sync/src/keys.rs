@@ -85,26 +85,26 @@ impl AuthorPublicKey {
 /// Namespace key of a [`crate::Replica`].
 ///
 /// Holders of this key can insert new entries into a [`crate::Replica`].
-/// Internally, a [`Namespace`] is a [`SigningKey`] which is used to sign entries.
+/// Internally, a [`NamespaceSecret`] is a [`SigningKey`] which is used to sign entries.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Namespace {
+pub struct NamespaceSecret {
     signing_key: SigningKey,
 }
 
-impl Namespace {
-    /// Create a new [`Namespace`] with a random key.
+impl NamespaceSecret {
+    /// Create a new [`NamespaceSecret`] with a random key.
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let signing_key = SigningKey::generate(rng);
 
-        Namespace { signing_key }
+        NamespaceSecret { signing_key }
     }
 
-    /// Create a [`Namespace`] from a byte array.
+    /// Create a [`NamespaceSecret`] from a byte array.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
 
-    /// Returns the [`Namespace`] byte representation.
+    /// Returns the [`NamespaceSecret`] byte representation.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.signing_key.to_bytes()
     }
@@ -119,26 +119,24 @@ impl Namespace {
         NamespaceId::from(self.public_key())
     }
 
-    /// Sign a message with this [`Namespace`] key.
+    /// Sign a message with this [`NamespaceSecret`] key.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         self.signing_key.sign(msg)
     }
 
-    /// Strictly verify a signature on a message with this [`Namespace`]'s public key.
+    /// Strictly verify a signature on a message with this [`NamespaceSecret`]'s public key.
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.signing_key.verify_strict(msg, signature)
     }
 }
 
-/// Identifier for a [`Namespace`]
-///
-/// This is the corresponding [`VerifyingKey`] for a [`Namespace`]. It is used as an identifier, and can
-/// be used to verify [`Signature`]s.
+/// The corresponding [`VerifyingKey`] for a [`NamespaceSecret`].
+/// It is used as an identifier, and can be used to verify [`Signature`]s.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
 pub struct NamespacePublicKey(VerifyingKey);
 
 impl NamespacePublicKey {
-    /// Verify that a signature matches the `msg` bytes and was created with the [`Namespace`]
+    /// Verify that a signature matches the `msg` bytes and was created with the [`NamespaceSecret`]
     /// that corresponds to this [`NamespaceId`].
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.0.verify_strict(msg, signature)
@@ -165,7 +163,7 @@ impl fmt::Display for Author {
     }
 }
 
-impl fmt::Display for Namespace {
+impl fmt::Display for NamespaceSecret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", base32::fmt(self.to_bytes()))
     }
@@ -195,7 +193,7 @@ impl fmt::Display for NamespaceId {
     }
 }
 
-impl fmt::Debug for Namespace {
+impl fmt::Debug for NamespaceSecret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Namespace({})", self)
     }
@@ -239,7 +237,7 @@ impl FromStr for Author {
     }
 }
 
-impl FromStr for Namespace {
+impl FromStr for NamespaceSecret {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -269,7 +267,7 @@ impl From<SigningKey> for Author {
     }
 }
 
-impl From<SigningKey> for Namespace {
+impl From<SigningKey> for NamespaceSecret {
     fn from(signing_key: SigningKey) -> Self {
         Self { signing_key }
     }
@@ -299,8 +297,8 @@ impl Ord for AuthorPublicKey {
     }
 }
 
-impl From<Namespace> for NamespacePublicKey {
-    fn from(value: Namespace) -> Self {
+impl From<NamespaceSecret> for NamespacePublicKey {
+    fn from(value: NamespaceSecret) -> Self {
         value.public_key()
     }
 }
@@ -311,8 +309,8 @@ impl From<Author> for AuthorPublicKey {
     }
 }
 
-impl From<&Namespace> for NamespacePublicKey {
-    fn from(value: &Namespace) -> Self {
+impl From<&NamespaceSecret> for NamespacePublicKey {
+    fn from(value: &NamespaceSecret) -> Self {
         value.public_key()
     }
 }
@@ -506,8 +504,8 @@ impl From<Author> for AuthorId {
         value.id()
     }
 }
-impl From<Namespace> for NamespaceId {
-    fn from(value: Namespace) -> Self {
+impl From<NamespaceSecret> for NamespaceId {
+    fn from(value: NamespaceSecret) -> Self {
         value.id()
     }
 }

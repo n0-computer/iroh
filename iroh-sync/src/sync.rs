@@ -26,7 +26,9 @@ pub use crate::heads::AuthorHeads;
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::{
-    keys::{base32, Author, AuthorId, AuthorPublicKey, Namespace, NamespaceId, NamespacePublicKey},
+    keys::{
+        base32, Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret,
+    },
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
     store::{self, PublicKeyStore},
 };
@@ -118,10 +120,119 @@ impl Subscribers {
     }
 }
 
+/// Kind of capability of the namespace.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    num_enum::IntoPrimitive,
+    num_enum::TryFromPrimitive,
+    strum::Display,
+)]
+#[repr(u8)]
+#[strum(serialize_all = "snake_case")]
+pub enum CapabilityKind {
+    /// A writable replica.
+    Write = 1,
+    /// A readable replica.
+    Read = 2,
+}
+
+/// The capability of the namespace.
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From)]
+pub enum Capability {
+    /// Write access to the namespace.
+    Write(NamespaceSecret),
+    /// Read only access to the namespace.
+    Read(NamespaceId),
+}
+
+impl Capability {
+    /// Get the [`NamespaceId`] for this [`Capability`].
+    pub fn id(&self) -> NamespaceId {
+        match self {
+            Capability::Write(secret) => secret.id(),
+            Capability::Read(id) => *id,
+        }
+    }
+
+    /// Get the [`NamespaceSecret`] of this [`Capability`].
+    /// Will fail if the [`Capability`] is read only.
+    pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
+        match self {
+            Capability::Write(secret) => Ok(secret),
+            Capability::Read(_) => Err(ReadOnly),
+        }
+    }
+
+    /// Get the kind of capability.
+    pub fn kind(&self) -> CapabilityKind {
+        match self {
+            Capability::Write(_) => CapabilityKind::Write,
+            Capability::Read(_) => CapabilityKind::Read,
+        }
+    }
+
+    /// Get the raw representation of this namespace capability.
+    pub fn raw(&self) -> (u8, [u8; 32]) {
+        let capability_repr: u8 = self.kind().into();
+        let bytes = match self {
+            Capability::Write(secret) => secret.to_bytes(),
+            Capability::Read(id) => id.to_bytes(),
+        };
+        (capability_repr, bytes)
+    }
+
+    /// Create a [`Capability`] from its raw representation.
+    pub fn from_raw(kind: u8, bytes: &[u8; 32]) -> anyhow::Result<Self> {
+        let kind: CapabilityKind = kind.try_into()?;
+        let capability = match kind {
+            CapabilityKind::Write => {
+                let secret = NamespaceSecret::from_bytes(bytes);
+                Capability::Write(secret)
+            }
+            CapabilityKind::Read => {
+                let id = NamespaceId::from(bytes);
+                Capability::Read(id)
+            }
+        };
+        Ok(capability)
+    }
+
+    /// Merge this capability with another capability.
+    ///
+    /// Will return an error if `other` is not a capability for the same namespace.
+    ///
+    /// Returns `true` if the capability was changed, `false` otherwise.
+    pub fn merge(&mut self, other: Capability) -> Result<bool, CapabilityError> {
+        if other.id() != self.id() {
+            return Err(CapabilityError::NamespaceMismatch);
+        }
+
+        // the only capability upgrade is from read-only (self) to writable (other)
+        if matches!(self, Capability::Read(_)) && matches!(other, Capability::Write(_)) {
+            let _ = std::mem::replace(self, other);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+/// Errors for capability operations
+#[derive(Debug, thiserror::Error)]
+pub enum CapabilityError {
+    /// Namespaces are not the same
+    #[error("Namespaces are not the same")]
+    NamespaceMismatch,
+}
+
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
-    namespace: Namespace,
+    capability: Capability,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
@@ -131,10 +242,9 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.
-    // TODO: make read only replicas possible
-    pub fn new(namespace: Namespace, store: S) -> Self {
+    pub fn new(capability: Capability, store: S) -> Self {
         Replica {
-            namespace,
+            capability,
             peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
@@ -204,6 +314,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.closed
     }
 
+    /// Merge a capability.
+    ///
+    /// The capability must refer to the the same namespace, otherwise an error will be returned.
+    ///
+    /// This will upgrade the replica's capability when passing a `Capability::Write`.
+    /// It is a no-op if `capability` is a Capability::Read`.
+    pub fn merge_capability(&mut self, capability: Capability) -> Result<bool, CapabilityError> {
+        self.capability.merge(capability)
+    }
+
     /// Insert a new record at the given key.
     ///
     /// The entry will by signed by the provided `author`.
@@ -225,7 +345,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         let id = RecordIdentifier::new(self.id(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
-        let signed_entry = entry.sign(&self.namespace, author);
+        let secret = self.secret_key()?;
+        let signed_entry = entry.sign(secret, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -243,7 +364,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         self.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), prefix);
         let entry = Entry::new_empty(id);
-        let signed_entry = entry.sign(&self.namespace, author);
+        let signed_entry = entry.sign(self.secret_key()?, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
     }
 
@@ -324,7 +445,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> anyhow::Result<Hash> {
+    ) -> Result<Hash, InsertError<S>> {
         self.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
@@ -334,7 +455,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the identifier for an entry in this replica.
     pub fn record_id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        RecordIdentifier::new(self.namespace.id(), author.id(), key)
+        RecordIdentifier::new(self.capability.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
@@ -411,14 +532,25 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn id(&self) -> NamespaceId {
-        self.namespace.id()
+        self.capability.id()
     }
 
-    /// Get the byte represenation of the [`Namespace`] key for this replica.
-    pub fn secret_key(&self) -> Namespace {
-        self.namespace.clone()
+    /// Get the [`Capability`] of this [`Replica`].
+    pub fn capability(&self) -> &Capability {
+        &self.capability
+    }
+
+    /// Get the byte represenation of the [`NamespaceSecret`] key for this replica. Will fail if
+    /// the replica is read only
+    pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
+        self.capability.secret_key()
     }
 }
+
+/// Error that occurs trying to access the [`NamespaceSecret`] of a read-only [`Capability`].
+#[derive(Debug, thiserror::Error)]
+#[error("Replica allows read access only.")]
+pub struct ReadOnly;
 
 /// Validate a [`SignedEntry`] if it's fit to be inserted.
 ///
@@ -452,7 +584,7 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
 }
 
 /// Error emitted when inserting entries into a [`Replica`] failed
-#[derive(thiserror::Error, derive_more::Debug)]
+#[derive(thiserror::Error, derive_more::Debug, derive_more::From)]
 pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Storage error
     #[error("storage error")]
@@ -466,6 +598,10 @@ pub enum InsertError<S: ranger::Store<SignedEntry>> {
     /// Attempted to insert an empty entry.
     #[error("Attempted to insert an empty entry")]
     EntryIsEmpty,
+    /// Replica is read only.
+    #[error("Attempted to insert to read only replica")]
+    #[from(ReadOnly)]
+    ReadOnly,
     /// The replica is closed, no operations may be performed.
     #[error("replica is closed")]
     Closed,
@@ -534,14 +670,14 @@ impl SignedEntry {
     }
 
     /// Create a new signed entry by signing an entry with the `namespace` and `author`.
-    pub fn from_entry(entry: Entry, namespace: &Namespace, author: &Author) -> Self {
+    pub fn from_entry(entry: Entry, namespace: &NamespaceSecret, author: &Author) -> Self {
         let signature = EntrySignature::from_entry(&entry, namespace, author);
         SignedEntry { signature, entry }
     }
 
     /// Create a new signed entries from its parts.
     pub fn from_parts(
-        namespace: &Namespace,
+        namespace: &NamespaceSecret,
         author: &Author,
         key: impl AsRef<[u8]>,
         record: Record,
@@ -648,7 +784,7 @@ impl Debug for EntrySignature {
 
 impl EntrySignature {
     /// Create a new signature by signing an entry with the `namespace` and `author`.
-    pub fn from_entry(entry: &Entry, namespace: &Namespace, author: &Author) -> Self {
+    pub fn from_entry(entry: &Entry, namespace: &NamespaceSecret, author: &Author) -> Self {
         // TODO: this should probably include a namespace prefix
         // namespace in the cryptographic sense.
         let bytes = entry.to_vec();
@@ -701,7 +837,7 @@ impl EntrySignature {
 /// A single entry in a [`Replica`]
 ///
 /// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
-/// [`Namespace`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
+/// [`NamespaceSecret`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
@@ -771,8 +907,8 @@ impl Entry {
         out
     }
 
-    /// Sign this entry with a [`Namespace`] and [`Author`].
-    pub fn sign(self, namespace: &Namespace, author: &Author) -> SignedEntry {
+    /// Sign this entry with a [`NamespaceSecret`] and [`Author`].
+    pub fn sign(self, namespace: &NamespaceSecret, author: &Author) -> SignedEntry {
         SignedEntry::from_entry(self, namespace, author)
     }
 }
@@ -1009,6 +1145,7 @@ mod tests {
     use rand_core::SeedableRng;
 
     use crate::{
+        actor::SyncHandle,
         ranger::{Range, Store as _},
         store::{self, OpenError, Query, SortBy, SortDirection, Store},
     };
@@ -1036,7 +1173,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let bob = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
 
         let record_id = RecordIdentifier::new(myspace.id(), alice.id(), "/my/key");
         let record = Record::current_from_data(b"this is my cool data");
@@ -1233,7 +1370,7 @@ mod tests {
         let n_replicas = 3;
         let n_entries = 4;
         for i in 0..n_replicas {
-            let namespace = Namespace::new(&mut rng);
+            let namespace = NamespaceSecret::new(&mut rng);
             let author = store.new_author(&mut rng)?;
             let mut replica = store.new_replica(namespace)?;
             for j in 0..n_entries {
@@ -1255,7 +1392,7 @@ mod tests {
 
         let k = ["a", "c", "z"];
 
-        let mut n: Vec<_> = (0..3).map(|_| Namespace::new(&mut rng)).collect();
+        let mut n: Vec<_> = (0..3).map(|_| NamespaceSecret::new(&mut rng)).collect();
         n.sort_by_key(|n| n.id());
 
         let mut a: Vec<_> = (0..3).map(|_| Author::new(&mut rng)).collect();
@@ -1358,7 +1495,7 @@ mod tests {
 
     fn test_timestamps<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
         let author = store.new_author(&mut rng)?;
 
@@ -1423,7 +1560,7 @@ mod tests {
 
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
@@ -1473,7 +1610,7 @@ mod tests {
     fn test_replica_timestamp_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(namespace.clone())?;
         let mut bob = bob_store.new_replica(namespace.clone())?;
 
@@ -1515,7 +1652,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let store = store::memory::Store::default();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         let key = b"hi";
@@ -1558,7 +1695,7 @@ mod tests {
         let store = store::memory::Store::default();
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(myspace.clone())?;
         let hash = Hash::new(b"");
         let res = replica.insert(b"foo", &alice, hash, 0);
@@ -1585,7 +1722,7 @@ mod tests {
     fn test_prefix_delete<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(myspace.clone())?;
         let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
         let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
@@ -1643,7 +1780,7 @@ mod tests {
 
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let myspace = Namespace::new(&mut rng);
+        let myspace = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
@@ -1686,7 +1823,7 @@ mod tests {
 
     fn test_replica_remove<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let author = Author::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
@@ -1739,7 +1876,7 @@ mod tests {
     fn test_replica_delete_edge_cases<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         let edgecases = [0u8, 1u8, 255u8];
@@ -1796,7 +1933,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         replica.hash_and_insert(b"a0.1", &author0, b"hi")?;
@@ -1839,7 +1976,7 @@ mod tests {
     fn test_replica_byte_keys<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
 
         let hash = Hash::new(b"foo");
@@ -1862,6 +1999,106 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_replica_capability_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_replica_capability(store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_capability_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_replica_capability(store)
+    }
+
+    fn test_replica_capability<S: store::Store>(store: S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let author = store.new_author(&mut rng)?;
+        let namespace = NamespaceSecret::new(&mut rng);
+
+        // import read capability - insert must fail
+        let capability = Capability::Read(namespace.id());
+        store.import_namespace(capability)?;
+        let mut replica = store.open_replica(&namespace.id())?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(matches!(res, Err(InsertError::ReadOnly)));
+
+        // import write capability - insert must succeed
+        let capability = Capability::Write(namespace.clone());
+        store.import_namespace(capability)?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(matches!(res, Err(InsertError::ReadOnly)));
+        store.close_replica(replica);
+        let mut replica = store.open_replica(&namespace.id())?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(res.is_ok());
+
+        // import read capability again - insert must stil succeed
+        let capability = Capability::Read(namespace.id());
+        store.import_namespace(capability)?;
+        store.close_replica(replica);
+        let mut replica = store.open_replica(&namespace.id())?;
+        let res = replica.hash_and_insert(b"foo", &author, b"bar");
+        assert!(res.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_actor_capability_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_actor_capability(store).await
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[tokio::test]
+    async fn test_actor_capability_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_actor_capability(store).await
+    }
+
+    async fn test_actor_capability<S: store::Store>(store: S) -> Result<()> {
+        // test with actor
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let author = Author::new(&mut rng);
+        let handle = SyncHandle::spawn(store, None, "test".into());
+        let author = handle.import_author(author).await?;
+        let namespace = NamespaceSecret::new(&mut rng);
+        let id = namespace.id();
+
+        // import read capability - insert must fail
+        let capability = Capability::Read(namespace.id());
+        handle.import_namespace(capability).await?;
+        handle.open(namespace.id(), Default::default()).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_err());
+
+        // import write capability - insert must succeed
+        let capability = Capability::Write(namespace.clone());
+        handle.import_namespace(capability).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_ok());
+
+        // close and reopen - must still succeed
+        handle.close(namespace.id()).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_err());
+        handle.open(namespace.id(), Default::default()).await?;
+        let res = handle
+            .insert_local(id, author, b"foo".to_vec().into(), Hash::new(b"bar"), 3)
+            .await;
+        assert!(res.is_ok());
+        Ok(())
+    }
+
     /// This tests that no events are emitted for entries received during sync which are obsolete
     /// (too old) by the time they are actually inserted in the store.
     #[test]
@@ -1875,7 +2112,7 @@ mod tests {
         let mut state2 = SyncOutcome::default();
 
         let author = Author::new(&mut rng);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica1 = store1.new_replica(namespace.clone())?;
         let mut replica2 = store2.new_replica(namespace.clone())?;
 
@@ -1950,7 +2187,7 @@ mod tests {
 
     fn test_replica_queries<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace)?;
         let namespace = replica.id();
 
