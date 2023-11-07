@@ -749,6 +749,7 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 
 #[cfg(test)]
 mod tests {
+    use crate::NamespaceSecret;
     use crate::ranger::Store as _;
     use crate::store::Store as _;
 
