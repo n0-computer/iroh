@@ -99,6 +99,14 @@ fn migration_002_namespaces_populate_v2(tx: &WriteTransaction) -> Result<Migrate
 }
 
 /// Delete the v1 namespaces table.
+///
+/// This should be part of [`migration_002_namespaces_populate_v2`] but due to a limitation in
+/// [`redb`] up to v1.3.0 a table cannot be deleted in a transaction that also opens this table.
+/// Therefore the table deletion has to be in a separate transaction.
+///
+/// This limitation was removed in https://github.com/cberner/redb/pull/716 so this can be merged
+/// back into [`migration_002_namespaces_populate_v2`] once we upgrade to the next redb version
+/// after 1.3.
 fn migration_003_namespaces_delete_v1(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let namespaces_v1_exists = tx
         .list_tables()?
