@@ -15,18 +15,18 @@ use ouroboros::self_referencing;
 use parking_lot::RwLock;
 use redb::{
     Database, MultimapTableDefinition, Range as TableRange, ReadOnlyTable, ReadTransaction,
-    ReadableMultimapTable, ReadableTable, StorageError, Table, TableDefinition,
+    ReadableMultimapTable, ReadableTable, StorageError, Table, TableDefinition, TableHandle,
 };
 
 use crate::{
-    keys::{Author, Namespace},
+    keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     store::Store as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, OpenError, PublicKeyStore};
+use super::{pubkeys::MemPublicKeyStore, ImportNamespaceOutcome, OpenError, PublicKeyStore};
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
@@ -48,8 +48,15 @@ const AUTHORS_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> = TableDefinition::ne
 // Table
 // Key: [u8; 32] # NamespaceId
 // Value: #[u8; 32] # Namespace
-const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
+const NAMESPACES_TABLE_V1: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("namespaces-1");
+
+// Namespaces
+// Table
+// Key: [u8; 32] # NamespaceId
+// Value: (u8, [u8; 32]) # (CapabilityKind, Capability)
+const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
+    TableDefinition::new("namespaces-2");
 
 // Records
 // Table
@@ -118,6 +125,26 @@ fn migration_001_populate_latest_table(
     Ok(())
 }
 
+/// Migrate the namespaces table from V1 to V2.
+fn migration_002_namespaces_v2(
+    namespaces_v1: Table<&[u8; 32], &[u8; 32]>,
+    namespaces_v2: &mut Table<&[u8; 32], (u8, &[u8; 32])>,
+) -> Result<()> {
+    tracing::info!("Starting migration: 002_namespaces_v2");
+    let mut entries = 0;
+    for res in namespaces_v1.iter()? {
+        let db_value = res?.1;
+        let secret_bytes = db_value.value();
+        let capability = Capability::Write(NamespaceSecret::from_bytes(secret_bytes));
+        let id = capability.id().to_bytes();
+        let (raw_kind, raw_bytes) = capability.raw();
+        namespaces_v2.insert(&id, (raw_kind, &raw_bytes))?;
+        entries += 1;
+    }
+    tracing::info!("Migration finished ({entries} entries)");
+    Ok(())
+}
+
 impl Store {
     /// Create or open a store from a `path` to a database file.
     ///
@@ -129,7 +156,10 @@ impl Store {
         let write_tx = db.begin_write()?;
         {
             let records_table = write_tx.open_table(RECORDS_TABLE)?;
-            let _table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let namespaces_v1_exists = write_tx
+                .list_tables()?
+                .any(|handle| handle.name() == NAMESPACES_TABLE_V1.name());
+            let mut namespaces_v2 = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
             let mut latest_table = write_tx.open_table(LATEST_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
@@ -137,6 +167,13 @@ impl Store {
             // migration 001: populate latest table if it was empty before
             if latest_table.is_empty()? && !records_table.is_empty()? {
                 migration_001_populate_latest_table(&records_table, &mut latest_table)?;
+            }
+
+            // migration 002: update namespaces from V1 to V2
+            if namespaces_v1_exists {
+                let namespaces_v1 = write_tx.open_table(NAMESPACES_TABLE_V1)?;
+                migration_002_namespaces_v2(namespaces_v1, &mut namespaces_v2)?;
+                write_tx.delete_table(NAMESPACES_TABLE_V1)?;
             }
         }
         write_tx.commit()?;
@@ -146,18 +183,6 @@ impl Store {
             open_replicas: Default::default(),
             pubkeys: Default::default(),
         })
-    }
-
-    /// Stores a new namespace
-    fn insert_namespace(&self, namespace: Namespace) -> Result<()> {
-        let write_tx = self.db.begin_write()?;
-        {
-            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-            namespace_table.insert(namespace.id().as_bytes(), &namespace.to_bytes())?;
-        }
-        write_tx.commit()?;
-
-        Ok(())
     }
 
     fn insert_author(&self, author: Author) -> Result<()> {
@@ -178,7 +203,7 @@ impl super::Store for Store {
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
     type LatestIter<'a> = LatestIterator<'a>;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<NamespaceId>>;
+    type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
     fn open_replica(
@@ -193,20 +218,21 @@ impl super::Store for Store {
         let namespace_table = read_tx
             .open_table(NAMESPACES_TABLE)
             .map_err(anyhow::Error::from)?;
-        let Some(namespace) = namespace_table
+        let Some(db_value) = namespace_table
             .get(namespace_id.as_bytes())
             .map_err(anyhow::Error::from)?
         else {
             return Err(OpenError::NotFound);
         };
-        let namespace = Namespace::from_bytes(namespace.value());
+        let (raw_kind, raw_bytes) = db_value.value();
+        let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
         self.open_replicas.write().insert(*namespace_id);
         Ok(replica)
     }
 
     fn close_replica(&self, mut replica: Replica<Self::Instance>) {
-        self.open_replicas.write().remove(&replica.namespace());
+        self.open_replicas.write().remove(&replica.id());
         replica.close();
     }
 
@@ -216,9 +242,9 @@ impl super::Store for Store {
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
         let namespaces: Vec<_> = namespace_table
             .iter()?
-            .map(|res| match res {
-                Ok((_key, value)) => Ok(Namespace::from_bytes(value.value()).id()),
-                Err(err) => Err(err.into()),
+            .map(|res| {
+                let capability = parse_capability(res?.1.value())?;
+                Ok((capability.id(), capability.kind()))
             })
             .collect();
         Ok(namespaces.into_iter())
@@ -255,9 +281,31 @@ impl super::Store for Store {
         Ok(authors.into_iter())
     }
 
-    fn import_namespace(&self, namespace: Namespace) -> Result<()> {
-        self.insert_namespace(namespace.clone())?;
-        Ok(())
+    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
+        let write_tx = self.db.begin_write()?;
+        let outcome = {
+            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let (capability, outcome) = {
+                let existing = namespace_table.get(capability.id().as_bytes())?;
+                if let Some(existing) = existing {
+                    let mut existing = parse_capability(existing.value())?;
+                    let outcome = if existing.merge(capability)? {
+                        ImportNamespaceOutcome::Upgraded
+                    } else {
+                        ImportNamespaceOutcome::NoChange
+                    };
+                    (existing, outcome)
+                } else {
+                    (capability, ImportNamespaceOutcome::Inserted)
+                }
+            };
+            let id = capability.id().to_bytes();
+            let (kind, bytes) = capability.raw();
+            namespace_table.insert(&id, (kind, &bytes))?;
+            outcome
+        };
+        write_tx.commit()?;
+        Ok(outcome)
     }
 
     fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
@@ -402,6 +450,10 @@ impl super::Store for Store {
     }
 }
 
+fn parse_capability((raw_kind, raw_bytes): (u8, &[u8; 32])) -> Result<Capability> {
+    Capability::from_raw(raw_kind, raw_bytes)
+}
+
 fn get_one(
     record_table: &RecordsTable,
     namespace: NamespaceId,
@@ -524,7 +576,7 @@ fn prefix_range_end<'a>(prefix: &'a RecordsId<'a>) -> Option<([u8; 32], [u8; 32]
     }
 }
 
-/// [`Namespace`] specific wrapper around the [`Store`].
+/// [`NamespaceSecret`] specific wrapper around the [`Store`].
 #[derive(Debug, Clone)]
 pub struct StoreInstance {
     namespace: NamespaceId,
@@ -1027,7 +1079,7 @@ mod tests {
         let store = Store::new(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let mut replica = store.new_replica(namespace)?;
 
         // test author prefix relation for all-255 keys
@@ -1037,7 +1089,7 @@ mod tests {
         replica.hash_and_insert(&key2, &author, b"v2")?;
         let res = store
             .get_many(
-                replica.namespace(),
+                replica.id(),
                 GetFilter::AuthorAndPrefix(author.id(), vec![255]),
             )?
             .collect::<Result<Vec<_>>>()?;
@@ -1057,11 +1109,11 @@ mod tests {
         let store = Store::new(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
         store.close_replica(replica);
         let replica = store.open_replica(&namespace.id())?;
-        assert_eq!(replica.namespace(), namespace.id());
+        assert_eq!(replica.id(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);
@@ -1135,7 +1187,7 @@ mod tests {
     #[test]
     fn test_migration_001_populate_latest_table() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let namespace = Namespace::new(&mut rand::thread_rng());
+        let namespace = NamespaceSecret::new(&mut rand::thread_rng());
 
         // create a store and add some data
         let expected = {
