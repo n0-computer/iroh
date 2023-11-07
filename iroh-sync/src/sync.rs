@@ -222,7 +222,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             return Err(InsertError::EntryIsEmpty);
         }
         self.ensure_open()?;
-        let id = RecordIdentifier::new(self.namespace(), author.id(), key);
+        let id = RecordIdentifier::new(self.id(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
         let signed_entry = entry.sign(&self.namespace, author);
@@ -241,7 +241,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         author: &Author,
     ) -> Result<usize, InsertError<S>> {
         self.ensure_open()?;
-        let id = RecordIdentifier::new(self.namespace(), author.id(), prefix);
+        let id = RecordIdentifier::new(self.id(), author.id(), prefix);
         let entry = Entry::new_empty(id);
         let signed_entry = entry.sign(&self.namespace, author);
         self.insert_entry(signed_entry, InsertOrigin::Local)
@@ -277,7 +277,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         entry: SignedEntry,
         origin: InsertOrigin,
     ) -> Result<usize, InsertError<S>> {
-        let namespace = self.namespace();
+        let namespace = self.id();
 
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
@@ -333,7 +333,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Get the identifier for an entry in this replica.
-    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
+    pub fn record_id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
         RecordIdentifier::new(self.namespace.id(), author.id(), key)
     }
 
@@ -353,7 +353,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
         self.ensure_open()?;
-        let my_namespace = self.namespace();
+        let my_namespace = self.id();
         let now = system_time_now();
 
         // update state with incoming data.
@@ -410,7 +410,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     }
 
     /// Get the namespace identifier for this [`Replica`].
-    pub fn namespace(&self) -> NamespaceId {
+    pub fn id(&self) -> NamespaceId {
         self.namespace.id()
     }
 
@@ -1055,7 +1055,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_exact(my_replica.namespace(), alice.id(), format!("/{i}"), false)?
+                .get_exact(my_replica.id(), alice.id(), format!("/{i}"), false)?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -1065,35 +1065,35 @@ mod tests {
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_exact(my_replica.namespace(), alice.id(), "/cool/path", false)?
+            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_exact(my_replica.namespace(), alice.id(), "/cool/path", false)?
+            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::author(alice.id()))?
+            .get_many(my_replica.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::author(bob.id()))?
+            .get_many(my_replica.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::key_exact(b"/cool/path"))?
+            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::all())?
+            .get_many(my_replica.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
@@ -1102,31 +1102,31 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::author(alice.id()))?
+            .get_many(my_replica.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::author(bob.id()))?
+            .get_many(my_replica.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::key_exact(b"/cool/path"))?
+            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::key_prefix(b"/cool"))?
+            .get_many(my_replica.id(), Query::key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get All by author and prefix
         let entries: Vec<_> = store
             .get_many(
-                my_replica.namespace(),
+                my_replica.id(),
                 Query::author(alice.id()).key_prefix(b"/cool"),
             )?
             .collect::<Result<_>>()?;
@@ -1134,7 +1134,7 @@ mod tests {
 
         let entries: Vec<_> = store
             .get_many(
-                my_replica.namespace(),
+                my_replica.id(),
                 Query::author(bob.id()).key_prefix(b"/cool"),
             )?
             .collect::<Result<_>>()?;
@@ -1142,7 +1142,7 @@ mod tests {
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.namespace(), Query::all())?
+            .get_many(my_replica.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
@@ -1161,7 +1161,7 @@ mod tests {
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
-        test_lru_cache_like_behaviour(&store, my_replica.namespace())
+        test_lru_cache_like_behaviour(&store, my_replica.id())
     }
 
     /// Test that [`Store::register_useful_peer`] behaves like a LRUCache of size
@@ -1952,7 +1952,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = Namespace::new(&mut rng);
         let mut replica = store.new_replica(namespace)?;
-        let namespace = replica.namespace();
+        let namespace = replica.id();
 
         let a1 = store.new_author(&mut rng)?;
         let a2 = store.new_author(&mut rng)?;

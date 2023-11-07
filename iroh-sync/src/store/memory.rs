@@ -105,7 +105,7 @@ impl super::Store for Store {
     }
 
     fn close_replica(&self, mut replica: Replica<Self::Instance>) {
-        self.open_replicas.write().remove(&replica.namespace());
+        self.open_replicas.write().remove(&replica.id());
         replica.close();
     }
 

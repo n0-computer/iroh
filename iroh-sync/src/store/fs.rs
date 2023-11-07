@@ -191,7 +191,7 @@ impl super::Store for Store {
     }
 
     fn close_replica(&self, mut replica: Replica<Self::Instance>) {
-        self.open_replicas.write().remove(&replica.namespace());
+        self.open_replicas.write().remove(&replica.id());
         replica.close();
     }
 
@@ -749,10 +749,7 @@ mod tests {
         replica.hash_and_insert(&key1, &author, b"v1")?;
         replica.hash_and_insert(&key2, &author, b"v2")?;
         let res = store
-            .get_many(
-                replica.namespace(),
-                Query::author(author.id()).key_prefix([255]),
-            )?
+            .get_many(replica.id(), Query::author(author.id()).key_prefix([255]))?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(res.len(), 2);
         assert_eq!(
@@ -774,7 +771,7 @@ mod tests {
         let replica = store.new_replica(namespace.clone())?;
         store.close_replica(replica);
         let replica = store.open_replica(&namespace.id())?;
-        assert_eq!(replica.namespace(), namespace.id());
+        assert_eq!(replica.id(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);
