@@ -432,7 +432,7 @@ mod test {
             &format!("{id}"),
             "aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaq"
         );
-        assert_eq!(&format!("{id:?}"), "Id(aeaqcaibaeaqcaib…)");
+        assert_eq!(&format!("{id:?}"), "Id(aeaqcaibaeaqcaib)");
         assert_eq!(id.as_bytes(), &[1u8; 32]);
     }
 
