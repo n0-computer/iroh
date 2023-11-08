@@ -16,12 +16,11 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
-bytes = { version = "1.4", features = ["serde"] }
+bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false, optional = true }
 data-encoding = "2.3.3"
 hex = "0.4.3"
-multibase = "0.9.1"
-postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+multibase = { version = "0.9.1", optional = true }
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 thiserror = "1"
@@ -34,5 +33,5 @@ serde_test = "1.0.176"
 
 [features]
 default = ["hash", "base32"]
-hash = []
-base32 = []
+hash = ["bao-tree", "multibase", "data-encoding", "postcard"]
+base32 = ["data-encoding"]
