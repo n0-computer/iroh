@@ -18,6 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_base::rpc::RpcResult;
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
@@ -25,13 +26,11 @@ use iroh_bytes::store::{
     Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{AddProgress, RequestAuthorizationHandler},
     util::runtime,
-    util::Hash,
-    BlobFormat, HashAndFormat, TempTag,
+    BlobFormat, Hash, HashAndFormat, TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;

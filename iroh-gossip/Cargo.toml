@@ -28,7 +28,8 @@ rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 tracing = "0.1"
-iroh-metrics = { path = "../iroh-metrics", version = "0.10.0" }
+iroh-metrics = { version = "0.10.0", path = "../iroh-metrics" }
+iroh-base = { version = "0.10.0", path = "../iroh-base" }
 
 # net dependencies (optional)
 futures = { version = "0.3.25", optional = true }

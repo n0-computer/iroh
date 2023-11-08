@@ -19,16 +19,14 @@ use derive_more::Deref;
 use iroh_metrics::{inc, inc_by};
 
 use ed25519_dalek::{Signature, SignatureError};
-use iroh_bytes::Hash;
+use iroh_base::{base32, hash::Hash};
 use serde::{Deserialize, Serialize};
 
 pub use crate::heads::AuthorHeads;
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::{
-    keys::{
-        base32, Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret,
-    },
+    keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
     store::{self, PublicKeyStore},
 };
@@ -39,7 +37,7 @@ use crate::{
 pub type ProtocolMessage = crate::ranger::Message<SignedEntry>;
 
 /// Byte represenation of a `PeerId` from `iroh-net`.
-// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
+// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-base crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
 
 /// Max time in the future from our wall clock time that we accept entries for.
@@ -837,7 +835,7 @@ impl EntrySignature {
 /// A single entry in a [`Replica`]
 ///
 /// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
-/// [`NamespaceSecret`]. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
+/// [`NamespaceSecret`]. Its value is the [32-byte BLAKE3 hash](iroh_base::hash::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {

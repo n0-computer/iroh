@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use futures::Stream;
-use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
+use iroh_bytes::{store::Store as BaoStore, BlobFormat};
 use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
 

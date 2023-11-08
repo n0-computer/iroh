@@ -16,11 +16,8 @@ use iroh_bytes::{
     protocol::{GetRequest, RangeSpecSeq},
     provider::DownloadProgress,
     store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
-    util::{
-        progress::{IdGenerator, ProgressSender},
-        Hash,
-    },
-    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
+    util::progress::{IdGenerator, ProgressSender},
+    BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
 use tracing::trace;

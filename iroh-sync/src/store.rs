@@ -4,7 +4,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 
 use anyhow::Result;
 use bytes::Bytes;
-use iroh_bytes::Hash;
+use iroh_base::hash::Hash;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 

@@ -12,6 +12,7 @@ use std::{
 
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
+use iroh_base::base32;
 use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -164,9 +165,7 @@ impl PublicKey {
     /// Convert to a base32 string limited to the first 10 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> String {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.as_bytes()[..10]);
-        text.make_ascii_lowercase();
-        text
+        base32::fmt_short(self.as_bytes())
     }
 }
 
@@ -222,17 +221,13 @@ impl From<VerifyingKey> for PublicKey {
 
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.as_bytes()[..10]);
-        text.make_ascii_lowercase();
-        write!(f, "PublicKey({text})")
+        write!(f, "PublicKey({})", base32::fmt_short(self.as_bytes()))
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(self.as_bytes());
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
+        write!(f, "{}", base32::fmt(self.as_bytes()))
     }
 }
 
@@ -269,17 +264,13 @@ pub struct SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.to_bytes());
-        text.make_ascii_lowercase();
-        write!(f, "SecretKey({text})")
+        write!(f, "SecretKey({})", base32::fmt_short(self.to_bytes()))
     }
 }
 
 impl Display for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.to_bytes());
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
+        write!(f, "{}", base32::fmt(self.to_bytes()))
     }
 }
 
@@ -287,9 +278,7 @@ impl FromStr for SecretKey {
     type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let key = SecretKey::try_from(&bytes[..])?;
-        Ok(key)
+        Ok(SecretKey::from(base32::parse_array::<32>(s)?))
     }
 }
 

@@ -13,10 +13,7 @@ use iroh::{
     ticket::blob::Ticket,
 };
 use iroh_bytes::{
-    protocol::RequestToken,
-    provider::AddProgress,
-    util::{BlobFormat, HashAndFormat, Tag},
-    Hash,
+    protocol::RequestToken, provider::AddProgress, util::Tag, BlobFormat, Hash, HashAndFormat,
 };
 use quic_rpc::ServiceConnection;
 

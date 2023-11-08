@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use iroh_bytes::Hash;
+use iroh_base::hash::Hash;
 use redb::Database;
 
 use crate::{

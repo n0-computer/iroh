@@ -11,8 +11,8 @@ use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::{BlobFormat, Tag};
-pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, Hash};
+use iroh_bytes::util::Tag;
+pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -29,7 +29,8 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
+pub use iroh_base::rpc::{RpcError, RpcResult};
+pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
 pub use crate::ticket::doc::Ticket as DocTicket;

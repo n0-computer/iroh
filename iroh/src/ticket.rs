@@ -1,5 +1,6 @@
 //! This module manages the different tickets Iroh has.
 
+use iroh_base::base32;
 use strum::{AsRefStr, Display, EnumIter, IntoEnumIterator};
 
 pub mod blob;
@@ -49,7 +50,7 @@ pub enum Error {
     Postcard(#[from] postcard::Error),
     /// This looks like a ticket, but base32 decoding failed.
     #[display("decoding failed: {_0}")]
-    Encoding(#[from] data_encoding::DecodeError),
+    Encoding(#[from] base32::DecodeError),
     /// Verification of the deserialized bytes failed.
     #[display("verification failed: {_0}")]
     Verify(&'static str),
@@ -79,9 +80,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Serialize to string.
     fn serialize(&self) -> String {
         let mut out = Self::KIND.to_string();
-        let bytes = self.to_bytes();
-        data_encoding::BASE32_NOPAD.encode_append(&bytes, &mut out);
-        out.make_ascii_lowercase();
+        base32::fmt_append(&self.to_bytes(), &mut out);
         out
     }
 
@@ -92,8 +91,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
         if expected != found {
             return Err(Error::WrongKind { expected, found });
         }
-        let bytes = bytes.to_ascii_uppercase();
-        let bytes = data_encoding::BASE32_NOPAD.decode(bytes.as_bytes())?;
+        let bytes = base32::parse_vec(bytes)?;
         let ticket = Self::from_bytes(&bytes)?;
         Ok(ticket)
     }

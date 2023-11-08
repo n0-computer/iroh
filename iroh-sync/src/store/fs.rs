@@ -13,7 +13,7 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
-use iroh_bytes::Hash;
+use iroh_base::hash::Hash;
 use parking_lot::RwLock;
 use redb::{
     Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,

@@ -9,7 +9,8 @@ use rand::RngCore;
 use iroh_bytes::{
     hashseq::HashSeq,
     store::{EntryStatus, Map, Store},
-    util::{runtime, BlobFormat, HashAndFormat, Tag},
+    util::{runtime, Tag},
+    BlobFormat, HashAndFormat,
 };
 
 /// Pick up the tokio runtime from the thread local and add a
@@ -211,8 +212,7 @@ mod flat {
     use iroh_bytes::{
         hashseq::HashSeq,
         store::{PartialMap, PartialMapEntry, Store},
-        util::{BlobFormat, HashAndFormat, Tag},
-        TempTag, IROH_BLOCK_SIZE,
+        BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
     fn path(root: PathBuf, suffix: &'static str) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {

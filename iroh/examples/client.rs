@@ -7,6 +7,7 @@
 //!     $ cargo run --example client
 use indicatif::HumanBytes;
 use iroh::node::Node;
+use iroh_base::base32;
 use iroh_bytes::util::runtime;
 use iroh_sync::{store::Query, Entry};
 use tokio_stream::StreamExt;
@@ -39,15 +40,9 @@ async fn main() -> anyhow::Result<()> {
 fn fmt_entry(entry: &Entry) -> String {
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let author = fmt_hash(id.author());
+    let author = base32::fmt_short(id.author());
     let hash = entry.content_hash();
-    let hash = fmt_hash(hash.as_bytes());
+    let hash = base32::fmt_short(hash.as_bytes());
     let len = HumanBytes(entry.content_len());
     format!("@{author}: {key} = {hash} ({len})",)
-}
-
-fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
-    text.make_ascii_lowercase();
-    format!("{}…", &text)
 }

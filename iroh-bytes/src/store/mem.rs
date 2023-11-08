@@ -22,9 +22,9 @@ use crate::{
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
-        runtime, BlobFormat, HashAndFormat, LivenessTracker,
+        runtime, LivenessTracker,
     },
-    Hash, Tag, TempTag, IROH_BLOCK_SIZE,
+    BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
 };
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;

@@ -10,7 +10,9 @@ pub mod provider;
 pub mod store;
 pub mod util;
 
-pub use crate::util::{BlobFormat, Hash, HashAndFormat, Tag, TempTag};
+pub use crate::util::{Tag, TempTag};
+pub use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
+
 use bao_tree::BlockSize;
 
 /// Block size used by iroh, 2^4*1024 = 16KiB

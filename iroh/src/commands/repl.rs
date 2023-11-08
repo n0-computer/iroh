@@ -2,11 +2,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use iroh::client::quic::Iroh;
+use iroh_base::base32::fmt_short;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::{sync::fmt_short, RpcCommands},
+    commands::RpcCommands,
     config::{ConsoleEnv, ConsolePaths},
 };
 

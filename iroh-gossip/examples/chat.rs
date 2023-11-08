@@ -4,9 +4,10 @@ use anyhow::{bail, Context};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::Signature;
+use iroh_base::base32;
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
-    proto::{util::base32, Event, TopicId},
+    proto::{Event, TopicId},
 };
 use iroh_net::{
     derp::{DerpMap, DerpMode},

@@ -135,8 +135,8 @@ use super::{
     PartialMapEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use crate::util::{BlobFormat, HashAndFormat, LivenessTracker, Tag};
-use crate::{Hash, TempTag, IROH_BLOCK_SIZE};
+use crate::util::{LivenessTracker, Tag};
+use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkRanges};

@@ -3,6 +3,7 @@
 use std::{cmp::Ordering, fmt, str::FromStr};
 
 use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey};
+use iroh_base::base32;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
@@ -318,32 +319,6 @@ impl From<&NamespaceSecret> for NamespacePublicKey {
 impl From<&Author> for AuthorPublicKey {
     fn from(value: &Author) -> Self {
         value.public_key()
-    }
-}
-
-/// Utilities for working with byte array identifiers
-// TODO: copy-pasted from iroh-gossip/src/proto/util.rs
-// Unify into iroh-common crate or similar
-pub(super) mod base32 {
-    /// Convert to a base32 string
-    pub fn fmt(bytes: impl AsRef<[u8]>) -> String {
-        let mut text = data_encoding::BASE32_NOPAD.encode(bytes.as_ref());
-        text.make_ascii_lowercase();
-        text
-    }
-    /// Convert to a base32 string limited to the first 10 bytes
-    pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
-        let len = bytes.as_ref().len().min(10);
-        let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
-        text.make_ascii_lowercase();
-        text
-    }
-    /// Parse from a base32 string into a byte array
-    pub fn parse_array<const N: usize>(input: &str) -> anyhow::Result<[u8; N]> {
-        data_encoding::BASE32_NOPAD
-            .decode(input.to_ascii_uppercase().as_bytes())?
-            .try_into()
-            .map_err(|_| ::anyhow::anyhow!("Failed to parse: invalid byte length"))
     }
 }
 
