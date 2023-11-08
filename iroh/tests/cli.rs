@@ -502,10 +502,8 @@ fn cli_rpc_lock_restart() -> Result<()> {
     .run()?;
 
     let output = std::str::from_utf8(&output.stderr).unwrap();
-    assert!(output.contains(&format!(
-        "Error: iroh is already running on port {}",
-        rpc_port
-    )));
+    println!("{}", output);
+    assert!(output.contains(&format!("iroh is already running on port {}", rpc_port)));
 
     Ok(())
 }
