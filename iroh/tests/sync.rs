@@ -23,7 +23,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh_bytes::{util::runtime, Hash};
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
-    store::{self, GetFilter},
+    store::{self, Query},
     AuthorId, ContentStatus, Entry,
 };
 
@@ -755,7 +755,7 @@ async fn doc_delete() -> Result<()> {
     let deleted = doc.del(author, b"foo".to_vec()).await?;
     assert_eq!(deleted, 1);
 
-    let entry = doc.get_one(author, b"foo".to_vec()).await?;
+    let entry = doc.get_exact(author, b"foo".to_vec(), false).await?;
     assert!(entry.is_none());
 
     // wait for gc
@@ -785,7 +785,7 @@ async fn sync_drop_doc() -> Result<()> {
     assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
 
     client.docs.drop_doc(doc.id()).await?;
-    let res = doc.get_one(author, b"foo".to_vec()).await;
+    let res = doc.get_exact(author, b"foo".to_vec(), true).await;
     assert!(res.is_err());
     let res = doc
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
@@ -805,9 +805,9 @@ async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
 }
 
 async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let filter = GetFilter::Key(key.to_vec());
+    let query = Query::single_latest_per_key().key_exact(key);
     let entry = doc
-        .get_many(filter)
+        .get_many(query)
         .await?
         .next()
         .await

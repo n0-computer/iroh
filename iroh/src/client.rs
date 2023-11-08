@@ -22,8 +22,7 @@ use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
-use iroh_sync::CapabilityKind;
-use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
+use iroh_sync::{store::Query, AuthorId, CapabilityKind, Entry, NamespaceId};
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -36,7 +35,7 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
-    DocDelResponse, DocDropRequest, DocGetManyRequest, DocGetOneRequest, DocImportRequest,
+    DocDelResponse, DocDropRequest, DocGetExactRequest, DocGetManyRequest, DocImportRequest,
     DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetHashRequest, DocSetRequest,
     DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
     DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
@@ -659,31 +658,47 @@ where
         Ok(removed)
     }
 
-    /// Get the latest entry for a key and author.
-    pub async fn get_one(&self, author: AuthorId, key: impl Into<Bytes>) -> Result<Option<Entry>> {
+    /// Get an entry for a key and author.
+    ///
+    /// Optionally also get the entry if it is empty (i.e. a deletion marker).
+    pub async fn get_exact(
+        &self,
+        author: AuthorId,
+        key: impl AsRef<[u8]>,
+        include_empty: bool,
+    ) -> Result<Option<Entry>> {
         self.ensure_open()?;
         let res = self
-            .rpc(DocGetOneRequest {
+            .rpc(DocGetExactRequest {
                 author,
-                key: key.into(),
+                key: key.as_ref().to_vec().into(),
                 doc_id: self.id(),
+                include_empty,
             })
             .await??;
         Ok(res.entry.map(|entry| entry.into()))
     }
 
     /// Get entries.
-    pub async fn get_many(&self, filter: GetFilter) -> Result<impl Stream<Item = Result<Entry>>> {
+    pub async fn get_many(
+        &self,
+        query: impl Into<Query>,
+    ) -> Result<impl Stream<Item = Result<Entry>>> {
         self.ensure_open()?;
         let stream = self
             .0
             .rpc
             .server_streaming(DocGetManyRequest {
                 doc_id: self.id(),
-                filter,
+                query: query.into(),
             })
             .await?;
         Ok(flatten(stream).map_ok(|res| res.entry.into()))
+    }
+
+    /// Get a single entry.
+    pub async fn get_one(&self, query: impl Into<Query>) -> Result<Option<Entry>> {
+        self.get_many(query).await?.next().await.transpose()
     }
 
     /// Share this document with peers over a ticket.
