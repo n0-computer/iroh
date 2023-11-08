@@ -60,6 +60,11 @@ pub async fn store_rpc(root: impl AsRef<Path>, rpc_port: u16) -> Result<()> {
     trace!("storing RPC lock: {}", p.display());
 
     ensure!(!p.exists(), "iroh is already running");
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .context("creating parent dir")?;
+    }
     fs::write(&p, &rpc_port.to_le_bytes())
         .await
         .context("writing rpc lock file")?;
