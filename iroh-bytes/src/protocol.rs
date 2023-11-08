@@ -405,7 +405,7 @@ impl FromStr for RequestToken {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        RequestToken::new(base32::parse_vec(&s)?)
+        RequestToken::new(base32::parse_vec(s)?)
     }
 }
 
