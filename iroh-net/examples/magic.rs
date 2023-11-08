@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = match args.secret {
         None => {
             let secret_key = SecretKey::generate();
-            println!("our secret key: {}", base32::fmt(&secret_key.to_bytes()));
+            println!("our secret key: {}", base32::fmt(secret_key.to_bytes()));
             secret_key
         }
         Some(key) => parse_secret(&key)?,
