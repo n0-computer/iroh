@@ -2,12 +2,13 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [unreleased]
+## [0.10.0](https://github.com/n0-computer/iroh/compare/v0.9.0..v0.10.0) - 2023-11-08
 
 ### ⛰️  Features
 
 - *(iroh-sync)* Read only replicas ([#1770](https://github.com/n0-computer/iroh/issues/1770)) - ([c1ebea8](https://github.com/n0-computer/iroh/commit/c1ebea8eb9b21114b92c94f37212bb0feaf794c2))
 - *(iroh-sync)* Queries and "views" ([#1766](https://github.com/n0-computer/iroh/issues/1766)) - ([899768a](https://github.com/n0-computer/iroh/commit/899768a16a4d8e3f8cc3f98d3df2e4494d8ca57f))
+- Add ability to connect just by node id - ([5ee69a4](https://github.com/n0-computer/iroh/commit/5ee69a47e67b9f87a67270c15ee4e3f7cce52671))
 
 ### 🐛 Bug Fixes
 
@@ -15,8 +16,6 @@ All notable changes to iroh will be documented in this file.
 - *(iroh-bytes)* Ensure to flush file to disk ([#1778](https://github.com/n0-computer/iroh/issues/1778)) - ([0987022](https://github.com/n0-computer/iroh/commit/0987022e218333c6ce9249eb273ee0d39bc374b3))
 - *(iroh-sync)* Fix panic in send ([#1773](https://github.com/n0-computer/iroh/issues/1773)) - ([c36cc6d](https://github.com/n0-computer/iroh/commit/c36cc6d736a99c89f108d1b9b6dc408c1474583c))
 - *(iroh-sync)* Prevent panic in namespace migration ([#1775](https://github.com/n0-computer/iroh/issues/1775)) - ([84ae95a](https://github.com/n0-computer/iroh/commit/84ae95a6a51972cf92ebd116f7f84b6129766e37))
-- Improve changelog rendering - ([53ef9ff](https://github.com/n0-computer/iroh/commit/53ef9ffe9858262812d863e2de7e38e4539b9d97))
-- Even nicer changelog - ([807568a](https://github.com/n0-computer/iroh/commit/807568a4d941266ed6f76846d7c8b898a24973e9))
 
 ### 🚜 Refactor
 
@@ -27,7 +26,7 @@ All notable changes to iroh will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - *(iroh-net)* Demote 'pong not received in timeout' message to debug ([#1769](https://github.com/n0-computer/iroh/issues/1769)) - ([56e92ca](https://github.com/n0-computer/iroh/commit/56e92caa1172ac416c2c2f5139a4aacd26cf27c7))
-- Switch to git-cliff for changelog generation - ([429f5d5](https://github.com/n0-computer/iroh/commit/429f5d53ae234f919e34a344cfa1d0547d14bf71))
+- Switch to git-cliff for changelog generation - ([bcdccb3](https://github.com/n0-computer/iroh/commit/bcdccb39fa374ec8eac84eb347f1e38c2f4dbb09))
 
 ## [0.9.0](https://github.com/n0-computer/iroh/compare/v0.8.0..v0.9.0) - 2023-10-31
 
