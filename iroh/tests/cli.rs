@@ -13,6 +13,7 @@ use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
 use iroh::ticket::blob::Ticket;
+use iroh::util::path::IrohPaths;
 use rand::{Rng, RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -434,6 +435,61 @@ fn cli_provide_addresses() -> Result<()> {
         .map(|x| SocketAddr::from_str(x).unwrap())
         .collect::<Vec<_>>();
     assert!(!addresses.is_empty());
+    Ok(())
+}
+
+#[test]
+fn cli_rpc_lock_restart() -> Result<()> {
+    let dir = testdir!();
+    let iroh_data_dir = dir.join("data-dir");
+
+    let mut reader_handle = cmd(iroh_bin(), vec!["start", "--rpc-port", "0"])
+        .env_remove("RUST_LOG")
+        .env("IROH_DATA_DIR", &iroh_data_dir)
+        .reader()?;
+
+    assert_matches_line(
+        BufReader::new(&mut reader_handle),
+        [
+            (r"Listening addresses:", 1),
+            (r"^  \S+", -1),
+            (r"DERP Region:", 1),
+            (r"PeerID: [_\w\d-]*", 1),
+        ],
+    );
+
+    // check for the lock file
+    assert!(
+        IrohPaths::RpcLock.with_root(&iroh_data_dir).exists(),
+        "missing lock file"
+    );
+
+    // kill process
+    reader_handle.kill()?;
+
+    // File should still be there
+    assert!(
+        IrohPaths::RpcLock.with_root(&iroh_data_dir).exists(),
+        "missing lock file"
+    );
+
+    // Restart should work fine
+
+    let mut reader_handle = cmd(iroh_bin(), vec!["start", "--rpc-port", "0"])
+        .env_remove("RUST_LOG")
+        .env("IROH_DATA_DIR", &iroh_data_dir)
+        .reader()?;
+
+    assert_matches_line(
+        BufReader::new(&mut reader_handle),
+        [
+            (r"Listening addresses:", 1),
+            (r"^  \S+", -1),
+            (r"DERP Region:", 1),
+            (r"PeerID: [_\w\d-]*", 1),
+        ],
+    );
+
     Ok(())
 }
 

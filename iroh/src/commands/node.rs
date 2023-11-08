@@ -20,7 +20,7 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
 use crate::{
-    commands::add,
+    commands::{add, rpc::clear_rpc},
     config::{get_iroh_data_root_with_env, path_with_env},
 };
 
@@ -84,6 +84,9 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     // makes this explicit.
     add_task.abort();
     drop(add_task);
+
+    clear_rpc(get_iroh_data_root_with_env()?).await?;
+
     Ok(())
 }
 

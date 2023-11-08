@@ -66,6 +66,17 @@ pub async fn store_rpc(root: impl AsRef<Path>, rpc_port: u16) -> Result<()> {
     Ok(())
 }
 
+/// Cleans up an existing rpc lock
+pub async fn clear_rpc(root: impl AsRef<Path>) -> Result<()> {
+    let p = IrohPaths::RpcLock.with_root(root);
+    trace!("clearing RPC lock: {}", p.display());
+
+    // ignore errors
+    tokio::fs::remove_file(&p).await.ok();
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
