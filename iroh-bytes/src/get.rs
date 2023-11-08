@@ -278,7 +278,7 @@ pub mod fsm {
                         .into()
                     }
                 }
-                None => AtClosing::new(misc, reader).into(),
+                None => AtClosing::new(misc, reader, true).into(),
             })
         }
     }
@@ -338,7 +338,7 @@ pub mod fsm {
         /// read the collection, or when you want to stop reading the response
         /// early.
         pub fn finish(self) -> AtClosing {
-            AtClosing::new(self.misc, self.reader)
+            AtClosing::new(self.misc, self.reader, false)
         }
     }
 
@@ -371,7 +371,7 @@ pub mod fsm {
 
         /// Finish the get response without reading further
         pub fn finish(self) -> AtClosing {
-            AtClosing::new(self.misc, self.reader)
+            AtClosing::new(self.misc, self.reader, false)
         }
     }
 
@@ -741,7 +741,7 @@ pub mod fsm {
 
         /// Immediately finish the get response without reading further
         pub fn finish(self) -> AtClosing {
-            AtClosing::new(self.misc, self.stream.finish())
+            AtClosing::new(self.misc, self.stream.finish(), false)
         }
     }
 
@@ -773,7 +773,7 @@ pub mod fsm {
                 }
                 .into()
             } else {
-                AtClosing::new(self.misc, self.stream).into()
+                AtClosing::new(self.misc, self.stream, true).into()
             }
         }
     }
@@ -783,20 +783,33 @@ pub mod fsm {
     pub struct AtClosing {
         misc: Box<Misc>,
         reader: TrackingReader<RecvStream>,
+        check_extra_data: bool,
     }
 
     impl AtClosing {
-        fn new(misc: Box<Misc>, reader: TrackingReader<RecvStream>) -> Self {
-            Self { misc, reader }
+        fn new(
+            misc: Box<Misc>,
+            reader: TrackingReader<RecvStream>,
+            check_extra_data: bool,
+        ) -> Self {
+            Self {
+                misc,
+                reader,
+                check_extra_data,
+            }
         }
 
         /// Finish the get response, returning statistics
         pub async fn next(self) -> result::Result<Stats, quinn::ReadError> {
             // Shut down the stream
             let (mut reader, bytes_read) = self.reader.into_parts();
-            if let Some(chunk) = reader.read_chunk(8, false).await? {
+            if self.check_extra_data {
+                if let Some(chunk) = reader.read_chunk(8, false).await? {
+                    reader.stop(0u8.into()).ok();
+                    error!("Received unexpected data from the provider: {chunk:?}");
+                }
+            } else {
                 reader.stop(0u8.into()).ok();
-                error!("Received unexpected data from the provider: {chunk:?}");
             }
             Ok(Stats {
                 elapsed: self.misc.start.elapsed(),

@@ -3,6 +3,7 @@
 use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
+use derive_more::Debug;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
@@ -12,7 +13,7 @@ use crate::{
     defaults::default_derp_map,
     derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
-    magicsock::{self, Callbacks, MagicSock},
+    magicsock::{self, Callbacks, Discovery, MagicSock},
     tls,
 };
 
@@ -118,6 +119,7 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     callbacks: Callbacks,
+    discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
 }
@@ -132,6 +134,7 @@ impl Default for MagicEndpointBuilder {
             concurrent_connections: Default::default(),
             keylog: Default::default(),
             callbacks: Default::default(),
+            discovery: Default::default(),
             peers_path: None,
         }
     }
@@ -233,6 +236,12 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Optionally set a discovery mechanism for this endpoint.
+    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
+        self.discovery = Some(discovery);
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -264,6 +273,7 @@ impl MagicEndpointBuilder {
             derp_map,
             callbacks: self.callbacks,
             nodes_path: self.peers_path,
+            discovery: self.discovery,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
@@ -348,6 +358,11 @@ impl MagicEndpoint {
         &self.secret_key
     }
 
+    /// Optional reference to the discovery mechanism.
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.msock.discovery()
+    }
+
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
@@ -412,6 +427,40 @@ impl MagicEndpoint {
         self.msock.tracked_endpoint(node_id).await
     }
 
+    async fn resolve(&self, node_id: &PublicKey) -> Result<AddrInfo> {
+        if let Some(discovery) = self.msock.discovery() {
+            debug!("no mapping address for {node_id}, resolving via {discovery:?}");
+            discovery.resolve(node_id).await
+        } else {
+            anyhow::bail!("no discovery mechanism configured");
+        }
+    }
+
+    /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
+    pub async fn connect_by_node_id(
+        &self,
+        node_id: &PublicKey,
+        alpn: &[u8],
+    ) -> Result<quinn::Connection> {
+        let addr = match self.msock.get_mapping_addr(node_id).await {
+            Some(addr) => addr,
+            None => {
+                let info = self.resolve(node_id).await?;
+                let peer_addr = NodeAddr {
+                    node_id: *node_id,
+                    info,
+                };
+                self.add_node_addr(peer_addr)?;
+                self.msock.get_mapping_addr(node_id).await.ok_or_else(|| {
+                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
+                })?
+            }
+        };
+
+        debug!("connecting to {}: (via {})", node_id, addr);
+        self.connect_inner(node_id, alpn, addr).await
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
@@ -439,11 +488,25 @@ impl MagicEndpoint {
             });
         };
 
+        debug!(
+            "connecting to {}: (via {} - {:?})",
+            node_id, addr, info.direct_addresses
+        );
+
+        self.connect_inner(&node_id, alpn, addr).await
+    }
+
+    async fn connect_inner(
+        &self,
+        node_id: &PublicKey,
+        alpn: &[u8],
+        addr: SocketAddr,
+    ) -> Result<quinn::Connection> {
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let tls_client_config = tls::make_client_config(
                 &self.secret_key,
-                Some(node_id),
+                Some(*node_id),
                 alpn_protocols,
                 self.keylog,
             )?;
@@ -453,11 +516,6 @@ impl MagicEndpoint {
             client_config.transport_config(Arc::new(transport_config));
             client_config
         };
-
-        debug!(
-            "connecting to {}: (via {} - {:?})",
-            node_id, addr, info.direct_addresses
-        );
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self

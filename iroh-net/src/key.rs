@@ -116,8 +116,8 @@ impl<'de> Deserialize<'de> for PublicKey {
         D: serde::Deserializer<'de>,
     {
         if deserializer.is_human_readable() {
-            let s: &str = serde::Deserialize::deserialize(deserializer)?;
-            Self::from_str(s).map_err(serde::de::Error::custom)
+            let s = String::deserialize(deserializer)?;
+            Self::from_str(&s).map_err(serde::de::Error::custom)
         } else {
             let bytes: &serde_bytes::Bytes = serde::Deserialize::deserialize(deserializer)?;
             Self::try_from(bytes.as_ref()).map_err(serde::de::Error::custom)

@@ -34,7 +34,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::FutureExt;
+use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -56,6 +56,7 @@ use crate::{
     net::{ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper, stun,
     util::AbortingJoinHandle,
+    AddrInfo,
 };
 
 use self::{
@@ -110,6 +111,38 @@ pub struct Options {
 
     /// Path to store known nodes.
     pub nodes_path: Option<std::path::PathBuf>,
+
+    /// Optional node discovery mechanism.
+    pub discovery: Option<Box<dyn Discovery>>,
+}
+
+/// Node discovery for [`super::MagicEndpoint`].
+///
+/// The purpose of this trait is to hoop up a node discovery mechanism that
+/// allows finding informations such as the derp region and current addresses
+/// of a node given the id.
+///
+/// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
+/// discovery information changes. If a discovery mechanism requires a periodic
+/// refresh, it should start it's own task.
+pub trait Discovery: std::fmt::Debug + Send + Sync {
+    /// Publish the given [`AddrInfo`] to the discovery mechanisms.
+    ///
+    /// This is fire and forget, since the magicsock can not wait for successful
+    /// publishing. If publishing is async, the implementation should start it's
+    /// own task.
+    ///
+    /// This will be called from a tokio task, so it is safe to spawn new tasks.
+    /// These tasks will be run on the runtime of the [`super::MagicEndpoint`].
+    fn publish(&self, info: &AddrInfo);
+
+    /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
+    ///
+    /// This is only called from [`super::MagicEndpoint::connect_by_node_id`], and only if
+    /// the [`AddrInfo`] is not already known.
+    ///
+    /// This is async since the connect can not proceed without the [`AddrInfo`].
+    fn resolve<'a>(&'a self, node_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
 }
 
 /// Contains options for `MagicSock::listen`.
@@ -137,6 +170,7 @@ impl Default for Options {
             derp_map: DerpMap::empty(),
             callbacks: Default::default(),
             nodes_path: None,
+            discovery: None,
         }
     }
 }
@@ -221,6 +255,8 @@ struct Inner {
     // UDP disco (ping) queue
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
+    // optional discovery service
+    discovery: Option<Box<dyn Discovery>>,
     // Our discovered endpoints
     endpoints: parking_lot::RwLock<DiscoveredEndpoints>,
 
@@ -1114,6 +1150,7 @@ impl MagicSock {
                     on_derp_active,
                     on_net_info,
                 },
+            discovery,
             nodes_path,
         } = opts;
 
@@ -1194,6 +1231,7 @@ impl MagicSock {
             udp_state,
             send_buffer: Default::default(),
             udp_disco_sender,
+            discovery,
             endpoints: Default::default(),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
@@ -1380,6 +1418,11 @@ impl MagicSock {
             .await
             .unwrap();
         r.await.unwrap();
+    }
+
+    /// Reference to optional discovery service
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.inner.discovery.as_ref().map(Box::as_ref)
     }
 }
 
@@ -1969,6 +2012,15 @@ impl Actor {
             log_endpoint_change(&eps);
             if let Some(ref cb) = self.inner.on_endpoints {
                 cb(&eps[..]);
+            }
+            if let Some(ref discovery) = self.inner.discovery {
+                let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
+                let derp_region = Some(self.inner.my_derp()).filter(|x| *x != 0);
+                let info = AddrInfo {
+                    derp_region,
+                    direct_addresses,
+                };
+                discovery.publish(&info);
             }
             self.inner.send_queued_call_me_maybes();
         }
