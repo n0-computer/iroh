@@ -91,7 +91,7 @@ trait IrohTicket: serde::Serialize + for<'de> serde::Deserialize<'de> {
         if expected != found {
             return Err(Error::WrongKind { expected, found });
         }
-        let bytes = base32::parse_vec(&bytes)?;
+        let bytes = base32::parse_vec(bytes)?;
         let ticket = Self::from_bytes(&bytes)?;
         Ok(ticket)
     }
