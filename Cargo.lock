@@ -2148,10 +2148,14 @@ dependencies = [
  "bytes",
  "data-encoding",
  "hex",
+ "iroh-test",
  "multibase",
  "postcard",
+ "proptest",
  "serde",
  "serde-error",
+ "serde_json",
+ "serde_test",
  "thiserror",
 ]
 
