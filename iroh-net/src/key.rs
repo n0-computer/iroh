@@ -165,7 +165,7 @@ impl PublicKey {
     /// Convert to a base32 string limited to the first 10 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.as_bytes())
+        base32::fmt_short(self.as_bytes())
     }
 }
 
@@ -221,13 +221,13 @@ impl From<VerifyingKey> for PublicKey {
 
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PublicKey({})", base32::fmt_short(&self.as_bytes()))
+        write!(f, "PublicKey({})", base32::fmt_short(self.as_bytes()))
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", base32::fmt(&self.as_bytes()))
+        write!(f, "{}", base32::fmt(self.as_bytes()))
     }
 }
 
@@ -264,13 +264,13 @@ pub struct SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", base32::fmt_short(&self.to_bytes()))
+        write!(f, "SecretKey({})", base32::fmt_short(self.to_bytes()))
     }
 }
 
 impl Display for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", base32::fmt(&self.to_bytes()))
+        write!(f, "{}", base32::fmt(self.to_bytes()))
     }
 }
 
