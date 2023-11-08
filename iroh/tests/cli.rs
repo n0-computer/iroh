@@ -459,10 +459,8 @@ fn cli_rpc_lock_restart() -> Result<()> {
     );
 
     // check for the lock file
-    assert!(
-        IrohPaths::RpcLock.with_root(&iroh_data_dir).exists(),
-        "missing lock file"
-    );
+    let content = std::fs::read(IrohPaths::RpcLock.with_root(&iroh_data_dir))?;
+    let rpc_port = u16::from_le_bytes(content[..2].try_into().unwrap());
 
     // kill process
     reader_handle.kill()?;
@@ -475,10 +473,13 @@ fn cli_rpc_lock_restart() -> Result<()> {
 
     // Restart should work fine
 
-    let mut reader_handle = cmd(iroh_bin(), vec!["start", "--rpc-port", "0"])
-        .env_remove("RUST_LOG")
-        .env("IROH_DATA_DIR", &iroh_data_dir)
-        .reader()?;
+    let mut reader_handle = cmd(
+        iroh_bin(),
+        vec!["start", "--rpc-port", &rpc_port.to_string()],
+    )
+    .env_remove("RUST_LOG")
+    .env("IROH_DATA_DIR", &iroh_data_dir)
+    .reader()?;
 
     assert_matches_line(
         BufReader::new(&mut reader_handle),
@@ -489,6 +490,22 @@ fn cli_rpc_lock_restart() -> Result<()> {
             (r"PeerID: [_\w\d-]*", 1),
         ],
     );
+
+    let output = cmd(
+        iroh_bin(),
+        vec!["start", "--rpc-port", &rpc_port.to_string()],
+    )
+    .env_remove("RUST_LOG")
+    .env("IROH_DATA_DIR", &iroh_data_dir)
+    .stderr_capture()
+    .unchecked()
+    .run()?;
+
+    let output = std::str::from_utf8(&output.stderr).unwrap();
+    assert!(output.contains(&format!(
+        "Error: iroh is already running on port {}",
+        rpc_port
+    )));
 
     Ok(())
 }
