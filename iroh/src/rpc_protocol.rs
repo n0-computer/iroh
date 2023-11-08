@@ -29,7 +29,7 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_base::rpc::RpcResult;
+pub use iroh_base::rpc::{RpcError, RpcResult};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
