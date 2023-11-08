@@ -351,6 +351,7 @@ use anyhow::{ensure, Result};
 use bao_tree::{ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use derive_more::From;
+use iroh_base::base32;
 use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 mod range_spec;
@@ -404,17 +405,14 @@ impl FromStr for RequestToken {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        RequestToken::new(bytes)
+        RequestToken::new(base32::parse_vec(&s)?)
     }
 }
 
 /// Serializes to base32.
 impl Display for RequestToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.bytes);
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
+        write!(f, "{}", base32::fmt(&self.bytes))
     }
 }
 

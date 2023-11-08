@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
+use iroh_base::base32;
 use iroh_net::{
     defaults::TEST_REGION_ID,
     derp::{DerpMap, DerpMode},
@@ -46,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = match args.secret {
         None => {
             let secret_key = SecretKey::generate();
-            println!("our secret key: {}", fmt_secret(&secret_key));
+            println!("our secret key: {}", base32::fmt(&secret_key));
             secret_key
         }
         Some(key) => parse_secret(&key)?,
@@ -116,16 +117,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fmt_secret(secret_key: &SecretKey) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&secret_key.to_bytes());
-    text.make_ascii_lowercase();
-    text
-}
 fn parse_secret(secret: &str) -> anyhow::Result<SecretKey> {
-    let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
-        .decode(secret.to_ascii_uppercase().as_bytes())?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
+    let bytes: [u8; 32] = base32::parse_array(secret)?;
     let key = SecretKey::from(bytes);
     Ok(key)
 }

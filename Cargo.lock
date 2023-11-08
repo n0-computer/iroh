@@ -2097,6 +2097,7 @@ dependencies = [
  "hex",
  "human-time",
  "indicatif",
+ "iroh-base",
  "iroh-bytes",
  "iroh-gossip",
  "iroh-io",
@@ -2139,6 +2140,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-base"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "bao-tree",
+ "bytes",
+ "data-encoding",
+ "hex",
+ "multibase",
+ "postcard",
+ "serde",
+ "serde-error",
+ "thiserror",
+]
+
+[[package]]
 name = "iroh-blake3"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2166,9 +2183,9 @@ dependencies = [
  "genawaiter",
  "hex",
  "http-body",
+ "iroh-base",
  "iroh-io",
  "iroh-test",
- "multibase",
  "num_cpus",
  "once_cell",
  "postcard",
@@ -2203,6 +2220,7 @@ dependencies = [
  "futures",
  "genawaiter",
  "indexmap 2.0.2",
+ "iroh-base",
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
@@ -2273,6 +2291,7 @@ dependencies = [
  "http",
  "hyper",
  "igd",
+ "iroh-base",
  "iroh-metrics",
  "iroh-test",
  "libc",
@@ -2359,6 +2378,7 @@ dependencies = [
  "flume 0.11.0",
  "futures",
  "hex",
+ "iroh-base",
  "iroh-blake3",
  "iroh-bytes",
  "iroh-metrics",

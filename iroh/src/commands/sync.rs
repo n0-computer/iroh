@@ -12,6 +12,7 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
+use iroh_base::base32::fmt_short;
 use tokio::io::AsyncReadExt;
 
 use iroh::{
@@ -666,13 +667,6 @@ async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String
     let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
     let len = human_len(entry);
     format!("@{author}: {key} = {content} ({len})")
-}
-
-/// Format the first 5 bytes of a byte string in bas32
-pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
-    text.make_ascii_lowercase();
-    format!("{}…", &text)
 }
 
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {

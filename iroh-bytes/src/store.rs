@@ -1,8 +1,5 @@
 //! Implementations of blob stores
-use crate::{
-    util::{BlobFormat, HashAndFormat},
-    Hash,
-};
+use crate::{BlobFormat, Hash, HashAndFormat};
 pub mod mem;
 pub mod readonly_mem;
 

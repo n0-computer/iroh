@@ -15,9 +15,9 @@ use crate::{
     },
     util::{
         progress::{IdGenerator, ProgressSender},
-        BlobFormat, HashAndFormat, Tag,
+        Tag,
     },
-    Hash, TempTag, IROH_BLOCK_SIZE,
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 use bao_tree::{
     blake3,

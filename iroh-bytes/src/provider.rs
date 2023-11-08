@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use futures::future::BoxFuture;
+use iroh_base::rpc::RpcError;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
 };
@@ -17,8 +18,8 @@ use tracing_futures::Instrument;
 use crate::hashseq::parse_hash_seq;
 use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
 use crate::store::*;
-use crate::util::{BlobFormat, RpcError, Tag};
-use crate::Hash;
+use crate::util::Tag;
+use crate::{BlobFormat, Hash};
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]

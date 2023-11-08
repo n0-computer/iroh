@@ -299,7 +299,7 @@ mod tests {
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
-    use iroh_bytes::Hash;
+    use iroh_base::hash::Hash;
     use iroh_net::key::SecretKey;
     use rand_core::{CryptoRngCore, SeedableRng};
 

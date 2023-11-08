@@ -18,10 +18,8 @@ use iroh_bytes::{
 };
 use iroh_bytes::{
     provider::DownloadProgress,
-    util::{
-        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
-        BlobFormat,
-    },
+    util::progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+    BlobFormat,
 };
 use iroh_io::ConcatenateSliceWriter;
 use iroh_net::derp::DerpMode;

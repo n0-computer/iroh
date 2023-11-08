@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use iroh_bytes::Hash;
+use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tracing::{debug, error, error_span, trace, warn};

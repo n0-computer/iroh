@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use ed25519_dalek::{SignatureError, VerifyingKey};
-use iroh_bytes::Hash;
+use iroh_base::hash::Hash;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
 use crate::{
