@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, io};
@@ -240,7 +241,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     // first test - empty work dir
     {
         println!("first test - empty work dir");
-        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get = make_get_cmd(&src_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
@@ -253,7 +254,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     {
         println!("second test - full work dir");
         copy_dir_all(&src_db_dir, &tgt_work_dir)?;
-        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get = make_get_cmd(&src_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
@@ -273,7 +274,7 @@ fn cli_provide_tree_resume() -> Result<()> {
                 MakePartialResult::Retain
             }
         })?;
-        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get = make_get_cmd(&src_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
@@ -293,7 +294,7 @@ fn cli_provide_tree_resume() -> Result<()> {
                 MakePartialResult::Retain
             }
         })?;
-        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get = make_get_cmd(&src_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
@@ -399,7 +400,7 @@ fn cli_provide_addresses() -> Result<()> {
     let path = dir.join("foo");
     make_rand_file(1000, &path)?;
 
-    let mut provider = spawn_provider(
+    let (mut provider, data_dir) = spawn_provider(
         &path,
         Input::Path,
         true,
@@ -410,9 +411,10 @@ fn cli_provide_addresses() -> Result<()> {
     let _ticket = match_provide_output(&mut provider, 1)?;
 
     // test output
-    let get_output = cmd(iroh_bin(), ["--rpc-port", RPC_PORT, "node", "status"])
+    let get_output = cmd(iroh_bin(), ["node", "status"])
         .env_remove("RUST_LOG")
-        // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+        .env("IROH_DATA_DIR", data_dir)
+        .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
         .stdout_capture()
         .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
@@ -508,10 +510,12 @@ fn spawn_provider(
     wrap: bool,
     addr: Option<&str>,
     rpc_port: Option<&str>,
-) -> Result<ReaderHandle> {
+) -> Result<(ReaderHandle, PathBuf)> {
     let home = testdir!();
     let iroh_data_dir = home.join("iroh_data_dir");
-    make_provider_in(&iroh_data_dir, path, input, wrap, addr, rpc_port)
+    let handle = make_provider_in(&iroh_data_dir, path, input, wrap, addr, rpc_port)?;
+
+    Ok((handle, iroh_data_dir))
 }
 
 /// Count the number of files in the given path, for matching the output text in
@@ -541,7 +545,7 @@ fn to_out_dir(output: Output) -> Option<PathBuf> {
 }
 
 /// Create a get command given a ticket and an output mode
-fn make_get_cmd(ticket: &str, out: Option<PathBuf>) -> duct::Expression {
+fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duct::Expression {
     // create a `get-ticket` cmd & optionally provide out path
     if let Some(ref out) = out {
         cmd(
@@ -552,6 +556,7 @@ fn make_get_cmd(ticket: &str, out: Option<PathBuf>) -> duct::Expression {
         cmd(iroh_bin(), ["get", "--ticket", ticket])
     }
     .env_remove("RUST_LOG")
+    .env("IROH_DATA_DIR", iroh_data_dir)
     .stdout_capture()
     .stderr_capture()
 }
@@ -568,12 +573,12 @@ fn make_get_cmd(ticket: &str, out: Option<PathBuf>) -> duct::Expression {
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
     let num_blobs = count_input_files(path);
     let wrap = !path.is_dir();
-    let mut provider = spawn_provider(path, input, wrap, None, None)?;
+    let (mut provider, data_dir) = spawn_provider(path, input, wrap, None, None)?;
 
     // test provide output & scrape the ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs)?;
     let out_dir = to_out_dir(output);
-    let get_cmd = make_get_cmd(&ticket, out_dir.clone());
+    let get_cmd = make_get_cmd(&data_dir, &ticket, out_dir.clone());
 
     // test get stderr output
     let get_output = get_cmd.unchecked().run()?;
@@ -626,7 +631,7 @@ fn test_provide_get_loop_single(
         1
     };
 
-    let mut provider = spawn_provider(path, input, true, None, None)?;
+    let (mut provider, data_dir) = spawn_provider(path, input, true, None, None)?;
     // test provide output & get all in one ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs)?;
     let ticket = Ticket::from_str(&ticket).unwrap();
@@ -658,6 +663,7 @@ fn test_provide_get_loop_single(
     args.push(&hash_str);
     let cmd = cmd(iroh_bin(), args)
         .env_remove("RUST_LOG")
+        .env("IROH_DATA_DIR", data_dir)
         .stdout_capture()
         .stderr_capture()
         .unchecked();

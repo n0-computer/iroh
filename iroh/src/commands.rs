@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use colored::Colorize;
@@ -25,9 +25,10 @@ use iroh_net::{
     magic_endpoint::ConnectionInfo,
 };
 
-use crate::config::{ConsoleEnv, NodeConfig};
+use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
 
 use self::node::StartOptions;
+use self::rpc::RpcStatus;
 use self::sync::{AuthorCommands, DocCommands};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -44,6 +45,8 @@ pub mod repl;
 pub mod sync;
 pub mod validate;
 
+mod rpc;
+
 /// iroh is a tool for syncing bytes
 /// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
@@ -51,10 +54,6 @@ pub mod validate;
 pub struct Cli {
     #[clap(subcommand)]
     pub command: Commands,
-
-    /// RPC port of the Iroh node.
-    #[clap(long, global = true, default_value_t = DEFAULT_RPC_PORT)]
-    pub rpc_port: u16,
 
     #[clap(flatten)]
     #[clap(next_help_heading = "Options for start, get, doctor")]
@@ -73,18 +72,38 @@ pub struct FullArgs {
     pub metrics_addr: Option<SocketAddr>,
     #[clap(long)]
     pub cfg: Option<PathBuf>,
+
+    /// RPC port of the Iroh node.
+    #[clap(long, global = true, default_value_t = DEFAULT_RPC_PORT)]
+    pub rpc_port: u16,
+}
+
+async fn iroh_quic_connect(rt: runtime::Handle) -> Result<iroh::client::quic::Iroh> {
+    let root = get_iroh_data_root_with_env()?;
+    let rpc_status = RpcStatus::load(root).await?;
+    match rpc_status {
+        RpcStatus::Stopped => {
+            bail!("iroh is not running, please start it");
+        }
+        RpcStatus::Running(rpc_port) => {
+            let iroh = iroh::client::quic::connect(rpc_port, Some(rt))
+                .await
+                .context("quic::connect")?;
+            Ok(iroh)
+        }
+    }
 }
 
 impl Cli {
     pub async fn run(self, rt: runtime::Handle) -> Result<()> {
         match self.command {
             Commands::Console => {
-                let iroh = iroh::client::quic::connect(self.rpc_port, Some(rt)).await?;
+                let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
                 let env = ConsoleEnv::for_console()?;
                 repl::run(&iroh, &env).await
             }
             Commands::Rpc(command) => {
-                let iroh = iroh::client::quic::connect(self.rpc_port, Some(rt)).await?;
+                let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
                 let env = ConsoleEnv::for_cli()?;
                 command.run(&iroh, &env).await
             }
@@ -93,6 +112,7 @@ impl Cli {
                     cfg,
                     metrics_addr,
                     keylog,
+                    rpc_port,
                 } = self.full_args;
 
                 let config = NodeConfig::from_env(cfg.as_deref())?;
@@ -100,7 +120,7 @@ impl Cli {
                 #[cfg(feature = "metrics")]
                 let metrics_fut = start_metrics_server(metrics_addr, &rt);
 
-                let res = command.run(&rt, &config, keylog, self.rpc_port).await;
+                let res = command.run(&rt, &config, keylog, rpc_port).await;
 
                 #[cfg(feature = "metrics")]
                 if let Some(metrics_fut) = metrics_fut {

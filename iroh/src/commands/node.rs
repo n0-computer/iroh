@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use iroh::{
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
@@ -19,9 +19,15 @@ use iroh_net::{
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
-use crate::{commands::add, config::path_with_env};
+use crate::{
+    commands::add,
+    config::{get_iroh_data_root_with_env, path_with_env},
+};
 
-use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
+use super::{
+    rpc::{store_rpc, RpcStatus},
+    BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
+};
 
 #[derive(Debug)]
 pub struct StartOptions {
@@ -85,6 +91,16 @@ async fn start_daemon_node(
     rt: &runtime::Handle,
     opts: StartOptions,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
+    let rpc_status = RpcStatus::load(get_iroh_data_root_with_env()?).await?;
+    match rpc_status {
+        RpcStatus::Running(port) => {
+            bail!("iroh is already running on port {}", port);
+        }
+        RpcStatus::Stopped => {
+            // all good, we can go ahead
+        }
+    }
+
     let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
     let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
     let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
@@ -120,7 +136,7 @@ async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Sto
     let builder = builder.bind_addr(opts.addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = opts.rpc_port.into() {
-        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port)?;
+        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port).await?;
         builder
             .rpc_endpoint(rpc_endpoint)
             .secret_key(secret_key)
@@ -155,7 +171,7 @@ async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
 }
 
 /// Makes a an RPC endpoint that uses a QUIC transport
-fn make_rpc_endpoint(
+async fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
@@ -169,7 +185,12 @@ fn make_rpc_endpoint(
         )?,
         rpc_addr,
     )?;
+    let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
     let rpc_endpoint =
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
+
+    // store rpc endpoint
+    store_rpc(get_iroh_data_root_with_env()?, actual_rpc_port).await?;
+
     Ok(rpc_endpoint)
 }
