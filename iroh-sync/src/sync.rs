@@ -835,7 +835,7 @@ impl EntrySignature {
 /// A single entry in a [`Replica`]
 ///
 /// An entry is identified by a key, its [`Author`], and the [`Replica`]'s
-/// [`NamespaceSecret`]. Its value is the [32-byte BLAKE3 hash](iroh_base::Hash)
+/// [`NamespaceSecret`]. Its value is the [32-byte BLAKE3 hash](iroh_base::hash::Hash)
 /// of the entry's content data, the size of this content data, and a timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {

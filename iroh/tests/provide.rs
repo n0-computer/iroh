@@ -29,8 +29,8 @@ use iroh_bytes::{
     protocol::{GetRequest, RangeSpecSeq, RequestToken},
     provider::{self, RequestAuthorizationHandler},
     store::{PartialMap, Store},
-    util::{runtime, BlobFormat},
-    Hash,
+    util::runtime,
+    BlobFormat, Hash,
 };
 use iroh_sync::store;
 

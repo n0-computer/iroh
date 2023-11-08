@@ -2145,7 +2145,6 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "bao-tree",
- "bytes",
  "data-encoding",
  "hex",
  "iroh-test",
