@@ -734,6 +734,8 @@ impl super::Store for Store {
                 offset += chunk.len() as u64;
                 progress.try_send(ImportProgress::CopyProgress { id, offset })?;
             }
+            writer.flush().await?;
+            drop(writer);
             let file = ImportFile::TempFile(temp_data_path);
             rt.spawn_blocking(move || this.finalize_import_sync(file, format, id, progress))
                 .map(flatten_to_io)
