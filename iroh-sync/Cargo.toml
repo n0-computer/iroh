@@ -31,7 +31,7 @@ rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
 url = "2.4"
-bytes = "1"
+bytes = { version = "1", feature = ["serde"] }
 parking_lot = "0.12.1"
 hex = "0.4"
 thiserror = "1"
