@@ -105,6 +105,9 @@ jobs:
       run: cargo test --workspace --all-features --doc
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
+    - name: check examples
+      run: cargo check --workspace --all-features --examples
       
   build_and_test_windows:
     timeout-minutes: 30
