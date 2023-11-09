@@ -471,13 +471,37 @@ impl RpcCommands {
     }
 }
 
+/// Where the data should be read from.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+pub enum BlobSource {
+    /// Reads from stdin
+    #[display("STDIN")]
+    Stdin,
+    /// Reads from the provided path
+    #[display("{}", _0.display())]
+    Path(PathBuf),
+}
+
+impl From<String> for BlobSource {
+    fn from(s: String) -> Self {
+        if s == "STDIN" {
+            return BlobSource::Stdin;
+        }
+
+        BlobSource::Path(s.into())
+    }
+}
+
 /// Options for the `blob add` command.
 #[derive(clap::Args, Debug, Clone)]
 pub struct BlobAddOptions {
-    /// The path to the file or folder to add.
+    /// The source of the file or folder to add.
     ///
-    /// If no path is specified, data will be read from STDIN.
-    path: Option<PathBuf>,
+    /// If `STDIN` is specified, the data will be read from stdin.
+    ///
+    /// When left empty no content is added.
+    #[clap(long, short)]
+    source: Option<BlobSource>,
 
     /// Add in place
     ///
@@ -1090,4 +1114,22 @@ pub async fn show_download_progress(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_blob_source() {
+        assert_eq!(
+            BlobSource::from(BlobSource::Stdin.to_string()),
+            BlobSource::Stdin
+        );
+
+        assert_eq!(
+            BlobSource::from(BlobSource::Path("hello/world".into()).to_string()),
+            BlobSource::Path("hello/world".into()),
+        );
+    }
 }

@@ -345,6 +345,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
                 ADDR,
                 "--rpc-port",
                 "0",
+                "--source",
                 path.to_str().unwrap(),
                 "--wrap",
             ],
@@ -547,7 +548,6 @@ fn make_provider_in(
 ) -> Result<ReaderHandle> {
     let mut args = vec![
         "start",
-        path.to_str().unwrap(),
         "--addr",
         addr.unwrap_or(ADDR),
         "--rpc-port",
@@ -556,6 +556,16 @@ fn make_provider_in(
     if wrap {
         args.push("--wrap");
     }
+    args.push("--source");
+    match input {
+        Input::Stdin => {
+            args.push("STDIN");
+        }
+        Input::Path => {
+            args.push(path.to_str().unwrap());
+        }
+    }
+
     // spawn a provider & optionally provide from stdin
     let res = cmd(iroh_bin(), &args)
         // .stderr_null()

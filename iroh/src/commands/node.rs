@@ -20,7 +20,7 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
 use crate::{
-    commands::{add, rpc::clear_rpc},
+    commands::{add, rpc::clear_rpc, BlobSource},
     config::{get_iroh_data_root_with_env, path_with_env},
 };
 
@@ -39,14 +39,6 @@ pub struct StartOptions {
 }
 
 pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOptions) -> Result<()> {
-    if let Some(ref path) = add_opts.path {
-        ensure!(
-            path.exists(),
-            "Cannot provide nonexistent path: {}",
-            path.display()
-        );
-    }
-
     let token = opts.request_token.clone();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -55,16 +47,27 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     let node = start_daemon_node(rt, opts).await?;
     let client = node.client();
 
-    let add_task = {
-        tokio::spawn(
-            async move {
-                if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
-                    eprintln!("Failed to add data: {}", e);
-                    std::process::exit(1);
-                }
+    let add_task = match add_opts.source {
+        Some(ref source) => {
+            if let BlobSource::Path(ref p) = source {
+                ensure!(
+                    p.exists(),
+                    "Cannot provide nonexistent path: {}",
+                    p.display()
+                );
             }
-            .instrument(info_span!("node-add")),
-        )
+
+            Some(tokio::spawn(
+                async move {
+                    if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
+                        eprintln!("Failed to add data: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                .instrument(info_span!("node-add")),
+            ))
+        }
+        None => None,
     };
 
     let node2 = node.clone();
@@ -82,9 +85,10 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
     // makes this explicit.
-    add_task.abort();
-    drop(add_task);
-
+    if let Some(add_task) = add_task {
+        add_task.abort();
+        drop(add_task);
+    }
     clear_rpc(get_iroh_data_root_with_env()?).await?;
 
     Ok(())

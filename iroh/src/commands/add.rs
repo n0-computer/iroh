@@ -16,6 +16,7 @@ use iroh_bytes::{
     protocol::RequestToken, provider::AddProgress, util::Tag, BlobFormat, Hash, HashAndFormat,
 };
 use quic_rpc::ServiceConnection;
+use tokio::io::AsyncWriteExt;
 
 use super::BlobAddOptions;
 
@@ -50,9 +51,13 @@ pub async fn run_with_opts<C: ServiceConnection<ProviderService>>(
         true => TicketOption::None,
         false => TicketOption::Print(request_token),
     };
-    let source = match opts.path {
-        None => BlobSource::Stdin,
-        Some(path) => BlobSource::LocalFs {
+    let source = match opts.source {
+        None => {
+            // Nothing to do
+            return Ok(());
+        }
+        Some(super::BlobSource::Stdin) => BlobSource::Stdin,
+        Some(super::BlobSource::Path(path)) => BlobSource::LocalFs {
             path,
             in_place: opts.in_place,
         },
@@ -77,29 +82,38 @@ pub async fn run<C: ServiceConnection<ProviderService>>(
     ticket: TicketOption,
     wrap: WrapOption,
 ) -> Result<()> {
-    let (path, in_place) = match source {
+    let (hash, format, entries) = match source {
         BlobSource::LocalFs { path, in_place } => {
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
-            (absolute, in_place)
+
+            // tell the node to add the data
+            let stream = client
+                .blobs
+                .add_from_path(absolute, in_place, tag, wrap)
+                .await?;
+            aggregate_add_response(stream).await?
         }
         BlobSource::Stdin => {
+            println!("Adding from STDIN...");
             // Store STDIN content into a temporary file
             let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
             let mut file = tokio::fs::File::from_std(file);
             let path_buf = path.to_path_buf();
             // Copy from stdin to the file, until EOF
             tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-            println!("Adding from stdin...");
-            (path_buf, false)
+            file.flush().await?;
+            drop(file);
+
+            // tell the node to add the data
+            let stream = client
+                .blobs
+                .add_from_path(path_buf, false, tag, wrap)
+                .await?;
+            aggregate_add_response(stream).await?
         }
     };
-    // tell the node to add the data
-    let stream = client
-        .blobs
-        .add_from_path(path, in_place, tag, wrap)
-        .await?;
-    let (hash, format, entries) = aggregate_add_response(stream).await?;
+
     print_add_response(hash, format, entries);
     if let TicketOption::Print(token) = ticket {
         let status = client.node.status().await?;
