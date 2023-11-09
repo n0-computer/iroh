@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use iroh::{
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
@@ -19,9 +19,15 @@ use iroh_net::{
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
-use crate::{commands::add, config::path_with_env};
+use crate::{
+    commands::{add, rpc::clear_rpc, BlobSource},
+    config::{get_iroh_data_root_with_env, path_with_env},
+};
 
-use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
+use super::{
+    rpc::{store_rpc, RpcStatus},
+    BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS,
+};
 
 #[derive(Debug)]
 pub struct StartOptions {
@@ -33,14 +39,6 @@ pub struct StartOptions {
 }
 
 pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOptions) -> Result<()> {
-    if let Some(ref path) = add_opts.path {
-        ensure!(
-            path.exists(),
-            "Cannot provide nonexistent path: {}",
-            path.display()
-        );
-    }
-
     let token = opts.request_token.clone();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -49,16 +47,27 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     let node = start_daemon_node(rt, opts).await?;
     let client = node.client();
 
-    let add_task = {
-        tokio::spawn(
-            async move {
-                if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
-                    eprintln!("Failed to add data: {}", e);
-                    std::process::exit(1);
-                }
+    let add_task = match add_opts.source {
+        Some(ref source) => {
+            if let BlobSource::Path(ref p) = source {
+                ensure!(
+                    p.exists(),
+                    "Cannot provide nonexistent path: {}",
+                    p.display()
+                );
             }
-            .instrument(info_span!("node-add")),
-        )
+
+            Some(tokio::spawn(
+                async move {
+                    if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
+                        eprintln!("Failed to add data: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                .instrument(info_span!("node-add")),
+            ))
+        }
+        None => None,
     };
 
     let node2 = node.clone();
@@ -76,8 +85,12 @@ pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOpti
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)
     // makes this explicit.
-    add_task.abort();
-    drop(add_task);
+    if let Some(add_task) = add_task {
+        add_task.abort();
+        drop(add_task);
+    }
+    clear_rpc(get_iroh_data_root_with_env()?).await?;
+
     Ok(())
 }
 
@@ -85,6 +98,16 @@ async fn start_daemon_node(
     rt: &runtime::Handle,
     opts: StartOptions,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
+    let rpc_status = RpcStatus::load(get_iroh_data_root_with_env()?).await?;
+    match rpc_status {
+        RpcStatus::Running(port) => {
+            bail!("iroh is already running on port {}", port);
+        }
+        RpcStatus::Stopped => {
+            // all good, we can go ahead
+        }
+    }
+
     let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
     let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
     let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
@@ -120,7 +143,7 @@ async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Sto
     let builder = builder.bind_addr(opts.addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = opts.rpc_port.into() {
-        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port)?;
+        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port).await?;
         builder
             .rpc_endpoint(rpc_endpoint)
             .secret_key(secret_key)
@@ -155,7 +178,7 @@ async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
 }
 
 /// Makes a an RPC endpoint that uses a QUIC transport
-fn make_rpc_endpoint(
+async fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
@@ -169,7 +192,12 @@ fn make_rpc_endpoint(
         )?,
         rpc_addr,
     )?;
+    let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
     let rpc_endpoint =
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
+
+    // store rpc endpoint
+    store_rpc(get_iroh_data_root_with_env()?, actual_rpc_port).await?;
+
     Ok(rpc_endpoint)
 }

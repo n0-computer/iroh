@@ -38,11 +38,17 @@ pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
 
 /// Get the path for this [`IrohPaths`] by joining the name to `IROH_DATA_DIR` environment variable.
 pub fn path_with_env(p: IrohPaths) -> Result<PathBuf> {
+    let root = get_iroh_data_root_with_env()?;
+    Ok(p.with_root(root))
+}
+
+/// Get the current root for [`IrohPaths`].
+pub fn get_iroh_data_root_with_env() -> Result<PathBuf> {
     let mut root = iroh_data_root()?;
     if !root.is_absolute() {
         root = std::env::current_dir()?.join(root);
     }
-    Ok(p.with_root(root))
+    Ok(root)
 }
 
 #[derive(Debug, Clone, Copy)]

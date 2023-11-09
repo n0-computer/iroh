@@ -1130,7 +1130,11 @@ impl<D: BaoStore> RpcHandler<D> {
         } = msg;
         // Check that the path is absolute and exists.
         anyhow::ensure!(root.is_absolute(), "path must be absolute");
-        anyhow::ensure!(root.exists(), "path must exist");
+        anyhow::ensure!(
+            root.exists(),
+            "trying to add missing path: {}",
+            root.display()
+        );
 
         let import_mode = match in_place {
             true => ImportMode::TryReference,
