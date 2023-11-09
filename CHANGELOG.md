@@ -2,6 +2,16 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [0.11.0](https://github.com/n0-computer/iroh/compare/v0.10.0..0.11.0) - 2023-11-08
+
+### ⛰️  Features
+
+- *(iroh)* Store rpc port in iroh data dir - ([ed85fb0](https://github.com/n0-computer/iroh/commit/ed85fb073106e18d165e40ace1aee1c26377f6d3))
+
+### 🚜 Refactor
+
+- Common base library ([#1780](https://github.com/n0-computer/iroh/issues/1780)) - ([de58d71](https://github.com/n0-computer/iroh/commit/de58d71998e49ed14c99b9765fc51d37965a95d9))
+
 ## [0.10.0](https://github.com/n0-computer/iroh/compare/v0.9.0..v0.10.0) - 2023-11-08
 
 ### ⛰️  Features
@@ -27,6 +37,7 @@ All notable changes to iroh will be documented in this file.
 
 - *(iroh-net)* Demote 'pong not received in timeout' message to debug ([#1769](https://github.com/n0-computer/iroh/issues/1769)) - ([56e92ca](https://github.com/n0-computer/iroh/commit/56e92caa1172ac416c2c2f5139a4aacd26cf27c7))
 - Switch to git-cliff for changelog generation - ([bcdccb3](https://github.com/n0-computer/iroh/commit/bcdccb39fa374ec8eac84eb347f1e38c2f4dbb09))
+- Release - ([c4514aa](https://github.com/n0-computer/iroh/commit/c4514aafa5e6452b881ae4917a63ab05cfe62e96))
 
 ## [0.9.0](https://github.com/n0-computer/iroh/compare/v0.8.0..v0.9.0) - 2023-10-31
 
