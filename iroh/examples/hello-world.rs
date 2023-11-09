@@ -2,7 +2,7 @@
 //!
 //! This can be downloaded using the iroh CLI.
 //!
-//! This is using an in memory database and a random peer id.
+//! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example hello-world
 use iroh::bytes::util::runtime;

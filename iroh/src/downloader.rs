@@ -228,7 +228,7 @@ impl Downloader {
     where
         S: Store,
     {
-        let me = endpoint.peer_id().fmt_short();
+        let me = endpoint.node_id().fmt_short();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
         let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
 

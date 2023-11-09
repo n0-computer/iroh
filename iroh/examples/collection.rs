@@ -3,7 +3,7 @@
 //! Since this is using the default iroh collection format, it can be downloaded
 //! recursively using the iroh CLI.
 //!
-//! This is using an in memory database and a random peer id.
+//! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run -p collection
 use iroh::bytes::util::runtime;

@@ -70,7 +70,7 @@ impl SyncEngine {
     ) -> Self {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
-        let me = endpoint.peer_id().fmt_short();
+        let me = endpoint.node_id().fmt_short();
 
         let content_status_cb = {
             let bao_store = bao_store.clone();

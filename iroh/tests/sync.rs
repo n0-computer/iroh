@@ -61,7 +61,7 @@ fn spawn_node(
     async move {
         let node = test_node(rt, "127.0.0.1:0".parse()?, secret_key);
         let node = node.spawn().await?;
-        info!(?i, me = %node.peer_id().fmt_short(), "node spawned");
+        info!(?i, me = %node.node_id().fmt_short(), "node spawned");
         Ok(node)
     }
 }
@@ -92,7 +92,7 @@ async fn sync_simple() -> Result<()> {
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // create doc on node0
-    let peer0 = nodes[0].peer_id();
+    let peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let hash0 = doc0
@@ -104,7 +104,7 @@ async fn sync_simple() -> Result<()> {
     let mut events0 = doc0.subscribe().await?;
 
     info!("node1: join");
-    let peer1 = nodes[1].peer_id();
+    let peer1 = nodes[1].node_id();
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
     let mut events1 = doc1.subscribe().await?;
     info!("node1: assert 4 events");
@@ -171,7 +171,7 @@ async fn sync_gossip_bulk() -> Result<()> {
     let nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
-    let _peer0 = nodes[0].peer_id();
+    let _peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let mut ticket = doc0.share(ShareMode::Write).await?;
@@ -257,7 +257,7 @@ async fn sync_full_basic() -> Result<()> {
     let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // peer0: create doc and ticket
-    let peer0 = nodes[0].peer_id();
+    let peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let mut events0 = doc0.subscribe().await?;
@@ -277,7 +277,7 @@ async fn sync_full_basic() -> Result<()> {
     let ticket = doc0.share(ShareMode::Write).await?;
 
     info!("peer1: spawn");
-    let peer1 = nodes[1].peer_id();
+    let peer1 = nodes[1].node_id();
     let author1 = clients[1].authors.create().await?;
     info!("peer1: join doc");
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
@@ -344,7 +344,7 @@ async fn sync_full_basic() -> Result<()> {
     nodes.push(spawn_node(rt.clone(), nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client());
     let doc2 = clients[2].docs.import(ticket).await?;
-    let peer2 = nodes[2].peer_id();
+    let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;
 
     info!("peer2: wait for 8 events (from sync with peers)");
@@ -498,7 +498,7 @@ async fn sync_subscribe_stop_close() -> Result<()> {
 //     });
 
 //     let nodes = spawn_nodes(rt, n_nodes, &mut rng).await?;
-//     let peer_ids = nodes.iter().map(|node| node.peer_id()).collect::<Vec<_>>();
+//     let peer_ids = nodes.iter().map(|node| node.node_id()).collect::<Vec<_>>();
 //     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 //     let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
 

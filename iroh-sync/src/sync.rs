@@ -62,7 +62,7 @@ pub enum Event {
 pub enum InsertOrigin {
     /// The entry was inserted locally.
     Local,
-    /// The entry was received from the remote peer identified by [`PeerIdBytes`].
+    /// The entry was received from the remote node identified by [`PeerIdBytes`].
     Sync {
         /// The peer from which we received this entry.
         from: PeerIdBytes,

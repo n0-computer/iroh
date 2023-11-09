@@ -132,7 +132,7 @@ async fn empty_files() -> Result<()> {
     transfer_random_data(file_opts, &rt).await
 }
 
-/// Create new get options with the given peer id and addresses, using a
+/// Create new get options with the given node id and addresses, using a
 /// randomly generated secret key.
 fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     let peer = iroh_net::NodeAddr::from_parts(node_id, Some(1), addrs);
@@ -168,7 +168,7 @@ async fn multiple_clients() -> Result<()> {
         let file_hash: Hash = expect_hash;
         let name = expect_name.clone();
         let addrs = node.local_address().unwrap();
-        let peer_id = node.peer_id();
+        let peer_id = node.node_id();
         let content = content.to_vec();
 
         tasks.push(rt.local_pool().spawn_pinned(move || {
@@ -265,7 +265,7 @@ where
     .await?;
 
     let addrs = node.local_endpoint_addresses().await?;
-    let opts = get_options(node.peer_id(), addrs);
+    let opts = get_options(node.node_id(), addrs);
     let request = GetRequest::all(collection_hash);
     let (collection, children, _stats) = run_collection_get_request(opts, request).await?;
     assert_eq!(num_blobs, collection.blobs().len());
@@ -359,7 +359,7 @@ async fn test_server_close() {
     let addr = "127.0.0.1:0".parse().unwrap();
     let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
 
     let (events_sender, mut events_recv) = mpsc::unbounded_channel();
     node.subscribe(move |event| {
@@ -439,7 +439,7 @@ async fn test_ipv6() {
         }
     };
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::all(hash);
@@ -468,7 +468,7 @@ async fn test_not_found() {
         }
     };
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::single(hash);
@@ -512,7 +512,7 @@ async fn test_chunk_not_found_1() {
         }
     };
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::single(hash);
@@ -618,7 +618,7 @@ async fn test_run_fsm() {
     let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
     let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::all(hash);
@@ -668,7 +668,7 @@ async fn test_size_request_blob() {
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::last_chunk(hash);
         let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
@@ -700,7 +700,7 @@ async fn test_collection_stat() {
         .await
         .unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         // first 1024 bytes
         let header = ChunkRanges::from(..ChunkNum(1));
@@ -784,7 +784,7 @@ async fn test_token_passthrough() -> Result<()> {
     .await?;
 
     let addrs = node.local_endpoint_addresses().await?;
-    let peer_id = node.peer_id();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(30), async move {
         let endpoint = MagicEndpoint::builder()
             .secret_key(SecretKey::generate())

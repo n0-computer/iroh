@@ -91,7 +91,7 @@ pub enum Commands {
     },
     /// Connect to an iroh doctor accept node.
     Connect {
-        /// hex peer id of the node to connect to
+        /// hex node id of the node to connect to
         dial: PublicKey,
 
         /// One or more remote endpoints to use when dialing
@@ -535,7 +535,7 @@ async fn passive_side(
     endpoint: MagicEndpoint,
     connection: quinn::Connection,
 ) -> anyhow::Result<()> {
-    let remote_peer_id = magic_endpoint::get_peer_id(&connection)?;
+    let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
     loop {
         match connection.accept_bi().await {
@@ -679,7 +679,8 @@ async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = magic_endpoint::get_peer_id(&connection) else {
+                        let Ok(remote_peer_id) = magic_endpoint::get_remote_node_id(&connection)
+                        else {
                             return;
                         };
                         println!("Accepted connection from {}", remote_peer_id);

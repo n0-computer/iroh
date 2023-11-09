@@ -228,7 +228,7 @@ impl ClientConnManager {
 ///     - receive a ping and write a pong back
 ///     - notify the server to send a packet to another peer on behalf of the client
 ///     - note whether the client is `preferred`, aka this client is the preferred way
-///     to speak to the peer ID associated with that client.
+///     to speak to the node ID associated with that client.
 ///
 /// If the `ClientConnIo` `can_mesh` that means that the associated [`super::client::Client`] is connected to
 /// a derp [`super::server::Server`] that is apart of the same mesh network as this [`super::server::Server`]. It can:

@@ -341,7 +341,7 @@ impl RpcMsg<ProviderService> for NodeStatusRequest {
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusResponse {
-    /// The peer id and socket addresses of this node.
+    /// The node id and socket addresses of this node.
     pub addr: NodeAddr,
     /// The bound listening addresses of the node
     pub listen_addrs: Vec<SocketAddr>,

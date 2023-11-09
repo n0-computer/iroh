@@ -33,7 +33,7 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Ma
             .unwrap();
         let addr = ep.local_addr().unwrap();
         let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
-        let addr = NodeAddr::new(ep.peer_id()).with_direct_addresses([addr]);
+        let addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
         (addr, ep)
     })
 }
