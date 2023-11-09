@@ -199,7 +199,8 @@ pub enum FullCommands {
         /// DERP region of the provider
         #[clap(long)]
         region: Option<u16>,
-        /// Directory in which to save the file(s), defaults to writing to STDOUT
+        /// Directory in which to save the file(s). When passed `STDOUT` will be written to stdout,
+        /// otherwise the content will be stored in the provided path.
         ///
         /// If the directory exists and contains a partial download, the download will
         /// be resumed.
@@ -207,7 +208,7 @@ pub enum FullCommands {
         /// Otherwise, all files in the collection will be overwritten. Other files
         /// in the directory will be left untouched.
         #[clap(long, short)]
-        out: Option<PathBuf>,
+        out: OutputTarget,
         #[clap(conflicts_with_all = &["hash", "peer", "addrs", "token"])]
         /// Ticket containing everything to retrieve the data from a provider.
         #[clap(long)]
@@ -222,6 +223,27 @@ pub enum FullCommands {
         #[clap(subcommand)]
         command: self::doctor::Commands,
     },
+}
+
+/// Where the data should be stored.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+pub enum OutputTarget {
+    /// Writes to stdout
+    #[display("STDOUT")]
+    Stdout,
+    /// Writes to the provided path
+    #[display("{}", _0.display())]
+    Path(PathBuf),
+}
+
+impl From<String> for OutputTarget {
+    fn from(s: String) -> Self {
+        if s == "STDOUT" {
+            return OutputTarget::Stdout;
+        }
+
+        OutputTarget::Path(s.into())
+    }
 }
 
 impl FullCommands {
@@ -1130,6 +1152,19 @@ mod tests {
         assert_eq!(
             BlobSource::from(BlobSource::Path("hello/world".into()).to_string()),
             BlobSource::Path("hello/world".into()),
+        );
+    }
+
+    #[test]
+    fn test_output_target() {
+        assert_eq!(
+            OutputTarget::from(OutputTarget::Stdout.to_string()),
+            OutputTarget::Stdout
+        );
+
+        assert_eq!(
+            OutputTarget::from(OutputTarget::Path("hello/world".into()).to_string()),
+            OutputTarget::Path("hello/world".into()),
         );
     }
 }

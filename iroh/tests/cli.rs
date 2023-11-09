@@ -633,7 +633,7 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
             ["get", "--ticket", ticket, "--out", out.to_str().unwrap()],
         )
     } else {
-        cmd(iroh_bin(), ["get", "--ticket", ticket])
+        cmd(iroh_bin(), ["get", "--ticket", ticket, "--out", "STDOUT"])
     }
     .env_remove("RUST_LOG")
     .env("IROH_DATA_DIR", iroh_data_dir)
@@ -694,12 +694,12 @@ fn test_provide_get_loop_single(
     hash: Hash,
 ) -> Result<()> {
     let out = match output {
-        Output::Stdout => None,
+        Output::Stdout => "STDOUT".to_string(),
         Output::Path => {
             let dir = testdir!();
-            Some(dir.join("out"))
+            dir.join("out").display().to_string()
         }
-        Output::Custom(out) => Some(out),
+        Output::Custom(ref out) => out.display().to_string(),
     };
 
     let num_blobs = if path.is_dir() {
@@ -733,10 +733,9 @@ fn test_provide_get_loop_single(
         args.push("--addrs");
         args.push(addr);
     }
-    if let Some(ref out) = out {
-        args.push("--out");
-        args.push(out.to_str().unwrap());
-    }
+    args.push("--out");
+    args.push(&out);
+
     args.push("--region");
     args.push(&region);
     let hash_str = hash.to_string();
@@ -757,12 +756,12 @@ fn test_provide_get_loop_single(
 
     // test output
     let expect_content = std::fs::read(path)?;
-    match out {
-        None => {
+    match output {
+        Output::Stdout => {
             assert!(!get_output.stdout.is_empty());
             assert_eq!(expect_content, get_output.stdout);
         }
-        Some(out) => {
+        _ => {
             let content = std::fs::read(out)?;
             assert_eq!(expect_content, content);
         }
