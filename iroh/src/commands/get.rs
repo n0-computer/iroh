@@ -26,6 +26,8 @@ use iroh_net::derp::DerpMode;
 
 use crate::commands::show_download_progress;
 
+use super::OutputTarget;
+
 #[derive(Debug)]
 pub struct GetInteractive {
     pub rt: iroh_bytes::util::runtime::Handle,
@@ -99,11 +101,10 @@ impl GetInteractive {
         Ok(())
     }
 
-    pub async fn get_interactive(self, out_dir: Option<PathBuf>) -> Result<()> {
-        if let Some(out_dir) = out_dir {
-            self.get_to_dir(out_dir).await
-        } else {
-            self.get_to_stdout().await
+    pub async fn get_interactive(self, out_dir: OutputTarget) -> Result<()> {
+        match out_dir {
+            OutputTarget::Path(dir) => self.get_to_dir(dir).await,
+            OutputTarget::Stdout => self.get_to_stdout().await,
         }
     }
 
