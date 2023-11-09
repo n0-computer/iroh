@@ -87,7 +87,7 @@ console-subscriber = "0.2"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh-test = { path = "../iroh-test" }
-nix = "0.26.2"
+nix = { version = "0.27", features = ["signal", "process"] }
 proptest = "1.2.0"
 rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }

@@ -22,7 +22,7 @@ bytes = "1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 curve25519-dalek = "4.0.0"
 data-encoding = "2.3.3"
-default-net = "0.18"
+default-net = "0.20"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "deref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
@@ -47,7 +47,7 @@ rand = "0.8"
 rand_core = "0.6.4"
 rcgen = "0.11"
 reqwest = { version = "0.11.19", default-features = false, features = ["rustls-tls"] }
-ring = "0.16.20"
+ring = "0.17"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_bytes = "0.11.12"
