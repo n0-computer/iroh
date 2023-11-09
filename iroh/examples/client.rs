@@ -1,7 +1,7 @@
 //! This example shows the shortest path to working with documents in iroh. This example creates a
 //! document and sets an entry with key: "hello", value: "world". The document is completely local.
 //!
-//! The iroh node that creates the document is backed by an in-memory database and a random peer ID
+//! The iroh node that creates the document is backed by an in-memory database and a random node ID
 //!
 //! run this example from the project root:
 //!     $ cargo run --example client

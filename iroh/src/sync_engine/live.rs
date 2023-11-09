@@ -696,7 +696,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         peer: PublicKey,
     ) -> AcceptOutcome {
         self.state
-            .accept_request(&self.endpoint.peer_id(), &namespace, peer)
+            .accept_request(&self.endpoint.node_id(), &namespace, peer)
     }
 }
 

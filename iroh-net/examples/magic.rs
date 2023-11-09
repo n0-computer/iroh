@@ -66,10 +66,10 @@ async fn main() -> anyhow::Result<()> {
         .bind(args.bind_port)
         .await?;
 
-    let me = endpoint.peer_id();
+    let me = endpoint.node_id();
     let local_addr = endpoint.local_addr()?;
     println!("magic socket listening on {local_addr:?}");
-    println!("our peer id: {me}");
+    println!("our node id: {me}");
 
     match args.command {
         Command::Listen => {

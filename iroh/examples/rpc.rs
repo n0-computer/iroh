@@ -61,7 +61,7 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
         .spawn()
         .await?;
     // print some info about the node
-    let peer = node.peer_id();
+    let peer = node.node_id();
     let addrs = node.local_endpoint_addresses().await?;
     println!("node PeerID:     {peer}");
     println!("node listening addresses:");

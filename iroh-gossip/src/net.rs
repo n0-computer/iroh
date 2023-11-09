@@ -4,7 +4,9 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, NodeAddr};
+use iroh_net::{
+    key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint, NodeAddr,
+};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
@@ -80,7 +82,7 @@ impl Gossip {
         config: proto::Config,
         my_addr: &AddrInfo,
     ) -> Self {
-        let peer_id = endpoint.peer_id();
+        let peer_id = endpoint.node_id();
         let dialer = Dialer::new(endpoint.clone());
         let state = proto::State::new(
             peer_id,
@@ -92,7 +94,7 @@ impl Gossip {
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
         let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
-        let me = endpoint.peer_id().fmt_short();
+        let me = endpoint.node_id().fmt_short();
         let actor = Actor {
             endpoint,
             state,
@@ -228,7 +230,7 @@ impl Gossip {
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
     pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
-        let peer_id = get_peer_id(&conn)?;
+        let peer_id = get_remote_node_id(&conn)?;
         self.send(ToActor::ConnIncoming(peer_id, ConnOrigin::Accept, conn))
             .await?;
         Ok(())
@@ -714,10 +716,10 @@ mod test {
         let go1 = Gossip::from_endpoint(ep1.clone(), Default::default(), &addr1);
         let go2 = Gossip::from_endpoint(ep2.clone(), Default::default(), &addr2);
         let go3 = Gossip::from_endpoint(ep3.clone(), Default::default(), &addr3);
-        debug!("peer1 {:?}", ep1.peer_id());
-        debug!("peer2 {:?}", ep2.peer_id());
-        debug!("peer3 {:?}", ep3.peer_id());
-        let pi1 = ep1.peer_id();
+        debug!("peer1 {:?}", ep1.node_id());
+        debug!("peer2 {:?}", ep2.node_id());
+        debug!("peer3 {:?}", ep3.node_id());
+        let pi1 = ep1.node_id();
 
         let cancel = CancellationToken::new();
         let tasks = [

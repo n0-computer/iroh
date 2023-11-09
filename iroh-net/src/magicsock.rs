@@ -2860,7 +2860,7 @@ pub(crate) mod tests {
 
                 let a_addr = b.endpoint.magic_sock().get_mapping_addr(&a.public()).await.unwrap();
                 let b_addr = a.endpoint.magic_sock().get_mapping_addr(&b.public()).await.unwrap();
-                let b_node_id = b.endpoint.peer_id();
+                let b_node_id = b.endpoint.node_id();
 
                 println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 

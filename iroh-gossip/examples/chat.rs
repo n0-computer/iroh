@@ -25,7 +25,7 @@ use url::Url;
 /// This broadcasts signed messages over iroh-gossip and verifies signatures
 /// on received messages.
 ///
-/// By default a new peer id is created when starting the example. To reuse your identity,
+/// By default a new node id is created when starting the example. To reuse your identity,
 /// set the `--secret-key` flag with the secret key printed on a previous invocation.
 ///
 /// By default, the DERP server run by n0 is used. To use a local DERP server, run
@@ -33,7 +33,7 @@ use url::Url;
 /// in another terminal and then set the `-d http://localhost:3340` flag on this example.
 #[derive(Parser, Debug)]
 struct Args {
-    /// secret key to derive our peer id from.
+    /// secret key to derive our node id from.
     #[clap(long)]
     secret_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
@@ -131,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .bind(args.bind_port)
         .await?;
-    println!("> our peer id: {}", endpoint.peer_id());
+    println!("> our node id: {}", endpoint.node_id());
 
     // wait for a first endpoint update so that we know about our endpoint addresses
     notify.notified().await;
@@ -142,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
     // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
     gossip_cell.set(gossip.clone()).unwrap();
 
-    // print a ticket that includes our own peer id and endpoint addresses
+    // print a ticket that includes our own node id and endpoint addresses
     let ticket = {
         let me = endpoint.my_addr().await?;
         let peers = peers.iter().cloned().chain([me]).collect();
@@ -206,12 +206,12 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
             match message {
                 Message::AboutMe { name } => {
                     names.insert(from, name.clone());
-                    println!("> {} is now known as {}", fmt_peer_id(&from), name);
+                    println!("> {} is now known as {}", fmt_node_id(&from), name);
                 }
                 Message::Message { text } => {
                     let name = names
                         .get(&from)
-                        .map_or_else(|| fmt_peer_id(&from), String::to_string);
+                        .map_or_else(|| fmt_node_id(&from), String::to_string);
                     println!("{}: {}", name, text);
                 }
             }
@@ -320,7 +320,7 @@ impl FromStr for Ticket {
 
 // helpers
 
-fn fmt_peer_id(input: &PublicKey) -> String {
+fn fmt_node_id(input: &PublicKey) -> String {
     base32::fmt_short(input.as_bytes())
 }
 fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {

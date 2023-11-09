@@ -348,8 +348,8 @@ impl MagicEndpoint {
         self.endpoint.accept()
     }
 
-    /// Get the peer id of this endpoint.
-    pub fn peer_id(&self) -> PublicKey {
+    /// Get the node id of this endpoint.
+    pub fn node_id(&self) -> PublicKey {
         self.secret_key.public()
     }
 
@@ -392,14 +392,14 @@ impl MagicEndpoint {
         let addrs = self.local_endpoints().await?;
         let derp = self.my_derp();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.peer_id(), derp, addrs))
+        Ok(NodeAddr::from_parts(self.node_id(), derp, addrs))
     }
 
     /// Get the [`NodeAddr`] for this endpoint, while providing the endpoints.
     pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
         let derp = self.my_derp();
         let addrs = eps.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.peer_id(), derp, addrs))
+        Ok(NodeAddr::from_parts(self.node_id(), derp, addrs))
     }
 
     /// Get information on all the nodes we have connection information about.
@@ -573,7 +573,7 @@ pub async fn accept_conn(
 ) -> Result<(PublicKey, String, quinn::Connection)> {
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
-    let peer_id = get_peer_id(&conn)?;
+    let peer_id = get_remote_node_id(&conn)?;
     Ok((peer_id, alpn, conn))
 }
 
@@ -590,7 +590,7 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
 }
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
-pub fn get_peer_id(connection: &quinn::Connection) -> Result<PublicKey> {
+pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => anyhow::bail!("no peer certificate found"),
@@ -788,7 +788,7 @@ mod tests {
                         .await
                         .unwrap();
                     let eps = ep.local_addr().unwrap();
-                    info!(me = %ep.peer_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
+                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_iters {
                         let now = Instant::now();
                         println!("[server] round {}", i + 1);
@@ -829,7 +829,7 @@ mod tests {
                         .await
                         .unwrap();
                     let eps = ep.local_addr().unwrap();
-                    info!(me = %ep.peer_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
+                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
                     let node_addr = NodeAddr::new(server_node_id).with_derp_region(region_id);
                     info!(to = ?node_addr, "client connecting");
                     let t = Instant::now();
@@ -866,10 +866,10 @@ mod tests {
     //     setup_logging();
     //     let (ep1, ep2, cleanup) = setup_pair().await.unwrap();
 
-    //     let peer_id_1 = ep1.peer_id();
-    //     eprintln!("peer id 1 {peer_id_1}");
-    //     let peer_id_2 = ep2.peer_id();
-    //     eprintln!("peer id 2 {peer_id_2}");
+    //     let peer_id_1 = ep1.node_id();
+    //     eprintln!("node id 1 {peer_id_1}");
+    //     let peer_id_2 = ep2.node_id();
+    //     eprintln!("node id 2 {peer_id_2}");
 
     //     let endpoint = ep2.clone();
     //     let p2_connect = tokio::spawn(async move {

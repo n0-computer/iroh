@@ -373,7 +373,7 @@ where
             let handler = RpcHandler {
                 inner: inner.clone(),
             };
-            let me = endpoint.peer_id().fmt_short();
+            let me = endpoint.node_id().fmt_short();
             rt2.main().spawn(
                 async move {
                     Self::run(
@@ -448,7 +448,7 @@ where
         // is only initialized once the endpoint is fully bound
         if let Ok(local_endpoints) = server.local_endpoints().await {
             if !local_endpoints.is_empty() {
-                debug!(me = ?server.peer_id(), "gossip initial update: {local_endpoints:?}");
+                debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
                 gossip.update_endpoints(&local_endpoints).ok();
             }
         }
@@ -719,7 +719,7 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Returns the [`PublicKey`] of the node.
-    pub fn peer_id(&self) -> PublicKey {
+    pub fn node_id(&self) -> PublicKey {
         self.inner.secret_key.public()
     }
 

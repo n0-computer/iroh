@@ -162,7 +162,7 @@ async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Sto
         "DERP Region: {}",
         region.map_or("None".to_string(), |r| r.to_string())
     );
-    println!("PeerID: {}", provider.peer_id());
+    println!("PeerID: {}", provider.node_id());
     println!();
     Ok(provider)
 }
