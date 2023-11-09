@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, io};
@@ -416,7 +415,7 @@ fn cli_provide_addresses() -> Result<()> {
     let get_output = cmd(iroh_bin(), ["node", "status"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", data_dir)
-        .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
+        // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
         .stdout_capture()
         .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
