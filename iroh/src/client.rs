@@ -2,7 +2,7 @@
 //!
 //! TODO: Contains only iroh sync related methods. Add other methods.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{self, Cursor};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -93,7 +93,7 @@ where
     C: ServiceConnection<ProviderService>,
 {
     /// Get statistics of the running node.
-    pub async fn stats(&self) -> Result<HashMap<String, CounterStats>> {
+    pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
         let res = self.rpc.rpc(NodeStatsRequest {}).await??;
         Ok(res.stats)
     }
