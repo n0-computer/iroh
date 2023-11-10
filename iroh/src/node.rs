@@ -661,7 +661,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: Map> {
+pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -697,6 +697,15 @@ impl<D: ReadableStore> Node<D> {
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
     pub fn builder<S: DocStore>(bao_store: D, doc_store: S) -> Builder<D, S> {
         Builder::with_db_and_store(bao_store, doc_store)
+    }
+
+    /// Returns the [`MagicEndpoint`] of the node.
+    ///
+    /// This can be used to establish connections to other nodes under any
+    /// ALPNs other than the iroh internal ones. This is useful for some advanced
+    /// use cases.
+    pub fn magic_endpoint(&self) -> &MagicEndpoint {
+        &self.inner.endpoint
     }
 
     /// The address on which the node socket is bound.
@@ -781,7 +790,7 @@ impl<D: ReadableStore> Node<D> {
     }
 }
 
-impl<D: Map> NodeInner<D> {
+impl<D> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -802,7 +811,7 @@ impl<D: Map> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: Map> Future for Node<D> {
+impl<D> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
