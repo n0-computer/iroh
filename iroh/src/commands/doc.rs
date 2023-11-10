@@ -248,21 +248,6 @@ impl From<Sorting> for iroh_sync::store::SortBy {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
-pub enum AuthorCommands {
-    /// Set the active author (only works within the Iroh console).
-    Switch { author: AuthorId },
-    /// Create a new author.
-    New {
-        /// Switch to the created author (only in the Iroh console).
-        #[clap(long)]
-        switch: bool,
-    },
-    /// List authors.
-    #[clap(alias = "ls")]
-    List,
-}
-
 impl DocCommands {
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
         match self {
@@ -586,37 +571,6 @@ async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyh
         .open(env.doc(id)?)
         .await?
         .context("Document not found")
-}
-
-impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
-        match self {
-            Self::Switch { author } => {
-                env.set_author(author)?;
-                println!("Active author is now {}", fmt_short(author.as_bytes()));
-            }
-            Self::List => {
-                let mut stream = iroh.authors.list().await?;
-                while let Some(author_id) = stream.try_next().await? {
-                    println!("{}", author_id);
-                }
-            }
-            Self::New { switch } => {
-                if switch && !env.is_console() {
-                    bail!("The --switch flag is only supported within the Iroh console.");
-                }
-
-                let author_id = iroh.authors.create().await?;
-                println!("{}", author_id);
-
-                if switch {
-                    env.set_author(author_id)?;
-                    println!("Active author is now {}", fmt_short(author_id.as_bytes()));
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
