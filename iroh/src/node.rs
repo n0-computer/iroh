@@ -1594,6 +1594,18 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                 })
                 .await
             }
+            DocSetDownloadPolicy(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_set_download_policy(req).await
+                })
+                .await
+            }
+            DocGetDownloadPolicy(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_get_download_policy(req).await
+                })
+                .await
+            }
         }
     });
 }

@@ -15,7 +15,7 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{self, ImportNamespaceOutcome, Query},
+    store::{self, DownloadPolicy, ImportNamespaceOutcome, Query},
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
     SyncOutcome,
@@ -142,6 +142,15 @@ enum ReplicaAction {
         heads: AuthorHeads,
         #[debug("reply")]
         reply: oneshot::Sender<Result<Option<NonZeroU64>>>,
+    },
+    SetDownloadPolicy {
+        policy: DownloadPolicy,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
+    },
+    GetDownloadPolicy {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<DownloadPolicy>>,
     },
 }
 
@@ -445,6 +454,24 @@ impl SyncHandle {
         rx.await?
     }
 
+    pub async fn get_download_policy(&self, namespace: NamespaceId) -> Result<DownloadPolicy> {
+        let (reply, rx) = oneshot::channel();
+        let action = ReplicaAction::GetDownloadPolicy { reply };
+        self.send_replica(namespace, action).await?;
+        rx.await?
+    }
+
+    pub async fn set_download_policy(
+        &self,
+        namespace: NamespaceId,
+        policy: DownloadPolicy,
+    ) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        let action = ReplicaAction::SetDownloadPolicy { reply, policy };
+        self.send_replica(namespace, action).await?;
+        rx.await?
+    }
+
     async fn send(&self, action: Action) -> Result<()> {
         self.tx
             .send_async(action)
@@ -639,6 +666,12 @@ impl<S: store::Store> Actor<S> {
             ReplicaAction::HasNewsForUs { heads, reply } => {
                 let res = self.store.has_news_for_us(namespace, &heads);
                 send_reply(reply, res)
+            }
+            ReplicaAction::SetDownloadPolicy { policy, reply } => {
+                send_reply(reply, self.store.set_download_policy(&namespace, policy))
+            }
+            ReplicaAction::GetDownloadPolicy { reply } => {
+                send_reply(reply, self.store.get_download_policy(&namespace))
             }
         }
     }

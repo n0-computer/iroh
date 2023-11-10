@@ -28,7 +28,10 @@ use crate::{
     AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
 };
 
-use super::{pubkeys::MemPublicKeyStore, ImportNamespaceOutcome, OpenError, PublicKeyStore, Query};
+use super::{
+    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
+    Query,
+};
 
 mod bounds;
 mod migrations;
@@ -98,6 +101,12 @@ const NAMESPACE_PEERS_TABLE: MultimapTableDefinition<&[u8; 32], (Nanos, &PeerIdB
 // which should be more than enough
 type Nanos = u64;
 
+/// Table: Download policy
+/// Key:   `[u8; 32]`        # NamespaceId
+/// Value: `Vec<u8>`         # Postcard encoded download policy
+const DOWNLOAD_POLICY_TABLE: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("download-policy-1");
+
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -120,6 +129,7 @@ impl Store {
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+            let _table = write_tx.open_table(DOWNLOAD_POLICY_TABLE)?;
         }
         write_tx.commit()?;
 
@@ -388,6 +398,27 @@ impl super::Store for Store {
         } else {
             Ok(Some(peers.into_iter()))
         }
+    }
+
+    fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
+            let value = postcard::to_stdvec(&policy)?;
+            table.insert(namespace.as_bytes(), value.as_slice())?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
+        let value = table.get(namespace.as_bytes())?;
+        Ok(match value {
+            None => DownloadPolicy::default(),
+            Some(value) => postcard::from_bytes(value.value())?,
+        })
     }
 }
 

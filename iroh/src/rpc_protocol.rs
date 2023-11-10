@@ -20,7 +20,7 @@ use iroh_net::{
 
 use iroh_sync::{
     actor::OpenState,
-    store::Query,
+    store::{DownloadPolicy, Query},
     {AuthorId, CapabilityKind, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
@@ -744,6 +744,41 @@ pub struct DocGetExactResponse {
     pub entry: Option<SignedEntry>,
 }
 
+/// Set a download policy
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetDownloadPolicyRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Download policy
+    pub policy: DownloadPolicy,
+}
+
+impl RpcMsg<ProviderService> for DocSetDownloadPolicyRequest {
+    type Response = RpcResult<DocSetDownloadPolicyResponse>;
+}
+
+/// Response to [`DocSetDownloadPolicyRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetDownloadPolicyResponse {}
+
+/// Get a download policy
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetDownloadPolicyRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocGetDownloadPolicyRequest {
+    type Response = RpcResult<DocGetDownloadPolicyResponse>;
+}
+
+/// Response to [`DocGetDownloadPolicyRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetDownloadPolicyResponse {
+    /// The download policy
+    pub policy: DownloadPolicy,
+}
+
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BlobReadRequest {
@@ -874,6 +909,8 @@ pub enum ProviderRequest {
     DocLeave(DocLeaveRequest),
     DocShare(DocShareRequest),
     DocSubscribe(DocSubscribeRequest),
+    DocGetDownloadPolicy(DocGetDownloadPolicyRequest),
+    DocSetDownloadPolicy(DocSetDownloadPolicyRequest),
 
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
@@ -919,6 +956,8 @@ pub enum ProviderResponse {
     DocStartSync(RpcResult<DocStartSyncResponse>),
     DocLeave(RpcResult<DocLeaveResponse>),
     DocSubscribe(RpcResult<DocSubscribeResponse>),
+    DocGetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
+    DocSetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),

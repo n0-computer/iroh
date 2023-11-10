@@ -175,6 +175,11 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
 
     /// Get peers to use for syncing a document.
     fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>>;
+
+    /// Set the download policy for a document.
+    fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()>;
+    /// Get the download policy for a document.
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
 }
 
 /// Outcome of [`Store::import_namespace`]
@@ -186,6 +191,18 @@ pub enum ImportNamespaceOutcome {
     Upgraded,
     /// The namespace existed and its capability remains unchanged.
     NoChange,
+}
+
+/// Download policy to decide which content blobs shall be downloaded.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum DownloadPolicy {
+    /// Do not download any blobs.
+    Nothing,
+    /// Download all blobs.
+    #[default]
+    Everything,
+    /// Download blobs for entries matching a query.
+    Query(Query),
 }
 
 /// A query builder for document queries.
