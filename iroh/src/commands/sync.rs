@@ -12,7 +12,7 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh_base::base32::fmt_short;
+use iroh_base::base32::{fmt, fmt_short};
 use tokio::io::AsyncReadExt;
 
 use iroh::{
@@ -40,6 +40,8 @@ pub enum DisplayContentMode {
     Content,
     /// Display the hash of the content.
     Hash,
+    /// Displays the full hash of the content.
+    HashFull,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -650,6 +652,10 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
         DisplayContentMode::Hash => {
             let hash = entry.record().content_hash();
             Ok(fmt_short(hash.as_bytes()))
+        }
+        DisplayContentMode::HashFull => {
+            let hash = entry.record().content_hash();
+            Ok(fmt(hash.as_bytes()))
         }
     }
 }
