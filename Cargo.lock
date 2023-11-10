@@ -2091,6 +2091,7 @@ dependencies = [
  "iroh-net",
  "iroh-sync",
  "iroh-test",
+ "itertools 0.11.0",
  "multibase",
  "nix 0.27.1",
  "num_cpus",

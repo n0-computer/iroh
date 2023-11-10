@@ -24,6 +24,7 @@ use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
 };
+use itertools::Itertools;
 
 use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
 
@@ -216,6 +217,9 @@ pub enum FullCommands {
         /// If set assume that the hash refers to a collection and download it with all children.
         #[clap(long, default_value_t = false)]
         collection: bool,
+        /// RPC port of the Iroh node.
+        #[clap(long)]
+        rpc_port: Option<u16>,
     },
     /// Diagnostic commands for the derp relay protocol.
     Doctor {
@@ -287,12 +291,17 @@ impl FullCommands {
                 token,
                 out,
                 collection,
+                rpc_port,
             } => {
                 let get = if let Some(ticket) = ticket {
                     self::get::GetInteractive {
                         rt: rt.clone(),
                         hash: ticket.hash(),
-                        opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()?),
+                        opts: ticket.as_get_options(
+                            SecretKey::generate(),
+                            config.derp_map()?,
+                            rpc_port,
+                        ),
                         token: ticket.token().cloned(),
                         format: ticket.format(),
                     }
@@ -309,6 +318,7 @@ impl FullCommands {
                             keylog,
                             derp_map: config.derp_map()?,
                             secret_key: SecretKey::generate(),
+                            rpc_port: rpc_port,
                         },
                         token,
                         format,
@@ -427,7 +437,8 @@ impl NodeCommands {
             }
             Self::Stats => {
                 let stats = iroh.node.stats().await?;
-                for (name, details) in stats.iter() {
+                for name in stats.keys().sorted() {
+                    let details = stats.get(name).unwrap();
                     println!(
                         "{:23} : {:>6}    ({})",
                         name, details.value, details.description

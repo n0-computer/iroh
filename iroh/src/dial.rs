@@ -16,6 +16,8 @@ pub struct Options {
     pub keylog: bool,
     /// The configuration of the derp services
     pub derp_map: Option<DerpMap>,
+    /// The rpc port to connect to via console
+    pub rpc_port: Option<u16>,
 }
 
 /// Create a new endpoint and dial a peer, returning the connection

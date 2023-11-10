@@ -171,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
     //
     // in real applications, it would be very much preferable to use a persistent secret key
     let secret_key = SecretKey::generate();
-    let dial_options = ticket.as_get_options(secret_key, None);
+    let dial_options = ticket.as_get_options(secret_key, None, None);
 
     // connect to the peer
     //

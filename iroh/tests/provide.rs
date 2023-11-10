@@ -141,6 +141,7 @@ fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
         peer,
         keylog: false,
         derp_map: Some(iroh_net::defaults::default_derp_map()),
+        rpc_port: None,
     }
 }
 
@@ -555,6 +556,7 @@ async fn test_run_ticket() {
         let opts = no_token_ticket.as_get_options(
             SecretKey::generate(),
             Some(iroh_net::defaults::default_derp_map()),
+            None,
         );
         let request = GetRequest::all(no_token_ticket.hash());
         let response = run_collection_get_request(opts, request).await;
@@ -576,6 +578,7 @@ async fn test_run_ticket() {
             ticket.as_get_options(
                 SecretKey::generate(),
                 Some(iroh_net::defaults::default_derp_map()),
+                None,
             ),
             request,
         )

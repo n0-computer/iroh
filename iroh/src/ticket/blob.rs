@@ -105,12 +105,18 @@ impl Ticket {
     }
 
     /// Convert this ticket into a [`Options`], adding the given secret key.
-    pub fn as_get_options(&self, secret_key: SecretKey, derp_map: Option<DerpMap>) -> Options {
+    pub fn as_get_options(
+        &self,
+        secret_key: SecretKey,
+        derp_map: Option<DerpMap>,
+        rpc_port: Option<u16>,
+    ) -> Options {
         Options {
             peer: self.node.clone(),
             secret_key,
             keylog: true,
             derp_map,
+            rpc_port,
         }
     }
 }

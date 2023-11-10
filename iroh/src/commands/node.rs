@@ -178,7 +178,7 @@ async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
 }
 
 /// Makes a an RPC endpoint that uses a QUIC transport
-async fn make_rpc_endpoint(
+pub(crate) async fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {

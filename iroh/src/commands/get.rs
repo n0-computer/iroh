@@ -68,14 +68,26 @@ impl GetInteractive {
         // TODO: we don't need sync here, maybe disable completely?
         let doc_store = iroh_sync::store::memory::Store::default();
         // spin up temp node and ask it to download the data for us
-        let mut provider = iroh::node::Node::builder(db, doc_store);
+        let mut builder = iroh::node::Node::builder(db, doc_store);
         if let Some(ref dm) = self.opts.derp_map {
-            provider = provider.derp_mode(DerpMode::Custom(dm.clone()));
+            builder = builder.derp_mode(DerpMode::Custom(dm.clone()));
         }
-        let provider = provider
-            .runtime(&iroh_bytes::util::runtime::Handle::from_current(1)?)
-            .spawn()
-            .await?;
+
+        let provider = if let Some(rpc_port) = self.opts.rpc_port.into() {
+            let rpc_endpoint =
+                crate::commands::node::make_rpc_endpoint(&self.opts.secret_key, rpc_port).await?;
+            builder
+                .runtime(&iroh_bytes::util::runtime::Handle::from_current(1)?)
+                .rpc_endpoint(rpc_endpoint)
+                .secret_key(self.opts.secret_key)
+                .spawn()
+                .await?
+        } else {
+            builder
+                .runtime(&iroh_bytes::util::runtime::Handle::from_current(1)?)
+                .spawn()
+                .await?
+        };
         let out = out_dir
             .to_str()
             .context("out_dir is not valid utf8")?
