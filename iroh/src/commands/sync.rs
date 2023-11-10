@@ -40,8 +40,8 @@ pub enum DisplayContentMode {
     Content,
     /// Display the hash of the content.
     Hash,
-    /// Displays the full hash of the content.
-    HashFull,
+    /// Display the shortened hash of the content.
+    ShortHash,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -153,7 +153,7 @@ pub enum DocCommands {
         #[clap(long)]
         desc: bool,
         /// How to show the contents of the keys.
-        #[clap(short, long, default_value_t=DisplayContentMode::Hash)]
+        #[clap(short, long, default_value_t=DisplayContentMode::ShortHash)]
         mode: DisplayContentMode,
     },
     /// Import data into a document
@@ -514,12 +514,14 @@ impl DocCommands {
                                 }
                                 iroh_sync::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                            .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
                                 iroh_sync::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                            .await;
                                     format!("<missing: {} ({})>", content, human_len(&entry))
                                 }
                             };
@@ -649,11 +651,11 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
             let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
             Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
-        DisplayContentMode::Hash => {
+        DisplayContentMode::ShortHash => {
             let hash = entry.record().content_hash();
             Ok(fmt_short(hash.as_bytes()))
         }
-        DisplayContentMode::HashFull => {
+        DisplayContentMode::Hash => {
             let hash = entry.record().content_hash();
             Ok(hash.to_string())
         }
