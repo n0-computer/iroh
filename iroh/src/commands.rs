@@ -24,6 +24,7 @@ use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::ConnectionInfo,
 };
+use itertools::Itertools;
 
 use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
 
@@ -427,7 +428,8 @@ impl NodeCommands {
             }
             Self::Stats => {
                 let stats = iroh.node.stats().await?;
-                for (name, details) in stats.iter() {
+                for name in stats.keys().sorted() {
+                    let details = stats.get(name).unwrap();
                     println!(
                         "{:23} : {:>6}    ({})",
                         name, details.value, details.description
