@@ -2,22 +2,12 @@ use std::str::FromStr;
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand};
-use console::style;
-use futures::{Stream, StreamExt};
-use indicatif::{
-    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
-    ProgressStyle,
-};
-use iroh::rpc_protocol::*;
-use iroh::ticket::blob::Ticket;
-use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
-use iroh_net::key::PublicKey;
+use clap::{Parser, Subcommand};
+use iroh_bytes::{protocol::RequestToken, util::runtime};
 
 use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
 
-use self::blob::{BlobAddOptions, DownloadOpts};
-use self::get::GetArgs;
+use self::blob::BlobAddOptions;
 use self::node::StartOptions;
 use self::rpc::{RpcCommands, RpcStatus};
 
@@ -29,7 +19,6 @@ pub mod author;
 pub mod blob;
 pub mod doc;
 pub mod doctor;
-pub mod get;
 pub mod node;
 pub mod repl;
 pub mod tag;
@@ -44,23 +33,9 @@ pub struct Cli {
     #[clap(subcommand)]
     pub command: Commands,
 
-    #[clap(flatten)]
-    #[clap(next_help_heading = "Options for start, get, doctor")]
-    pub full_args: FullArgs,
-}
-
-/// Options for commands that may start an Iroh node
-#[derive(Args, Debug, Clone)]
-pub struct FullArgs {
-    /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
+    /// Path to the configuration file.
     #[clap(long)]
-    pub keylog: bool,
-    /// Bind address on which to serve Prometheus metrics
-    #[cfg(feature = "metrics")]
-    #[clap(long)]
-    pub metrics_addr: Option<SocketAddr>,
-    #[clap(long)]
-    pub cfg: Option<PathBuf>,
+    pub config: Option<PathBuf>,
 
     /// RPC port of the Iroh node.
     #[clap(long, global = true, default_value_t = DEFAULT_RPC_PORT)]
@@ -97,19 +72,12 @@ impl Cli {
                 command.run(&iroh, &env).await
             }
             Commands::Full(command) => {
-                let FullArgs {
-                    cfg,
-                    metrics_addr,
-                    keylog,
-                    rpc_port,
-                } = self.full_args;
-
-                let config = NodeConfig::from_env(cfg.as_deref())?;
+                let config = NodeConfig::from_env(self.config.as_deref())?;
 
                 #[cfg(feature = "metrics")]
-                let metrics_fut = start_metrics_server(metrics_addr, &rt);
+                let metrics_fut = start_metrics_server(config.metrics_addr, &rt);
 
-                let res = command.run(&rt, &config, keylog, rpc_port).await;
+                let res = command.run(&rt, &config, self.rpc_port).await;
 
                 #[cfg(feature = "metrics")]
                 if let Some(metrics_fut) = metrics_fut {
@@ -162,12 +130,6 @@ pub enum FullCommands {
         #[clap(flatten)]
         add_options: BlobAddOptions,
     },
-    /// Fetch data from a provider
-    ///
-    /// Fetches the content identified by HASH.
-    /// `iroh start` does not need to be running to use `iroh get`. Get starts a temporary iroh
-    /// node to fetch the data, and shuts it down when done.
-    Get(GetArgs),
     /// Diagnostic commands for the derp relay protocol.
     Doctor {
         /// Commands for doctor - defined in the mod
@@ -177,13 +139,7 @@ pub enum FullCommands {
 }
 
 impl FullCommands {
-    pub async fn run(
-        self,
-        rt: &runtime::Handle,
-        config: &NodeConfig,
-        keylog: bool,
-        rpc_port: u16,
-    ) -> Result<()> {
+    pub async fn run(self, rt: &runtime::Handle, config: &NodeConfig, rpc_port: u16) -> Result<()> {
         match self {
             FullCommands::Start {
                 addr,
@@ -200,7 +156,6 @@ impl FullCommands {
                     StartOptions {
                         addr,
                         rpc_port,
-                        keylog,
                         request_token,
                         derp_map: config.derp_map()?,
                     },
@@ -208,7 +163,6 @@ impl FullCommands {
                 )
                 .await
             }
-            FullCommands::Get(get) => get.run(config, rt, keylog).await,
             FullCommands::Doctor { command } => self::doctor::run(command, config).await,
         }
     }
@@ -230,59 +184,6 @@ impl<T: FromStr> FromStr for Optional<T> {
             _ => T::from_str(s).map(Self::Some),
         }
     }
-}
-
-// Helper struct to model a ticket or the arguments that would make a ticket. This works as a
-// subcommand.
-#[derive(Subcommand, Debug, Clone)]
-pub enum TicketOrArgs {
-    /// Use a blob ticket to download the data.
-    #[command(arg_required_else_help = true)]
-    Ticket {
-        /// Ticket to use.
-        ticket: Ticket,
-        /// Additonal socket address to use to contact the node. Can be used multiple times.
-        #[clap(long)]
-        address: Vec<SocketAddr>,
-        /// Override the Derp region to use to contact the node.
-        #[clap(long, value_name = "\"none\" | DERP_REGION")]
-        derp_region: Option<Optional<u16>>,
-        /// Override to treat the blob as a raw blob or a hash sequence.
-        #[clap(long)]
-        recursive: Option<bool>,
-        /// Override the ticket token.
-        #[clap(long, value_name = "\"none\" | TOKEN")]
-        request_token: Option<Optional<RequestToken>>,
-        /// If set, the ticket's direct addresses will not be used.
-        #[clap(long)]
-        override_addresses: bool,
-        #[command(flatten)]
-        ops: DownloadOpts,
-    },
-    /// Supply the content and node-addressing information directly to perform a download.
-    #[command(arg_required_else_help = true)]
-    Hash {
-        /// Hash of the content to download.
-        hash: Hash,
-        /// NodeId of the provider.
-        #[clap(long, required = true)]
-        node: PublicKey,
-        /// Additonal socket address to use to contact the node. Can be used multiple times.
-        /// Necessary if no derp region provided.
-        #[clap(long, required_unless_present = "derp_region")]
-        address: Vec<SocketAddr>,
-        /// Derp region to use to contact the node. Necessary if no addresses provided.
-        #[clap(long, required_unless_present = "address")]
-        derp_region: Option<u16>,
-        /// Whether to treat the blob as a raw blob or a hash sequence.
-        #[clap(long)]
-        recursive: bool,
-        /// Token to use.
-        #[clap(long)]
-        request_token: Option<RequestToken>,
-        #[command(flatten)]
-        ops: DownloadOpts,
-    },
 }
 
 #[cfg(feature = "metrics")]
@@ -320,97 +221,4 @@ impl FromStr for RequestTokenOptions {
         let token = RequestToken::from_str(s)?;
         Ok(Self::Token(token))
     }
-}
-
-fn make_overall_progress() -> ProgressBar {
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}",
-        )
-        .unwrap()
-        .progress_chars("#>-"),
-    );
-    pb
-}
-
-fn make_individual_progress() -> ProgressBar {
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb.set_style(
-        ProgressStyle::with_template("{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
-    pb
-}
-
-pub async fn show_download_progress(
-    hash: Hash,
-    mut stream: impl Stream<Item = Result<DownloadProgress>> + Unpin,
-) -> Result<()> {
-    eprintln!("Fetching: {}", hash);
-    let mp = MultiProgress::new();
-    mp.set_draw_target(ProgressDrawTarget::stderr());
-    let op = mp.add(make_overall_progress());
-    let ip = mp.add(make_individual_progress());
-    op.set_message(format!("{} Connecting ...\n", style("[1/3]").bold().dim()));
-    let mut seq = false;
-    while let Some(x) = stream.next().await {
-        match x? {
-            DownloadProgress::Connected => {
-                op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
-            }
-            DownloadProgress::FoundHashSeq { children, .. } => {
-                op.set_message(format!(
-                    "{} Downloading {} blob(s)\n",
-                    style("[3/3]").bold().dim(),
-                    children + 1,
-                ));
-                op.set_length(children + 1);
-                op.reset();
-                seq = true;
-            }
-            DownloadProgress::Found { size, child, .. } => {
-                if seq {
-                    op.set_position(child);
-                } else {
-                    op.finish_and_clear();
-                }
-                ip.set_length(size);
-                ip.reset();
-            }
-            DownloadProgress::Progress { offset, .. } => {
-                ip.set_position(offset);
-            }
-            DownloadProgress::Done { .. } => {
-                ip.finish_and_clear();
-            }
-            DownloadProgress::NetworkDone {
-                bytes_read,
-                elapsed,
-                ..
-            } => {
-                op.finish_and_clear();
-                eprintln!(
-                    "Transferred {} in {}, {}/s",
-                    HumanBytes(bytes_read),
-                    HumanDuration(elapsed),
-                    HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
-                );
-            }
-            DownloadProgress::AllDone => {
-                break;
-            }
-            _ => {}
-        }
-    }
-    Ok(())
 }

@@ -1109,7 +1109,7 @@ impl<D: BaoStore> RpcHandler<D> {
 
     async fn blob_export(
         self,
-        out: String,
+        out: PathBuf,
         hash: Hash,
         recursive: bool,
         stable: bool,

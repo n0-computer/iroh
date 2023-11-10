@@ -118,7 +118,7 @@ pub enum DownloadLocation {
     /// Store at the provided path.
     External {
         /// The path to store the data at.
-        path: String,
+        path: PathBuf,
         /// If this flag is true, the data is shared in place, i.e. it is moved to the
         /// out path instead of being copied. The database itself contains only a
         /// reference to the out path of the file.

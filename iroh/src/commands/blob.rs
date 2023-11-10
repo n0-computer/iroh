@@ -1,14 +1,18 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    net::SocketAddr,
     path::PathBuf,
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
-use clap::{Args, Subcommand};
+use anyhow::{anyhow, bail, Context, Result};
+use clap::Subcommand;
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
-use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{
+    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
+    ProgressStyle,
+};
 use iroh::{
     client::quic::Iroh,
     rpc_protocol::{
@@ -18,14 +22,14 @@ use iroh::{
     ticket::blob::Ticket,
 };
 use iroh_bytes::{
-    protocol::RequestToken, provider::AddProgress, store::ValidateProgress, BlobFormat, Hash,
-    HashAndFormat, Tag,
+    protocol::RequestToken,
+    provider::{AddProgress, DownloadProgress},
+    store::ValidateProgress,
+    BlobFormat, Hash, HashAndFormat, Tag,
 };
-use iroh_net::NodeAddr;
+use iroh_net::{key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
-
-use super::{show_download_progress, Optional, TicketOrArgs};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
@@ -36,9 +40,41 @@ pub enum BlobCommands {
     ///
     /// In addition to downloading the data, you can also specify an optional output directory
     /// where the data will be exported to after it has been downloaded.
-    Download {
-        #[clap(subcommand)]
-        command: TicketOrArgs,
+    Get {
+        /// Ticket or Hash to use.
+        ticket: TicketOrHash,
+        /// Additonal socket address to use to contact the node. Can be used multiple times.
+        #[clap(long)]
+        address: Vec<SocketAddr>,
+        /// Override the Derp region to use to contact the node.
+        #[clap(long)]
+        derp_region: Option<u16>,
+        /// Override to treat the blob as a raw blob or a hash sequence.
+        #[clap(long)]
+        recursive: Option<bool>,
+        /// Override the ticket token.
+        #[clap(long)]
+        request_token: Option<RequestToken>,
+        /// If set, the ticket's direct addresses will not be used.
+        #[clap(long)]
+        override_addresses: bool,
+        /// NodeId of the provider.
+        #[clap(long)]
+        node: Option<PublicKey>,
+        /// Directory or file in which to save the file(s).
+        ///
+        /// If set to `STDOUT` the output will be redirected to stdout.
+        ///
+        /// If not specified, the data will only be stored internally.
+        #[clap(long, short)]
+        out: Option<OutputTarget>,
+        /// If set, the data will be moved to the output directory, and iroh will assume that it
+        /// will not change.
+        #[clap(long, default_value_t = false, global = true)]
+        stable: bool,
+        /// Tag to tag the data with.
+        #[clap(long, global = true)]
+        tag: Option<String>,
     },
     /// List availble content on the node.
     #[clap(subcommand)]
@@ -74,20 +110,43 @@ pub enum BlobCommands {
     },
 }
 
+#[derive(Debug, Clone, derive_more::Display)]
+pub enum TicketOrHash {
+    Ticket(Ticket),
+    Hash(Hash),
+}
+
+impl std::str::FromStr for TicketOrHash {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if let Ok(ticket) = Ticket::from_str(s) {
+            return Ok(Self::Ticket(ticket));
+        }
+        if let Ok(hash) = Hash::from_str(s) {
+            return Ok(Self::Hash(hash));
+        }
+        Err(anyhow!("neither a valid ticket or hash"))
+    }
+}
+
 impl BlobCommands {
     pub async fn run(self, iroh: &Iroh) -> Result<()> {
         match self {
-            Self::Download { command } => {
-                let (node_addr, hash, format, token, ops) = match command {
-                    TicketOrArgs::Ticket {
-                        ticket,
-                        mut address,
-                        derp_region,
-                        recursive,
-                        request_token,
-                        override_addresses,
-                        ops,
-                    } => {
+            Self::Get {
+                ticket,
+                mut address,
+                derp_region,
+                recursive,
+                request_token,
+                override_addresses,
+                node,
+                out,
+                stable,
+                tag,
+            } => {
+                let (node_addr, hash, format, token) = match ticket {
+                    TicketOrHash::Ticket(ticket) => {
                         let (node_addr, hash, blob_format, maybe_token) = ticket.into_parts();
 
                         // create the node address with the appropriate overrides
@@ -101,46 +160,35 @@ impl BlobCommands {
                                 address.extend(info.direct_addresses.into_iter());
                                 address
                             };
-                            let region = match derp_region {
-                                Some(Optional::None) => None,
-                                Some(Optional::Some(region)) => Some(region),
-                                None => info.derp_region,
-                            };
-                            NodeAddr::from_parts(node_id, region, addresses)
+
+                            NodeAddr::from_parts(node_id, derp_region, addresses)
                         };
 
                         // check if the blob format has an override
-                        let format = match recursive {
+                        let blob_format = match recursive {
                             Some(true) => BlobFormat::HashSeq,
                             Some(false) => BlobFormat::Raw,
                             None => blob_format,
                         };
 
                         // check if the token has an override
-                        let token = match request_token {
-                            Some(Optional::None) => None,
-                            Some(Optional::Some(token)) => Some(token),
-                            None => maybe_token,
+                        let token = maybe_token.and(request_token);
+                        (node_addr, hash, blob_format, token)
+                    }
+                    TicketOrHash::Hash(hash) => {
+                        // check if the blob format has an override
+                        let blob_format = match recursive {
+                            Some(true) => BlobFormat::HashSeq,
+                            Some(false) => BlobFormat::Raw,
+                            None => BlobFormat::Raw,
                         };
 
-                        (node_addr, hash, format, token, ops)
-                    }
-                    TicketOrArgs::Hash {
-                        hash,
-                        node,
-                        address,
-                        derp_region,
-                        recursive,
-                        request_token,
-                        ops,
-                    } => {
-                        let format = if recursive {
-                            BlobFormat::HashSeq
-                        } else {
-                            BlobFormat::Raw
+                        let Some(node) = node else {
+                            bail!("missing NodeId");
                         };
+
                         let node_addr = NodeAddr::from_parts(node, derp_region, address);
-                        (node_addr, hash, format, request_token, ops)
+                        (node_addr, hash, blob_format, request_token)
                     }
                 };
 
@@ -149,33 +197,40 @@ impl BlobCommands {
                         "no derp region provided and no direct addresses provided"
                     ));
                 }
+                let tag = match tag {
+                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
+                    None => SetTagOption::Auto,
+                };
 
-                let DownloadOpts {
-                    out,
-                    stable: in_place,
-                    tag,
-                } = ops;
-
-                let out = match out {
-                    None => DownloadLocation::Internal,
-                    Some(path) => {
+                let (out_location, tmpfile) = match out {
+                    None => (DownloadLocation::Internal, None),
+                    Some(OutputTarget::Stdout) => {
+                        let tmpfile = tempfile::NamedTempFile::new()?;
+                        (
+                            DownloadLocation::External {
+                                path: tmpfile.path().into(),
+                                in_place: false,
+                            },
+                            Some(tmpfile),
+                        )
+                    }
+                    Some(OutputTarget::Path(path)) => {
                         let absolute = std::env::current_dir()?.join(&path);
                         tracing::info!(
                             "output path is {} -> {}",
                             path.display(),
                             absolute.display()
                         );
-                        DownloadLocation::External {
-                            path: absolute.display().to_string(),
-                            in_place,
-                        }
+                        (
+                            DownloadLocation::External {
+                                path: absolute,
+                                in_place: stable,
+                            },
+                            None,
+                        )
                     }
                 };
 
-                let tag = match tag {
-                    Some(tag) => SetTagOption::Named(Tag::from(tag)),
-                    None => SetTagOption::Auto,
-                };
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
@@ -183,12 +238,19 @@ impl BlobCommands {
                         format,
                         peer: node_addr,
                         token,
-                        out,
+                        out: out_location,
                         tag,
                     })
                     .await?;
 
-                show_download_progress(hash, &mut stream).await
+                if let Some(_tmpfile) = tmpfile {
+                    // TODO
+
+                    show_download_progress(hash, &mut stream).await?;
+                    Ok(())
+                } else {
+                    show_download_progress(hash, &mut stream).await
+                }
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
@@ -262,7 +324,6 @@ pub struct BlobAddOptions {
     /// If `STDIN` is specified, the data will be read from stdin.
     ///
     /// When left empty no content is added.
-    #[clap(long, short)]
     pub source: Option<BlobSource>,
 
     /// Add in place
@@ -302,20 +363,6 @@ pub struct BlobAddOptions {
     /// Do not print the all-in-one ticket to get the added data from this node.
     #[clap(long)]
     pub no_ticket: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct DownloadOpts {
-    /// Directory or file in which to save the file(s).
-    #[clap(long, short, global = true, value_name = "PATH")]
-    out: Option<PathBuf>,
-    /// If set, the data will be moved to the output directory, and iroh will assume that it
-    /// will not change.
-    #[clap(long, default_value_t = false, global = true)]
-    stable: bool,
-    /// Tag to tag the data with.
-    #[clap(long, global = true)]
-    tag: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -781,6 +828,120 @@ impl ProvideProgressState {
     }
 }
 
+pub async fn show_download_progress(
+    hash: Hash,
+    mut stream: impl Stream<Item = Result<DownloadProgress>> + Unpin,
+) -> Result<()> {
+    eprintln!("Fetching: {}", hash);
+    let mp = MultiProgress::new();
+    mp.set_draw_target(ProgressDrawTarget::stderr());
+    let op = mp.add(make_overall_progress());
+    let ip = mp.add(make_individual_progress());
+    op.set_message(format!("{} Connecting ...\n", style("[1/3]").bold().dim()));
+    let mut seq = false;
+    while let Some(x) = stream.next().await {
+        match x? {
+            DownloadProgress::Connected => {
+                op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
+            }
+            DownloadProgress::FoundHashSeq { children, .. } => {
+                op.set_message(format!(
+                    "{} Downloading {} blob(s)\n",
+                    style("[3/3]").bold().dim(),
+                    children + 1,
+                ));
+                op.set_length(children + 1);
+                op.reset();
+                seq = true;
+            }
+            DownloadProgress::Found { size, child, .. } => {
+                if seq {
+                    op.set_position(child);
+                } else {
+                    op.finish_and_clear();
+                }
+                ip.set_length(size);
+                ip.reset();
+            }
+            DownloadProgress::Progress { offset, .. } => {
+                ip.set_position(offset);
+            }
+            DownloadProgress::Done { .. } => {
+                ip.finish_and_clear();
+            }
+            DownloadProgress::NetworkDone {
+                bytes_read,
+                elapsed,
+                ..
+            } => {
+                op.finish_and_clear();
+                eprintln!(
+                    "Transferred {} in {}, {}/s",
+                    HumanBytes(bytes_read),
+                    HumanDuration(elapsed),
+                    HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
+                );
+            }
+            DownloadProgress::AllDone => {
+                break;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Where the data should be stored.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+pub enum OutputTarget {
+    /// Writes to stdout
+    #[display("STDOUT")]
+    Stdout,
+    /// Writes to the provided path
+    #[display("{}", _0.display())]
+    Path(PathBuf),
+}
+
+impl From<String> for OutputTarget {
+    fn from(s: String) -> Self {
+        if s == "STDOUT" {
+            return OutputTarget::Stdout;
+        }
+
+        OutputTarget::Path(s.into())
+    }
+}
+
+fn make_overall_progress() -> ProgressBar {
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}",
+        )
+        .unwrap()
+        .progress_chars("#>-"),
+    );
+    pb
+}
+
+fn make_individual_progress() -> ProgressBar {
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb.set_style(
+        ProgressStyle::with_template("{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+    pb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,6 +956,19 @@ mod tests {
         assert_eq!(
             BlobSource::from(BlobSource::Path("hello/world".into()).to_string()),
             BlobSource::Path("hello/world".into()),
+        );
+    }
+
+    #[test]
+    fn test_output_target() {
+        assert_eq!(
+            OutputTarget::from(OutputTarget::Stdout.to_string()),
+            OutputTarget::Stdout
+        );
+
+        assert_eq!(
+            OutputTarget::from(OutputTarget::Path("hello/world".into()).to_string()),
+            OutputTarget::Path("hello/world".into()),
         );
     }
 }

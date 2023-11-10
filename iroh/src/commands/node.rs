@@ -114,7 +114,6 @@ impl NodeCommands {
 pub struct StartOptions {
     pub addr: SocketAddr,
     pub rpc_port: u16,
-    pub keylog: bool,
     pub request_token: Option<RequestToken>,
     pub derp_map: Option<DerpMap>,
 }
@@ -216,8 +215,7 @@ async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Sto
 
     let mut builder = Node::builder(bao_store, doc_store)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
-        .peers_data_path(peers_data_path)
-        .keylog(opts.keylog);
+        .peers_data_path(peers_data_path);
     if let Some(dm) = opts.derp_map {
         builder = builder.derp_mode(DerpMode::Custom(dm));
     }

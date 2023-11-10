@@ -1,5 +1,6 @@
 //! The server side API
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -209,7 +210,7 @@ pub enum DownloadProgress {
         /// The size of the entry in bytes.
         size: u64,
         /// The path to the file where the data is exported.
-        target: String,
+        target: PathBuf,
     },
     /// We have made progress exporting the data.
     ///

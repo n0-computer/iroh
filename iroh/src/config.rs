@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     env, fmt,
+    net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -123,6 +124,9 @@ pub struct NodeConfig {
     pub derp_regions: Vec<DerpRegion>,
     /// How often to run garbage collection.
     pub gc_policy: GcPolicy,
+    /// Bind address on which to serve Prometheus metrics
+    #[cfg(feature = "metrics")]
+    pub metrics_addr: Option<SocketAddr>,
 }
 
 impl Default for NodeConfig {
@@ -131,6 +135,8 @@ impl Default for NodeConfig {
             // TODO(ramfox): this should probably just be a derp map
             derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
             gc_policy: GcPolicy::Disabled,
+            #[cfg(feature = "metrics")]
+            metrics_addr: None,
         }
     }
 }
