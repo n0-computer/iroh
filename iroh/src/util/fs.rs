@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use bytes::{BufMut, Bytes, BytesMut};
 use iroh_net::key::SecretKey;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
@@ -225,9 +226,47 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
     Ok(PathContent { size, files })
 }
 
+/// Helper function that translates a path on a filesystem to a key in a document.
+pub fn path_to_key(path: impl AsRef<Path>) -> anyhow::Result<Bytes> {
+    let buf = path
+        .as_ref()
+        .to_str()
+        .map(|p| p.as_bytes())
+        .ok_or(anyhow::anyhow!("could not convert path to bytes"))?;
+    let mut bytes = BytesMut::from(buf);
+    bytes.put(&b"\0"[..]);
+    Ok(bytes.freeze())
+}
+
+/// Helper function that translates a key that was derived from a path on a filesystem back to that
+/// path.
+pub fn key_to_path(key: impl AsRef<[u8]>) -> anyhow::Result<PathBuf> {
+    let key = std::str::from_utf8(key.as_ref())?;
+    if key.is_empty() {
+        return Ok(PathBuf::new());
+    }
+    // assumes the last byte is the null byte that was appended using
+    // the [`path_to_key`] helper function
+    Ok(PathBuf::from(&key[..key.len() - 1]))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::util::fs::{path_content_info, PathContent};
+
+    #[test]
+    fn test_path_to_key_roundtrip() {
+        let expect_path = PathBuf::from("/foo/bar");
+        let key = b"/foo/bar\0";
+        let expect_key = Bytes::from(&key[..]);
+
+        let got_key = path_to_key(expect_path.clone()).unwrap();
+        let got_path = key_to_path(got_key.clone()).unwrap();
+
+        assert_eq!(expect_key, got_key);
+        assert_eq!(expect_path, got_path);
+    }
 
     #[test]
     fn test_canonicalize_path() {

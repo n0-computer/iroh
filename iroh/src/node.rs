@@ -59,7 +59,8 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    DeleteTagRequest, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
+    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
@@ -963,6 +964,121 @@ impl<D: BaoStore> RpcHandler<D> {
         rx.into_stream().map(BlobAddPathResponse)
     }
 
+    fn doc_import_file(
+        self,
+        msg: DocImportFileRequest,
+    ) -> impl Stream<Item = DocImportFileResponse> {
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
+        let tx2 = tx.clone();
+        self.rt().local_pool().spawn_pinned(|| async move {
+            if let Err(e) = self.doc_import_file0(msg, tx).await {
+                tx2.send_async(DocImportProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream().map(DocImportFileResponse)
+    }
+
+    async fn doc_import_file0(
+        self,
+        msg: DocImportFileRequest,
+        progress: flume::Sender<DocImportProgress>,
+    ) -> anyhow::Result<()> {
+        use iroh_bytes::store::ImportMode;
+        use std::collections::BTreeMap;
+
+        let progress = FlumeProgressSender::new(progress);
+        let names = Arc::new(Mutex::new(BTreeMap::new()));
+        // convert import progress to provide progress
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id, name } => {
+                names.lock().unwrap().insert(id, name);
+                None
+            }
+            ImportProgress::Size { id, size } => {
+                let name = names.lock().unwrap().remove(&id)?;
+                Some(DocImportProgress::Found { id, name, size })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(DocImportProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => {
+                Some(DocImportProgress::IngestDone { hash, id })
+            }
+            _ => None,
+        });
+        let DocImportFileRequest {
+            doc_id,
+            author_id,
+            key,
+            path: root,
+            // todo: figure out tags
+            // in_place,
+            // tag,
+        } = msg;
+        // Check that the path is absolute and exists.
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
+        anyhow::ensure!(
+            root.exists(),
+            "trying to add missing path: {}",
+            root.display()
+        );
+
+        // todo: do we assume copy?
+        // let import_mode = match in_place {
+        //     true => ImportMode::TryReference,
+        //     false => ImportMode::Copy,
+        // };
+        let import_mode = ImportMode::Copy;
+
+        let (temp_tag, size) = self
+            .inner
+            .db
+            .import_file(root, import_mode, BlobFormat::Raw, import_progress)
+            .await?;
+
+        let hash_and_format = temp_tag.inner();
+        let HashAndFormat { hash, format } = *hash_and_format;
+        // todo: figure out tags
+        // let tag = match tag {
+        //     SetTagOption::Named(tag) => {
+        //         self.inner
+        //             .db
+        //             .set_tag(tag.clone(), Some(*hash_and_format))
+        //             .await?;
+        //         tag
+        //     }
+        //     SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
+        // };
+        let tag = self.inner.db.create_tag(*hash_and_format).await?;
+        self.inner
+            .sync
+            .doc_set_hash(DocSetHashRequest {
+                doc_id,
+                author_id,
+                key: key.clone(),
+                hash,
+                size,
+            })
+            .await?;
+        progress
+            .send(DocImportProgress::AllDone {
+                key,
+                tag: tag.clone(),
+            })
+            .await?;
+        self.inner
+            .callbacks
+            .send(Event::ByteProvide(
+                iroh_bytes::provider::Event::TaggedBlobAdded { hash, format, tag },
+            ))
+            .await;
+
+        Ok(())
+    }
+
     async fn blob_export(
         self,
         out: String,
@@ -1554,6 +1670,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                     handler.inner.sync.doc_set(&bao_store, req).await
                 })
                 .await
+            }
+            DocImportFile(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::doc_import_file)
+                    .await
             }
             DocDel(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {

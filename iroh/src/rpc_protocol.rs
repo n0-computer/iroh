@@ -651,6 +651,111 @@ pub struct DocSetResponse {
     pub entry: SignedEntry,
 }
 
+/// A request to the node to add the data at the given filepath as an entry to the document
+///
+/// Will produce a stream of [`DocImportProgress`] messages.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocImportFileRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Key of this entry.
+    pub key: Bytes,
+    /// The filepath to the data
+    ///
+    /// This should be an absolute path valid for the file system on which
+    /// the node runs. Usually the cli will run on the same machine as the
+    /// node, so this should be an absolute path on the cli machine.
+    pub path: PathBuf,
+}
+
+impl Msg<ProviderService> for DocImportFileRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocImportFileRequest {
+    type Response = DocImportFileResponse;
+}
+
+/// Wrapper around [`DocImportProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocImportFileResponse(pub DocImportProgress);
+
+/// Progress messages for an doc import operation
+///
+/// An import operation involves computing the outboard of a file, and then
+/// either copying or moving the file into the database, then setting the author, hash, size, and tag of that file as an entry in the doc
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DocImportProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found {
+        /// A new unique id for this entry.
+        id: u64,
+        /// The name of the entry.
+        name: String,
+        /// The size of the entry in bytes.
+        size: u64,
+    },
+    /// We got progress ingesting item `id`.
+    Progress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done adding `id` to the data store and the hash is `hash`.
+    IngestDone {
+        /// The unique id of the entry.
+        id: u64,
+        /// The hash of the entry.
+        hash: Hash,
+    },
+    /// We are done setting the entry to the doc
+    AllDone {
+        /// The key of the entry
+        key: Bytes,
+        /// The tag of the added data.
+        tag: Tag,
+    },
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
+/// Progress messages for an doc export operation
+///
+/// An export operation involves reading the entry from the database ans saving the entry to the
+/// given `outpath`
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DocExportProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found {
+        /// A new unique id for this entry.
+        id: u64,
+        /// The key to the entry.
+        key: Bytes,
+        /// The size of the entry in bytes.
+        size: u64,
+        /// The path to where we are writing the entry
+        outpath: PathBuf,
+    },
+    /// We got progress exporting item `id`.
+    Progress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done writing the entry to the filesystem
+    AllDone,
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocDelRequest {
@@ -869,6 +974,7 @@ pub enum ProviderRequest {
     DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
     DocGetExact(DocGetExactRequest),
+    DocImportFile(DocImportFileRequest),
     DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocLeave(DocLeaveRequest),
@@ -914,6 +1020,7 @@ pub enum ProviderResponse {
     DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetExact(RpcResult<DocGetExactResponse>),
+    DocImportFile(DocImportFileResponse),
     DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),
