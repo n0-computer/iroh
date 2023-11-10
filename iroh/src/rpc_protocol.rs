@@ -21,7 +21,7 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::Query,
-    {AuthorId, CapabilityKind, NamespaceId, SignedEntry},
+    {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -668,6 +668,9 @@ pub struct DocImportFileRequest {
     /// the node runs. Usually the cli will run on the same machine as the
     /// node, so this should be an absolute path on the cli machine.
     pub path: PathBuf,
+    /// True if the provider can assume that the data will not change, so it
+    /// can be shared in place.
+    pub in_place: bool,
 }
 
 impl Msg<ProviderService> for DocImportFileRequest {
@@ -715,14 +718,39 @@ pub enum DocImportProgress {
     AllDone {
         /// The key of the entry
         key: Bytes,
-        /// The tag of the added data.
-        tag: Tag,
     },
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
 }
+
+/// A request to the node to save the data of the entry to the given filepath
+///
+/// Will produce a stream of [`DocExportProgress`] messages.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocExportFileRequest {
+    /// The entry you want to export
+    pub entry: Entry,
+    /// The filepath to where the data should be saved
+    ///
+    /// This should be an absolute path valid for the file system on which
+    /// the node runs. Usually the cli will run on the same machine as the
+    /// node, so this should be an absolute path on the cli machine.
+    pub path: PathBuf,
+}
+
+impl Msg<ProviderService> for DocExportFileRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocExportFileRequest {
+    type Response = DocExportFileResponse;
+}
+
+/// Wrapper around [`DocExportProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocExportFileResponse(pub DocExportProgress);
 
 /// Progress messages for an doc export operation
 ///
@@ -734,6 +762,8 @@ pub enum DocExportProgress {
     Found {
         /// A new unique id for this entry.
         id: u64,
+        /// The hash of the entry.
+        hash: Hash,
         /// The key to the entry.
         key: Bytes,
         /// The size of the entry in bytes.
@@ -975,6 +1005,7 @@ pub enum ProviderRequest {
     DocGet(DocGetManyRequest),
     DocGetExact(DocGetExactRequest),
     DocImportFile(DocImportFileRequest),
+    DocExportFile(DocExportFileRequest),
     DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocLeave(DocLeaveRequest),
@@ -1021,6 +1052,7 @@ pub enum ProviderResponse {
     DocGet(RpcResult<DocGetManyResponse>),
     DocGetExact(RpcResult<DocGetExactResponse>),
     DocImportFile(DocImportFileResponse),
+    DocExportFile(DocExportFileResponse),
     DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),

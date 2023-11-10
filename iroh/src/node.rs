@@ -59,12 +59,13 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    DeleteTagRequest, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, SetTagOption,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocExportProgress,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::blob::Ticket;
@@ -1014,9 +1015,7 @@ impl<D: BaoStore> RpcHandler<D> {
             author_id,
             key,
             path: root,
-            // todo: figure out tags
-            // in_place,
-            // tag,
+            in_place,
         } = msg;
         // Check that the path is absolute and exists.
         anyhow::ensure!(root.is_absolute(), "path must be absolute");
@@ -1026,12 +1025,10 @@ impl<D: BaoStore> RpcHandler<D> {
             root.display()
         );
 
-        // todo: do we assume copy?
-        // let import_mode = match in_place {
-        //     true => ImportMode::TryReference,
-        //     false => ImportMode::Copy,
-        // };
-        let import_mode = ImportMode::Copy;
+        let import_mode = match in_place {
+            true => ImportMode::TryReference,
+            false => ImportMode::Copy,
+        };
 
         let (temp_tag, size) = self
             .inner
@@ -1040,19 +1037,7 @@ impl<D: BaoStore> RpcHandler<D> {
             .await?;
 
         let hash_and_format = temp_tag.inner();
-        let HashAndFormat { hash, format } = *hash_and_format;
-        // todo: figure out tags
-        // let tag = match tag {
-        //     SetTagOption::Named(tag) => {
-        //         self.inner
-        //             .db
-        //             .set_tag(tag.clone(), Some(*hash_and_format))
-        //             .await?;
-        //         tag
-        //     }
-        //     SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
-        // };
-        let tag = self.inner.db.create_tag(*hash_and_format).await?;
+        let HashAndFormat { hash, .. } = *hash_and_format;
         self.inner
             .sync
             .doc_set_hash(DocSetHashRequest {
@@ -1063,19 +1048,61 @@ impl<D: BaoStore> RpcHandler<D> {
                 size,
             })
             .await?;
-        progress
-            .send(DocImportProgress::AllDone {
-                key,
-                tag: tag.clone(),
-            })
-            .await?;
-        self.inner
-            .callbacks
-            .send(Event::ByteProvide(
-                iroh_bytes::provider::Event::TaggedBlobAdded { hash, format, tag },
-            ))
-            .await;
+        progress.send(DocImportProgress::AllDone { key }).await?;
+        Ok(())
+    }
 
+    fn doc_export_file(
+        self,
+        msg: DocExportFileRequest,
+    ) -> impl Stream<Item = DocExportFileResponse> {
+        let (tx, rx) = flume::bounded(1024);
+        let tx2 = tx.clone();
+        self.rt().local_pool().spawn_pinned(|| async move {
+            if let Err(e) = self.doc_export_file0(msg, tx).await {
+                tx2.send_async(DocExportProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream().map(DocExportFileResponse)
+    }
+
+    async fn doc_export_file0(
+        self,
+        msg: DocExportFileRequest,
+        progress: flume::Sender<DocExportProgress>,
+    ) -> anyhow::Result<()> {
+        let progress = FlumeProgressSender::new(progress);
+        let DocExportFileRequest { entry, path } = msg;
+        let key = bytes::Bytes::from(entry.key().to_vec());
+        let export_progress = progress.clone().with_filter_map(move |x| match x {
+            DownloadProgress::Export {
+                id,
+                hash,
+                size,
+                target,
+            } => Some(DocExportProgress::Found {
+                id,
+                key: key.clone(),
+                size,
+                outpath: target.into(),
+                hash,
+            }),
+            DownloadProgress::ExportProgress { id, offset } => {
+                Some(DocExportProgress::Progress { id, offset })
+            }
+            _ => None,
+        });
+        self.blob_export(
+            String::from(path.to_str().context("invalid path")?),
+            entry.content_hash(),
+            false,
+            false,
+            export_progress,
+        )
+        .await?;
+        progress.send(DocExportProgress::AllDone).await?;
         Ok(())
     }
 
@@ -1673,6 +1700,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             DocImportFile(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::doc_import_file)
+                    .await
+            }
+            DocExportFile(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::doc_export_file)
                     .await
             }
             DocDel(msg) => {
