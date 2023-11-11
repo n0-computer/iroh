@@ -42,6 +42,7 @@ pub enum BlobCommands {
     /// where the data will be exported to after it has been downloaded.
     Get {
         /// Ticket or Hash to use.
+        #[clap(name = "TICKET OR HASH")]
         ticket: TicketOrHash,
         /// Additonal socket address to use to contact the node. Can be used multiple times.
         #[clap(long)]
@@ -324,6 +325,7 @@ pub struct BlobAddOptions {
     /// If `STDIN` is specified, the data will be read from stdin.
     ///
     /// When left empty no content is added.
+    #[clap(long)]
     pub source: Option<BlobSource>,
 
     /// Add in place

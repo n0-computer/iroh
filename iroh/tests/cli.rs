@@ -630,10 +630,10 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
     if let Some(ref out) = out {
         cmd(
             iroh_bin(),
-            ["get", "--ticket", ticket, "--out", out.to_str().unwrap()],
+            ["blob", "get", ticket, "--out", out.to_str().unwrap()],
         )
     } else {
-        cmd(iroh_bin(), ["get", "--ticket", ticket, "--out", "STDOUT"])
+        cmd(iroh_bin(), ["blob", "get", ticket, "--out", "STDOUT"])
     }
     .env_remove("RUST_LOG")
     .env("IROH_DATA_DIR", iroh_data_dir)
@@ -728,7 +728,7 @@ fn test_provide_get_loop_single(
         .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
-    let mut args = vec!["get", "--peer", &peer];
+    let mut args = vec!["blob", "get", "--peer", &peer];
     for addr in &addrs {
         args.push("--addrs");
         args.push(addr);
