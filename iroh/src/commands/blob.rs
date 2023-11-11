@@ -14,7 +14,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    client::quic::Iroh,
+    client::Iroh,
     rpc_protocol::{
         BlobDownloadRequest, DownloadLocation, NodeStatusResponse, ProviderService, SetTagOption,
         WrapOption,
@@ -71,10 +71,10 @@ pub enum BlobCommands {
         out: Option<OutputTarget>,
         /// If set, the data will be moved to the output directory, and iroh will assume that it
         /// will not change.
-        #[clap(long, default_value_t = false, global = true)]
+        #[clap(long, default_value_t = false)]
         stable: bool,
         /// Tag to tag the data with.
-        #[clap(long, global = true)]
+        #[clap(long)]
         tag: Option<String>,
     },
     /// List availble content on the node.
@@ -132,7 +132,10 @@ impl std::str::FromStr for TicketOrHash {
 }
 
 impl BlobCommands {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Get {
                 ticket,
@@ -367,7 +370,10 @@ pub enum ListCommands {
 }
 
 impl ListCommands {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Blobs => {
                 let mut response = iroh.blobs.list().await?;
@@ -419,7 +425,10 @@ pub enum DeleteCommands {
 }
 
 impl DeleteCommands {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Blob { hash } => {
                 let response = iroh.blobs.delete_blob(hash).await;
@@ -432,7 +441,10 @@ impl DeleteCommands {
     }
 }
 
-pub async fn validate(iroh: &Iroh, repair: bool) -> Result<()> {
+pub async fn validate<C>(iroh: &Iroh<C>, repair: bool) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
 

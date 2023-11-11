@@ -13,11 +13,12 @@ use dialoguer::Confirm;
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
 use iroh_base::base32::fmt_short;
+use quic_rpc::ServiceConnection;
 use tokio::io::AsyncReadExt;
 
 use iroh::{
-    client::quic::{Doc, Iroh},
-    rpc_protocol::{DocTicket, SetTagOption, ShareMode, WrapOption},
+    client::{Doc, Iroh},
+    rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
     util::fs::{path_content_info, PathContent},
 };
@@ -249,7 +250,10 @@ impl From<Sorting> for iroh_sync::store::SortBy {
 }
 
 impl DocCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Switch { id: doc } => {
                 env.set_doc(doc)?;
@@ -566,7 +570,14 @@ impl DocCommands {
     }
 }
 
-async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
+async fn get_doc<C>(
+    iroh: &Iroh<C>,
+    env: &ConsoleEnv,
+    id: Option<NamespaceId>,
+) -> anyhow::Result<Doc<C>>
+where
+    C: ServiceConnection<ProviderService>,
+{
     iroh.docs
         .open(env.doc(id)?)
         .await?
@@ -574,7 +585,14 @@ async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyh
 }
 
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
-async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
+async fn fmt_content<C>(
+    doc: &Doc<C>,
+    entry: &Entry,
+    mode: DisplayContentMode,
+) -> Result<String, String>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
     let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
@@ -622,7 +640,10 @@ fn human_len(entry: &Entry) -> HumanBytes {
 }
 
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
+async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
+where
+    C: ServiceConnection<ProviderService>,
+{
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
     let author = fmt_short(id.author());
@@ -651,15 +672,18 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 /// document via the hash of the blob.
 /// It also creates and powers the [`ImportProgressBar`].
 #[tracing::instrument(skip_all)]
-async fn import_coordinator(
-    doc: Doc,
+async fn import_coordinator<C>(
+    doc: Doc<C>,
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,
     blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
     expected_size: u64,
     expected_entries: u64,
-) -> Result<()> {
+) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
         doc.id(),

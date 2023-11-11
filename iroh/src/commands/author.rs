@@ -3,8 +3,9 @@ use clap::Parser;
 use futures::TryStreamExt;
 use iroh_base::base32::fmt_short;
 
-use iroh::client::quic::Iroh;
+use iroh::{client::Iroh, rpc_protocol::ProviderService};
 use iroh_sync::AuthorId;
+use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;
 
@@ -24,7 +25,10 @@ pub enum AuthorCommands {
 }
 
 impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Switch { author } => {
                 env.set_author(author)?;

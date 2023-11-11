@@ -2,7 +2,8 @@ use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 use clap::Subcommand;
-use iroh::{client::quic::Iroh, util::path::IrohPaths};
+use iroh::{client::Iroh, rpc_protocol::ProviderService, util::path::IrohPaths};
+use quic_rpc::ServiceConnection;
 use tokio::{fs, io::AsyncReadExt};
 use tracing::trace;
 
@@ -61,7 +62,10 @@ pub enum RpcCommands {
 }
 
 impl RpcCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Node { command } => command.run(iroh).await,
             Self::Blob { command } => command.run(iroh).await,

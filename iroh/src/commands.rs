@@ -7,10 +7,10 @@ use iroh_bytes::{protocol::RequestToken, util::runtime};
 
 use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
 
+use self::blob::BlobAddOptions;
 use self::rpc::{RpcCommands, RpcStatus};
 use self::start::StartArgs;
 
-const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
@@ -37,9 +37,12 @@ pub struct Cli {
     #[clap(long)]
     pub config: Option<PathBuf>,
 
-    /// RPC port of the Iroh node.
-    #[clap(long, global = true, default_value_t = DEFAULT_RPC_PORT)]
-    pub rpc_port: u16,
+    /// Start an iroh node in the background.
+    #[clap(long, global = true)]
+    start: bool,
+
+    #[clap(flatten)]
+    start_args: StartArgs,
 }
 
 async fn iroh_quic_connect(rt: runtime::Handle) -> Result<iroh::client::quic::Iroh> {
@@ -62,14 +65,34 @@ impl Cli {
     pub async fn run(self, rt: runtime::Handle) -> Result<()> {
         match self.command {
             Commands::Console => {
-                let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
-                let env = ConsoleEnv::for_console()?;
-                repl::run(&iroh, &env).await
+                if self.start {
+                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    self.start_args
+                        .run_with_command(&rt, &config, |iroh| async move {
+                            let env = ConsoleEnv::for_console()?;
+                            repl::run(&iroh, &env).await
+                        })
+                        .await
+                } else {
+                    let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
+                    let env = ConsoleEnv::for_console()?;
+                    repl::run(&iroh, &env).await
+                }
             }
             Commands::Rpc(command) => {
-                let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
-                let env = ConsoleEnv::for_cli()?;
-                command.run(&iroh, &env).await
+                if self.start {
+                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    self.start_args
+                        .run_with_command(&rt, &config, |iroh| async move {
+                            let env = ConsoleEnv::for_cli()?;
+                            command.run(&iroh, &env).await
+                        })
+                        .await
+                } else {
+                    let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
+                    let env = ConsoleEnv::for_cli()?;
+                    command.run(&iroh, &env).await
+                }
             }
             Commands::Full(command) => {
                 let config = NodeConfig::from_env(self.config.as_deref())?;
@@ -77,7 +100,12 @@ impl Cli {
                 #[cfg(feature = "metrics")]
                 let metrics_fut = start_metrics_server(config.metrics_addr, &rt);
 
-                let res = command.run(&rt, &config, self.rpc_port).await;
+                let res = match command {
+                    FullCommands::Start { add_options } => {
+                        self.start_args.run(&rt, &config, add_options).await
+                    }
+                    FullCommands::Doctor { command } => self::doctor::run(command, &config).await,
+                };
 
                 #[cfg(feature = "metrics")]
                 if let Some(metrics_fut) = metrics_fut {
@@ -100,7 +128,7 @@ pub enum Commands {
     #[clap(flatten)]
     Full(#[clap(subcommand)] FullCommands),
     #[clap(flatten)]
-    Rpc(#[clap(subcommands)] RpcCommands),
+    Rpc(#[clap(subcommand)] RpcCommands),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -116,22 +144,17 @@ pub enum FullCommands {
     /// reads from STDIN.
     /// Data can be added after startup with commands like `iroh blob add`
     /// or by adding content to documents.
-    Start(StartArgs),
+    Start {
+        /// Add data when starting the node
+        #[clap(flatten)]
+        add_options: BlobAddOptions,
+    },
     /// Diagnostic commands for the derp relay protocol.
     Doctor {
         /// Commands for doctor - defined in the mod
         #[clap(subcommand)]
         command: self::doctor::Commands,
     },
-}
-
-impl FullCommands {
-    pub async fn run(self, rt: &runtime::Handle, config: &NodeConfig, rpc_port: u16) -> Result<()> {
-        match self {
-            FullCommands::Start(start_args) => start_args.run(rt, config, rpc_port).await,
-            FullCommands::Doctor { command } => self::doctor::run(command, config).await,
-        }
-    }
 }
 
 #[cfg(feature = "metrics")]
