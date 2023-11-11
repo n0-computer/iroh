@@ -203,32 +203,20 @@ impl BlobCommands {
                     None => SetTagOption::Auto,
                 };
 
-                let (out_location, tmpfile) = match out {
-                    None => (DownloadLocation::Internal, None),
-                    Some(OutputTarget::Stdout) => {
-                        let tmpfile = tempfile::NamedTempFile::new()?;
-                        (
-                            DownloadLocation::External {
-                                path: tmpfile.path().into(),
-                                in_place: false,
-                            },
-                            Some(tmpfile),
-                        )
-                    }
-                    Some(OutputTarget::Path(path)) => {
-                        let absolute = std::env::current_dir()?.join(&path);
+                let out_location = match out {
+                    None => DownloadLocation::Internal,
+                    Some(OutputTarget::Stdout) => DownloadLocation::Internal,
+                    Some(OutputTarget::Path(ref path)) => {
+                        let absolute = std::env::current_dir()?.join(path);
                         tracing::info!(
                             "output path is {} -> {}",
                             path.display(),
                             absolute.display()
                         );
-                        (
-                            DownloadLocation::External {
-                                path: absolute,
-                                in_place: stable,
-                            },
-                            None,
-                        )
+                        DownloadLocation::External {
+                            path: absolute,
+                            in_place: stable,
+                        }
                     }
                 };
 
@@ -244,14 +232,15 @@ impl BlobCommands {
                     })
                     .await?;
 
-                if let Some(_tmpfile) = tmpfile {
-                    // TODO
+                show_download_progress(hash, &mut stream).await?;
 
-                    show_download_progress(hash, &mut stream).await?;
-                    Ok(())
-                } else {
-                    show_download_progress(hash, &mut stream).await
+                if out == Some(OutputTarget::Stdout) {
+                    let mut blob_read = iroh.blobs.read(hash).await?;
+
+                    tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
                 }
+
+                Ok(())
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,

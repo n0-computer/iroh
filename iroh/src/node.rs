@@ -1206,12 +1206,17 @@ impl<D: BaoStore> RpcHandler<D> {
                     elapsed: stats.elapsed,
                 })
                 .await?;
-            if let DownloadLocation::External { path, in_place } = msg.out {
-                if let Err(cause) = this
-                    .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
-                    .await
-                {
-                    progress.send(DownloadProgress::Abort(cause.into())).await?;
+            match msg.out {
+                DownloadLocation::External { path, in_place } => {
+                    if let Err(cause) = this
+                        .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
+                        .await
+                    {
+                        progress.send(DownloadProgress::Abort(cause.into())).await?;
+                    }
+                }
+                DownloadLocation::Internal => {
+                    // nothing to do
                 }
             }
             match msg.tag {
