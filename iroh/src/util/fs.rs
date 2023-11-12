@@ -231,8 +231,9 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
 /// Helper function that translates a key that was derived from a path on a filesystem back to that
 /// path.
 ///
-/// If `strip_prefix` exists, it will be stripped before converting back to a path
-/// If `root` exists, it will add the root as a parent to the created path
+/// If `prefix` exists, it will be stripped before converting back to a path
+/// If `root` exists, will add the root as a parent to the created path
+/// Removes any null byte that has been appened to the key
 pub fn key_to_path(
     key: impl AsRef<[u8]>,
     prefix: Option<String>,
@@ -271,8 +272,7 @@ pub fn key_to_path(
     Ok(path)
 }
 
-/// Helper function that creates a document key from the path, removing the full canonicalized path, and adding
-/// whatever prefix the user requests.
+/// Helper function that creates a document key from the path, removing the `root` and adding the `prefix`, if they exist
 ///
 /// Appends the null byte to the end of the key.
 pub fn path_to_key(
