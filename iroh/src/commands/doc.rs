@@ -32,8 +32,7 @@ use crate::config::ConsoleEnv;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DisplayContentMode {
     /// Displays the content if small enough, otherwise it displays the content hash.
     Auto,
@@ -86,7 +85,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
@@ -109,10 +108,10 @@ pub enum DocCommands {
         #[clap(short, long)]
         prefix: bool,
         /// Filter by author.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// How to show the contents of the key.
-        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        #[clap(short, long, value_enum, default_value_t=DisplayContentMode::Auto)]
         mode: DisplayContentMode,
     },
     /// Delete all entries below a key prefix.
@@ -127,7 +126,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Prefix to delete. All entries whose key starts with or is equal to the prefix will be
         /// deleted.
@@ -143,7 +142,7 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         /// Filter by author.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
@@ -154,7 +153,7 @@ pub enum DocCommands {
         #[clap(long)]
         desc: bool,
         /// How to show the contents of the keys.
-        #[clap(short, long, default_value_t=DisplayContentMode::ShortHash)]
+        #[clap(short, long, value_enum, default_value_t=DisplayContentMode::ShortHash)]
         mode: DisplayContentMode,
     },
     /// Import data into a document
@@ -169,7 +168,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also be set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Prefix to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
         #[clap(long)]
