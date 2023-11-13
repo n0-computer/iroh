@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 # proto dependencies (required)
 anyhow = { version = "1", features = ["backtrace"] }
-blake3 = { package = "iroh-blake3", version = "1.4.3"}
+blake3 = { git = "https://github.com/Arqu/iroh-blake3", branch = "arqu/blake3" }
 bytes = { version = "1.4.0", features = ["serde"] }
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
