@@ -54,3 +54,6 @@ net = ["futures", "iroh-net", "quinn", "tokio", "tokio-util"]
 [[example]]
 name = "chat"
 required-features = ["net"]
+
+[patch.crates-io]
+blake3 = { git = "https://github.com/Arqu/iroh-blake3.git", branch = "arqu/blake3" }

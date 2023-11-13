@@ -63,3 +63,6 @@ default = ["net", "fs-store", "metrics"]
 net = ["iroh-net", "tokio/io-util", "tokio-stream", "tokio-util", "quinn", "futures"]
 fs-store = ["redb", "ouroboros"]
 metrics = ["iroh-metrics"]
+
+[patch.crates-io]
+blake3 = { git = "https://github.com/Arqu/iroh-blake3.git", branch = "arqu/blake3" }
