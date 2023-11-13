@@ -433,7 +433,7 @@ impl DeleteCommands {
             Self::Blob { hash } => {
                 let response = iroh.blobs.delete_blob(hash).await;
                 if let Err(e) = response {
-                    println!("Error: {}", e);
+                    eprintln!("Error: {}", e);
                 }
             }
         }

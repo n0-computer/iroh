@@ -89,7 +89,6 @@ impl StartArgs {
             biased;
             res = cmd(client) => {
                 res?;
-                println!("Shutting down node...");
                 node2.shutdown();
             }
             res = node => {
@@ -141,7 +140,6 @@ impl StartArgs {
         tokio::select! {
             biased;
             _ = tokio::signal::ctrl_c() => {
-                println!("Shutting down node...");
                 node2.shutdown();
             }
             res = node => {
@@ -168,7 +166,7 @@ impl StartArgs {
         derp_map: Option<DerpMap>,
     ) -> Result<Node<iroh_bytes::store::flat::Store>> {
         if let Some(t) = token.as_ref() {
-            println!("Request token: {}", t);
+            eprintln!("Request token: {}", t);
         }
 
         let rpc_status = RpcStatus::load(get_iroh_data_root_with_env()?).await?;
@@ -239,17 +237,17 @@ impl StartArgs {
             builder.secret_key(secret_key).spawn().await?
         };
         let eps = provider.local_endpoints().await?;
-        println!("Listening addresses:");
+        eprintln!("Listening addresses:");
         for ep in eps {
-            println!("  {}", ep.addr);
+            eprintln!("  {}", ep.addr);
         }
         let region = provider.my_derp();
-        println!(
+        eprintln!(
             "DERP Region: {}",
             region.map_or("None".to_string(), |r| r.to_string())
         );
-        println!("PeerID: {}", provider.node_id());
-        println!();
+        eprintln!("PeerID: {}", provider.node_id());
+        eprintln!();
         Ok(provider)
     }
 }
@@ -281,7 +279,7 @@ async fn make_rpc_endpoint(
         Ok(ep) => ep,
         Err(err) => {
             if err.kind() == std::io::ErrorKind::AddrInUse {
-                println!(
+                tracing::warn!(
                     "RPC port {} already in use, switching to random port",
                     rpc_port
                 );
