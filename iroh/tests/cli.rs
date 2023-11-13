@@ -771,7 +771,7 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");
     let cmd = cmd(iroh_bin(), args)
         .env_remove("RUST_LOG")
-        .env("IROH_DATA_DIR", &get_iroh_data_dir)
+        .env("IROH_DATA_DIR", get_iroh_data_dir)
         .stdout_capture()
         .stderr_capture()
         .unchecked();

@@ -88,7 +88,7 @@ impl StartArgs {
         let node = self.start_daemon_node(rt, token, derp_map).await?;
         drop(spinner);
 
-        let msg = welcome_message(&node).await?;
+        let msg = welcome_message(&node)?;
         eprintln!("{}", msg);
 
         let client = node.client();
@@ -123,7 +123,7 @@ impl StartArgs {
         let node = self.start_daemon_node(rt, token.clone(), derp_map).await?;
         drop(spinner);
 
-        let msg = welcome_message(&node).await?;
+        let msg = welcome_message(&node)?;
         eprintln!("{}", msg);
 
         let client = node.client();
@@ -255,7 +255,7 @@ impl StartArgs {
     }
 }
 
-async fn welcome_message<B: iroh_bytes::store::Store>(node: &Node<B>) -> Result<String> {
+fn welcome_message<B: iroh_bytes::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
         "Iroh is running".green(),
