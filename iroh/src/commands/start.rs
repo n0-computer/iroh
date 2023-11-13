@@ -79,6 +79,7 @@ impl StartArgs {
         T: Future<Output = Result<()>>,
     {
         let token = self.request_token();
+
         let derp_map = config.derp_map()?;
         let node = self.start_daemon_node(rt, token, derp_map).await?;
         let client = node.client();
@@ -206,6 +207,7 @@ impl StartArgs {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Store>(
         &self,
         rt: &runtime::Handle,
