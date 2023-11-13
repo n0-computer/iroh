@@ -445,7 +445,7 @@ fn cli_provide_addresses() -> Result<()> {
         .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
-    assert!(stdout.starts_with("Listening addresses:"));
+    assert!(stdout.starts_with("Iroh is running"));
     //parse the output to get the addresses
     let addresses = stdout
         .split('[')
@@ -468,19 +468,16 @@ fn cli_rpc_lock_restart() -> Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("data-dir");
 
+    println!("start");
     let mut reader_handle = cmd(iroh_bin(), vec!["start", "--rpc-port", "0"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
+        .stderr_to_stdout()
         .reader()?;
 
     assert_matches_line(
         BufReader::new(&mut reader_handle),
-        [
-            (r"Listening addresses:", 1),
-            (r"^  \S+", -1),
-            (r"DERP Region:", 1),
-            (r"PeerID: [_\w\d-]*", 1),
-        ],
+        [(r"Iroh is running", 1), (r"Node ID: [_\w\d-]*", 1)],
     );
 
     // check for the lock file
@@ -488,6 +485,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
     let rpc_port = u16::from_le_bytes(content[..2].try_into().unwrap());
 
     // kill process
+    println!("killing process");
     reader_handle.kill()?;
 
     // File should still be there
@@ -497,25 +495,22 @@ fn cli_rpc_lock_restart() -> Result<()> {
     );
 
     // Restart should work fine
-
+    println!("restart");
     let mut reader_handle = cmd(
         iroh_bin(),
         vec!["start", "--rpc-port", &rpc_port.to_string()],
     )
     .env_remove("RUST_LOG")
     .env("IROH_DATA_DIR", &iroh_data_dir)
+    .stderr_to_stdout()
     .reader()?;
 
     assert_matches_line(
         BufReader::new(&mut reader_handle),
-        [
-            (r"Listening addresses:", 1),
-            (r"^  \S+", -1),
-            (r"DERP Region:", 1),
-            (r"PeerID: [_\w\d-]*", 1),
-        ],
+        [(r"Iroh is running", 1), (r"Node ID: [_\w\d-]*", 1)],
     );
 
+    println!("double start");
     let output = cmd(
         iroh_bin(),
         vec!["start", "--rpc-port", &rpc_port.to_string()],
@@ -843,10 +838,8 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
     let captures = assert_matches_line(
         std::io::Cursor::new(stderr),
         [
-            (r"Listening addresses:", 1),
-            (r"^  \S+", -1),
-            (r"DERP Region:", 1),
-            (r"PeerID: [_\w\d-]*", 1),
+            (r"Iroh is running", 1),
+            (r"Node ID: [_\w\d-]*", 1),
             (r"", 1),
             (r"Fetching: [\da-z]{59}", 1),
             (
@@ -871,10 +864,8 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
     let mut caps = assert_matches_line(
         reader,
         [
-            (r"Listening addresses:", 1),
-            (r"^  \S+", -1),
-            (r"DERP Region:", 1),
-            (r"PeerID: [_\w\d-]*", 1),
+            (r"Iroh is running", 1),
+            (r"Node ID: [_\w\d-]*", 1),
             (r"", 1),
             (r"Adding .*", 1),
             (r"- \S*: \d*.?\d*? ?[BKMGT]i?B?", num_blobs as i64),

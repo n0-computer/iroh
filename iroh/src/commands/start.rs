@@ -2,11 +2,14 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{bail, ensure, Context, Result};
 use clap::Args;
+use colored::Colorize;
 use futures::Future;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::{
     client::quic::RPC_ALPN,
     node::{Node, StaticTokenAuthHandler},
@@ -79,9 +82,15 @@ impl StartArgs {
         T: Future<Output = Result<()>>,
     {
         let token = self.request_token();
-
         let derp_map = config.derp_map()?;
+
+        let spinner = create_spinner("Iroh booting...");
         let node = self.start_daemon_node(rt, token, derp_map).await?;
+        drop(spinner);
+
+        let msg = welcome_message(&node).await?;
+        eprintln!("{}", msg);
+
         let client = node.client();
 
         let node2 = node.clone();
@@ -110,7 +119,13 @@ impl StartArgs {
         let token = self.request_token();
         let derp_map = config.derp_map()?;
 
+        let spinner = create_spinner("Iroh is booting...");
         let node = self.start_daemon_node(rt, token.clone(), derp_map).await?;
+        drop(spinner);
+
+        let msg = welcome_message(&node).await?;
+        eprintln!("{}", msg);
+
         let client = node.client();
 
         let add_task = match add_opts.source {
@@ -226,7 +241,7 @@ impl StartArgs {
         }
         let builder = builder.bind_addr(self.addr).runtime(rt);
 
-        let provider = if let Some(rpc_port) = self.rpc_port.into() {
+        let node = if let Some(rpc_port) = self.rpc_port.into() {
             let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port).await?;
             builder
                 .rpc_endpoint(rpc_endpoint)
@@ -236,21 +251,20 @@ impl StartArgs {
         } else {
             builder.secret_key(secret_key).spawn().await?
         };
-        let eps = provider.local_endpoints().await?;
-        eprintln!("Listening addresses:");
-        for ep in eps {
-            eprintln!("  {}", ep.addr);
-        }
-        let region = provider.my_derp();
-        eprintln!(
-            "DERP Region: {}",
-            region.map_or("None".to_string(), |r| r.to_string())
-        );
-        eprintln!("PeerID: {}", provider.node_id());
-        eprintln!();
-        Ok(provider)
+        Ok(node)
     }
 }
+
+async fn welcome_message<B: iroh_bytes::store::Store>(node: &Node<B>) -> Result<String> {
+    let msg = format!(
+        "{}\nNode ID: {}\n",
+        "Iroh is running".green(),
+        node.node_id()
+    );
+
+    Ok(msg)
+}
+
 async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
     match key {
         Some(key_path) => load_secret_key(key_path).await,
@@ -302,4 +316,18 @@ async fn make_rpc_endpoint(
     store_rpc(get_iroh_data_root_with_env()?, actual_rpc_port).await?;
 
     Ok(rpc_endpoint)
+}
+
+/// Create a nice spinner.
+fn create_spinner(msg: &'static str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb.set_draw_target(ProgressDrawTarget::stderr());
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.blue} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    pb.set_message(msg);
+    pb.with_finish(indicatif::ProgressFinish::AndClear)
 }
