@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{env, io};
@@ -13,7 +14,8 @@ use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
 use iroh::ticket::blob::Ticket;
 use iroh::util::path::IrohPaths;
-use rand::{Rng, RngCore, SeedableRng};
+use rand::distributions::{Alphanumeric, DistString};
+use rand::{Rng, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
@@ -23,9 +25,10 @@ const RPC_PORT: &str = "4999";
 const BAO_DIR: &str = "blobs.v0";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
-    let mut content = vec![0u8; size];
-    rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
-    let hash = blake3::hash(&content);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+    let content = Alphanumeric.sample_string(&mut rng, size);
+
+    let hash = blake3::hash(content.as_bytes());
     std::fs::write(path, content)?;
     Ok(hash.into())
 }
@@ -627,18 +630,18 @@ fn to_out_dir(output: Output) -> Option<PathBuf> {
 /// Create a get command given a ticket and an output mode
 fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duct::Expression {
     // create a `get-ticket` cmd & optionally provide out path
-    if let Some(ref out) = out {
-        cmd(
-            iroh_bin(),
-            ["blob", "get", ticket, "--out", out.to_str().unwrap()],
-        )
+    let args = if let Some(ref out) = out {
+        vec!["blob", "get", ticket, "--out", out.to_str().unwrap()]
     } else {
-        cmd(iroh_bin(), ["blob", "get", ticket, "--out", "STDOUT"])
-    }
-    .env_remove("RUST_LOG")
-    .env("IROH_DATA_DIR", iroh_data_dir)
-    .stdout_capture()
-    .stderr_capture()
+        vec!["blob", "get", ticket, "--out", "STDOUT"]
+    };
+    println!("running iroh {:?}", args);
+
+    cmd(iroh_bin(), &args)
+        .env_remove("RUST_LOG")
+        .env("IROH_DATA_DIR", iroh_data_dir)
+        .stdout_capture()
+        .stderr_capture()
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.
@@ -672,8 +675,11 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     match out_dir {
         None => {
             assert!(!get_output.stdout.is_empty());
-            let expect_content = std::fs::read(path)?;
-            assert_eq!(expect_content, get_output.stdout);
+            let expect_content = std::fs::read_to_string(path)?;
+            assert_eq!(
+                expect_content,
+                std::string::String::from_utf8_lossy(&get_output.stdout)
+            );
         }
         Some(out) => compare_files(path, out)?,
     };
