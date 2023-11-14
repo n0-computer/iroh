@@ -626,7 +626,7 @@ where
         Ok(())
     }
 
-    /// Add an entry from a file path
+    /// Add an entry from an absolute file path
     pub async fn import_file(
         &self,
         author: AuthorId,
@@ -649,7 +649,7 @@ where
         Ok(DocImportFileProgress::new(stream))
     }
 
-    /// Export an entry as a file to a given path.
+    /// Export an entry as a file to a given absolute path.
     pub async fn export_file(
         &self,
         entry: Entry,
