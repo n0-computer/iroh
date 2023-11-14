@@ -445,7 +445,7 @@ fn cli_provide_addresses() -> Result<()> {
         .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
-    assert!(stdout.starts_with("Iroh is running"));
+    assert!(stdout.starts_with("Listening addresses:"));
     //parse the output to get the addresses
     let addresses = stdout
         .split('[')
@@ -595,6 +595,11 @@ fn make_provider_in(
     args.push(&arg);
 
     // spawn a provider & optionally provide from stdin
+    println!(
+        "running iroh {:?} in dir: {}",
+        args,
+        iroh_data_dir.display()
+    );
     let res = cmd(iroh_bin(), &args)
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir)
