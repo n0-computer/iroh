@@ -1,9 +1,7 @@
 //! Utilities for filesystem operations.
 use std::{
     borrow::Cow,
-    ffi::OsStr,
     fs::read_dir,
-    os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
 };
 
@@ -78,7 +76,7 @@ pub fn scan_path(path: PathBuf, wrap: WrapOption) -> anyhow::Result<Vec<DataSour
 }
 
 fn file_name(path: &Path) -> anyhow::Result<String> {
-    canonicalize_path(path.file_name().context("path is invalid")?)
+    relative_canonicalized_path_to_string(path.file_name().context("path is invalid")?)
 }
 
 /// Create data sources from a directory.
@@ -100,7 +98,7 @@ pub fn scan_dir(root: PathBuf, wrap: WrapOption) -> anyhow::Result<Vec<DataSourc
                 return Ok(None);
             }
             let path = entry.into_path();
-            let mut name = canonicalize_path(path.strip_prefix(&root)?)?;
+            let mut name = relative_canonicalized_path_to_string(path.strip_prefix(&root)?)?;
             if let Some(prefix) = &prefix {
                 name = format!("{prefix}/{name}");
             }
@@ -117,25 +115,8 @@ pub fn scan_dir(root: PathBuf, wrap: WrapOption) -> anyhow::Result<Vec<DataSourc
 /// This function will also fail if the path is non canonical, i.e. contains
 /// `..` or `.`, or if the path components contain any windows or unix path
 /// separators.
-pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
-    let parts = path
-        .as_ref()
-        .components()
-        .map(|c| {
-            let c = if let Component::Normal(x) = c {
-                x.to_str().context("invalid character in path")?
-            } else {
-                anyhow::bail!("invalid path component {:?}", c)
-            };
-            anyhow::ensure!(
-                !c.contains('/') && !c.contains('\\'),
-                "invalid path component {:?}",
-                c
-            );
-            Ok(c)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(parts.join("/"))
+pub fn relative_canonicalized_path_to_string(path: impl AsRef<Path>) -> anyhow::Result<String> {
+    canonicalized_path_to_string(path, true)
 }
 
 /// Loads a [`SecretKey`] from the provided file.
@@ -228,8 +209,8 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
     Ok(PathContent { size, files })
 }
 
-/// Helper function that translates a key that was derived from a path on a filesystem back to that
-/// path.
+/// Helper function that translates a key that was derived from the [`path_to_key`] function back
+/// into a path.
 ///
 /// If `prefix` exists, it will be stripped before converting back to a path
 /// If `root` exists, will add the root as a parent to the created path
@@ -259,8 +240,7 @@ pub fn key_to_path(
         key
     };
 
-    // convert to a path
-    let path = PathBuf::from(OsStr::from_bytes(key));
+    let path = PathBuf::from(String::from_utf8(key.into()).context("key contains invalid data")?);
 
     // add root if it exists
     let path = if let Some(root) = root {
@@ -272,7 +252,7 @@ pub fn key_to_path(
     Ok(path)
 }
 
-/// Helper function that creates a document key from the path, removing the `root` and adding the `prefix`, if they exist
+/// Helper function that creates a document key from a canonicalized path, removing the `root` and adding the `prefix`, if they exist
 ///
 /// Appends the null byte to the end of the key.
 pub fn path_to_key(
@@ -280,16 +260,13 @@ pub fn path_to_key(
     prefix: Option<String>,
     root: Option<PathBuf>,
 ) -> anyhow::Result<Bytes> {
+    let path = path.as_ref();
     let path = if let Some(root) = root {
-        path.as_ref().strip_prefix(root)?
+        path.strip_prefix(root)?
     } else {
-        path.as_ref()
+        path
     };
-    let suffix = path
-        .to_str()
-        .map(|p| p.as_bytes())
-        .ok_or(anyhow::anyhow!("could not convert path to bytes"))?
-        .to_vec();
+    let suffix = canonicalized_path_to_string(path, false)?.into_bytes();
     let mut key = if let Some(prefix) = prefix {
         prefix.into_bytes().to_vec()
     } else {
@@ -298,6 +275,51 @@ pub fn path_to_key(
     key.extend(suffix);
     key.push(b'\0');
     Ok(key.into())
+}
+
+/// This function converts an already canonicalized path to a string.
+///
+/// If `must_be_relative` is true, the function will fail if any component of the path is
+/// `Component::RootDir`
+///
+/// This function will also fail if the path is non canonical, i.e. contains
+/// `..` or `.`, or if the path components contain any windows or unix path
+/// separators.
+pub fn canonicalized_path_to_string(
+    path: impl AsRef<Path>,
+    must_be_relative: bool,
+) -> anyhow::Result<String> {
+    let mut path_str = String::new();
+    let parts = path
+        .as_ref()
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(x) => {
+                let c = match x.to_str() {
+                    Some(c) => c,
+                    None => return Some(Err(anyhow::anyhow!("invalid character in path"))),
+                };
+
+                if !c.contains('/') && !c.contains('\\') {
+                    Some(Ok(c))
+                } else {
+                    Some(Err(anyhow::anyhow!("invalid path component {:?}", c)))
+                }
+            }
+            Component::RootDir => {
+                if must_be_relative {
+                    Some(Err(anyhow::anyhow!("invalid path component {:?}", c)))
+                } else {
+                    path_str.push('/');
+                    None
+                }
+            }
+            _ => Some(Err(anyhow::anyhow!("invalid path component {:?}", c))),
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let parts = parts.join("/");
+    path_str.push_str(&parts);
+    Ok(path_str)
 }
 
 #[cfg(test)]
@@ -338,8 +360,11 @@ mod tests {
     }
 
     #[test]
-    fn test_canonicalize_path() {
-        assert_eq!(super::canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    fn test_relative_canonicalized_path_to_string() {
+        assert_eq!(
+            super::relative_canonicalized_path_to_string("foo/bar").unwrap(),
+            "foo/bar"
+        );
     }
 
     #[test]
