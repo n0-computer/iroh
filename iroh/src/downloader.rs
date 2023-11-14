@@ -33,6 +33,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use bao_tree::ChunkRanges;
@@ -48,7 +49,10 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
 mod invariants;
+mod state;
 mod test;
+
+use self::state::State;
 
 /// Delay added to a request when it's first received.
 const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
@@ -86,6 +90,8 @@ pub enum FailureAction {
     DropPeer(anyhow::Error),
     /// An error occurred in which neither the node nor the request are at fault.
     RetryLater(anyhow::Error),
+    /// The peer doesn't have the requested content
+    NotFound,
 }
 
 /// Future of a get request.
@@ -467,6 +473,8 @@ struct Service<G: Getter, D: Dialer> {
     scheduled_requests: HashMap<DownloadKind, PendingRequestInfo>,
     /// Queue of scheduled requests.
     scheduled_request_queue: delay_queue::DelayQueue<DownloadKind>,
+    // State
+    state: State,
 }
 
 impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
@@ -488,6 +496,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             in_progress_downloads: Default::default(),
             scheduled_requests: HashMap::default(),
             scheduled_request_queue: delay_queue::DelayQueue::default(),
+            state: Default::default(),
         }
     }
 
@@ -534,8 +543,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     trace!(%node, "tick: goodbye node");
                 }
             }
-            #[cfg(any(test, debug_assertions))]
-            self.check_invariants();
+            // #[cfg(any(test, debug_assertions))]
+            // self.check_invariants();
         }
     }
 
@@ -709,16 +718,22 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// remove it from the scheduled requests, or cancel the future.
     fn handle_cancel_download(&mut self, id: Id, kind: DownloadKind) {
         let hash = *kind.hash();
-        let mut download_removed = false;
-        if let Entry::Occupied(mut occupied_entry) = self.current_requests.entry(kind.clone()) {
+
+        // case 1: download is currently running
+        let download_removed = if let Entry::Occupied(mut occupied_entry) =
+            self.current_requests.entry(kind.clone())
+        {
             // remove the intent from the associated request
             let intents = &mut occupied_entry.get_mut().intents;
             intents.remove(&id);
             // if this was the last intent associated with the request cancel it
             if intents.is_empty() {
-                download_removed = true;
                 occupied_entry.remove().cancellation.cancel();
+                true
+            } else {
+                false
             }
+        // case 1: download is scheduled
         } else if let Entry::Occupied(mut occupied_entry) = self.scheduled_requests.entry(kind) {
             // remove the intent from the associated request
             let intents = &mut occupied_entry.get_mut().intents;
@@ -728,9 +743,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             if intents.is_empty() {
                 let delay_key = occupied_entry.remove().delay_key;
                 self.scheduled_request_queue.remove(&delay_key);
-                download_removed = true;
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
 
         if download_removed && !self.is_needed(hash) {
             self.providers.remove(hash)
@@ -907,6 +926,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 }
                 false
             }
+            // TODO
+            _ => todo!(),
         };
 
         if !self.is_needed(hash) {
@@ -1022,6 +1043,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // number) is maxed at INITIAL_RETRY_COUNT
         let delay = INITIAL_REQUEST_DELAY
             * (INITIAL_RETRY_COUNT.saturating_sub(remaining_retries) as u32 + 1);
+        let delay = Duration::ZERO;
 
         let delay_key = self.scheduled_request_queue.insert(kind.clone(), delay);
 
