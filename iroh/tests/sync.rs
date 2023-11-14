@@ -11,10 +11,13 @@ use futures::{Stream, StreamExt};
 use iroh::{
     client::mem::Doc,
     node::{Builder, Node},
-    rpc_protocol::ShareMode,
+    rpc_protocol::{DocTicket, SetTagOption, ShareMode},
     sync_engine::LiveEvent,
 };
-use iroh_net::key::{PublicKey, SecretKey};
+use iroh_net::{
+    key::{PublicKey, SecretKey},
+    NodeAddr,
+};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, info};
@@ -408,6 +411,196 @@ async fn sync_full_basic() -> Result<()> {
     info!("shutdown");
     for node in nodes {
         node.shutdown();
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sync_download_missing() -> Result<()> {
+    let mut rng = test_rng(b"sync_subscribe_stop_close");
+    let rt = test_runtime();
+    setup_logging();
+
+    // create two nodes
+    let mut nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+    let mut docs = vec![];
+
+    let peer0 = nodes[0].node_id();
+    let doc0 = clients[0].docs.create().await?;
+    docs.push(doc0.clone());
+    let author0 = clients[0].authors.create().await?;
+
+    // these are the hashes that we insert into the doc (but not in the blob store initially)
+    let contents = vec![("foo", Hash::new(b"foo")), ("bar", Hash::new(b"bar"))];
+
+    // set entries in doc0 (but without inserting the content into the blob store)
+    for (content, hash) in &contents {
+        doc0.set_hash(
+            author0,
+            format!("key:{content}"),
+            *hash,
+            content.len() as u64,
+        )
+        .await?;
+    }
+
+    // task that waits for exepected events on node0
+    let peer1 = nodes[1].node_id();
+    let task0 = tokio::task::spawn({
+        let doc0 = doc0.clone();
+        async move {
+            let mut events0 = doc0.subscribe().await.unwrap();
+            assert_next_unordered(
+                &mut events0,
+                TIMEOUT,
+                vec![
+                    Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+                    Box::new(move |e| match_sync_finished(e, peer1)),
+                ],
+            )
+            .await;
+        }
+    });
+
+    // import the doc on node1 (but create the event stream before joining node0)
+    let ticket = doc0.share(ShareMode::Read).await?;
+    let doc1 = clients[1]
+        .docs
+        .import(DocTicket::new(ticket.capability.clone(), vec![]))
+        .await?;
+    let mut events1 = doc1.subscribe().await?;
+    let doc1 = clients[1].docs.import(ticket.clone()).await?;
+    docs.push(doc1.clone());
+
+    // ensure node1 events
+    let hash0 = contents[0].1;
+    let hash1 = contents[1].1;
+    assert_next_unordered(
+        &mut events1,
+        TIMEOUT,
+        vec![
+            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
+            Box::new(
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
+            ),
+            Box::new(
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash1),
+            ),
+        ],
+    )
+    .await;
+
+    // ensure node0 events
+    task0.await?;
+
+    println!("finish sync doc1 with doc0");
+    println!("sleep 1s");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    for (i, doc) in docs.iter().enumerate() {
+        let mut entries = doc.get_many(Query::all()).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            let content = doc.read_to_bytes(&entry).await;
+            println!(
+                "doc {i} entry {}: content available? {}",
+                String::from_utf8_lossy(entry.key()),
+                content.is_ok()
+            );
+        }
+    }
+
+    println!("doc1 leave");
+    doc1.leave().await?;
+
+    let node = spawn_node(rt, 2, &mut rng).await?;
+    let client = node.client();
+    let peer2 = node.node_id();
+    println!("node2 spawn {peer2:?}");
+    nodes.push(node);
+    clients.push(client);
+
+    let doc2 = clients[2]
+        .docs
+        .import(DocTicket::new(ticket.capability.clone(), vec![]))
+        .await?;
+    let mut events2 = doc2.subscribe().await?;
+    println!("start sync doc2 with doc0");
+    let _ = clients[2].docs.import(ticket.clone()).await?;
+    docs.push(doc2.clone());
+
+    assert_next_unordered(
+        &mut events2,
+        TIMEOUT,
+        vec![
+            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
+            // Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
+            // Box::new(move |e| match_sync_finished(e, peer1)),
+            Box::new(
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
+            ),
+            Box::new(
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash1),
+            ),
+        ],
+    )
+    .await;
+
+    // assert_next_unordered(
+    //     &mut events1,
+    //     TIMEOUT,
+    //     vec![
+    //         Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
+    //         Box::new(move |e| match_sync_finished(e, peer2)),
+    //     ],
+    // )
+    // .await;
+
+    println!("finished sync doc2 with doc0");
+
+    tokio::task::spawn(async move {
+        while let Some(ev) = events1.next().await {
+            println!("doc1 event {ev:?}");
+        }
+    });
+
+    println!("doc0 leave");
+    doc0.leave().await?;
+    // nodes[0].shutdown();
+
+    println!("doc2 add content");
+    clients[2]
+        .blobs
+        .add_bytes(b"foo".to_vec().into(), SetTagOption::Auto)
+        .await?;
+    clients[2]
+        .blobs
+        .add_bytes(b"bar".to_vec().into(), SetTagOption::Auto)
+        .await?;
+
+    let ticket = doc2.share(ShareMode::Read).await?;
+
+    println!("start sync doc1 with doc2");
+    doc1.start_sync(ticket.nodes).await?;
+
+    println!("sleep 5s");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    for (i, doc) in docs.iter().enumerate() {
+        let mut entries = doc.get_many(Query::all()).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            let content = doc.read_to_bytes(&entry).await;
+            println!(
+                "doc {i} entry {}: content available? {}",
+                String::from_utf8_lossy(entry.key()),
+                content.is_ok()
+            );
+        }
     }
 
     Ok(())
@@ -835,7 +1028,7 @@ async fn next<T: std::fmt::Debug>(mut stream: impl Stream<Item = Result<T>> + Un
 }
 
 #[allow(clippy::type_complexity)]
-fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool>>) -> bool {
+fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool + Send>>) -> bool {
     for i in 0..matchers.len() {
         if matchers[i](item) {
             let _ = matchers.remove(i);
@@ -853,9 +1046,9 @@ fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool>>) -> b
 /// Returns all received events.
 #[allow(clippy::type_complexity)]
 async fn assert_next_unordered<T: std::fmt::Debug + Clone>(
-    stream: impl Stream<Item = Result<T>> + Unpin,
+    stream: impl Stream<Item = Result<T>> + Unpin + Send,
     timeout: Duration,
-    matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+    matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
 ) -> Vec<T> {
     assert_next_unordered_with_optionals(stream, timeout, matchers, vec![]).await
 }
@@ -873,10 +1066,10 @@ async fn assert_next_unordered<T: std::fmt::Debug + Clone>(
 /// Returns all received events.
 #[allow(clippy::type_complexity)]
 async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
-    mut stream: impl Stream<Item = Result<T>> + Unpin,
+    mut stream: impl Stream<Item = Result<T>> + Unpin + Send,
     timeout: Duration,
-    mut required_matchers: Vec<Box<dyn Fn(&T) -> bool>>,
-    mut optional_matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+    mut required_matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
+    mut optional_matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
 ) -> Vec<T> {
     let max = required_matchers.len() + optional_matchers.len();
     let required = required_matchers.len();
