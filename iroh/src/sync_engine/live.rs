@@ -328,6 +328,42 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         self.running_sync_connect.spawn(fut);
     }
 
+    fn download_missing_content_from_peer(&self, namespace: NamespaceId, peer: PublicKey) {
+        let (tx, rx) = flume::bounded(128);
+        let mut downloader = self.downloader.clone();
+        let sync = self.sync.clone();
+        let _r: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::task::spawn(
+            async move {
+                sync.missing_content_hashes(namespace, tx).await?;
+                let mut pending = JoinSet::new();
+                while let Ok(hash) = rx.recv_async().await {
+                    let hash = hash?;
+                    // todo timeout?
+                    // let role = Role::Candidate;
+                    let role = Role::Provider;
+                    let handle = downloader
+                        .queue(DownloadKind::Blob { hash }, vec![(peer, role).into()])
+                        .await;
+                    pending.spawn(async move {
+                        // NOTE: this ignores the result for now, simply keeping the option
+                        let res = handle.await.ok();
+                        res.map(|_| (namespace, hash))
+                    });
+                }
+                while let Some(res) = pending.join_next().await {
+                    debug!("finish missing download {res:?}");
+                    // ..
+                }
+                Ok(())
+            }
+            .instrument(tracing::error_span!(
+                "download",
+                me = self.endpoint.node_id().fmt_short(),
+                peer = peer.fmt_short()
+            )),
+        );
+    }
+
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         // cancel all subscriptions
         self.subscribers.clear();
@@ -529,6 +565,15 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 }
             }
         };
+
+        if result.is_ok()
+            && matches!(
+                origin,
+                Origin::Connect(SyncReason::DirectJoin | SyncReason::NewNeighbor)
+            )
+        {
+            self.download_missing_content_from_peer(namespace, peer);
+        }
 
         let result_for_event = match &result {
             Ok(_) => Ok(()),

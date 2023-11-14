@@ -152,6 +152,9 @@ enum ReplicaAction {
         #[debug("reply")]
         reply: oneshot::Sender<Result<DownloadPolicy>>,
     },
+    MissingContentHashes {
+        reply: flume::Sender<Result<Hash>>,
+    },
 }
 
 /// The state for an open replica.
@@ -472,6 +475,16 @@ impl SyncHandle {
         rx.await?
     }
 
+    pub async fn missing_content_hashes(
+        &self,
+        namespace: NamespaceId,
+        reply: flume::Sender<Result<Hash>>
+    ) -> Result<()> {
+        let action = ReplicaAction::MissingContentHashes { reply };
+        self.send_replica(namespace, action).await?;
+        Ok(())
+    }
+
     async fn send(&self, action: Action) -> Result<()> {
         self.tx
             .send_async(action)
@@ -672,6 +685,13 @@ impl<S: store::Store> Actor<S> {
             }
             ReplicaAction::GetDownloadPolicy { reply } => {
                 send_reply(reply, self.store.get_download_policy(&namespace))
+            }
+            ReplicaAction::MissingContentHashes { reply } => {
+                let iter = self
+                    .states
+                    .replica(&namespace)
+                    .and_then(|r| r.missing_content_hashes());
+                iter_to_channel(reply, iter)
             }
         }
     }

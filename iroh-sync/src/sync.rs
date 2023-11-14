@@ -528,6 +528,35 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         Ok(reply)
     }
 
+    /// Iterator of content hashes in this document which are not available on this node.
+    // TODO: Add `ranger::Store::content_hashes() -> impl Iterator<Item = Result<Hash>>` to save
+    // unneeded allocation of document keys.
+    pub fn missing_content_hashes<'a>(
+        &'a self,
+    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Hash>> + 'a> {
+        let Some(ref content_status_cb) = self.content_status_cb else {
+            anyhow::bail!("No content status callback set, cannot list missing content hashes.");
+        };
+        let iter = self
+            .peer
+            .store()
+            .all()
+            .map_err(|e| e.into())?
+            .filter_map(|e| {
+                let r = match e {
+                    Err(err) => Some(Err(err.into())),
+                    Ok(entry) => match content_status_cb(entry.content_hash()) {
+                        ContentStatus::Missing | ContentStatus::Incomplete => {
+                            Some(Ok(entry.content_hash()))
+                        }
+                        ContentStatus::Complete => None,
+                    },
+                };
+                r
+            });
+        Ok(iter)
+    }
+
     /// Get the namespace identifier for this [`Replica`].
     pub fn id(&self) -> NamespaceId {
         self.capability.id()
