@@ -1038,7 +1038,6 @@ impl<D: BaoStore> RpcHandler<D> {
 
         let hash_and_format = temp_tag.inner();
         let HashAndFormat { hash, .. } = *hash_and_format;
-        drop(temp_tag);
         self.inner
             .sync
             .doc_set_hash(DocSetHashRequest {
@@ -1049,6 +1048,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 size,
             })
             .await?;
+        drop(temp_tag);
         progress.send(DocImportProgress::AllDone { key }).await?;
         Ok(())
     }
