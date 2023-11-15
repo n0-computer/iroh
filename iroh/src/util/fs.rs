@@ -240,7 +240,17 @@ pub fn key_to_path(
         key
     };
 
-    let path = PathBuf::from(String::from_utf8(key.into()).context("key contains invalid data")?);
+    let mut path = PathBuf::new();
+    if key[0] == b'/' {
+        path = path.join("/");
+    }
+    for component in key
+        .split(|c| c == &b'/')
+        .map(|c| String::from_utf8(c.into()).context("key contains invalid data"))
+    {
+        let component = component?;
+        path = path.join(component);
+    }
 
     // add root if it exists
     let path = if let Some(root) = root {
