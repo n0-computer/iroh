@@ -20,7 +20,7 @@ use iroh::{
     client::{Doc, Iroh},
     rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
-    util::fs::{path_content_info, PathContent},
+    util::fs::{path_content_info, path_to_key, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
 use iroh_sync::{
@@ -725,20 +725,21 @@ where
                         Some((path_str, size, ref mut h, last_val)) => {
                             imp.add_progress(*size - *last_val);
                             imp.import_found(path_str.clone());
+                            let path = PathBuf::from(path_str.clone());
                             *h = Some(hash);
-                            let key = match key_from_path_str(
-                                root.clone(),
-                                prefix.clone(),
-                                path_str.clone(),
-                            ) {
-                                Ok(k) => k,
-                                Err(e) => {
-                                    tracing::info!("error getting key from {}, id {id}", path_str);
-                                    return Some(Err(anyhow::anyhow!(
-                                        "Issue creating a key for entry {hash:?}: {e}"
-                                    )));
-                                }
-                            };
+                            let key =
+                                match path_to_key(path, Some(prefix.clone()), Some(root.clone())) {
+                                    Ok(k) => k.to_vec(),
+                                    Err(e) => {
+                                        tracing::info!(
+                                            "error getting key from {}, id {id}",
+                                            path_str
+                                        );
+                                        return Some(Err(anyhow::anyhow!(
+                                            "Issue creating a key for entry {hash:?}: {e}"
+                                        )));
+                                    }
+                                };
                             // send update to doc
                             tracing::info!(
                                 "setting entry {} (id: {id}) to doc",
@@ -786,20 +787,6 @@ where
 
     task_imp.all_done();
     Ok(())
-}
-
-/// Creates a document key from the path, removing the full canonicalized path, and adding
-/// whatever prefix the user requests.
-fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
-    let suffix = PathBuf::from(path_str)
-        .strip_prefix(root)?
-        .to_str()
-        .map(|p| p.as_bytes())
-        .ok_or(anyhow!("could not convert path to bytes"))?
-        .to_vec();
-    let mut key = prefix.into_bytes().to_vec();
-    key.extend(suffix);
-    Ok(key)
 }
 
 #[derive(Debug, Clone)]
