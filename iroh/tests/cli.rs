@@ -21,7 +21,6 @@ use walkdir::WalkDir;
 
 const ADDR: &str = "127.0.0.1:0";
 const RPC_PORT: &str = "4999";
-const BAO_DIR: &str = "blobs.v0";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1);
@@ -234,7 +233,7 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
         IrohPaths::BaoFlatStoreMeta,
     ];
     for dir in dirs.into_iter() {
-        copy_dir_all(&dir.clone().with_root(&src), &dir.with_root(&tgt))?;
+        copy_dir_all(&dir.clone().with_root(src), &dir.with_root(tgt))?;
     }
     Ok(())
 }
@@ -423,7 +422,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
         tokio_util::task::LocalPoolHandle::new(1),
     );
     // should have some data now
-    let db_path = iroh_data_dir.join(BAO_DIR);
+    let db_path = IrohPaths::BaoFlatStoreComplete.with_root(&iroh_data_dir);
     let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 3);
