@@ -1,11 +1,11 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 #![cfg(feature = "cli")]
 use std::collections::BTreeMap;
+use std::env;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::{env, io};
 
 use anyhow::{Context, Result};
 use bao_tree::blake3;
@@ -105,10 +105,11 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<()> {
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<usize> {
     let src = src.as_ref();
     let dst = dst.as_ref();
     std::fs::create_dir_all(dst)?;
+    let mut len = 0;
     for entry in std::fs::read_dir(src)? {
         let entry = entry.with_context(|| {
             format!(
@@ -125,7 +126,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
         let src = entry.path();
         let dst = dst.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir_all(&src, &dst).with_context(|| {
+            len += copy_dir_all(&src, &dst).with_context(|| {
                 format!(
                     "failed to copy directory `{}` to `{}`",
                     src.to_string_lossy(),
@@ -140,9 +141,10 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
                     dst.to_string_lossy()
                 )
             })?;
+            len += 1;
         }
     }
-    Ok(())
+    Ok(len)
 }
 
 #[cfg(feature = "flat-db")]
@@ -156,19 +158,17 @@ enum MakePartialResult {
     Truncate(u64),
 }
 
-/// take an iroh_data_dir containing a flat file database and convert some of the files to partial files
-///
-/// Note that this assumes that both complete and partial files are in the same directory
+/// Take an iroh_data_dir containing a flat file database and convert some of the files to partial files.
 #[cfg(feature = "flat-db")]
-fn make_partial(
-    dir: impl AsRef<Path>,
-    op: impl Fn(Hash, u64) -> MakePartialResult,
-) -> io::Result<()> {
+fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResult) -> Result<()> {
+    let complete_dir = IrohPaths::BaoFlatStoreComplete.with_root(&dir);
+    let partial_dir = IrohPaths::BaoFlatStorePartial.with_root(&dir);
     use iroh_bytes::store::flat::FileName;
-    let dir = dir.as_ref();
     let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(&complete_dir)
+        .with_context(|| format!("failed to read {complete_dir:?}"))?
+    {
+        let entry = entry.with_context(|| format!("failed to read entry in {complete_dir:?}"))?;
         if !entry.file_type()?.is_file() {
             continue;
         }
@@ -194,28 +194,47 @@ fn make_partial(
         match op(hash, size.unwrap()) {
             MakePartialResult::Retain => {}
             MakePartialResult::Remove => {
-                let src = dir.join(FileName::Data(hash).to_string());
-                std::fs::remove_file(src)?;
+                let src = complete_dir.join(FileName::Data(hash).to_string());
+                std::fs::remove_file(&src)
+                    .with_context(|| format!("failed to remove file {src:?}"))?;
                 if ob {
-                    let src = dir.join(FileName::Outboard(hash).to_string());
-                    std::fs::remove_file(src)?;
+                    let src = complete_dir.join(FileName::Outboard(hash).to_string());
+                    std::fs::remove_file(&src)
+                        .with_context(|| format!("failed to remove file {src:?}"))?;
                 }
             }
             MakePartialResult::Truncate(truncated_size) => {
                 let uuid = rand::thread_rng().gen();
-                let src = dir.join(FileName::Data(hash).to_string());
-                let tgt = dir.join(FileName::PartialData(hash, uuid).to_string());
-                std::fs::rename(src, &tgt)?;
-                let file = std::fs::OpenOptions::new().write(true).open(tgt)?;
-                file.set_len(truncated_size)?;
+                let src = complete_dir.join(FileName::Data(hash).to_string());
+                let tgt = partial_dir.join(FileName::PartialData(hash, uuid).to_string());
+                std::fs::rename(&src, &tgt)
+                    .with_context(|| format!("failed to rename {src:?} to {tgt:?}"))?;
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&tgt)
+                    .with_context(|| format!("failed to open file {tgt:?}"))?;
+                file.set_len(truncated_size)
+                    .with_context(|| format!("failed to truncate {file:?} to {truncated_size}"))?;
                 drop(file);
                 if ob {
-                    let src = dir.join(FileName::Outboard(hash).to_string());
-                    let tgt = dir.join(FileName::PartialOutboard(hash, uuid).to_string());
+                    let src = complete_dir.join(FileName::Outboard(hash).to_string());
+                    let tgt = partial_dir.join(FileName::PartialOutboard(hash, uuid).to_string());
                     std::fs::rename(src, tgt)?;
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
+    let dirs = [
+        IrohPaths::BaoFlatStoreComplete,
+        IrohPaths::BaoFlatStorePartial,
+        IrohPaths::BaoFlatStoreMeta,
+    ];
+    for dir in dirs.into_iter() {
+        copy_dir_all(&dir.clone().with_root(&src), &dir.with_root(&tgt))?;
     }
     Ok(())
 }
@@ -233,20 +252,21 @@ fn cli_provide_tree_resume() -> Result<()> {
 
     let tmp = testdir!();
     let src = tmp.join("src");
+    std::fs::create_dir(&src)?;
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
     let tgt = tmp.join("tgt");
-    let tgt_work_dir = tmp.join(".iroh-tmp");
-    std::fs::create_dir(&src)?;
-    let foo_path = src.join("foo");
-    let bar_path = src.join("bar");
-    let file1 = foo_path.join("file1");
-    let file2 = bar_path.join("file2");
-    let file3 = bar_path.join("file3");
-    std::fs::create_dir(&foo_path)?;
-    std::fs::create_dir(&bar_path)?;
-    make_rand_file(10000, &file1)?;
-    make_rand_file(100000, &file2)?;
-    make_rand_file(5000, &file3)?;
+    {
+        let foo_path = src.join("foo");
+        let bar_path = src.join("bar");
+        let file1 = foo_path.join("file1");
+        let file2 = bar_path.join("file2");
+        let file3 = bar_path.join("file3");
+        std::fs::create_dir(&foo_path)?;
+        std::fs::create_dir(&bar_path)?;
+        make_rand_file(10000, &file1)?;
+        make_rand_file(100000, &file2)?;
+        make_rand_file(5000, &file3)?;
+    }
     // leave the provider running for the entire test
     let provider = make_provider_in(
         &src_iroh_data_dir,
@@ -255,10 +275,8 @@ fn cli_provide_tree_resume() -> Result<()> {
         None,
         None,
     )?;
-    let src_db_dir = src_iroh_data_dir.join(BAO_DIR);
     let count = count_input_files(&src);
     let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
-    // first test - empty work dir
     {
         println!("first test - empty work dir");
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
@@ -274,8 +292,8 @@ fn cli_provide_tree_resume() -> Result<()> {
     // second test - full work dir
     {
         println!("second test - full work dir");
-        copy_dir_all(&src_db_dir, &tgt_work_dir)?;
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -288,15 +306,15 @@ fn cli_provide_tree_resume() -> Result<()> {
     // third test - partial work dir - remove some large files
     {
         println!("third test - partial work dir - remove some large files");
-        copy_dir_all(&src_db_dir, &tgt_work_dir)?;
-        make_partial(&tgt_work_dir, |_hash, size| {
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_03");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        make_partial(&get_iroh_data_dir, |_hash, size| {
             if size == 100000 {
                 MakePartialResult::Remove
             } else {
                 MakePartialResult::Retain
             }
         })?;
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_03");
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
@@ -309,15 +327,15 @@ fn cli_provide_tree_resume() -> Result<()> {
     // fourth test - partial work dir - truncate some large files
     {
         println!("fourth test - partial work dir - truncate some large files");
-        copy_dir_all(&src_db_dir, &tgt_work_dir)?;
-        make_partial(tgt_work_dir, |_hash, size| {
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        make_partial(&get_iroh_data_dir, |_hash, size| {
             if size == 100000 {
                 MakePartialResult::Truncate(1024 * 32)
             } else {
                 MakePartialResult::Retain
             }
         })?;
-        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
         let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
