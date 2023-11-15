@@ -16,10 +16,10 @@ const MAX_RPC_STREAMS: u64 = 1024;
 
 pub mod author;
 pub mod blob;
+pub mod console;
 pub mod doc;
 pub mod doctor;
 pub mod node;
-pub mod console;
 pub mod start;
 pub mod tag;
 
