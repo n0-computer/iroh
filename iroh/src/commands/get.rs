@@ -1,13 +1,16 @@
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context as _, Result};
 use bao_tree::ChunkRanges;
+use clap::Parser;
 use futures::StreamExt;
+use iroh::ticket::blob::Ticket;
 use iroh::{
     collection::Collection,
     rpc_protocol::{BlobDownloadRequest, DownloadLocation, SetTagOption},
     util::progress::ProgressSliceWriter,
 };
+use iroh_bytes::util::runtime;
 use iroh_bytes::{
     get::{
         self,
@@ -23,10 +26,124 @@ use iroh_bytes::{
 };
 use iroh_io::ConcatenateSliceWriter;
 use iroh_net::derp::DerpMode;
+use iroh_net::key::{PublicKey, SecretKey};
+use iroh_net::NodeAddr;
 
 use crate::commands::show_download_progress;
+use crate::config::NodeConfig;
 
-use super::OutputTarget;
+#[derive(Debug, Clone, Parser)]
+pub struct GetArgs {
+    /// The hash to retrieve, as a Blake3 CID
+    #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
+    hash: Option<Hash>,
+    /// PublicKey of the provider
+    #[clap(
+        long,
+        short,
+        conflicts_with = "ticket",
+        required_unless_present = "ticket"
+    )]
+    peer: Option<PublicKey>,
+    /// Addresses of the provider
+    #[clap(long, short)]
+    addrs: Vec<SocketAddr>,
+    /// base32-encoded Request token to use for authentication, if any
+    #[clap(long)]
+    token: Option<RequestToken>,
+    /// DERP region of the provider
+    #[clap(long)]
+    region: Option<u16>,
+    /// Directory in which to save the file(s). When passed `STDOUT` will be written to stdout,
+    /// otherwise the content will be stored in the provided path.
+    ///
+    /// If the directory exists and contains a partial download, the download will
+    /// be resumed.
+    ///
+    /// Otherwise, all files in the collection will be overwritten. Other files
+    /// in the directory will be left untouched.
+    #[clap(long, short)]
+    out: OutputTarget,
+    #[clap(conflicts_with_all = &["hash", "peer", "addrs", "token"])]
+    /// Ticket containing everything to retrieve the data from a provider.
+    #[clap(long)]
+    ticket: Option<Ticket>,
+    /// If set assume that the hash refers to a collection and download it with all children.
+    #[clap(long, default_value_t = false)]
+    collection: bool,
+}
+
+/// Where the data should be stored.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+pub enum OutputTarget {
+    /// Writes to stdout
+    #[display("STDOUT")]
+    Stdout,
+    /// Writes to the provided path
+    #[display("{}", _0.display())]
+    Path(PathBuf),
+}
+
+impl From<String> for OutputTarget {
+    fn from(s: String) -> Self {
+        if s == "STDOUT" {
+            return OutputTarget::Stdout;
+        }
+
+        OutputTarget::Path(s.into())
+    }
+}
+
+impl GetArgs {
+    pub async fn run(self, config: &NodeConfig, rt: &runtime::Handle, keylog: bool) -> Result<()> {
+        let GetArgs {
+            hash,
+            peer,
+            addrs,
+            token,
+            region,
+            out,
+            ticket,
+            collection,
+        } = self;
+        let get = if let Some(ticket) = ticket {
+            GetInteractive {
+                rt: rt.clone(),
+                hash: ticket.hash(),
+                opts: ticket.as_get_options(SecretKey::generate(), config.derp_map()?),
+                token: ticket.token().cloned(),
+                format: ticket.format(),
+            }
+        } else if let (Some(peer), Some(hash)) = (peer, hash) {
+            let format = match collection {
+                true => BlobFormat::HashSeq,
+                false => BlobFormat::Raw,
+            };
+            GetInteractive {
+                rt: rt.clone(),
+                hash,
+                opts: iroh::dial::Options {
+                    peer: NodeAddr::from_parts(peer, region, addrs),
+                    keylog,
+                    derp_map: config.derp_map()?,
+                    secret_key: SecretKey::generate(),
+                },
+                token,
+                format,
+            }
+        } else {
+            anyhow::bail!("Either ticket or hash and peer must be specified")
+        };
+        tokio::select! {
+            biased;
+            res = get.get_interactive(out) => res,
+            _ = tokio::signal::ctrl_c() => {
+                println!("Ending transfer early...");
+                Ok(())
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct GetInteractive {
@@ -235,4 +352,22 @@ async fn get_to_stdout_multi(
         next = curr.next();
     };
     Ok(finishing.next().await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_output_target() {
+        assert_eq!(
+            OutputTarget::from(OutputTarget::Stdout.to_string()),
+            OutputTarget::Stdout
+        );
+
+        assert_eq!(
+            OutputTarget::from(OutputTarget::Path("hello/world".into()).to_string()),
+            OutputTarget::Path("hello/world".into()),
+        );
+    }
 }
