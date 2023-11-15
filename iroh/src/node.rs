@@ -1096,7 +1096,7 @@ impl<D: BaoStore> RpcHandler<D> {
             _ => None,
         });
         self.blob_export(
-            String::from(path.to_str().context("invalid path")?),
+            path,
             entry.content_hash(),
             false,
             false,
