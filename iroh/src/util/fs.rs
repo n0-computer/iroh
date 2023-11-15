@@ -360,11 +360,34 @@ mod tests {
     }
 
     #[test]
-    fn test_relative_canonicalized_path_to_string() {
+    fn test_canonicalized_path_to_string() {
         assert_eq!(
-            super::relative_canonicalized_path_to_string("foo/bar").unwrap(),
+            canonicalized_path_to_string("foo/bar", true).unwrap(),
             "foo/bar"
         );
+        assert_eq!(canonicalized_path_to_string("", true).unwrap(), "");
+        assert_eq!(
+            canonicalized_path_to_string("foo bar/baz/bat", true).unwrap(),
+            "foo bar/baz/bat"
+        );
+        assert_eq!(
+            canonicalized_path_to_string("/foo/bar", true).map_err(|e| e.to_string()),
+            Err("invalid path component RootDir".to_string())
+        );
+
+        assert_eq!(
+            canonicalized_path_to_string("/foo/bar", false).unwrap(),
+            "/foo/bar"
+        );
+        let path = PathBuf::new()
+            .join("/")
+            .join("Ü")
+            .join("⁰€™■･�")
+            .join("東京");
+        assert_eq!(
+            canonicalized_path_to_string(path, false).unwrap(),
+            "/Ü/⁰€™■･�/東京"
+        )
     }
 
     #[test]
