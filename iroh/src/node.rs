@@ -1087,7 +1087,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 id,
                 key: key.clone(),
                 size,
-                outpath: target.into(),
+                outpath: target,
                 hash,
             }),
             DownloadProgress::ExportProgress { id, offset } => {
