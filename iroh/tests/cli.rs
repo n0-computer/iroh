@@ -257,7 +257,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     )?;
     let src_db_dir = src_iroh_data_dir.join(BAO_DIR);
     let count = count_input_files(&src);
-    let ticket = match_provide_output(&provider, count)?;
+    let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     // first test - empty work dir
     {
         println!("first test - empty work dir");
@@ -383,7 +383,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     let provide = |path| {
         let mut child = iroh_provide(path)?;
         // wait for the provider to start
-        let _ticket = match_provide_output(&mut child, 1)?;
+        let _ticket = match_provide_output(&mut child, 1, BlobOrCollection::Collection)?;
         println!("got ticket, stopping provider {}", _ticket);
         // kill the provider via Control-C
         for pid in child.pids() {
@@ -434,7 +434,7 @@ fn cli_provide_addresses() -> Result<()> {
         Some(RPC_PORT),
     )?;
     // wait for the provider to start
-    let _ticket = match_provide_output(&mut provider, 1)?;
+    let _ticket = match_provide_output(&mut provider, 1, BlobOrCollection::Collection)?;
 
     // test output
     let get_output = cmd(iroh_bin(), ["node", "status"])
@@ -549,6 +549,7 @@ enum Input {
     /// Indicates we should pass the content as an argument to the `iroh start` command
     Path(PathBuf),
     /// Idincates we should pipe the content via `stdin` to the `iroh start` command
+    /// should point to a file, never to a directory
     Stdin(PathBuf),
 }
 
@@ -564,6 +565,21 @@ impl Input {
         match self {
             Input::Path(path) => path.to_str().unwrap().to_string(),
             Input::Stdin(_) => "STDIN".into(),
+        }
+    }
+
+    fn should_wrap(&self) -> bool {
+        match self {
+            Input::Path(path) => path.as_path().is_file(),
+            Input::Stdin(_) => false,
+        }
+    }
+
+    fn is_blob_or_collection(&self) -> BlobOrCollection {
+        match self {
+            // we currently always create a collection because single files will be wrapped
+            Input::Path(_) => BlobOrCollection::Collection,
+            Input::Stdin(_) => BlobOrCollection::Blob,
         }
     }
 }
@@ -673,14 +689,14 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
 /// the "provided" content.
 fn test_provide_get_loop(input: Input, output: Output) -> Result<()> {
     let num_blobs = count_input_files(input.as_path());
-    let wrap = !input.as_path().is_dir();
+    let wrap = input.should_wrap();
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh-data-dir");
     let mut provider = make_provider_in(&iroh_data_dir, input.clone(), wrap, None, None)?;
 
     // test provide output & scrape the ticket from stderr
-    let ticket = match_provide_output(&mut provider, num_blobs)?;
+    let ticket = match_provide_output(&mut provider, num_blobs, input.is_blob_or_collection())?;
     let out_dir = to_out_dir(output);
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");
     let get_cmd = make_get_cmd(&get_iroh_data_dir, &ticket, out_dir.clone());
@@ -746,7 +762,7 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     let mut provider = make_provider_in(&iroh_data_dir, input.clone(), true, None, None)?;
 
     // test provide output & get all in one ticket from stderr
-    let ticket = match_provide_output(&mut provider, num_blobs)?;
+    let ticket = match_provide_output(&mut provider, num_blobs, BlobOrCollection::Collection)?;
     let ticket = Ticket::from_str(&ticket).unwrap();
     let addrs = ticket
         .node_addr()
@@ -856,6 +872,11 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
     Ok(captures)
 }
 
+enum BlobOrCollection {
+    Blob,
+    Collection,
+}
+
 /// Asserts provider output, returning the all-in-one ticket.
 ///
 /// The provider output is asserted to check if it matches expected output.  The all-in-one
@@ -863,8 +884,17 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
 ///
 /// Returns an error on the first regex mismatch or if the stderr output has fewer lines
 /// than expected.
-fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> {
+fn match_provide_output<T: Read>(
+    reader: T,
+    num_blobs: usize,
+    kind: BlobOrCollection,
+) -> Result<String> {
     let reader = BufReader::new(reader);
+
+    let blob_or_collection_matcher = match kind {
+        BlobOrCollection::Collection => (r"Collection: [\da-z]{59}", 1),
+        BlobOrCollection::Blob => (r"Blob: [\da-z]{59}", 1),
+    };
 
     let mut caps = assert_matches_line(
         reader,
@@ -876,7 +906,7 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
             (r"- \S*: \d*.?\d*? ?[BKMGT]i?B?", num_blobs as i64),
             (r"Total: [_\w\d-]*", 1),
             (r"", 1),
-            (r"Collection: [\da-z]{59}", 1),
+            blob_or_collection_matcher,
             (r"All-in-one ticket: ([_a-zA-Z\d-]*)", 1),
         ],
     );

@@ -196,6 +196,10 @@ impl BlobCommands {
                     }
                 };
 
+                if format != BlobFormat::Raw && out == Some(OutputTarget::Stdout) {
+                    return Err(anyhow::anyhow!("The input arguments refer to a collection of blobs and output is set to STDOUT. Only single blobs may be passed in this case."));
+                }
+
                 if node_addr.info.is_empty() {
                     return Err(anyhow::anyhow!(
                         "no derp region provided and no direct addresses provided"
@@ -237,9 +241,10 @@ impl BlobCommands {
 
                 show_download_progress(hash, &mut stream).await?;
 
+                // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
+                // single hash and not a hashseq.
                 if out == Some(OutputTarget::Stdout) {
                     let mut blob_read = iroh.blobs.read(hash).await?;
-
                     tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
                 }
 
