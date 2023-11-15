@@ -19,7 +19,7 @@ pub mod blob;
 pub mod doc;
 pub mod doctor;
 pub mod node;
-pub mod repl;
+pub mod console;
 pub mod start;
 pub mod tag;
 
@@ -70,13 +70,13 @@ impl Cli {
                     self.start_args
                         .run_with_command(&rt, &config, |iroh| async move {
                             let env = ConsoleEnv::for_console()?;
-                            repl::run(&iroh, &env).await
+                            console::run(&iroh, &env).await
                         })
                         .await
                 } else {
                     let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
                     let env = ConsoleEnv::for_console()?;
-                    repl::run(&iroh, &env).await
+                    console::run(&iroh, &env).await
                 }
             }
             Commands::Rpc(command) => {
