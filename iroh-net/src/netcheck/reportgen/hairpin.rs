@@ -137,7 +137,7 @@ impl Actor {
             Ok(Err(_)) => bail!("netcheck actor dropped stun response channel"),
             Err(_) => false, // Elapsed
         };
-        tracing::info!(
+        tracing::debug!(
             "hairpinning done in {:?}, res: {:?}",
             now.elapsed(),
             hairpinning_works
