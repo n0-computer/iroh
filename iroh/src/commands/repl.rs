@@ -7,7 +7,7 @@ use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::RpcCommands,
+    commands::rpc::RpcCommands,
     config::{ConsoleEnv, ConsolePaths},
 };
 

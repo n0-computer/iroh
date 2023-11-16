@@ -120,6 +120,7 @@ impl Store {
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+            let _table = write_tx.open_table(AUTHORS_TABLE)?;
         }
         write_tx.commit()?;
 
@@ -777,6 +778,9 @@ mod tests {
     fn test_basics() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
         let store = Store::new(dbfile.path())?;
+
+        let authors: Vec<_> = store.list_authors()?.collect::<Result<_>>()?;
+        assert!(authors.is_empty());
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
