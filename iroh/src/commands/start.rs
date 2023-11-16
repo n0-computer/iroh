@@ -167,7 +167,7 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn start_node(
+pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     derp_map: Option<DerpMap>,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
