@@ -117,7 +117,7 @@ pub enum ReplCmd {
     Exit,
 }
 
-fn try_parse_cmd<C: Subcommand>(s: &str) -> anyhow::Result<C> {
+pub fn try_parse_cmd<C: Subcommand>(s: &str) -> anyhow::Result<C> {
     let args = shell_words::split(s)?;
     let cmd = clap::Command::new("repl");
     let cmd = C::augment_subcommands(cmd);

@@ -52,6 +52,12 @@ pub enum Commands {
     /// to serve on startup. Data can also be added after startup with commands like
     /// `iroh blob add` or by adding content to documents.
     Start {
+        /// Execute console commands on the running node
+        ///
+        /// All commands expect `start`, `console`, and `doctor` are valid.
+        #[clap(short, long)]
+        exec: Vec<String>,
+
         /// Optionally add a file or folder to the node.
         ///
         /// If set to `STDIN`, the data will be read from stdin.
@@ -113,7 +119,11 @@ impl Cli {
                     command.run(&iroh, &env).await
                 }
             }
-            Commands::Start { add, add_options } => {
+            Commands::Start {
+                add,
+                add_options,
+                exec,
+            } => {
                 // if adding data on start, exit early if the path doesn't exist
                 if let Some(BlobSource::Path(ref path)) = add {
                     ensure!(
@@ -131,10 +141,20 @@ impl Cli {
 
                 self.start_args
                     .run_with_command(&rt, &config, RunType::UntilStopped, |client| async move {
-                        match add_command {
-                            None => Ok(()),
-                            Some(command) => command.run(&client).await,
+                        if let Some(command) = add_command {
+                            command.run(&client).await?;
                         }
+                        if !exec.is_empty() {
+                            let env = ConsoleEnv::for_cli()?;
+                            for line in exec {
+                                let cmd = console::try_parse_cmd::<RpcCommands>(&line)
+                                    .with_context(|| {
+                                        format!("Failed to parse --exec command `{line}`")
+                                    })?;
+                                cmd.run(&client, &env).await?;
+                            }
+                        }
+                        Ok(())
                     })
                     .await
             }
