@@ -385,7 +385,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
                 ADDR,
                 "--rpc-port",
                 "0",
-                "--source",
+                "--add",
                 path.to_str().unwrap(),
                 "--wrap",
             ],
@@ -623,7 +623,7 @@ fn make_provider_in(
     if wrap {
         args.push("--wrap");
     }
-    args.push("--source");
+    args.push("--add");
     let arg = input.as_arg();
     args.push(&arg);
 
