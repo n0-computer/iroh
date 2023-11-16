@@ -89,7 +89,7 @@ impl StartArgs {
         T: Future<Output = Result<()>> + 'static,
     {
         #[cfg(feature = "metrics")]
-        let metrics_fut = start_metrics_server(config.metrics_addr, &rt);
+        let metrics_fut = start_metrics_server(config.metrics_addr, rt);
 
         let res = self
             .run_with_command_inner(rt, config, run_type, command)
@@ -105,7 +105,7 @@ impl StartArgs {
         res
     }
 
-    pub async fn run_with_command_inner<F, T>(
+    async fn run_with_command_inner<F, T>(
         self,
         rt: &runtime::Handle,
         config: &NodeConfig,
