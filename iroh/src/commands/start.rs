@@ -24,20 +24,15 @@ use iroh_net::{
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tracing::{info_span, Instrument};
 
-use crate::{
-    commands::rpc::clear_rpc,
-    config::{get_iroh_data_root_with_env, path_with_env, NodeConfig},
-};
+use crate::config::{iroh_data_root, path_with_env, NodeConfig};
 
-use super::{
-    rpc::{store_rpc, RpcStatus},
-    RequestTokenOptions,
-};
+use super::{rpc::RpcStatus, RequestTokenOptions};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
+/// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Eq, PartialEq)]
 pub enum RunType {
     /// Run a single command, and then shutdown the node.
@@ -100,7 +95,7 @@ impl StartArgs {
             metrics_fut.abort();
         }
 
-        clear_rpc(get_iroh_data_root_with_env()?).await?;
+        RpcStatus::clear(iroh_data_root()?).await?;
 
         res
     }
@@ -132,7 +127,7 @@ impl StartArgs {
                 match command(client).await {
                     Err(err) => Err(err),
                     Ok(()) => {
-                        // keep the task open forever if not running in single-command loop
+                        // keep the task open forever if not running in single-command mode
                         if run_type == RunType::UntilStopped {
                             futures::future::pending().await
                         }
@@ -177,7 +172,7 @@ impl StartArgs {
             eprintln!("Request token: {}", t);
         }
 
-        let rpc_status = RpcStatus::load(get_iroh_data_root_with_env()?).await?;
+        let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
         match rpc_status {
             RpcStatus::Running(port) => {
                 bail!("iroh is already running on port {}", port);
@@ -280,7 +275,7 @@ async fn make_rpc_endpoint(
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
 
     // store rpc endpoint
-    store_rpc(get_iroh_data_root_with_env()?, actual_rpc_port).await?;
+    RpcStatus::store(iroh_data_root()?, actual_rpc_port).await?;
 
     Ok(rpc_endpoint)
 }

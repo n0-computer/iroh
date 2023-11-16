@@ -123,34 +123,34 @@ impl RpcStatus {
             Ok(RpcStatus::Stopped)
         }
     }
-}
 
-/// Store the current rpc status.
-pub async fn store_rpc(root: impl AsRef<Path>, rpc_port: u16) -> Result<()> {
-    let p = IrohPaths::RpcLock.with_root(root);
-    trace!("storing RPC lock: {}", p.display());
+    /// Store the current rpc status.
+    pub async fn store(root: impl AsRef<Path>, rpc_port: u16) -> Result<()> {
+        let p = IrohPaths::RpcLock.with_root(root);
+        trace!("storing RPC lock: {}", p.display());
 
-    ensure!(!p.exists(), "iroh is already running");
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent)
+        ensure!(!p.exists(), "iroh is already running");
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .context("creating parent dir")?;
+        }
+        fs::write(&p, &rpc_port.to_le_bytes())
             .await
-            .context("creating parent dir")?;
+            .context("writing rpc lock file")?;
+        Ok(())
     }
-    fs::write(&p, &rpc_port.to_le_bytes())
-        .await
-        .context("writing rpc lock file")?;
-    Ok(())
-}
 
-/// Cleans up an existing rpc lock
-pub async fn clear_rpc(root: impl AsRef<Path>) -> Result<()> {
-    let p = IrohPaths::RpcLock.with_root(root);
-    trace!("clearing RPC lock: {}", p.display());
+    /// Cleans up an existing rpc lock
+    pub async fn clear(root: impl AsRef<Path>) -> Result<()> {
+        let p = IrohPaths::RpcLock.with_root(root);
+        trace!("clearing RPC lock: {}", p.display());
 
-    // ignore errors
-    tokio::fs::remove_file(&p).await.ok();
+        // ignore errors
+        tokio::fs::remove_file(&p).await.ok();
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -162,7 +162,7 @@ mod tests {
         let dir = testdir::testdir!();
 
         let rpc_port = 7778;
-        store_rpc(&dir, rpc_port).await.unwrap();
+        RpcStatus::store(&dir, rpc_port).await.unwrap();
         let status = RpcStatus::load(&dir).await.unwrap();
         assert_eq!(status, RpcStatus::Stopped);
         let p = IrohPaths::RpcLock.with_root(&dir);

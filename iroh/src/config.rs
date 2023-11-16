@@ -39,17 +39,8 @@ pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
 
 /// Get the path for this [`IrohPaths`] by joining the name to `IROH_DATA_DIR` environment variable.
 pub fn path_with_env(p: IrohPaths) -> Result<PathBuf> {
-    let root = get_iroh_data_root_with_env()?;
+    let root = iroh_data_root()?;
     Ok(p.with_root(root))
-}
-
-/// Get the current root for [`IrohPaths`].
-pub fn get_iroh_data_root_with_env() -> Result<PathBuf> {
-    let mut root = iroh_data_root()?;
-    if !root.is_absolute() {
-        root = std::env::current_dir()?.join(root);
-    }
-    Ok(root)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -396,19 +387,19 @@ pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
-    if let Some(val) = env::var_os("IROH_DATA_DIR") {
-        return Ok(PathBuf::from(val));
-    }
-    let path = dirs_next::data_dir().ok_or_else(|| {
-        anyhow!("operating environment provides no directory for application data")
-    })?;
-    Ok(path.join(IROH_DIR))
-}
-
-/// Path that leads to a file in the iroh data directory.
-#[allow(dead_code)]
-pub fn iroh_data_path(file_name: &Path) -> Result<PathBuf> {
-    let path = iroh_data_root()?.join(file_name);
+    let path = if let Some(val) = env::var_os("IROH_DATA_DIR") {
+        PathBuf::from(val)
+    } else {
+        let path = dirs_next::data_dir().ok_or_else(|| {
+            anyhow!("operating environment provides no directory for application data")
+        })?;
+        path.join(IROH_DIR)
+    };
+    let path = if !path.is_absolute() {
+        std::env::current_dir()?.join(path)
+    } else {
+        path
+    };
     Ok(path)
 }
 
