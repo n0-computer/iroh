@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
 use iroh_bytes::{protocol::RequestToken, util::runtime};
 
-use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
+use crate::config::{iroh_data_root, ConsoleEnv, NodeConfig};
 
 use self::blob::{BlobAddOptions, BlobSource};
 use self::rpc::{RpcCommands, RpcStatus};
@@ -147,7 +147,7 @@ impl Cli {
 }
 
 async fn iroh_quic_connect(rt: runtime::Handle) -> Result<iroh::client::quic::Iroh> {
-    let root = get_iroh_data_root_with_env()?;
+    let root = iroh_data_root()?;
     let rpc_status = RpcStatus::load(root).await?;
     match rpc_status {
         RpcStatus::Stopped => {
