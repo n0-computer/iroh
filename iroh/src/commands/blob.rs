@@ -35,7 +35,15 @@ use tokio::io::AsyncWriteExt;
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlobCommands {
     /// Add data from PATH to the running node.
-    Add(BlobAddOptions),
+    Add {
+        /// Path to a file or folder.
+        ///
+        /// If set to `STDIN`, the data will be read from stdin.
+        source: BlobSource,
+
+        #[clap(flatten)]
+        options: BlobAddOptions,
+    },
     /// Download data to the running node's database and provide it.
     ///
     /// In addition to downloading the data, you can also specify an optional output directory
@@ -253,10 +261,13 @@ impl BlobCommands {
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { repair } => validate(iroh, repair).await,
-            Self::Add(opts) => {
+            Self::Add {
+                source: path,
+                options,
+            } => {
                 // TODO: This is where we are missing the request token from the running
                 // node (last argument to run_with_opts).
-                add_with_opts(iroh, opts, None).await
+                add_with_opts(iroh, path, options, None).await
             }
             Self::Share {
                 hash,
@@ -317,14 +328,6 @@ impl BlobCommands {
 /// Options for the `blob add` command.
 #[derive(clap::Args, Debug, Clone)]
 pub struct BlobAddOptions {
-    /// The source of the file or folder to add.
-    ///
-    /// If `STDIN` is specified, the data will be read from stdin.
-    ///
-    /// When left empty no content is added.
-    #[clap(long)]
-    pub source: Option<BlobSource>,
-
     /// Add in place
     ///
     /// Set this to true only if you are sure that the data in its current location
@@ -621,6 +624,7 @@ pub enum TicketOption {
 
 pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
     client: &iroh::client::Iroh<C>,
+    source: BlobSource,
     opts: BlobAddOptions,
     request_token: Option<RequestToken>,
 ) -> Result<()> {
@@ -632,13 +636,9 @@ pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
         true => TicketOption::None,
         false => TicketOption::Print(request_token),
     };
-    let source = match opts.source {
-        None => {
-            // Nothing to do
-            return Ok(());
-        }
-        Some(BlobSource::Stdin) => BlobSourceIroh::Stdin,
-        Some(BlobSource::Path(path)) => BlobSourceIroh::LocalFs {
+    let source = match source {
+        BlobSource::Stdin => BlobSourceIroh::Stdin,
+        BlobSource::Path(path) => BlobSourceIroh::LocalFs {
             path,
             in_place: opts.in_place,
         },

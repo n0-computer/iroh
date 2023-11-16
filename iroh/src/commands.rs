@@ -1,18 +1,15 @@
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use anyhow::{bail, ensure, Context, Result};
+use clap::Parser;
 use iroh_bytes::{protocol::RequestToken, util::runtime};
 
 use crate::config::{get_iroh_data_root_with_env, ConsoleEnv, NodeConfig};
 
-use self::blob::BlobAddOptions;
+use self::blob::{BlobAddOptions, BlobSource};
 use self::rpc::{RpcCommands, RpcStatus};
-use self::start::StartArgs;
-
-const MAX_RPC_CONNECTIONS: u32 = 16;
-const MAX_RPC_STREAMS: u64 = 1024;
+use self::start::{RunType, StartArgs};
 
 pub mod author;
 pub mod blob;
@@ -20,10 +17,9 @@ pub mod console;
 pub mod doc;
 pub mod doctor;
 pub mod node;
+pub mod rpc;
 pub mod start;
 pub mod tag;
-
-mod rpc;
 
 /// iroh is a tool for syncing bytes
 /// https://iroh.computer/docs
@@ -45,6 +41,111 @@ pub struct Cli {
     start_args: StartArgs,
 }
 
+#[derive(Parser, Debug, Clone)]
+pub enum Commands {
+    /// Start an iroh node
+    ///
+    /// A node is a long-running process that serves data and connects to other nodes.
+    /// The console, doc, author, blob, node, and tag commands require a running node.
+    ///
+    /// start optionally takes a `--add SOURCE` option, which can be a file or a folder
+    /// to serve on startup. Data can also be added after startup with commands like
+    /// `iroh blob add` or by adding content to documents.
+    Start {
+        /// Optionally add a file or folder to the node.
+        ///
+        /// If set to `STDIN`, the data will be read from stdin.
+        ///
+        /// When left empty no content is added.
+        #[clap(long)]
+        add: Option<BlobSource>,
+
+        /// Options when adding data.
+        #[clap(flatten)]
+        add_options: BlobAddOptions,
+    },
+
+    /// Open the iroh console
+    ///
+    /// The console is a REPL for interacting with a running iroh node.
+    /// For more info on available commands, see https://iroh.computer/docs/api
+    Console,
+
+    #[clap(flatten)]
+    Rpc(#[clap(subcommand)] RpcCommands),
+
+    /// Diagnostic commands for the derp relay protocol.
+    Doctor {
+        /// Commands for doctor - defined in the mod
+        #[clap(subcommand)]
+        command: self::doctor::Commands,
+    },
+}
+
+impl Cli {
+    pub async fn run(self, rt: runtime::Handle) -> Result<()> {
+        match self.command {
+            Commands::Console => {
+                let env = ConsoleEnv::for_console()?;
+                if self.start {
+                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    self.start_args
+                        .run_with_command(&rt, &config, RunType::SingleCommand, |iroh| async move {
+                            console::run(&iroh, &env).await
+                        })
+                        .await
+                } else {
+                    let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
+                    console::run(&iroh, &env).await
+                }
+            }
+            Commands::Rpc(command) => {
+                let env = ConsoleEnv::for_cli()?;
+                if self.start {
+                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    self.start_args
+                        .run_with_command(&rt, &config, RunType::SingleCommand, |iroh| async move {
+                            command.run(&iroh, &env).await
+                        })
+                        .await
+                } else {
+                    let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
+                    command.run(&iroh, &env).await
+                }
+            }
+            Commands::Start { add, add_options } => {
+                // if adding data on start, exit early if the path doesn't exist
+                if let Some(BlobSource::Path(ref path)) = add {
+                    ensure!(
+                        path.exists(),
+                        "Cannot provide nonexistent path: {}",
+                        path.display()
+                    );
+                }
+                let config = NodeConfig::from_env(self.config.as_deref())?;
+
+                let add_command = add.map(|source| blob::BlobCommands::Add {
+                    source,
+                    options: add_options,
+                });
+
+                self.start_args
+                    .run_with_command(&rt, &config, RunType::UntilStopped, |client| async move {
+                        match add_command {
+                            None => Ok(()),
+                            Some(command) => command.run(&client).await,
+                        }
+                    })
+                    .await
+            }
+            Commands::Doctor { command } => {
+                let config = NodeConfig::from_env(self.config.as_deref())?;
+                self::doctor::run(command, &config).await
+            }
+        }
+    }
+}
+
 async fn iroh_quic_connect(rt: runtime::Handle) -> Result<iroh::client::quic::Iroh> {
     let root = get_iroh_data_root_with_env()?;
     let rpc_status = RpcStatus::load(root).await?;
@@ -59,121 +160,6 @@ async fn iroh_quic_connect(rt: runtime::Handle) -> Result<iroh::client::quic::Ir
             Ok(iroh)
         }
     }
-}
-
-impl Cli {
-    pub async fn run(self, rt: runtime::Handle) -> Result<()> {
-        match self.command {
-            Commands::Console => {
-                if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
-                    self.start_args
-                        .run_with_command(&rt, &config, |iroh| async move {
-                            let env = ConsoleEnv::for_console()?;
-                            console::run(&iroh, &env).await
-                        })
-                        .await
-                } else {
-                    let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
-                    let env = ConsoleEnv::for_console()?;
-                    console::run(&iroh, &env).await
-                }
-            }
-            Commands::Rpc(command) => {
-                if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
-                    self.start_args
-                        .run_with_command(&rt, &config, |iroh| async move {
-                            let env = ConsoleEnv::for_cli()?;
-                            command.run(&iroh, &env).await
-                        })
-                        .await
-                } else {
-                    let iroh = iroh_quic_connect(rt).await.context("rpc connect")?;
-                    let env = ConsoleEnv::for_cli()?;
-                    command.run(&iroh, &env).await
-                }
-            }
-            Commands::Full(command) => {
-                let config = NodeConfig::from_env(self.config.as_deref())?;
-
-                #[cfg(feature = "metrics")]
-                let metrics_fut = start_metrics_server(config.metrics_addr, &rt);
-
-                let res = match command {
-                    FullCommands::Start { add_options } => {
-                        self.start_args.run(&rt, &config, add_options).await
-                    }
-                    FullCommands::Doctor { command } => self::doctor::run(command, &config).await,
-                };
-
-                #[cfg(feature = "metrics")]
-                if let Some(metrics_fut) = metrics_fut {
-                    metrics_fut.abort();
-                }
-
-                res
-            }
-        }
-    }
-}
-
-#[derive(Parser, Debug, Clone)]
-pub enum Commands {
-    /// Open the iroh console
-    ///
-    /// The console is a REPL for interacting with a running iroh node.
-    /// For more info on available commands, see https://iroh.computer/docs/api
-    Console,
-    #[clap(flatten)]
-    Full(#[clap(subcommand)] FullCommands),
-    #[clap(flatten)]
-    Rpc(#[clap(subcommand)] RpcCommands),
-}
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Subcommand, Debug, Clone)]
-pub enum FullCommands {
-    /// Start an iroh node
-    ///
-    /// A node is a long-running process that serves data and connects to other nodes.
-    /// The console, doc, author, blob, node, and tag commands require a running node.
-    ///
-    /// start optionally takes a PATH argument, which can be a file or a folder to serve on startup.
-    /// If PATH is a folder all files in that folder will be served. If no PATH is specified start
-    /// reads from STDIN.
-    /// Data can be added after startup with commands like `iroh blob add`
-    /// or by adding content to documents.
-    Start {
-        /// Add data when starting the node
-        #[clap(flatten)]
-        add_options: BlobAddOptions,
-    },
-    /// Diagnostic commands for the derp relay protocol.
-    Doctor {
-        /// Commands for doctor - defined in the mod
-        #[clap(subcommand)]
-        command: self::doctor::Commands,
-    },
-}
-
-#[cfg(feature = "metrics")]
-pub fn start_metrics_server(
-    metrics_addr: Option<SocketAddr>,
-    rt: &iroh_bytes::util::runtime::Handle,
-) -> Option<tokio::task::JoinHandle<()>> {
-    // doesn't start the server if the address is None
-    if let Some(metrics_addr) = metrics_addr {
-        // metrics are initilaized in iroh::node::Node::spawn
-        // here we only start the server
-        return Some(rt.main().spawn(async move {
-            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
-                eprintln!("Failed to start metrics server: {e}");
-            }
-        }));
-    }
-    tracing::info!("Metrics server not started, no address provided");
-    None
 }
 
 #[derive(Debug, Clone)]
