@@ -893,6 +893,9 @@ pub async fn show_download_progress(
             DownloadProgress::AllDone => {
                 break;
             }
+            DownloadProgress::Abort(e) => {
+                bail!("download aborted: {:?}", e);
+            }
             _ => {}
         }
     }
