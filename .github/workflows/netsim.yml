@@ -122,8 +122,8 @@ jobs:
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
-          sudo python3 main.py sims/iroh
-          sudo python3 main.py sims/integration
+          sudo python3 main.py --integration sims/iroh
+          sudo python3 main.py --integration sims/integration
         else
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json
