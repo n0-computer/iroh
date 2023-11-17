@@ -14,10 +14,7 @@ use iroh::{
     rpc_protocol::{DocTicket, SetTagOption, ShareMode},
     sync_engine::LiveEvent,
 };
-use iroh_net::{
-    key::{PublicKey, SecretKey},
-    NodeAddr,
-};
+use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, info};
@@ -433,18 +430,14 @@ async fn sync_download_missing() -> Result<()> {
     let author0 = clients[0].authors.create().await?;
 
     // these are the hashes that we insert into the doc (but not in the blob store initially)
-    let contents = vec![("foo", Hash::new(b"foo")), ("bar", Hash::new(b"bar"))];
+    let contents = ["foo", "bazoo"];
+    let hashes = contents.map(|s| Hash::new(s.as_bytes()));
 
-    // set entries in doc0 (but without inserting the content into the blob store)
-    for (content, hash) in &contents {
-        doc0.set_hash(
-            author0,
-            format!("key:{content}"),
-            *hash,
-            content.len() as u64,
-        )
+    doc0.set_hash(author0, contents[0], hashes[0], contents[1].len() as u64)
         .await?;
-    }
+
+    doc0.set_hash(author0, contents[1], hashes[1], contents[1].len() as u64)
+        .await?;
 
     // task that waits for exepected events on node0
     let peer1 = nodes[1].node_id();
@@ -475,8 +468,8 @@ async fn sync_download_missing() -> Result<()> {
     docs.push(doc1.clone());
 
     // ensure node1 events
-    let hash0 = contents[0].1;
-    let hash1 = contents[1].1;
+    let hash0 = hashes[0];
+    let hash1 = hashes[1];
     assert_next_unordered(
         &mut events1,
         TIMEOUT,
@@ -495,23 +488,7 @@ async fn sync_download_missing() -> Result<()> {
 
     // ensure node0 events
     task0.await?;
-
     println!("finish sync doc1 with doc0");
-    println!("sleep 1s");
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    for (i, doc) in docs.iter().enumerate() {
-        let mut entries = doc.get_many(Query::all()).await?;
-        while let Some(entry) = entries.next().await {
-            let entry = entry?;
-            let content = doc.read_to_bytes(&entry).await;
-            println!(
-                "doc {i} entry {}: content available? {}",
-                String::from_utf8_lossy(entry.key()),
-                content.is_ok()
-            );
-        }
-    }
 
     println!("doc1 leave");
     doc1.leave().await?;
@@ -529,7 +506,7 @@ async fn sync_download_missing() -> Result<()> {
         .await?;
     let mut events2 = doc2.subscribe().await?;
     println!("start sync doc2 with doc0");
-    let _ = clients[2].docs.import(ticket.clone()).await?;
+    clients[2].docs.import(ticket.clone()).await?;
     docs.push(doc2.clone());
 
     assert_next_unordered(
@@ -549,59 +526,66 @@ async fn sync_download_missing() -> Result<()> {
         ],
     )
     .await;
-
-    // assert_next_unordered(
-    //     &mut events1,
-    //     TIMEOUT,
-    //     vec![
-    //         Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
-    //         Box::new(move |e| match_sync_finished(e, peer2)),
-    //     ],
-    // )
-    // .await;
-
     println!("finished sync doc2 with doc0");
-
-    tokio::task::spawn(async move {
-        while let Some(ev) = events1.next().await {
-            println!("doc1 event {ev:?}");
-        }
-    });
 
     println!("doc0 leave");
     doc0.leave().await?;
     // nodes[0].shutdown();
 
     println!("doc2 add content");
-    clients[2]
+    let doc2hash0 = clients[2]
         .blobs
         .add_bytes(b"foo".to_vec().into(), SetTagOption::Auto)
-        .await?;
-    clients[2]
+        .await?
+        .hash;
+    let doc2hash1 = clients[2]
         .blobs
-        .add_bytes(b"bar".to_vec().into(), SetTagOption::Auto)
-        .await?;
+        .add_bytes(b"bazoo".to_vec().into(), SetTagOption::Auto)
+        .await?
+        .hash;
+    assert_eq!(doc2hash0, hash0);
+    assert_eq!(doc2hash1, hash1);
 
-    let ticket = doc2.share(ShareMode::Read).await?;
+    let ticket2 = doc2.share(ShareMode::Read).await?;
 
     println!("start sync doc1 with doc2");
-    doc1.start_sync(ticket.nodes).await?;
+    doc1.start_sync(ticket2.nodes).await?;
 
-    println!("sleep 5s");
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        TIMEOUT,
+        vec![
+            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+        ],
+        vec![
+            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
+            Box::new(move |e| matches!(e, LiveEvent::NeighborDown(peer) if *peer == peer0)),
+            Box::new(move |e| matches!(e, LiveEvent::SyncFinished(e) if e.peer == peer2 && e.result.is_ok())),
+            Box::new(move |e| matches!(e, LiveEvent::SyncFinished(e) if e.peer == peer0 && e.result.is_err())),
+    ])
+    .await;
 
-    for (i, doc) in docs.iter().enumerate() {
-        let mut entries = doc.get_many(Query::all()).await?;
-        while let Some(entry) = entries.next().await {
-            let entry = entry?;
-            let content = doc.read_to_bytes(&entry).await;
-            println!(
-                "doc {i} entry {}: content available? {}",
-                String::from_utf8_lossy(entry.key()),
-                content.is_ok()
-            );
-        }
-    }
+    assert!(get_latest(&doc0, contents[0].as_bytes()).await.is_err());
+    assert!(get_latest(&doc0, contents[1].as_bytes()).await.is_err());
+    assert_eq!(
+        get_latest(&doc1, contents[0].as_bytes()).await?,
+        contents[0].as_bytes().to_vec()
+    );
+    assert_eq!(
+        get_latest(&doc1, contents[1].as_bytes()).await?,
+        contents[1].as_bytes().to_vec()
+    );
+    assert_eq!(
+        get_latest(&doc2, contents[0].as_bytes()).await?,
+        contents[0].as_bytes().to_vec()
+    );
+    assert_eq!(
+        get_latest(&doc2, contents[1].as_bytes()).await?,
+        contents[1].as_bytes().to_vec()
+    );
 
     Ok(())
 }

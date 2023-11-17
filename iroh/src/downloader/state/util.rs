@@ -34,9 +34,9 @@ impl<T> Default for IndexSet<T> {
     }
 }
 impl<T: std::hash::Hash + Eq + PartialEq + Copy> IndexSet<T> {
-    pub fn contains(&self, item: &T) -> bool {
-        self.items.contains(item)
-    }
+    // pub fn contains(&self, item: &T) -> bool {
+    //     self.items.contains(item)
+    // }
 
     pub fn insert(&mut self, item: T) -> bool {
         if self.items.insert(item) {
@@ -46,32 +46,32 @@ impl<T: std::hash::Hash + Eq + PartialEq + Copy> IndexSet<T> {
             false
         }
     }
-    pub fn push_front(&mut self, item: T) -> bool {
-        if self.items.insert(item) {
-            self.order.push_front(item);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn pop_front(&mut self) -> Option<T> {
-        if let Some(item) = self.order.pop_front() {
-            self.items.remove(&item);
-            Some(item)
-        } else {
-            None
-        }
-    }
-
-    pub fn pop_back(&mut self) -> Option<T> {
-        if let Some(item) = self.order.pop_back() {
-            self.items.remove(&item);
-            Some(item)
-        } else {
-            None
-        }
-    }
+    // pub fn push_front(&mut self, item: T) -> bool {
+    //     if self.items.insert(item) {
+    //         self.order.push_front(item);
+    //         true
+    //     } else {
+    //         false
+    //     }
+    // }
+    //
+    // pub fn pop_front(&mut self) -> Option<T> {
+    //     if let Some(item) = self.order.pop_front() {
+    //         self.items.remove(&item);
+    //         Some(item)
+    //     } else {
+    //         None
+    //     }
+    // }
+    //
+    // pub fn pop_back(&mut self) -> Option<T> {
+    //     if let Some(item) = self.order.pop_back() {
+    //         self.items.remove(&item);
+    //         Some(item)
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
         self.order.iter()
@@ -83,26 +83,26 @@ impl<T: std::hash::Hash + Eq + PartialEq + Copy> IndexSet<T> {
         res
     }
 
-    pub fn drain(&mut self) -> Drain<'_, T> {
-        Drain::new(self)
-    }
+    // pub fn drain(&mut self) -> Drain<'_, T> {
+    //     Drain::new(self)
+    // }
 }
 
-pub struct Drain<'a, T> {
-    inner: &'a mut IndexSet<T>,
-}
-impl<'a, T> Drain<'a, T> {
-    fn new(inner: &'a mut IndexSet<T>) -> Self {
-        Self { inner }
-    }
-}
-impl<'a, T: std::hash::Hash + Eq + PartialEq> Iterator for Drain<'a, T> {
-    type Item = T;
-    fn next(&mut self) -> Option<Self::Item> {
-        let item = self.inner.order.pop_front();
-        if let Some(ref item) = item {
-            self.inner.items.remove(&item);
-        }
-        item
-    }
-}
+// pub struct Drain<'a, T> {
+//     inner: &'a mut IndexSet<T>,
+// }
+// impl<'a, T> Drain<'a, T> {
+//     fn new(inner: &'a mut IndexSet<T>) -> Self {
+//         Self { inner }
+//     }
+// }
+// impl<'a, T: std::hash::Hash + Eq + PartialEq> Iterator for Drain<'a, T> {
+//     type Item = T;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         let item = self.inner.order.pop_front();
+//         if let Some(ref item) = item {
+//             self.inner.items.remove(&item);
+//         }
+//         item
+//     }
+// }

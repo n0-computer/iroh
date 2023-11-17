@@ -478,7 +478,7 @@ impl SyncHandle {
     pub async fn missing_content_hashes(
         &self,
         namespace: NamespaceId,
-        reply: flume::Sender<Result<Hash>>
+        reply: flume::Sender<Result<Hash>>,
     ) -> Result<()> {
         let action = ReplicaAction::MissingContentHashes { reply };
         self.send_replica(namespace, action).await?;
