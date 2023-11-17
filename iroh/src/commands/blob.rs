@@ -173,6 +173,9 @@ impl BlobCommands {
                                 address
                             };
 
+                            // prefer direct arg over ticket
+                            let derp_region = derp_region.or(info.derp_region);
+
                             NodeAddr::from_parts(node_id, derp_region, addresses)
                         };
 
