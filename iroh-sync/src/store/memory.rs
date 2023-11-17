@@ -516,6 +516,7 @@ impl Iterator for RecordsIter<'_> {
 }
 
 /// Wrapper around [`QueryIterator`]
+#[derive(Debug)]
 pub struct RangerQueryIterator<'a>(QueryIterator<'a>);
 impl<'a> Iterator for RangerQueryIterator<'a> {
     type Item = Result<SignedEntry, Infallible>;
