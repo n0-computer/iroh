@@ -741,18 +741,19 @@ async fn run_probe(
     debug!("starting probe");
 
     let (would_help_tx, would_help_rx) = oneshot::channel();
-    reportstate
+    if let Err(err) = reportstate
         .send(Message::ProbeWouldHelp(
             probe.clone(),
             derp_node.clone(),
             would_help_tx,
         ))
         .await
-        .map_err(|err| {
-            error!("Failed to check if probe would help: {err:#}");
-            err
-        })
-        .map_err(|err| ProbeError::AbortSet(err.into(), probe.clone()))?;
+    {
+        // this happens on shutdown or if the report is already finished
+        debug!("Failed to check if probe would help: {err:#}");
+        return Err(ProbeError::AbortSet(err.into(), probe.clone()));
+    }
+
     if !would_help_rx.await.map_err(|_| {
         ProbeError::AbortSet(
             anyhow!("ReportCheck actor dropped sender while waiting for ProbeWouldHelp response"),
