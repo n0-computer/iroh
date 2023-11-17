@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ContentStatus;
+use crate::{store::Query, ContentStatus};
 
 /// Store entries that can be fingerprinted and put into ranges.
 pub trait RangeEntry: Debug + Clone {
@@ -235,6 +235,11 @@ pub trait Store<E: RangeEntry>: Sized {
         Self: 'a,
         E: 'a;
 
+    type QueryIterator<'a>: Iterator<Item = Result<E, Self::Error>>
+    where
+        Self: 'a,
+        E: 'a;
+
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<E::Key, Self::Error>;
 
@@ -267,6 +272,9 @@ pub trait Store<E: RangeEntry>: Sized {
 
     /// Remove an entry from the store.
     fn remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+
+    /// Query records.
+    fn query(&self, query: Query) -> Result<Self::QueryIterator<'_>, Self::Error>;
 
     /// Remove all entries whose key start with a prefix and for which the `predicate` callback
     /// returns true.

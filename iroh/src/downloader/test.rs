@@ -153,9 +153,7 @@ async fn max_concurrent_requests() {
     let mut handles = Vec::with_capacity(5);
     let mut expected_history = Vec::with_capacity(5);
     for i in 0..5 {
-        let kind = Resource::blob(
-            Hash::new([i; 32]),
-        );
+        let kind = Resource::blob(Hash::new([i; 32]));
         let h = downloader
             .queue(kind.clone(), ResourceHints::with_node(peer))
             .await;

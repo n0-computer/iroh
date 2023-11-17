@@ -13,7 +13,7 @@ use crate::{
     keys::{Author, NamespaceSecret},
     ranger,
     sync::{Replica, SignedEntry},
-    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
+    AuthorId, Capability, CapabilityKind, Entry, NamespaceId, PeerIdBytes,
 };
 
 #[cfg(feature = "fs-store")]
@@ -203,6 +203,20 @@ pub enum DownloadPolicy {
     Everything,
     /// Download blobs for entries matching a query.
     Query(Query),
+}
+
+impl DownloadPolicy {
+    /// Check if an entry should be downloaded according to this policy.
+    pub fn matches(&self, entry: &Entry) -> bool {
+        match self {
+            DownloadPolicy::Nothing => false,
+            DownloadPolicy::Everything => true,
+            DownloadPolicy::Query(query) => {
+                query.filter_author.matches(&entry.author())
+                    && query.filter_key.matches(entry.key())
+            }
+        }
+    }
 }
 
 /// A query builder for document queries.

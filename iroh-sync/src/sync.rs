@@ -28,7 +28,7 @@ use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
-    store::{self, PublicKeyStore},
+    store::{self, DownloadPolicy, PublicKeyStore, Query},
 };
 
 /// Protocol message for the set reconciliation protocol.
@@ -67,7 +67,11 @@ pub enum InsertOrigin {
         /// The peer from which we received this entry.
         from: PeerIdBytes,
         /// Whether the peer claims to have the content blob for this entry.
-        content_status: ContentStatus,
+        peer_content_status: ContentStatus,
+        // /// Whether we have the content blob for this entry.
+        // local_content_status: ContentStatus,
+        /// Whether the document's download policy indicates that the blob should be downloaded.
+        matched_by_download_policy: bool,
     },
 }
 
@@ -231,6 +235,7 @@ pub enum CapabilityError {
 #[derive(derive_more::Debug)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     capability: Capability,
+    download_policy: DownloadPolicy,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
@@ -240,9 +245,10 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     /// Create a new replica.
-    pub fn new(capability: Capability, store: S) -> Self {
+    pub fn new(capability: Capability, store: S, download_policy: DownloadPolicy) -> Self {
         Replica {
             capability,
+            download_policy,
             peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
@@ -383,7 +389,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
-            content_status,
+            peer_content_status: content_status,
+            matched_by_download_policy: self.download_policy.matches(entry.entry()),
         };
         self.insert_entry(entry, origin)
     }
@@ -493,7 +500,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 |store, entry, content_status| {
                     let origin = InsertOrigin::Sync {
                         from: from_peer,
-                        content_status,
+                        peer_content_status: content_status,
+                        matched_by_download_policy: self.download_policy.matches(entry.entry()),
                     };
                     validate_entry(now, store, my_namespace, entry, &origin).is_ok()
                 },
@@ -504,7 +512,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                         namespace: my_namespace,
                         origin: InsertOrigin::Sync {
                             from: from_peer,
-                            content_status,
+                            peer_content_status: content_status,
+                            matched_by_download_policy: self.download_policy.matches(entry.entry()),
                         },
                         entry: entry.clone(),
                     })
@@ -537,10 +546,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         let Some(ref content_status_cb) = self.content_status_cb else {
             anyhow::bail!("No content status callback set, cannot list missing content hashes.");
         };
+        let query = match &self.download_policy {
+            DownloadPolicy::Query(query) => query.clone(),
+            DownloadPolicy::Nothing => Query::all().limit(0).into(),
+            DownloadPolicy::Everything => Query::all().into(),
+        };
         let iter = self
             .peer
             .store()
-            .all()
+            .query(query)
             .map_err(|e| e.into())?
             .filter_map(|e| {
                 let r = match e {

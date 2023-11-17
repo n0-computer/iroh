@@ -658,14 +658,17 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             }
             InsertOrigin::Sync {
                 from,
-                content_status,
+                peer_content_status: content_status,
+                matched_by_download_policy,
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 let hash = signed_entry.content_hash();
                 let entry_status = self.bao_store.contains(&hash);
                 // TODO: Make downloads configurable.
-                if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
+                if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
+                    && matched_by_download_policy
+                {
                     let from = PublicKey::from_bytes(&from)?;
                     let hints = ResourceHints::with_group(Group::Doc(namespace));
                     let hints = if let ContentStatus::Complete = content_status {
