@@ -10,7 +10,7 @@ use iroh_net::NodeId;
 use iroh_sync::NamespaceId;
 use tracing::debug;
 
-use super::{FailureAction, IDLE_PEER_TIMEOUT, INITIAL_RETRY_COUNT};
+use super::{FailureAction, Id, IDLE_PEER_TIMEOUT, INITIAL_RETRY_COUNT};
 
 use self::util::{IdGenerator, IndexSet};
 
@@ -303,6 +303,8 @@ pub struct ResourceState {
     groups: IndexSet<Group>,
     nodes: IndexSet<NodeId>,
 
+    intents: HashSet<Intent>,
+
     skip_nodes: HashSet<NodeId>,
     active_transfer: Option<TransferId>,
 }
@@ -313,9 +315,12 @@ impl ResourceState {
     }
 
     fn can_start_transfer(&self, node: &NodeId) -> bool {
-        !self.is_transfering() && !self.skip_nodes.contains(node)
+        !self.intents.is_empty() && !self.is_transfering() && !self.skip_nodes.contains(node)
     }
 }
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct Intent(pub Id);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::From, Hash)]
 pub struct TransferId(u64);
@@ -352,6 +357,8 @@ pub enum OutEvent {
     StartDial(NodeId),
     RegisterTimer(Duration, Timer),
     DropConnection(NodeId),
+    CancelTransfer(Transfer),
+    ResourceOutOfProviders(Resource),
 }
 
 #[derive(Debug)]
@@ -367,8 +374,13 @@ pub enum InEvent {
         hints: NodeHints,
     },
     AddResource {
+        intent: Intent,
         resource: Resource,
         hints: ResourceHints,
+    },
+    CancelResource {
+        intent: Intent,
+        resource: Resource,
     },
     TransferReady {
         id: TransferId,
@@ -396,10 +408,15 @@ impl State {
         }
     }
     pub fn handle(&mut self, in_event: InEvent) {
-        debug!("in_event {in_event:?}");
+        debug!("handle {in_event:?}");
         match in_event {
             InEvent::AddNode { node, hints } => self.add_node(node, hints),
-            InEvent::AddResource { resource, hints } => self.add_resource(resource, hints),
+            InEvent::AddResource {
+                resource,
+                intent,
+                hints,
+            } => self.add_resource(resource, intent, hints),
+            InEvent::CancelResource { intent, resource } => self.cancel_resource(resource, intent),
             InEvent::TransferReady { id } => self.on_transfer_ready(id),
             InEvent::TransferFailed { id, failure } => self.on_transfer_failed(id, failure),
             InEvent::NodeConnected { node } => self.on_node_connected(node),
@@ -424,10 +441,9 @@ impl State {
             // TODO: I think if we add the resource *later*, then it will not be associated to the
             // node..
             if node_info.resources.insert(resource) {
-                if let Some(resource_state) = self.resources.get_mut(&resource) {
-                    resource_state.nodes.insert(node);
-                    resource_state.skip_nodes.remove(&node);
-                }
+                let resource_state = self.resources.entry(resource).or_default();
+                resource_state.nodes.insert(node);
+                resource_state.skip_nodes.remove(&node);
             }
         }
         match node_info.state {
@@ -457,7 +473,7 @@ impl State {
         self.limits.at_connections_capacity(self.connection_count())
     }
 
-    fn add_resource(&mut self, resource: Resource, hints: ResourceHints) {
+    fn add_resource(&mut self, resource: Resource, intent: Intent, hints: ResourceHints) {
         let state = self.resources.entry(resource).or_default();
         state.skip_nodes.extend(hints.skip_nodes.into_iter());
         for group in hints.groups {
@@ -466,8 +482,20 @@ impl State {
                 group_state.resources.insert(resource);
             }
         }
+        state.intents.insert(intent);
         for node in hints.nodes {
             self.add_node(node, NodeHints::with_resource(resource));
+        }
+    }
+
+    fn cancel_resource(&mut self, resource: Resource, intent: Intent) {
+        if let Some(resource_state) = self.resources.get_mut(&resource) {
+            resource_state.intents.remove(&intent);
+            if resource_state.intents.is_empty() {
+                if let Some(id) = resource_state.active_transfer.take() {
+                    self.on_transfer_failed(id, FailureAction::Cancelled);
+                }
+            }
         }
     }
 
@@ -613,13 +641,33 @@ impl State {
             );
             return;
         };
+        let is_cancel = matches!(action, FailureAction::Cancelled);
+
         let Transfer { id, resource, node } = transfer;
-        let resource_state = self.resources.entry(resource).or_default();
-        resource_state.skip_nodes.insert(node);
-        resource_state.active_transfer = None;
+        if let Some(resource_state) = self.resources.get_mut(&resource) {
+            resource_state.skip_nodes.insert(node);
+            resource_state.active_transfer = None;
+            if !is_cancel
+                && !resource_state.intents.is_empty()
+                && !resource_has_providers(&self.nodes, &self.groups, &resource_state)
+            {
+                // TODO: Maybe intents should be kept alive?
+                resource_state.intents.clear();
+                self.actions
+                    .push(OutEvent::ResourceOutOfProviders(resource));
+            }
+        }
+        if is_cancel {
+            self.actions
+                .push(OutEvent::CancelTransfer(Transfer { id, resource, node }));
+        }
+
         if let Some(node_state) = self.nodes.get_mut(&node) {
             node_state.active_transfers.remove(&id);
             match action {
+                FailureAction::Cancelled => {
+                    self.node_fill_transfers(node);
+                }
                 FailureAction::NotFound | FailureAction::AbortRequest(_) => {
                     self.node_fill_transfers(node)
                 }
@@ -697,4 +745,32 @@ fn resource_iter<'a>(
     match_resources
         .chain(resources_via_group)
         .filter_map(|r| resources.get(r).map(|state| (r, state)))
+}
+
+fn resource_node_iter<'a>(
+    nodes: &'a BTreeMap<NodeId, NodeInfo>,
+    groups: &'a BTreeMap<Group, GroupState>,
+    resource_state: &'a ResourceState,
+) -> impl Iterator<Item = (&'a NodeId, &'a NodeInfo)> {
+    let nodes_via_group = resource_state
+        .groups
+        .iter()
+        .filter_map(|g| groups.get(g))
+        .map(|g| g.nodes.iter())
+        .flatten();
+    resource_state
+        .nodes
+        .iter()
+        .chain(nodes_via_group)
+        .filter_map(|n| nodes.get(n).map(|state| (n, state)))
+}
+
+fn resource_has_providers<'a>(
+    nodes: &'a BTreeMap<NodeId, NodeInfo>,
+    groups: &'a BTreeMap<Group, GroupState>,
+    resource_state: &'a ResourceState,
+) -> bool {
+    resource_node_iter(nodes, groups, resource_state).any(|(n, node_info)| {
+        node_info.state.may_connect() && !resource_state.skip_nodes.contains(n)
+    })
 }

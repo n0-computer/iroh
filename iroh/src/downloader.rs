@@ -35,6 +35,7 @@ use std::{
     time::Instant,
 };
 
+use anyhow::anyhow;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_bytes::{store::Store, TempTag};
 use iroh_gossip::net::util::Timers;
@@ -51,7 +52,9 @@ mod invariants;
 mod state;
 mod test;
 
-use self::state::{ConcurrencyLimits, InEvent, OutEvent, State, Timer, Transfer, TransferId};
+use self::state::{
+    ConcurrencyLimits, InEvent, Intent, OutEvent, State, Timer, Transfer, TransferId,
+};
 pub use self::state::{Group, NodeHints, Resource, ResourceHints, ResourceKind};
 
 /// Number of retries initially assigned to a request.
@@ -90,6 +93,8 @@ pub enum FailureAction {
     RetryLater(anyhow::Error),
     /// The peer doesn't have the requested content
     NotFound,
+    /// We cancelled the transfer.
+    Cancelled,
 }
 
 /// Future of a get request.
@@ -343,7 +348,11 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 id,
                 sender,
             } => {
-                self.state.handle(InEvent::AddResource { resource, hints });
+                self.state.handle(InEvent::AddResource {
+                    resource,
+                    hints,
+                    intent: Intent(id),
+                });
                 let info = self.current_requests.entry(resource).or_default();
                 info.intents.insert(id, sender);
             }
@@ -351,8 +360,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 self.state.handle(InEvent::AddNode { node, hints });
             }
             Message::Cancel { id, resource } => {
-                // TODO
-                // self.handle_cancel_download(id, kind),
+                self.state.handle(InEvent::CancelResource {
+                    resource,
+                    intent: Intent(id),
+                });
             }
         }
     }
@@ -362,7 +373,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // TODO: Can we avoid the alloc? We have a mutable borrow on state...
         let actions: Vec<_> = actions.collect();
         for action in actions.into_iter() {
-            debug!("downloader action: {action:?}");
+            debug!("perform action: {action:?}");
             match action {
                 OutEvent::StartTransfer(transfer) => self.start_download(transfer),
                 OutEvent::StartDial(node) => self.dialer.queue_dial(node),
@@ -375,7 +386,28 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 OutEvent::DropConnection(node) => {
                     let _ = self.conns.remove(&node);
                 }
+                OutEvent::CancelTransfer(transfer) => {
+                    self.on_cancel(transfer.resource, "Cancelled");
+                }
+                OutEvent::ResourceOutOfProviders(resource) => {
+                    self.on_cancel(resource, "No providers left");
+                }
             }
+        }
+    }
+
+    fn on_cancel(&mut self, resource: Resource, reason: &str) {
+        let info = self.current_requests.remove(&resource);
+        let Some(info) = info else {
+            warn!(?resource, "cancelled download not in current_requests");
+            debug_assert!(false, "cancelled download not in current_requests");
+            return;
+        };
+        if let Some((_id, cancel)) = info.transfer {
+            cancel.cancel();
+        }
+        for sender in info.intents.into_values() {
+            let _ = sender.send(Err(anyhow!("{}", reason)));
         }
     }
 
@@ -400,7 +432,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         result: Result<TempTag, FailureAction>,
     ) {
         // first remove the request
-        let info = self.current_requests.remove(&resource);
+        let info = self.current_requests.get_mut(&resource);
         let Some(info) = info else {
             warn!(
                 ?resource,
@@ -412,31 +444,31 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         };
 
         // update the active requests for this node
-        let ActiveRequestInfo { intents, transfer } = info;
+        // let ActiveRequestInfo { intents, transfer } = info;
 
-        let Some((id, _cancellation)) = transfer else {
+        let Some((ref id, _cancellation)) = &info.transfer else {
             debug_assert!(false, "download complete but not transfer info");
             return;
         };
+        let id = *id;
 
         match result {
             Ok(temp_tag) => {
                 self.state.handle(InEvent::TransferReady { id });
-                for sender in intents.into_values() {
+                // The transfer is finished, finalize and remove.
+                let info = self.current_requests.remove(&resource).unwrap();
+                for sender in info.intents.into_values() {
                     let _ = sender.send(Ok(temp_tag.clone()));
                 }
             }
             Err(action) => {
+                // The transfer failed. Inform state but do not remove yet because there's still a
+                // possiblity for it to succeed. It will be removed in on_cancel.
+                info.transfer = None;
                 self.state.handle(InEvent::TransferFailed {
                     id,
                     failure: action,
                 });
-                // TODO: Check if transfer failed finally and send to intents.
-                // if state.failed(id) {
-                // for sender in intents.into_values() {
-                //     let _ = sender.send(Err(err))
-                // }
-                // }
             }
         }
     }
