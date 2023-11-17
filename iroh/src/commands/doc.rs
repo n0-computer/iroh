@@ -40,6 +40,8 @@ pub enum DisplayContentMode {
     Content,
     /// Display the hash of the content.
     Hash,
+    /// Display the shortened hash of the content.
+    ShortHash,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -151,7 +153,7 @@ pub enum DocCommands {
         #[clap(long)]
         desc: bool,
         /// How to show the contents of the keys.
-        #[clap(short, long, default_value_t=DisplayContentMode::Hash)]
+        #[clap(short, long, default_value_t=DisplayContentMode::ShortHash)]
         mode: DisplayContentMode,
     },
     /// Import data into a document
@@ -244,21 +246,6 @@ impl From<Sorting> for iroh_sync::store::SortBy {
             Sorting::Key => Self::KeyAuthor,
         }
     }
-}
-
-#[derive(Debug, Clone, Parser)]
-pub enum AuthorCommands {
-    /// Set the active author (only works within the Iroh console).
-    Switch { author: AuthorId },
-    /// Create a new author.
-    New {
-        /// Switch to the created author (only in the Iroh console).
-        #[clap(long)]
-        switch: bool,
-    },
-    /// List authors.
-    #[clap(alias = "ls")]
-    List,
 }
 
 impl DocCommands {
@@ -512,12 +499,14 @@ impl DocCommands {
                                 }
                                 iroh_sync::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                            .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
                                 iroh_sync::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                            .await;
                                     format!("<missing: {} ({})>", content, human_len(&entry))
                                 }
                             };
@@ -584,37 +573,6 @@ async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyh
         .context("Document not found")
 }
 
-impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
-        match self {
-            Self::Switch { author } => {
-                env.set_author(author)?;
-                println!("Active author is now {}", fmt_short(author.as_bytes()));
-            }
-            Self::List => {
-                let mut stream = iroh.authors.list().await?;
-                while let Some(author_id) = stream.try_next().await? {
-                    println!("{}", author_id);
-                }
-            }
-            Self::New { switch } => {
-                if switch && !env.is_console() {
-                    bail!("The --switch flag is only supported within the Iroh console.");
-                }
-
-                let author_id = iroh.authors.create().await?;
-                println!("{}", author_id);
-
-                if switch {
-                    env.set_author(author_id)?;
-                    println!("Active author is now {}", fmt_short(author_id.as_bytes()));
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
@@ -647,9 +605,13 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
             let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
             Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
-        DisplayContentMode::Hash => {
+        DisplayContentMode::ShortHash => {
             let hash = entry.record().content_hash();
             Ok(fmt_short(hash.as_bytes()))
+        }
+        DisplayContentMode::Hash => {
+            let hash = entry.record().content_hash();
+            Ok(hash.to_string())
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use iroh_metrics::{
     core::{Counter, Metric},
@@ -59,8 +59,8 @@ pub fn try_init_metrics_collection() -> std::io::Result<()> {
 /// Collect the current metrics into a hash map.
 ///
 /// TODO: Only counters are supported for now, other metrics will be skipped without error.
-pub fn get_metrics() -> anyhow::Result<HashMap<String, CounterStats>> {
-    let mut map = HashMap::new();
+pub fn get_metrics() -> anyhow::Result<BTreeMap<String, CounterStats>> {
+    let mut map = BTreeMap::new();
     let core =
         iroh_metrics::core::Core::get().ok_or_else(|| anyhow::anyhow!("metrics are disabled"))?;
     collect(
@@ -87,7 +87,7 @@ pub fn get_metrics() -> anyhow::Result<HashMap<String, CounterStats>> {
 }
 
 // TODO: support other things than counters
-fn collect(metrics: Option<&impl Iterable>, map: &mut HashMap<String, CounterStats>) {
+fn collect(metrics: Option<&impl Iterable>, map: &mut BTreeMap<String, CounterStats>) {
     let Some(metrics) = metrics else {
         return;
     };

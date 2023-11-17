@@ -556,17 +556,14 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             .store()
             .query(query)
             .map_err(|e| e.into())?
-            .filter_map(|e| {
-                
-                match e {
-                    Err(err) => Some(Err(err.into())),
-                    Ok(entry) => match content_status_cb(entry.content_hash()) {
-                        ContentStatus::Missing | ContentStatus::Incomplete => {
-                            Some(Ok(entry.content_hash()))
-                        }
-                        ContentStatus::Complete => None,
-                    },
-                }
+            .filter_map(|e| match e {
+                Err(err) => Some(Err(err.into())),
+                Ok(entry) => match content_status_cb(entry.content_hash()) {
+                    ContentStatus::Missing | ContentStatus::Incomplete => {
+                        Some(Ok(entry.content_hash()))
+                    }
+                    ContentStatus::Complete => None,
+                },
             });
         Ok(iter)
     }
