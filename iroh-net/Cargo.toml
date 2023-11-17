@@ -1,6 +1,6 @@
 [package]
 name = "iroh-net"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 readme = "README.md"
 description = "networking support for iroh"
@@ -29,7 +29,7 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.11"
 futures = "0.3.25"
 governor = "0.6.0"
-iroh-base = { version = "0.10.0", path = "../iroh-base" }
+iroh-base = { version = "0.11.0", path = "../iroh-base" }
 hex = "0.4.3"
 hostname = "0.3.1"
 http = "0.2.9"
@@ -81,7 +81,7 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # metrics
-iroh-metrics = { version = "0.10.0", path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.11.0", path = "../iroh-metrics", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"

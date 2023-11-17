@@ -1,6 +1,6 @@
 [package]
 name = "iroh-metrics"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 readme = "README.md"
 description = "metrics for iroh"
