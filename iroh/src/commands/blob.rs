@@ -168,7 +168,7 @@ impl BlobCommands {
                                 // use only the cli supplied ones
                                 address
                             } else {
-                                // use both the cli supploes ones and the ticket ones
+                                // use both the cli supplied ones and the ticket ones
                                 address.extend(info.direct_addresses.into_iter());
                                 address
                             };
