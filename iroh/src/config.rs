@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result, ensure};
 use config::{Environment, File, Value};
 use iroh::{node::GcPolicy, util::path::IrohPaths};
 use iroh_net::{
@@ -138,6 +138,9 @@ impl NodeConfig {
     /// Optionally provide an additional configuration source.
     pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
+        if let Some(path) = additional_config_source {
+            ensure!(path.is_file(), "Config file does not exist: {}", path.display());
+        }
         let sources = [Some(config_path.as_path()), additional_config_source];
         let config = Self::load(
             // potential config files
