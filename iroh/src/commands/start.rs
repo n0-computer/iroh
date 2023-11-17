@@ -171,6 +171,7 @@ impl StartArgs {
         if let Some(t) = token.as_ref() {
             eprintln!("Request token: {}", t);
         }
+        eprintln!("Derp map: {derp_map:?}");
 
         let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
         match rpc_status {
