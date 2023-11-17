@@ -457,7 +457,7 @@ impl State {
             }
             NodeState::Disconnected { .. } => {
                 if !at_connections_capacity
-                    && node_should_connect(&self.resources, &self.groups, &node, &node_info)
+                    && node_should_connect(&self.resources, &self.groups, &node, node_info)
                 {
                     self.actions.push(node_info.connect(node))
                 }
@@ -475,7 +475,7 @@ impl State {
 
     fn add_resource(&mut self, resource: Resource, intent: Intent, hints: ResourceHints) {
         let state = self.resources.entry(resource).or_default();
-        state.skip_nodes.extend(hints.skip_nodes.into_iter());
+        state.skip_nodes.extend(hints.skip_nodes);
         for group in hints.groups {
             if state.groups.insert(group) {
                 let group_state = self.groups.entry(group).or_default();
@@ -649,7 +649,7 @@ impl State {
             resource_state.active_transfer = None;
             if !is_cancel
                 && !resource_state.intents.is_empty()
-                && !resource_has_providers(&self.nodes, &self.groups, &resource_state)
+                && !resource_has_providers(&self.nodes, &self.groups, resource_state)
             {
                 // TODO: Maybe intents should be kept alive?
                 resource_state.intents.clear();
@@ -706,7 +706,7 @@ fn node_should_connect<'a>(
     node: &'a NodeId,
     node_info: &'a NodeInfo,
 ) -> bool {
-    node_info.state.may_connect() && node_is_needed(resources, groups, &node, &node_info)
+    node_info.state.may_connect() && node_is_needed(resources, groups, node, node_info)
 }
 
 fn node_is_needed<'a>(
@@ -715,7 +715,7 @@ fn node_is_needed<'a>(
     node: &'a NodeId,
     node_info: &'a NodeInfo,
 ) -> bool {
-    node_resource_iter(&resources, &groups, &node_info)
+    node_resource_iter(resources, groups, node_info)
         .any(|(_resource, state)| state.can_start_transfer(node))
 }
 
@@ -740,8 +740,7 @@ fn resource_iter<'a>(
 ) -> impl Iterator<Item = (&'a Resource, &'a ResourceState)> {
     let resources_via_group = match_groups
         .filter_map(|g| groups.get(g))
-        .map(|g| g.resources.iter())
-        .flatten();
+        .flat_map(|g| g.resources.iter());
     match_resources
         .chain(resources_via_group)
         .filter_map(|r| resources.get(r).map(|state| (r, state)))
@@ -756,8 +755,7 @@ fn resource_node_iter<'a>(
         .groups
         .iter()
         .filter_map(|g| groups.get(g))
-        .map(|g| g.nodes.iter())
-        .flatten();
+        .flat_map(|g| g.nodes.iter());
     resource_state
         .nodes
         .iter()

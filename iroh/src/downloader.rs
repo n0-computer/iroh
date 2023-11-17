@@ -182,7 +182,7 @@ impl Downloader {
         let (sender, receiver) = oneshot::channel();
         let handle = DownloadHandle {
             id,
-            resource: resource.clone(),
+            resource,
             receiver,
         };
         let msg = Message::AddResource {
@@ -492,7 +492,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         }
         info.transfer = Some((id, cancellation.clone()));
 
-        let get = self.getter.get(resource.into(), conn.clone());
+        let get = self.getter.get(resource, conn.clone());
         let fut = async move {
             // NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
             // > at this stage we do not know the size of the download, so the timeout would have

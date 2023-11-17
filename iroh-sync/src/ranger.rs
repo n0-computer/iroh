@@ -761,6 +761,11 @@ mod tests {
                 filter: SimpleFilter::Range(range),
             })
         }
+        type QueryIterator<'a> = SimpleRangeIterator<'a, K, V>
+        where K: 'a, V: 'a;
+        fn query(&self, _query: Query) -> Result<Self::QueryIterator<'_>, Self::Error> {
+            unimplemented!()
+        }
 
         fn remove(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
             let res = self.data.remove(key).map(|v| (key.clone(), v));

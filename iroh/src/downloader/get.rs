@@ -235,7 +235,7 @@ pub async fn get_blob<D: Store>(
     conn: quinn::Connection,
     hash: &Hash,
 ) -> Result<Stats, FailureAction> {
-    if matches!(db.contains(&hash), EntryStatus::Complete) {
+    if matches!(db.contains(hash), EntryStatus::Complete) {
         return Ok(Default::default());
     }
     let end = if let Some(entry) = db.get_partial(hash) {
