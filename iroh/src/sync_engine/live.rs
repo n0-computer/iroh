@@ -669,7 +669,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     let from = PublicKey::from_bytes(&from)?;
                     let hints = ResourceHints::with_group(Group::Doc(namespace));
                     let hints = if let ContentStatus::Complete = content_status {
-                        hints.with_node(from)
+                        hints.add_node(from)
                     } else {
                         hints.skip_node(from)
                     };

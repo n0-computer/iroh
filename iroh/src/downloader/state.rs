@@ -120,7 +120,7 @@ impl ResourceHints {
     }
 
     /// Create a [`ProviderHints`] with a single node.
-    pub fn with_node(self, node: NodeId) -> Self {
+    pub fn with_node(node: NodeId) -> Self {
         Self {
             nodes: vec![node],
             ..Default::default()
