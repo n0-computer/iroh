@@ -2,15 +2,32 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.11.0](https://github.com/n0-computer/iroh/compare/v0.10.0..0.11.0) - 2023-11-08
+## [0.11.0](https://github.com/n0-computer/iroh/compare/v0.10.0..0.11.0) - 2023-11-17
 
 ### ⛰️  Features
 
-- *(iroh)* Store rpc port in iroh data dir - ([ed85fb0](https://github.com/n0-computer/iroh/commit/ed85fb073106e18d165e40ace1aee1c26377f6d3))
+- *(iroh)* Store rpc port in iroh data dir ([#1783](https://github.com/n0-computer/iroh/issues/1783)) - ([d471477](https://github.com/n0-computer/iroh/commit/d471477659cd9018bdaebdfa3c0146451d5d3b43))
+- *(iroh)* Make `out` argument required for `iroh get` ([#1786](https://github.com/n0-computer/iroh/issues/1786)) - ([0e0f641](https://github.com/n0-computer/iroh/commit/0e0f6411d0fbe88559db132a06b0ccf64bf831f4))
+- *(iroh)* Allow full and short hash printing in the cli ([#1795](https://github.com/n0-computer/iroh/issues/1795)) - ([018772c](https://github.com/n0-computer/iroh/commit/018772ce2f8a06f98447160f33a9720da4ea5939))
+- Add `Doc::import_file` and `Doc::export_file` ([#1793](https://github.com/n0-computer/iroh/issues/1793)) - ([fe7fc50](https://github.com/n0-computer/iroh/commit/fe7fc506c7ac5bc7be518d407829580d880b0f62))
+
+### 🐛 Bug Fixes
+
+- *(iroh-sync)* Ensure the authors table exists ([#1807](https://github.com/n0-computer/iroh/issues/1807)) - ([39ed64e](https://github.com/n0-computer/iroh/commit/39ed64e4492393b133398f49a957614fd3535968))
+- Drop temp tag after doc insert ([#1810](https://github.com/n0-computer/iroh/issues/1810)) - ([a608fe8](https://github.com/n0-computer/iroh/commit/a608fe8c7562286629a41d70fbbef05382443649))
+- Netsim should fail on all failed tests ([#1816](https://github.com/n0-computer/iroh/issues/1816)) - ([199a677](https://github.com/n0-computer/iroh/commit/199a677121ac469634ba1c2d6c6d412f75c1e3c8))
 
 ### 🚜 Refactor
 
+- *(iroh)* Restructure cli modules to match command structure ([#1799](https://github.com/n0-computer/iroh/issues/1799)) - ([c1aeeb1](https://github.com/n0-computer/iroh/commit/c1aeeb12898d86bce901ec6ec9d54ada026c7adf))
+- *(iroh)* Add `--start` option to CLI commands ([#1802](https://github.com/n0-computer/iroh/issues/1802)) - ([10af401](https://github.com/n0-computer/iroh/commit/10af4018302ee62fdad8fbbbe8c3902a9082bb35))
+- *(logging)* Log hairpin results at debug level ([#1809](https://github.com/n0-computer/iroh/issues/1809)) - ([ca8a983](https://github.com/n0-computer/iroh/commit/ca8a98383bc69d672073edb0df8086ae83a0b893))
 - Common base library ([#1780](https://github.com/n0-computer/iroh/issues/1780)) - ([de58d71](https://github.com/n0-computer/iroh/commit/de58d71998e49ed14c99b9765fc51d37965a95d9))
+- More renaming of the term peer id to node id ([#1789](https://github.com/n0-computer/iroh/issues/1789)) - ([53f1b61](https://github.com/n0-computer/iroh/commit/53f1b616c75bcc81c1b7493a4365c22340989a5d))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies ([#1787](https://github.com/n0-computer/iroh/issues/1787)) - ([697b80c](https://github.com/n0-computer/iroh/commit/697b80cbe7cf17a8f39b2ab4ee4044d7074135e3))
 
 ## [0.10.0](https://github.com/n0-computer/iroh/compare/v0.9.0..v0.10.0) - 2023-11-08
 
