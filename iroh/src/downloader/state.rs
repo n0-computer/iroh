@@ -1,20 +1,18 @@
 use std::{
     collections::{BTreeMap, HashSet},
     fmt,
+    marker::PhantomData,
     num::NonZeroUsize,
     time::Duration,
 };
 
+use hashlink::{LinkedHashMap as IndexMap, LinkedHashSet as IndexSet};
 use iroh_bytes::{Hash, HashAndFormat};
 use iroh_net::NodeId;
 use iroh_sync::NamespaceId;
 use tracing::debug;
 
 use super::{FailureAction, Id, IDLE_PEER_TIMEOUT, INITIAL_RETRY_COUNT};
-
-use self::util::{IdGenerator, IndexSet};
-
-mod util;
 
 /// Concurrency limits for the [`Downloader`].
 #[derive(Debug)]
@@ -44,11 +42,19 @@ impl ConcurrencyLimits {
         active_requests >= self.max_concurrent_requests
     }
 
-    pub fn node_remaining_requests(&self, active_requests: usize) -> Option<NonZeroUsize> {
-        NonZeroUsize::new(
-            self.max_concurrent_requests_per_node
-                .saturating_sub(active_requests),
-        )
+    /// Check how many new rquests can be opened for a node.
+    pub fn remaining_request(
+        &self,
+        active_node_requests: usize,
+        active_total_requests: usize,
+    ) -> Option<NonZeroUsize> {
+        let remaining_at_node = self
+            .max_concurrent_requests_per_node
+            .saturating_sub(active_node_requests);
+        let remaining_at_total = self
+            .max_concurrent_requests
+            .saturating_sub(active_total_requests);
+        NonZeroUsize::new(remaining_at_node.min(remaining_at_total))
     }
 
     /// Checks if the maximum number of concurrent requests per node has been reached.
@@ -205,7 +211,7 @@ pub enum Group {
 #[derive(Debug, Default)]
 pub struct State {
     groups: BTreeMap<Group, GroupState>,
-    resources: BTreeMap<Resource, ResourceState>,
+    resources: IndexMap<Resource, ResourceState>,
     nodes: BTreeMap<NodeId, NodeInfo>,
 
     limits: ConcurrencyLimits,
@@ -224,7 +230,6 @@ pub struct NodeInfo {
     active_transfers: HashSet<TransferId>,
 
     state: NodeState,
-    in_disconnect_timeout: bool,
 }
 
 #[derive(Debug)]
@@ -236,7 +241,9 @@ pub enum NodeState {
         state: PendingState,
         remaining_retries: u8,
     },
-    Connected,
+    Connected {
+        idle_timer_started: bool,
+    },
 }
 
 impl Default for NodeState {
@@ -260,13 +267,6 @@ impl NodeState {
     fn may_connect(&self) -> bool {
         matches!(self, NodeState::Disconnected { failed: false })
     }
-
-    fn connecting() -> Self {
-        Self::Pending {
-            state: PendingState::Connecting,
-            remaining_retries: INITIAL_RETRY_COUNT,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -288,13 +288,29 @@ impl NodeInfo {
         self.remaining_retries() > 0
     }
 
-    fn connect(&mut self, self_id: NodeId) -> OutEvent {
-        self.state = NodeState::connecting();
-        OutEvent::StartDial(self_id)
+    fn set_connecting(&mut self) {
+        self.state = NodeState::Pending {
+            state: PendingState::Connecting,
+            remaining_retries: self.remaining_retries(),
+        }
+    }
+
+    fn set_connected(&mut self, idle_timer_started: bool) {
+        self.state = NodeState::Connected { idle_timer_started };
     }
 
     fn is_connected(&self) -> bool {
         matches!(self.state, NodeState::Connected { .. })
+    }
+
+    fn is_newly_idle(&self) -> bool {
+        self.active_transfers.is_empty()
+            && matches!(
+                self.state,
+                NodeState::Connected {
+                    idle_timer_started: false
+                }
+            )
     }
 }
 
@@ -441,7 +457,10 @@ impl State {
             // TODO: I think if we add the resource *later*, then it will not be associated to the
             // node..
             if node_info.resources.insert(resource) {
-                let resource_state = self.resources.entry(resource).or_default();
+                let resource_state = self
+                    .resources
+                    .entry(resource)
+                    .or_insert_with(|| Default::default());
                 resource_state.nodes.insert(node);
                 resource_state.skip_nodes.remove(&node);
             }
@@ -459,7 +478,8 @@ impl State {
                 if !at_connections_capacity
                     && node_should_connect(&self.resources, &self.groups, &node, node_info)
                 {
-                    self.actions.push(node_info.connect(node))
+                    node_info.set_connecting();
+                    self.actions.push(OutEvent::StartDial(node));
                 }
             }
         }
@@ -474,7 +494,10 @@ impl State {
     }
 
     fn add_resource(&mut self, resource: Resource, intent: Intent, hints: ResourceHints) {
-        let state = self.resources.entry(resource).or_default();
+        let state = self
+            .resources
+            .entry(resource)
+            .or_insert_with(|| Default::default());
         state.skip_nodes.extend(hints.skip_nodes);
         for group in hints.groups {
             if state.groups.insert(group) {
@@ -515,13 +538,13 @@ impl State {
             return;
         }
 
-        if let Some(remaining) = self
-            .limits
-            .node_remaining_requests(node_info.active_transfers.len())
-        {
+        if let Some(remaining) = self.limits.remaining_request(
+            node_info.active_transfers.len(),
+            self.active_transfers.len(),
+        ) {
             let remaining: usize = remaining.into();
             let candidates = node_resource_iter(&self.resources, &self.groups, node_info);
-            let mut next_resources = HashSet::new();
+            let mut next_resources = IndexSet::new();
             for (resource, state) in candidates {
                 if !state.can_start_transfer(&node) {
                     continue;
@@ -545,22 +568,23 @@ impl State {
             }
         }
 
-        if node_info.active_transfers.is_empty() && !node_info.in_disconnect_timeout {
+        let idle_timer_started = if node_info.is_newly_idle() {
             self.actions.push(OutEvent::RegisterTimer(
                 IDLE_PEER_TIMEOUT,
                 Timer::DropConnection(node),
             ));
-            node_info.in_disconnect_timeout = true;
+            true
         } else {
-            node_info.in_disconnect_timeout = false;
-        }
+            false
+        };
+        node_info.set_connected(idle_timer_started);
     }
 
     fn on_node_connected(&mut self, node: NodeId) {
         let Some(node_info) = self.nodes.get_mut(&node) else {
             return;
         };
-        node_info.state = NodeState::Connected;
+        node_info.set_connected(false);
         self.node_fill_transfers(node)
     }
 
@@ -601,7 +625,8 @@ impl State {
                 })
                 .take(remaining.into())
             {
-                self.actions.push(node_info.connect(*node))
+                node_info.set_connecting();
+                self.actions.push(OutEvent::StartDial(*node));
             }
         }
     }
@@ -680,19 +705,25 @@ impl State {
     fn on_timer(&mut self, timer: Timer) {
         match timer {
             Timer::RetryNode(node) => {
-                if let Some(state) = self.nodes.get_mut(&node) {
-                    state.state = NodeState::connecting();
+                if let Some(node_info) = self.nodes.get_mut(&node) {
+                    node_info.set_connecting();
                     self.actions.push(OutEvent::StartDial(node))
                 }
             }
             Timer::DropConnection(node) => {
-                if let Some(state) = self.nodes.get_mut(&node) {
-                    if state.in_disconnect_timeout {
-                        state.in_disconnect_timeout = false;
-                        if state.active_transfers.is_empty() {
-                            state.state = NodeState::Disconnected { failed: false };
-                            self.actions.push(OutEvent::DropConnection(node));
+                if let Some(node_info) = self.nodes.get_mut(&node) {
+                    match node_info.state {
+                        NodeState::Connected {
+                            idle_timer_started: true,
+                        } => {
+                            if node_info.active_transfers.is_empty() {
+                                node_info.state = NodeState::Disconnected { failed: false };
+                                self.actions.push(OutEvent::DropConnection(node));
+                            } else {
+                                node_info.set_connected(false);
+                            }
                         }
+                        _ => {}
                     }
                 }
             }
@@ -701,7 +732,7 @@ impl State {
 }
 
 fn node_should_connect<'a>(
-    resources: &'a BTreeMap<Resource, ResourceState>,
+    resources: &'a IndexMap<Resource, ResourceState>,
     groups: &'a BTreeMap<Group, GroupState>,
     node: &'a NodeId,
     node_info: &'a NodeInfo,
@@ -710,7 +741,7 @@ fn node_should_connect<'a>(
 }
 
 fn node_is_needed<'a>(
-    resources: &'a BTreeMap<Resource, ResourceState>,
+    resources: &'a IndexMap<Resource, ResourceState>,
     groups: &'a BTreeMap<Group, GroupState>,
     node: &'a NodeId,
     node_info: &'a NodeInfo,
@@ -720,7 +751,7 @@ fn node_is_needed<'a>(
 }
 
 fn node_resource_iter<'a>(
-    resources: &'a BTreeMap<Resource, ResourceState>,
+    resources: &'a IndexMap<Resource, ResourceState>,
     groups: &'a BTreeMap<Group, GroupState>,
     node_info: &'a NodeInfo,
 ) -> impl Iterator<Item = (&'a Resource, &'a ResourceState)> {
@@ -733,7 +764,7 @@ fn node_resource_iter<'a>(
 }
 
 fn resource_iter<'a>(
-    resources: &'a BTreeMap<Resource, ResourceState>,
+    resources: &'a IndexMap<Resource, ResourceState>,
     groups: &'a BTreeMap<Group, GroupState>,
     match_resources: impl Iterator<Item = &'a Resource>,
     match_groups: impl Iterator<Item = &'a Group>,
@@ -771,4 +802,21 @@ fn resource_has_providers<'a>(
     resource_node_iter(nodes, groups, resource_state).any(|(n, node_info)| {
         node_info.state.may_connect() && !resource_state.skip_nodes.contains(n)
     })
+}
+
+#[derive(Debug)]
+pub struct IdGenerator<T>(u64, PhantomData<T>);
+
+impl<T> Default for IdGenerator<T> {
+    fn default() -> Self {
+        Self(0, PhantomData)
+    }
+}
+
+impl<T: From<u64>> IdGenerator<T> {
+    pub fn next(&mut self) -> T {
+        let next = self.0;
+        self.0 += 1;
+        next.into()
+    }
 }

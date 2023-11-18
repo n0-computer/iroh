@@ -134,7 +134,7 @@ async fn cancellation() {
 /// maximum number of concurrent requests is not exceed.
 /// NOTE: This is internally tested by [`Service::check_invariants`].
 #[tokio::test]
-async fn max_concurrent_requests() {
+async fn max_concurrent_requests_total() {
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
     // make request take some time to ensure concurreny limits are hit

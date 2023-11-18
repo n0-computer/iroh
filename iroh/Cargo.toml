@@ -24,6 +24,7 @@ derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from"
 flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
+hashlink = "0.8.4"
 hex = { version = "0.4.3" }
 iroh-bytes = { version = "0.10.0", path = "../iroh-bytes" }
 iroh-base = { version = "0.10.0", path = "../iroh-base" }
