@@ -9,7 +9,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.63"
+rust-version = "1.67"
 
 [dependencies]
 abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
