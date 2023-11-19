@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 readme = "README.md"
 description = "IPFS reimagined"
@@ -32,12 +32,12 @@ multibase = { version = "0.9.1", optional = true }
 num_cpus = "1.15.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.5", default-features = false, features = ["quinn-transport", "flume-transport"] }
-quinn = "0.9.3"
+quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"] }
+quinn = "0.10"
 rand = "0.7"
 rcgen = "0.10"
 ring = "0.16.20"
-rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
+rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
@@ -50,7 +50,7 @@ tracing = "0.1"
 tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
-webpki = "0.22"
+webpki = { package = "rustls-webpki", version = "0.101.4", features = ["std"] }
 x509-parser = "0.14"
 zeroize = "1.5"
 

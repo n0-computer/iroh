@@ -251,7 +251,7 @@ impl P2pCertificate<'_> {
             // In particular, MD5 and SHA1 MUST NOT be used.
             RSA_PKCS1_SHA1 => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
             ECDSA_SHA1_Legacy => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
-            Unknown(_) => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
+            _ => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
         };
         let spki = &self.certificate.tbs_certificate.subject_pki;
         let key = signature::UnparsedPublicKey::new(
