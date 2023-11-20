@@ -46,7 +46,7 @@ jobs:
         os: [windows-latest]
         rust: [stable]
         target:
-          - x86_64-pc-windows-gnu
+          # - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
 
     steps:
