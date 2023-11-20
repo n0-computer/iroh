@@ -19,3 +19,12 @@ expression = "MIT AND ISC AND OpenSSL"
 license-files = [
       { path = "LICENSE", hash = 0xbd0eed23 },
 ]
+
+[advisories]
+ignore = [
+      # While the general concern is valid, the use of the APIs here
+      # is not affected.  Later versions of iroh did migrate to the
+      # safer APIs, but this is a rather invasive change which will
+      # not happen on the maintenance branch.
+      "RUSTSEC-2022-0093",
+]
