@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
-        rust: [nightly, stable]
+        rust: [stable]
 
     steps:
     - name: Checkout
@@ -44,7 +44,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest]
-        rust: [nightly, stable]
+        rust: [stable]
         target:
           - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
@@ -184,7 +184,7 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install nightly
+    - name: Install rust
       # See https://github.com/cross-rs/cross/issues/1222
       uses: dtolnay/rust-toolchain@1.67
 
