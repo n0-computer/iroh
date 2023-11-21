@@ -217,7 +217,7 @@ pub struct State {
     limits: ConcurrencyLimits,
 
     active_transfers: BTreeMap<TransferId, Transfer>,
-    transfer_id: IdGenerator<TransferId>,
+    transfer_id_generator: IdGenerator<TransferId>,
 
     actions: Vec<OutEvent>,
 }
@@ -319,7 +319,7 @@ pub struct ResourceState {
     groups: IndexSet<Group>,
     nodes: IndexSet<NodeId>,
 
-    intents: HashSet<Intent>,
+    intents: HashSet<IntentId>,
 
     skip_nodes: HashSet<NodeId>,
     active_transfer: Option<TransferId>,
@@ -336,7 +336,7 @@ impl ResourceState {
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
-pub struct Intent(pub Id);
+pub struct IntentId(pub Id);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::From, Hash)]
 pub struct TransferId(u64);
@@ -370,17 +370,17 @@ impl fmt::Debug for Transfer {
 #[derive(Debug)]
 pub enum OutEvent {
     StartTransfer(Transfer),
-    StartDial(NodeId),
+    StartConnect(NodeId),
     RegisterTimer(Duration, Timer),
     DropConnection(NodeId),
-    CancelTransfer(Transfer),
-    ResourceOutOfProviders(Resource),
+    CancelTransfer(TransferId),
+    ResourceFailed(Resource),
 }
 
 #[derive(Debug)]
 pub enum Timer {
     RetryNode(NodeId),
-    DropConnection(NodeId),
+    IdleTimeout(NodeId),
 }
 
 #[derive(Debug)]
@@ -390,12 +390,12 @@ pub enum InEvent {
         hints: NodeHints,
     },
     AddResource {
-        intent: Intent,
+        intent: IntentId,
         resource: Resource,
         hints: ResourceHints,
     },
-    CancelResource {
-        intent: Intent,
+    CancelIntent {
+        intent: IntentId,
         resource: Resource,
     },
     TransferReady {
@@ -432,7 +432,7 @@ impl State {
                 intent,
                 hints,
             } => self.add_resource(resource, intent, hints),
-            InEvent::CancelResource { intent, resource } => self.cancel_resource(resource, intent),
+            InEvent::CancelIntent { intent, resource } => self.cancel_intent(resource, intent),
             InEvent::TransferReady { id } => self.on_transfer_ready(id),
             InEvent::TransferFailed { id, failure } => self.on_transfer_failed(id, failure),
             InEvent::NodeConnected { node } => self.on_node_connected(node),
@@ -460,7 +460,7 @@ impl State {
                 let resource_state = self
                     .resources
                     .entry(resource)
-                    .or_insert_with(|| Default::default());
+                    .or_insert_with(Default::default);
                 resource_state.nodes.insert(node);
                 resource_state.skip_nodes.remove(&node);
             }
@@ -479,7 +479,7 @@ impl State {
                     && node_should_connect(&self.resources, &self.groups, &node, node_info)
                 {
                     node_info.set_connecting();
-                    self.actions.push(OutEvent::StartDial(node));
+                    self.actions.push(OutEvent::StartConnect(node));
                 }
             }
         }
@@ -493,11 +493,11 @@ impl State {
         self.limits.at_connections_capacity(self.connection_count())
     }
 
-    fn add_resource(&mut self, resource: Resource, intent: Intent, hints: ResourceHints) {
+    fn add_resource(&mut self, resource: Resource, intent: IntentId, hints: ResourceHints) {
         let state = self
             .resources
             .entry(resource)
-            .or_insert_with(|| Default::default());
+            .or_insert_with(Default::default);
         state.skip_nodes.extend(hints.skip_nodes);
         for group in hints.groups {
             if state.groups.insert(group) {
@@ -511,12 +511,12 @@ impl State {
         }
     }
 
-    fn cancel_resource(&mut self, resource: Resource, intent: Intent) {
+    fn cancel_intent(&mut self, resource: Resource, intent: IntentId) {
         if let Some(resource_state) = self.resources.get_mut(&resource) {
             resource_state.intents.remove(&intent);
             if resource_state.intents.is_empty() {
                 if let Some(id) = resource_state.active_transfer.take() {
-                    self.on_transfer_failed(id, FailureAction::Cancelled);
+                    self.actions.push(OutEvent::CancelTransfer(id));
                 }
             }
         }
@@ -545,8 +545,8 @@ impl State {
             let remaining: usize = remaining.into();
             let candidates = node_resource_iter(&self.resources, &self.groups, node_info);
             let mut next_resources = IndexSet::new();
-            for (resource, state) in candidates {
-                if !state.can_start_transfer(&node) {
+            for (resource, resource_state) in candidates {
+                if !resource_state.can_start_transfer(&node) {
                     continue;
                 }
                 next_resources.insert(*resource);
@@ -558,7 +558,7 @@ impl State {
             for resource in next_resources {
                 let resource_state = self.resources.get_mut(&resource).expect("just checked");
 
-                let id = self.transfer_id.next();
+                let id = self.transfer_id_generator.next();
                 let transfer = Transfer { id, resource, node };
                 self.actions.push(OutEvent::StartTransfer(transfer.clone()));
 
@@ -571,7 +571,7 @@ impl State {
         let idle_timer_started = if node_info.is_newly_idle() {
             self.actions.push(OutEvent::RegisterTimer(
                 IDLE_PEER_TIMEOUT,
-                Timer::DropConnection(node),
+                Timer::IdleTimeout(node),
             ));
             true
         } else {
@@ -626,7 +626,7 @@ impl State {
                 .take(remaining.into())
             {
                 node_info.set_connecting();
-                self.actions.push(OutEvent::StartDial(*node));
+                self.actions.push(OutEvent::StartConnect(*node));
             }
         }
     }
@@ -666,36 +666,24 @@ impl State {
             );
             return;
         };
-        let is_cancel = matches!(action, FailureAction::Cancelled);
 
         let Transfer { id, resource, node } = transfer;
         if let Some(resource_state) = self.resources.get_mut(&resource) {
             resource_state.skip_nodes.insert(node);
             resource_state.active_transfer = None;
-            if !is_cancel
-                && !resource_state.intents.is_empty()
-                && !resource_has_providers(&self.nodes, &self.groups, resource_state)
-            {
+            if !resource_has_providers(&self.nodes, &self.groups, resource_state) {
                 // TODO: Maybe intents should be kept alive?
                 resource_state.intents.clear();
-                self.actions
-                    .push(OutEvent::ResourceOutOfProviders(resource));
+                self.actions.push(OutEvent::ResourceFailed(resource));
             }
-        }
-        if is_cancel {
-            self.actions
-                .push(OutEvent::CancelTransfer(Transfer { id, resource, node }));
         }
 
         if let Some(node_state) = self.nodes.get_mut(&node) {
             node_state.active_transfers.remove(&id);
             match action {
-                FailureAction::Cancelled => {
-                    self.node_fill_transfers(node);
-                }
-                FailureAction::NotFound | FailureAction::AbortRequest(_) => {
-                    self.node_fill_transfers(node)
-                }
+                FailureAction::Cancelled
+                | FailureAction::NotFound
+                | FailureAction::AbortRequest(_) => self.node_fill_transfers(node),
                 FailureAction::DropPeer(_) => self.on_node_failed(node, false),
                 FailureAction::RetryLater(_) => self.on_node_failed(node, true),
             }
@@ -707,10 +695,10 @@ impl State {
             Timer::RetryNode(node) => {
                 if let Some(node_info) = self.nodes.get_mut(&node) {
                     node_info.set_connecting();
-                    self.actions.push(OutEvent::StartDial(node))
+                    self.actions.push(OutEvent::StartConnect(node))
                 }
             }
-            Timer::DropConnection(node) => {
+            Timer::IdleTimeout(node) => {
                 if let Some(node_info) = self.nodes.get_mut(&node) {
                     match node_info.state {
                         NodeState::Connected {
@@ -755,26 +743,14 @@ fn node_resource_iter<'a>(
     groups: &'a BTreeMap<Group, GroupState>,
     node_info: &'a NodeInfo,
 ) -> impl Iterator<Item = (&'a Resource, &'a ResourceState)> {
-    resource_iter(
-        resources,
-        groups,
-        node_info.resources.iter(),
-        node_info.groups.iter(),
-    )
-}
-
-fn resource_iter<'a>(
-    resources: &'a IndexMap<Resource, ResourceState>,
-    groups: &'a BTreeMap<Group, GroupState>,
-    match_resources: impl Iterator<Item = &'a Resource>,
-    match_groups: impl Iterator<Item = &'a Group>,
-) -> impl Iterator<Item = (&'a Resource, &'a ResourceState)> {
-    let resources_via_group = match_groups
+    let resources_iter = node_info.resources.iter();
+    let groups_iter = node_info.groups.iter();
+    let resources_via_groups = groups_iter
         .filter_map(|g| groups.get(g))
-        .flat_map(|g| g.resources.iter());
-    match_resources
-        .chain(resources_via_group)
-        .filter_map(|r| resources.get(r).map(|state| (r, state)))
+        .flat_map(|gs| gs.resources.iter());
+    resources_iter
+        .chain(resources_via_groups)
+        .filter_map(|r| resources.get(r).map(|rs| (r, rs)))
 }
 
 fn resource_node_iter<'a>(
