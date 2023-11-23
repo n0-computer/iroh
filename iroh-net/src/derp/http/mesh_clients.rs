@@ -50,24 +50,20 @@ impl MeshClients {
             MeshAddrs::Addrs(urls) => urls.to_owned(),
             MeshAddrs::DerpMap(derp_map) => {
                 let mut urls = Vec::new();
-                for (_url, region) in derp_map.regions() {
-                    for node in region.nodes.iter() {
-                        // note: `node.host_name` is expected to include the scheme
-                        let mut url = node.url.clone();
-                        url.set_path("/derp");
-                        urls.push(url);
-                    }
+                for url in derp_map.urls() {
+                    // note: `node.host_name` is expected to include the scheme
+                    let mut url = url.clone();
+                    url.set_path("/derp");
+                    urls.push(url);
                 }
                 urls
             }
         };
         let mut meshed_once_recvs = Vec::new();
         for addr in addrs {
-            let (client, client_receiver) = ClientBuilder::new()
+            let (client, client_receiver) = ClientBuilder::new(addr)
                 .mesh_key(Some(self.mesh_key))
-                .server_url(addr)
-                .build(self.server_key.clone())
-                .expect("will only fail if no `server_url` is present");
+                .build(self.server_key.clone());
 
             let packet_forwarder_handler = self.packet_fwd.clone();
             let (sender, recv) = tokio::sync::mpsc::channel(32);
@@ -173,16 +169,12 @@ mod tests {
 
         let alice_key = SecretKey::generate();
         println!("client alice: {:?}", alice_key.public());
-        let (alice, mut alice_receiver) = ClientBuilder::new()
-            .server_url(a_url)
-            .build(alice_key.clone())?;
+        let (alice, mut alice_receiver) = ClientBuilder::new(a_url).build(alice_key.clone());
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
         println!("client bob: {:?}", bob_key.public());
-        let (bob, mut bob_receiver) = ClientBuilder::new()
-            .server_url(b_url)
-            .build(bob_key.clone())?;
+        let (bob, mut bob_receiver) = ClientBuilder::new(b_url).build(bob_key.clone());
         let _ = bob.connect().await?;
 
         // wait for the mesh clients to be present in the servers

@@ -345,11 +345,6 @@ impl DerpActor {
 
     async fn send_derp(&mut self, url: &Url, contents: DerpContents, peer: PublicKey) {
         debug!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
-        if !self.conn.derp_map.contains_region(url) {
-            warn!("unknown derper {}", url);
-            return;
-        }
-
         // Derp Send
         let derp_client = self.connect_derp(url, Some(&peer)).await;
         for content in &contents {
@@ -448,32 +443,19 @@ impl DerpActor {
         info!("adding connection to derp-{url} for {why}");
 
         let my_derp = self.conn.my_derp();
-        let conn1 = self.conn.clone();
         let ipv6_reported = self.conn.ipv6_reported.clone();
         let url = url.clone();
         let url1 = url.clone();
 
         // building a client does not dial
-        let (dc, dc_receiver) = derp::http::ClientBuilder::new()
+        let (dc, dc_receiver) = derp::http::ClientBuilder::new(url1.clone())
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
             })
             .can_ack_pings(true)
             .is_preferred(my_derp.as_ref() == Some(&url1))
-            .get_region(move || {
-                let conn = conn1.clone();
-                let url = url1.clone();
-                Box::pin(async move {
-                    if conn.is_closing() {
-                        // We're closing anyway; return to stop dialing.
-                        return None;
-                    }
-                    conn.get_derp_url(&url)
-                })
-            })
-            .build(self.conn.secret_key.clone())
-            .expect("will only fail is a `get_region` callback is not supplied");
+            .build(self.conn.secret_key.clone());
 
         let (s, r) = mpsc::channel(64);
 

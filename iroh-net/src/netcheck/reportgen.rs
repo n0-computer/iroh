@@ -33,7 +33,7 @@ use url::Url;
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
-use crate::derp::{DerpMap, DerpNode, DerpRegion};
+use crate::derp::{DerpMap, DerpNode};
 use crate::dns::DNS_RESOLVER;
 use crate::net::interfaces;
 use crate::net::ip;
@@ -47,9 +47,6 @@ mod hairpin;
 mod probes;
 
 use probes::{Probe, ProbePlan, ProbeProto};
-
-/// Fake DNS TLD used in tests for an invalid hostname.
-const DOT_INVALID: &str = ".invalid";
 
 /// The maximum amount of time netcheck will spend gathering a single report.
 const OVERALL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -853,9 +850,9 @@ async fn run_probe(
                 }
             }
         }
-        Probe::Https { ref region, .. } => {
+        Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
-            match measure_https_latency(region).await {
+            match measure_https_latency(node).await {
                 Ok((latency, ip)) => {
                     result.delay = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
@@ -888,49 +885,20 @@ async fn run_probe(
 async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<Url>) -> Result<bool> {
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
-    let preferred_derp = if preferred_derp.is_none()
-        || dm.get_region(preferred_derp.as_ref().unwrap()).is_none()
-        || (preferred_derp.is_some()
-            && dm
-                .get_region(preferred_derp.as_ref().unwrap())
-                .unwrap()
-                .nodes
-                .is_empty())
-    {
-        let mut rids = Vec::with_capacity(dm.len());
-        for (url, reg) in dm.regions() {
-            if reg.avoid || reg.nodes.is_empty() {
-                continue;
+    let url = match preferred_derp {
+        Some(url) => url,
+        None => {
+            let urls: Vec<_> = dm.urls().collect();
+            if urls.is_empty() {
+                return Ok(false);
             }
-            rids.push(url.clone());
-        }
 
-        if rids.is_empty() {
-            return Ok(false);
+            let i = (0..urls.len())
+                .choose(&mut rand::thread_rng())
+                .unwrap_or_default();
+            urls[i].clone()
         }
-
-        let i = (0..rids.len())
-            .choose(&mut rand::thread_rng())
-            .unwrap_or_default();
-        rids[i].clone()
-    } else {
-        preferred_derp.unwrap()
     };
-
-    // Has a node, as we filtered out regions without nodes above.
-    let node = &dm.get_region(&preferred_derp).unwrap().nodes[0];
-
-    if node
-        .url
-        .host_str()
-        .map(|s| s.ends_with(&DOT_INVALID))
-        .unwrap_or_default()
-    {
-        // Don't try to connect to invalid hostnames. This occurred in tests:
-        // https://github.com/tailscale/tailscale/issues/6207
-        // TODO(bradfitz,andrew-d): how to actually handle this nicely?
-        return Ok(false);
-    }
 
     let client = reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
@@ -940,7 +908,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<Url>) -> Resu
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
 
-    let host_name = node.url.host_str().unwrap_or_default();
+    let host_name = url.host_str().unwrap_or_default();
     let challenge = format!("ts_{}", host_name);
     let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
@@ -1040,7 +1008,7 @@ async fn measure_icmp_latency(
 }
 
 #[allow(clippy::unused_async)]
-async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {
+async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
     anyhow::bail!("not implemented");
     // TODO:
     // - needs derphttp::Client

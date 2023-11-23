@@ -153,7 +153,7 @@ pub mod test {
     };
 
     use crate::{
-        derp::{DerpMap, DerpNode, DerpRegion},
+        derp::{DerpMap, DerpNode},
         test_utils::CleanupDropGuard,
     };
 
@@ -178,27 +178,19 @@ pub mod test {
     }
 
     pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        let regions = stun.enumerate().map(|(i, addr)| {
-            let region_id = (i + 1) as u16;
+        let nodes = stun.map(|addr| {
             let host = addr.ip();
             let port = addr.port();
 
-            let url: Url = format!("http://{region_id}.invalid").parse().unwrap();
+            let url: Url = format!("http://{host}:{port}").parse().unwrap();
             let node = DerpNode {
                 url: url.clone(),
                 stun_port: port,
                 stun_only: true,
             };
-            (
-                url,
-                DerpRegion {
-                    region_code: "".to_string(),
-                    avoid: false,
-                    nodes: vec![node.into()],
-                },
-            )
+            (url, node)
         });
-        DerpMap::from_regions(regions).expect("generated invalid region")
+        DerpMap::from_nodes(nodes).expect("generated invalid region")
     }
 
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.

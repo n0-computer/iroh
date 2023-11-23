@@ -49,7 +49,7 @@ use watchable::Watchable;
 
 use crate::{
     config,
-    derp::{DerpMap, DerpRegion},
+    derp::DerpMap,
     disco::{self, SendAddr},
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -257,11 +257,7 @@ impl Inner {
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
     fn has_derp_url(&self, url: &Url) -> bool {
-        self.derp_map.contains_region(url)
-    }
-
-    fn get_derp_url(&self, url: &Url) -> Option<DerpRegion> {
-        self.derp_map.get_region(url).cloned()
+        self.derp_map.contains_node(url)
     }
 
     fn is_closing(&self) -> bool {
@@ -2154,14 +2150,7 @@ impl Actor {
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
-            match self.inner.derp_map.get_region(&derp_url) {
-                Some(dr) => {
-                    info!("home is now derp-{} ({})", derp_url, dr.region_code);
-                }
-                None => {
-                    warn!("derp_map.regions[{}] is empty", derp_url);
-                }
-            }
+            info!("home is now derp {}", derp_url);
 
             self.send_derp_actor(DerpActorMessage::NotePreferred(derp_url.clone()));
             self.send_derp_actor(DerpActorMessage::Connect {
@@ -2179,15 +2168,6 @@ impl Actor {
     ///
     /// If no the [`DerpMap`] is empty, returns `0`.
     fn pick_derp_fallback(&self) -> Option<Url> {
-        let ids = {
-            let ids = self.inner.derp_map.region_urls().collect::<Vec<_>>();
-            if ids.is_empty() {
-                // No DERP regions in map.
-                return None;
-            }
-            ids
-        };
-
         // TODO: figure out which DERP region most of our nodes are using,
         // and use that region as our fallback.
         //
@@ -2202,6 +2182,15 @@ impl Actor {
         if my_derp.is_some() {
             return my_derp;
         }
+
+        let ids = {
+            let ids = self.inner.derp_map.urls().collect::<Vec<_>>();
+            if ids.is_empty() {
+                // No DERP regions in map.
+                return None;
+            }
+            ids
+        };
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         ids.choose(&mut rng).map(|c| (*c).clone())

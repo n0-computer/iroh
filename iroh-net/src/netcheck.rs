@@ -725,7 +725,7 @@ impl Actor {
         if r.preferred_derp.is_some() {
             write!(log, " derpdist=").ok();
             let mut need_comma = false;
-            for rid in dm.region_urls() {
+            for rid in dm.urls() {
                 if let Some(d) = r.region_v4_latency.get(rid) {
                     if need_comma {
                         write!(log, ",").ok();
@@ -835,7 +835,7 @@ mod tests {
     use tracing::info;
 
     use crate::defaults::{DEFAULT_DERP_STUN_PORT, EU_DERP_HOSTNAME};
-    use crate::derp::{DerpNode, DerpRegion};
+    use crate::derp::DerpNode;
     use crate::net::IpFamily;
     use crate::ping::Pinger;
 
@@ -887,19 +887,12 @@ mod tests {
         let mut client = Client::new(None).context("failed to create netcheck client")?;
         let url: Url = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
 
-        let dm = DerpMap::from_regions([(
+        let dm = DerpMap::from_nodes([(
             url.clone(),
-            DerpRegion {
-                nodes: [DerpNode {
-                    url: url.clone(),
-                    stun_only: true,
-                    stun_port: DEFAULT_DERP_STUN_PORT,
-                }]
-                .into_iter()
-                .map(Arc::new)
-                .collect(),
-                avoid: false,
-                region_code: "default".into(),
+            DerpNode {
+                url: url.clone(),
+                stun_only: true,
+                stun_port: DEFAULT_DERP_STUN_PORT,
             },
         )])
         .expect("hardcoded");

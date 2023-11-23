@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use tracing::{error_span, info_span, Instrument};
 use url::Url;
 
-use crate::derp::{DerpMap, DerpNode, DerpRegion};
+use crate::derp::{DerpMap, DerpNode};
 use crate::key::SecretKey;
 
 /// A drop guard to clean up test infrastructure.
@@ -41,19 +41,14 @@ pub(crate) async fn run_derper() -> Result<(DerpMap, Url, CleanupDropGuard)> {
     let url: Url = format!("https://test-node.invalid:{}", https_addr.port())
         .parse()
         .unwrap();
-    let m = DerpMap::from_regions([(
+    let m = DerpMap::from_nodes([(
         url.clone(),
-        DerpRegion {
-            region_code: "test".into(),
-            nodes: vec![DerpNode {
-                // In test mode, the DERP client does not validate HTTPS certs, so the host
-                // name is irrelevant, but the port is used.
-                url: url.clone(),
-                stun_only: false,
-                stun_port: stun_addr.port(),
-            }
-            .into()],
-            avoid: false,
+        DerpNode {
+            // In test mode, the DERP client does not validate HTTPS certs, so the host
+            // name is irrelevant, but the port is used.
+            url: url.clone(),
+            stun_only: false,
+            stun_port: stun_addr.port(),
         },
     )])
     .expect("hardcoded");

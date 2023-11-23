@@ -22,7 +22,7 @@ pub(crate) mod types;
 pub use self::client::{Client as DerpClient, ReceivedMessage};
 pub use self::codec::MAX_PACKET_SIZE;
 pub use self::http::Client as HttpClient;
-pub use self::map::{DerpMap, DerpMode, DerpNode, DerpRegion};
+pub use self::map::{DerpMap, DerpMode, DerpNode};
 pub use self::metrics::Metrics;
 pub use self::server::{
     ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, PacketForwarderHandler, Server,

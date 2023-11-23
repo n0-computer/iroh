@@ -12,7 +12,7 @@ use anyhow::{ensure, Result};
 use tokio::time::Duration;
 use url::Url;
 
-use crate::derp::{DerpMap, DerpNode, DerpRegion};
+use crate::derp::{DerpMap, DerpNode};
 use crate::net::interfaces;
 use crate::netcheck::Report;
 
@@ -82,7 +82,6 @@ pub(super) enum Probe {
     Https {
         delay: Duration,
         node: Arc<DerpNode>,
-        region: DerpRegion,
     },
     #[display("Icmp after {delay:?} to {node}")]
     Icmp {
@@ -201,12 +200,11 @@ impl ProbePlan {
     pub(super) fn initial(derp_map: &DerpMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
 
-        for (url, region) in derp_map.regions() {
+        for (url, derp_node) in derp_map.nodes() {
             let mut stun_ipv4_probes = ProbeSet::new(url, ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(url, ProbeProto::StunIpv6);
 
             for attempt in 0..3 {
-                let derp_node = &region.nodes[attempt % region.nodes.len()];
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 if if_state.have_v4 {
@@ -233,19 +231,16 @@ impl ProbePlan {
             let mut https_probes = ProbeSet::new(url, ProbeProto::Https);
             let mut icmp_probes = ProbeSet::new(url, ProbeProto::Icmp);
             for attempt in 0..3 {
-                let derp_node = &region.nodes[attempt % region.nodes.len()];
                 let start = plan.max_delay() + DEFAULT_INITIAL_RETRANSMIT;
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
-                if region.has_derp_node() {
-                    https_probes
-                        .push(Probe::Https {
-                            delay,
-                            node: derp_node.clone(),
-                            region: region.clone(),
-                        })
-                        .expect("adding Https probe to a Https probe set");
-                }
+                https_probes
+                    .push(Probe::Https {
+                        delay,
+                        node: derp_node.clone(),
+                    })
+                    .expect("adding Https probe to a Https probe set");
+
                 icmp_probes
                     .push(Probe::Icmp {
                         delay,
@@ -274,10 +269,7 @@ impl ProbePlan {
         let had_stun_ipv6 = !last_report.region_v6_latency.is_empty();
         let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
         let sorted_regions = sort_regions(derp_map, last_report);
-        for (ri, (url, reg)) in sorted_regions.into_iter().enumerate() {
-            if reg.nodes.is_empty() {
-                continue; // Shouldn't be possible.
-            }
+        for (ri, (url, derp_node)) in sorted_regions.into_iter().enumerate() {
             if ri == NUM_INCREMENTAL_REGIONS {
                 break;
             }
@@ -318,7 +310,6 @@ impl ProbePlan {
             let mut stun_ipv6_probes = ProbeSet::new(url, ProbeProto::StunIpv6);
 
             for attempt in 0..attempts {
-                let derp_node = &reg.nodes[attempt % reg.nodes.len()];
                 let delay = (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
                 if do4 {
@@ -346,19 +337,16 @@ impl ProbePlan {
             let mut icmp_probes = ProbeSet::new(url, ProbeProto::Icmp);
             let start = plan.max_delay();
             for attempt in 0..attempts {
-                let derp_node = &reg.nodes[attempt % reg.nodes.len()];
                 let delay = start
                     + (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
-                if reg.has_derp_node() {
-                    https_probes
-                        .push(Probe::Https {
-                            delay,
-                            node: derp_node.clone(),
-                            region: reg.clone(),
-                        })
-                        .expect("Pushing Https Probe to an Https ProbeSet");
-                }
+                https_probes
+                    .push(Probe::Https {
+                        delay,
+                        node: derp_node.clone(),
+                    })
+                    .expect("Pushing Https Probe to an Https ProbeSet");
+
                 icmp_probes
                     .push(Probe::Icmp {
                         delay,
@@ -424,12 +412,15 @@ impl FromIterator<ProbeSet> for ProbePlan {
     }
 }
 
-/// Sorts the regions in the [`DerpMap`] from fastest to slowest.
+/// Sorts the nodes in the [`DerpMap`] from fastest to slowest.
 ///
 /// This uses the latencies from the last report to determine the order.  Regions with no
 /// data are at the end.
-fn sort_regions<'a>(derp_map: &'a DerpMap, last_report: &Report) -> Vec<(&'a Url, &'a DerpRegion)> {
-    let mut prev: Vec<_> = derp_map.regions().filter(|(_, r)| !r.avoid).collect();
+fn sort_regions<'a>(
+    derp_map: &'a DerpMap,
+    last_report: &Report,
+) -> Vec<(&'a Url, &'a Arc<DerpNode>)> {
+    let mut prev: Vec<_> = derp_map.nodes().collect();
     prev.sort_by(|(a_url, _a), (b_url, _b)| {
         let latencies_a = last_report.region_latency.get(a_url);
         let latencies_b = last_report.region_latency.get(b_url);
@@ -469,10 +460,8 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let derp_map = default_derp_map();
-        let derp_region_1 = derp_map.regions().nth(0).unwrap().1;
-        let derp_node_1 = derp_region_1.nodes[0].clone();
-        let derp_region_2 = derp_map.regions().nth(1).unwrap().1;
-        let derp_node_2 = derp_region_1.nodes[0].clone();
+        let derp_node_1 = derp_map.nodes().nth(0).unwrap().1;
+        let derp_node_2 = derp_map.nodes().nth(1).unwrap().1;
         let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
@@ -502,17 +491,14 @@ mod tests {
                     Probe::Https {
                         delay: Duration::from_millis(300),
                         node: derp_node_1.clone(),
-                        region: derp_region_1.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(400),
                         node: derp_node_1.clone(),
-                        region: derp_region_1.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(500),
                         node: derp_node_1.clone(),
-                        region: derp_region_1.clone(),
                     },
                 ],
             },
@@ -530,7 +516,7 @@ mod tests {
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(500),
-                        node: derp_node_1,
+                        node: derp_node_1.clone(),
                     },
                 ],
             },
@@ -559,17 +545,14 @@ mod tests {
                     Probe::Https {
                         delay: Duration::from_millis(600),
                         node: derp_node_2.clone(),
-                        region: derp_region_2.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(700),
                         node: derp_node_2.clone(),
-                        region: derp_region_2.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(800),
                         node: derp_node_2.clone(),
-                        region: derp_region_2.clone(),
                     },
                 ],
             },
@@ -587,7 +570,7 @@ mod tests {
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(800),
-                        node: derp_node_2,
+                        node: derp_node_2.clone(),
                     },
                 ],
             },
@@ -610,14 +593,12 @@ mod tests {
         for i in 0..10 {
             println!("round {}", i);
             let derp_map = default_derp_map();
-            let r1 = derp_map.regions().nth(0).unwrap();
-            let r2 = derp_map.regions().nth(1).unwrap();
-            let derp_node_1 = r1.1.nodes[0].clone();
-            let derp_node_2 = r2.1.nodes[0].clone();
+            let (u1, derp_node_1) = derp_map.nodes().nth(0).unwrap();
+            let (u2, derp_node_2) = derp_map.nodes().nth(1).unwrap();
             let if_state = interfaces::State::fake();
             let mut latencies = RegionLatencies::new();
-            latencies.update_region(r1.0.clone(), Duration::from_millis(2));
-            latencies.update_region(r2.0.clone(), Duration::from_millis(2));
+            latencies.update_region(u1.clone(), Duration::from_millis(2));
+            latencies.update_region(u2.clone(), Duration::from_millis(2));
             let last_report = Report {
                 udp: true,
                 ipv6: true,
@@ -629,7 +610,7 @@ mod tests {
                 mapping_varies_by_dest_ip: Some(false),
                 hair_pinning: Some(true),
                 portmap_probe: None,
-                preferred_derp: Some(r1.0.clone()),
+                preferred_derp: Some(u1.clone()),
                 region_latency: latencies.clone(),
                 region_v4_latency: latencies.clone(),
                 region_v6_latency: latencies.clone(),
@@ -668,22 +649,18 @@ mod tests {
                         Probe::Https {
                             delay: Duration::from_micros(207_200),
                             node: derp_node_1.clone(),
-                            region: r1.1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(259_600),
                             node: derp_node_1.clone(),
-                            region: r1.1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(312_000),
                             node: derp_node_1.clone(),
-                            region: r1.1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(364_400),
                             node: derp_node_1.clone(),
-                            region: r1.1.clone(),
                         },
                     ],
                 },
@@ -730,12 +707,10 @@ mod tests {
                         Probe::Https {
                             delay: Duration::from_micros(414_400),
                             node: derp_node_2.clone(),
-                            region: r2.1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(466_800),
                             node: derp_node_2.clone(),
-                            region: r2.1.clone(),
                         },
                     ],
                 },
@@ -807,8 +782,8 @@ mod tests {
     #[test]
     fn test_derp_region_sort_two_latencies() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.regions().nth(0).unwrap();
-        let r2 = derp_map.regions().nth(1).unwrap();
+        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r2 = derp_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             r1.0,
             Some(Duration::from_millis(1)),
@@ -825,8 +800,8 @@ mod tests {
     #[test]
     fn test_derp_region_sort_equal_latencies() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.regions().nth(0).unwrap();
-        let r2 = derp_map.regions().nth(1).unwrap();
+        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r2 = derp_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             r1.0,
             Some(Duration::from_millis(2)),
@@ -843,8 +818,8 @@ mod tests {
     #[test]
     fn test_derp_region_sort_missing_latency() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.regions().nth(0).unwrap();
-        let r2 = derp_map.regions().nth(1).unwrap();
+        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r2 = derp_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(r1.0, None, r2.0, Some(Duration::from_millis(2)));
         let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
@@ -864,8 +839,8 @@ mod tests {
     #[test]
     fn test_derp_region_sort_no_latency() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.regions().nth(0).unwrap();
-        let r2 = derp_map.regions().nth(1).unwrap();
+        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r2 = derp_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(r1.0, None, r2.0, None);
         let sorted: Vec<_> = sort_regions(&derp_map, &last_report)

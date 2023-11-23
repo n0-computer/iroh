@@ -23,60 +23,45 @@ pub enum DerpMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     /// A map of the different region IDs to the [`DerpRegion`] information
-    regions: Arc<BTreeMap<Url, DerpRegion>>,
+    nodes: Arc<BTreeMap<Url, Arc<DerpNode>>>,
 }
 
 impl DerpMap {
     /// Returns the sorted region URLs.
-    pub fn region_urls(&self) -> impl Iterator<Item = &Url> {
-        self.regions.keys()
+    pub fn urls(&self) -> impl Iterator<Item = &Url> {
+        self.nodes.keys()
     }
 
     /// Create an empty Derp map.
     pub fn empty() -> Self {
         Self {
-            regions: Default::default(),
+            nodes: Default::default(),
         }
     }
 
-    /// Returns an `Iterator` over all known regions.
-    pub fn regions(&self) -> impl Iterator<Item = (&Url, &DerpRegion)> {
-        self.regions.iter()
+    /// Returns an `Iterator` over all known nodes.
+    pub fn nodes(&self) -> impl Iterator<Item = (&Url, &Arc<DerpNode>)> {
+        self.nodes.iter()
     }
 
-    /// Is this a known region?
-    pub fn contains_region(&self, url: &Url) -> bool {
-        self.regions.contains_key(&url)
+    /// Is this a known node?
+    pub fn contains_node(&self, url: &Url) -> bool {
+        self.nodes.contains_key(&url)
     }
 
-    /// Get the given region.
-    pub fn get_region(&self, url: &Url) -> Option<&DerpRegion> {
-        self.regions.get(&url)
+    /// Get the given node.
+    pub fn get_node(&self, url: &Url) -> Option<&Arc<DerpNode>> {
+        self.nodes.get(&url)
     }
 
-    /// Get the given region mutable.
-    #[cfg(test)]
-    pub fn get_region_mut(&mut self, url: &Url) -> Option<&mut DerpRegion> {
-        Arc::get_mut(&mut self.regions).and_then(|r| r.get_mut(&url))
-    }
-
-    #[cfg(test)]
-    pub fn get_node_mut(&mut self, url: &Url, node_idx: usize) -> Option<&mut DerpNode> {
-        Arc::get_mut(&mut self.regions)
-            .and_then(|regions| regions.get_mut(&url))
-            .map(|region| region.nodes.as_mut_slice())
-            .and_then(|slice| slice.get_mut(node_idx))
-            .map(Arc::make_mut)
-    }
-
-    /// How many regions are known?
+    /// How many nodes are known?
     pub fn len(&self) -> usize {
-        self.regions.len()
+        self.nodes.len()
     }
 
-    /// Are there any regions in this map?
+    /// Are there any nodes in this map?
     pub fn is_empty(&self) -> bool {
-        self.regions.is_empty()
+        self.nodes.is_empty()
     }
 
     /// Creates a new [`DerpMap`] with a single Derp server configured.
@@ -84,23 +69,19 @@ impl DerpMap {
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
     pub fn default_from_node(url: Url, stun_port: u16) -> Self {
-        let mut regions = BTreeMap::new();
-        regions.insert(
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
             url.clone(),
-            DerpRegion {
-                nodes: vec![DerpNode {
-                    url,
-                    stun_only: false,
-                    stun_port,
-                }
-                .into()],
-                avoid: false,
-                region_code: "default".into(),
-            },
+            DerpNode {
+                url,
+                stun_only: false,
+                stun_port,
+            }
+            .into(),
         );
 
         DerpMap {
-            regions: Arc::new(regions),
+            nodes: Arc::new(nodes),
         }
     }
 
@@ -112,55 +93,21 @@ impl DerpMap {
         Self::default_from_node(url, DEFAULT_DERP_STUN_PORT)
     }
 
-    /// Constructs the [`DerpMap`] from an iterator of [`DerpRegion`]s.
-    pub fn from_regions(value: impl IntoIterator<Item = (Url, DerpRegion)>) -> Result<Self> {
+    /// Constructs the [`DerpMap`] from an iterator of [`DerpNodes`]s.
+    pub fn from_nodes(value: impl IntoIterator<Item = (Url, DerpNode)>) -> Result<Self> {
         let mut map = BTreeMap::new();
-        for (url, region) in value.into_iter() {
-            ensure!(!map.contains_key(&url), "Duplicate region id");
-            ensure!(!region.nodes.is_empty(), "A DerpRegion must have DerpNodes");
-            for node in region.nodes.iter() {
-                ensure!(
-                    node.url == url,
-                    "DerpNode region_id does not match DerpRegion region_id"
-                );
-            }
-            map.insert(url, region);
+        for (url, node) in value.into_iter() {
+            ensure!(!map.contains_key(&url), "Duplicate node url");
+            ensure!(url == node.url, "invalid node url");
+            map.insert(url, node.into());
         }
-        Ok(DerpMap {
-            regions: map.into(),
-        })
+        Ok(DerpMap { nodes: map.into() })
     }
 }
 
 impl fmt::Display for DerpMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
-    }
-}
-
-/// A geographic region running DERP relay node(s).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct DerpRegion {
-    /// A list of [`DerpNode`]s in this region
-    pub nodes: Vec<Arc<DerpNode>>,
-    /// Whether or not to avoid this region
-    pub avoid: bool,
-    /// The region-specific string identifier
-    pub region_code: String,
-}
-
-impl DerpRegion {
-    /// Whether this region has a full DERP node configured.
-    ///
-    /// It is possible for a region to only have STUN servers configured and no full blown
-    /// DERP server.  In this case this will return false.
-    pub fn has_derp_node(&self) -> bool {
-        for node in self.nodes.iter() {
-            if !node.stun_only {
-                return true;
-            }
-        }
-        false
     }
 }
 

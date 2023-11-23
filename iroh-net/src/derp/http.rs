@@ -49,7 +49,7 @@ mod tests {
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::derp::{DerpNode, DerpRegion, ReceivedMessage};
+    use crate::derp::ReceivedMessage;
     use crate::key::{PublicKey, SecretKey};
 
     #[tokio::test]
@@ -78,29 +78,19 @@ mod tests {
             }
         };
         info!("addr: {addr}:{port}");
-        let region = DerpRegion {
-            avoid: false,
-            nodes: vec![DerpNode {
-                url: format!("http://localhost:{port}").parse().unwrap(),
-                stun_only: false,
-                stun_port: 0,
-            }
-            .into()],
-            region_code: "test_region".to_string(),
-        };
+        let derp_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
         // create clients
-        let derp_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
         let (a_key, mut a_recv, client_a_task, client_a) = {
             let span = info_span!("client-a");
             let _guard = span.enter();
-            create_test_client(a_key, region.clone(), Some(derp_addr.clone()))
+            create_test_client(a_key, derp_addr.clone())
         };
         info!("created client {a_key:?}");
         let (b_key, mut b_recv, client_b_task, client_b) = {
             let span = info_span!("client-b");
             let _guard = span.enter();
-            create_test_client(b_key, region, Some(derp_addr))
+            create_test_client(b_key, derp_addr)
         };
         info!("created client {b_key:?}");
 
@@ -137,25 +127,15 @@ mod tests {
 
     fn create_test_client(
         key: SecretKey,
-        region: DerpRegion,
-        server_url: Option<Url>,
+        server_url: Url,
     ) -> (
         PublicKey,
         mpsc::Receiver<(PublicKey, Bytes)>,
         JoinHandle<()>,
         Client,
     ) {
-        let mut client = ClientBuilder::new();
-        if let Some(url) = server_url {
-            client = client.server_url(url);
-        }
-        let (client, mut client_reader) = client
-            .get_region(move || {
-                let region = region.clone();
-                Box::pin(async move { Some(region) })
-            })
-            .build(key.clone())
-            .expect("won't fail if you supply a `get_region`");
+        let client = ClientBuilder::new(server_url);
+        let (client, mut client_reader) = client.build(key.clone());
         let public_key = key.public();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
         let client_reader_task = tokio::spawn(
@@ -229,22 +209,12 @@ mod tests {
         };
         info!("DERP listening on: {addr}:{port}");
 
-        let region = DerpRegion {
-            avoid: false,
-            nodes: vec![DerpNode {
-                url: format!("https://localhost:{port}").parse().unwrap(),
-                stun_only: false,
-                stun_port: 0,
-            }
-            .into()],
-            region_code: "test_region".to_string(),
-        };
+        let url: Url = format!("https://localhost:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut a_recv, client_a_task, client_a) =
-            create_test_client(a_key, region.clone(), None);
+        let (a_key, mut a_recv, client_a_task, client_a) = create_test_client(a_key, url.clone());
         info!("created client {a_key:?}");
-        let (b_key, mut b_recv, client_b_task, client_b) = create_test_client(b_key, region, None);
+        let (b_key, mut b_recv, client_b_task, client_b) = create_test_client(b_key, url);
         info!("created client {b_key:?}");
 
         client_a.ping().await?;
