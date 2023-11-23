@@ -37,7 +37,7 @@ fn test_node(
     let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
-        .runtime(&LocalPoolHandle::new(1))
+        .local_pool(&LocalPoolHandle::new(1))
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
         .bind_addr(addr)

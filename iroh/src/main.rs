@@ -24,12 +24,12 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
-    let rt = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
+    let lp = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
         .init();
 
     let cli = Cli::parse();
-    cli.run(rt).await
+    cli.run(lp).await
 }

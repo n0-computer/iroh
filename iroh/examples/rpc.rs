@@ -46,7 +46,7 @@ fn make_rpc_endpoint(
 
 async fn run(db: impl Store) -> anyhow::Result<()> {
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let rt = LocalPoolHandle::new(1);
+    let lp = LocalPoolHandle::new(1);
     // create a random secret key
     let secret_key = SecretKey::generate();
     // create a rpc endpoint
@@ -57,7 +57,7 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
     let doc_store = iroh_sync::store::memory::Store::default();
     let node = iroh::node::Node::builder(db, doc_store)
         .secret_key(secret_key)
-        .runtime(&rt)
+        .local_pool(&lp)
         .rpc_endpoint(rpc_endpoint)
         .spawn()
         .await?;

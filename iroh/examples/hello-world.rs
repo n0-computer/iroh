@@ -26,12 +26,12 @@ async fn main() -> anyhow::Result<()> {
     // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let rt = LocalPoolHandle::new(1);
+    let lp = LocalPoolHandle::new(1);
     // add some data and remember the hash
     let hash = db.insert(b"Hello, world!");
     // create a new node
     let node = iroh::node::Node::builder(db, doc_store)
-        .runtime(&rt)
+        .local_pool(&lp)
         .spawn()
         .await?;
     // create a ticket

@@ -210,7 +210,7 @@ impl StartArgs {
             .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token)))
             .peers_data_path(peers_data_path)
             .bind_addr(self.addr)
-            .runtime(rt)
+            .local_pool(rt)
             .rpc_endpoint(rpc_endpoint)
             .secret_key(secret_key)
             .spawn()

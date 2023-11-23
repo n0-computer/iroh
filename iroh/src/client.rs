@@ -961,9 +961,9 @@ mod tests {
     async fn test_drop_doc_client_sync() -> Result<()> {
         let db = iroh_bytes::store::readonly_mem::Store::default();
         let doc_store = iroh_sync::store::memory::Store::default();
-        let rt = LocalPoolHandle::new(1);
+        let lp = LocalPoolHandle::new(1);
         let node = crate::node::Node::builder(db, doc_store)
-            .runtime(&rt)
+            .local_pool(&lp)
             .spawn()
             .await?;
 

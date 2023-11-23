@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let collection = Collection::new(blobs, 0)?;
     let hash = db.insert_many(collection.to_blobs()).unwrap();
     // create a new local pool handle with 1 worker thread
-    let rt = LocalPoolHandle::new(1);
+    let lp = LocalPoolHandle::new(1);
 
     // create an in-memory doc store for iroh sync (not used here)
     let doc_store = iroh_sync::store::memory::Store::default();
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
     let node = iroh::node::Node::builder(db, doc_store)
-        .runtime(&rt)
+        .local_pool(&lp)
         .spawn()
         .await?;
     // create a ticket

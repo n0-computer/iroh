@@ -274,7 +274,7 @@ where
     /// Sets the tokio runtime to use.
     ///
     /// If not set, the current runtime will be picked up.
-    pub fn runtime(mut self, rt: &LocalPoolHandle) -> Self {
+    pub fn local_pool(mut self, rt: &LocalPoolHandle) -> Self {
         self.rt = Some(rt.clone());
         self
     }
@@ -286,7 +286,7 @@ where
     /// get information about it.
     pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
-        let rt = self
+        let lp = self
             .rt
             .unwrap_or_else(|| LocalPoolHandle::new(num_cpus::get()));
         // Initialize the metrics collection.
@@ -334,7 +334,7 @@ where
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone());
+        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             endpoint.clone(),
@@ -349,7 +349,7 @@ where
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.db.clone();
             let callbacks = callbacks.clone();
-            let task = rt.spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
+            let task = lp.spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
             Some(AbortingJoinHandle(task))
         } else {
             None
@@ -364,7 +364,7 @@ where
             callbacks: callbacks.clone(),
             cb_sender,
             gc_task,
-            rt: rt.clone(),
+            rt: lp.clone(),
             sync,
         });
         let task = {
@@ -1841,13 +1841,13 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let _guard = iroh_test::logging::setup();
 
-        let rt = LocalPoolHandle::new(1);
+        let lp = LocalPoolHandle::new(1);
         let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(&rt)
+            .local_pool(&lp)
             .spawn()
             .await
             .unwrap();
