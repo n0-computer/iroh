@@ -281,8 +281,7 @@ mod flat {
         let outboard_path = outboard_path(dir.clone());
 
         let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
-                .await?;
+            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(123456);
@@ -439,8 +438,7 @@ mod flat {
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
         let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
-                .await?;
+            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
 
@@ -481,8 +479,7 @@ mod flat {
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
         let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
-                .await?;
+            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), rt, Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 

@@ -189,7 +189,7 @@ impl StartArgs {
         tokio::fs::create_dir_all(&blob_dir).await?;
         tokio::fs::create_dir_all(&partial_blob_dir).await?;
         let bao_store =
-            iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
+            iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir)
                 .await
                 .with_context(|| {
                     format!("Failed to load iroh database from {}", blob_dir.display())
