@@ -121,7 +121,7 @@ impl NotifySender {
     /// This is a no-op after the first call.
     pub fn trigger(&self) {
         if !self.did_sent.fetch_or(true, Ordering::SeqCst) {
-            self.sender.lock().unwrap().take().unwrap().send(());
+            let _ = self.sender.lock().unwrap().take().unwrap().send(());
         }
     }
 }

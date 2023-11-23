@@ -13,7 +13,6 @@ use std::{
 
 use anyhow::{anyhow, ensure, Context, Result};
 use derive_more::Debug;
-use futures::FutureExt;
 use once_cell::sync::OnceCell;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
