@@ -3,10 +3,12 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
 };
 
 use futures::FutureExt;
+use tokio::sync::oneshot;
 
 /// A join handle that owns the task it is running, and aborts it when dropped.
 #[derive(Debug, derive_more::Deref)]
@@ -88,4 +90,54 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 /// and do not attempt to do any hole punching.
 pub(crate) fn derp_only_mode() -> bool {
     std::option_env!("DEV_DERP_ONLY").is_some()
+}
+
+/// A simple notifier.
+///
+/// The notification is only triggered once. The receiver can be put into an [`std::sync::Arc`] to
+/// make it cloneable, and can be received multiple times.
+pub fn notifier_channel() -> (NotifySender, NotifyReceiver) {
+    let (tx, rx) = oneshot::channel();
+    let tx = NotifySender {
+        sender: std::sync::Mutex::new(Some(tx)),
+        did_sent: AtomicBool::new(false),
+    };
+    let rx = NotifyReceiver {
+        receiver: rx.shared(),
+    };
+    (tx, rx)
+}
+
+/// Sender for [`notifier_channel`].
+#[derive(Debug)]
+pub struct NotifySender {
+    sender: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    did_sent: AtomicBool,
+}
+
+impl NotifySender {
+    /// Trigger the notification.
+    ///
+    /// This is a no-op after the first call.
+    pub fn trigger(&self) {
+        if !self.did_sent.fetch_or(true, Ordering::SeqCst) {
+            self.sender.lock().unwrap().take().unwrap().send(());
+        }
+    }
+}
+
+/// Receiver for [`notifier_channel`].
+#[derive(Debug)]
+pub struct NotifyReceiver {
+    receiver: futures::future::Shared<tokio::sync::oneshot::Receiver<()>>,
+}
+
+impl NotifyReceiver {
+    /// Wait for the notification to be triggered.
+    ///
+    /// This will resolve immediately for calls after the notification was triggered, and wait for
+    /// the notification if called before.
+    pub async fn recv(&self) -> Result<(), tokio::sync::oneshot::error::RecvError> {
+        self.receiver.clone().await
+    }
 }

@@ -1,9 +1,20 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    collections::{BTreeSet, HashMap},
+    future::Future,
+    net::SocketAddr,
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use derive_more::Debug;
+use futures::FutureExt;
+use once_cell::sync::OnceCell;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
@@ -18,6 +29,34 @@ use crate::{
 };
 
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
+
+type Alpn = &'static [u8];
+
+/// Protocol handler
+pub trait Protocol: std::fmt::Debug + Send + Sync + AsAnyArc + 'static {
+    /// Handle an incoming connection
+    fn handle_connection(
+        &self,
+        conn: quinn::Connection,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>;
+
+    ///
+    fn on_endpoints(&self, _endpoints: &[config::Endpoint]) {}
+}
+
+///
+pub trait AsAnyArc {
+    ///
+    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+///
+impl<T: Protocol> AsAnyArc for T {
+    ///
+    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
+    }
+}
 
 /// A peer and it's addressing information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,8 +148,12 @@ impl NodeAddr {
     }
 }
 
+///
+pub type ProtocolBuilder =
+    Box<dyn FnOnce(Alpn, MagicEndpoint, NodeAddr) -> Arc<dyn Protocol> + 'static>;
+
 /// Builder for [MagicEndpoint]
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct MagicEndpointBuilder {
     secret_key: Option<SecretKey>,
     derp_mode: DerpMode,
@@ -122,6 +165,8 @@ pub struct MagicEndpointBuilder {
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
+    #[debug("ProtocolHandlers")]
+    protocols: HashMap<Alpn, ProtocolBuilder>,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -136,6 +181,7 @@ impl Default for MagicEndpointBuilder {
             callbacks: Default::default(),
             discovery: Default::default(),
             peers_path: None,
+            protocols: Default::default(),
         }
     }
 }
@@ -242,6 +288,16 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Register a protocol handler
+    pub fn register_protocol(
+        mut self,
+        alpn: Alpn,
+        builder: impl FnOnce(Alpn, MagicEndpoint, NodeAddr) -> Arc<dyn Protocol> + 'static,
+    ) -> Self {
+        self.protocols.insert(alpn, Box::new(builder));
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -257,25 +313,75 @@ impl MagicEndpointBuilder {
                 derp_map
             }
         };
+        let mut alpn_protocols = self.alpn_protocols;
+        alpn_protocols.extend(self.protocols.keys().map(|alpn| alpn.to_vec()));
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
         let mut server_config = make_server_config(
             &secret_key,
-            self.alpn_protocols,
+            alpn_protocols,
             self.transport_config,
             self.keylog,
         )?;
         if let Some(c) = self.concurrent_connections {
             server_config.concurrent_connections(c);
         }
+
+        // let protocol_handlers = Arc::new(self.protocols);
+        let protocols: Arc<OnceCell<HashMap<Alpn, Arc<dyn Protocol>>>> = Arc::new(OnceCell::new());
+
+        let (first_update_tx, first_update_rx) = crate::util::notifier_channel();
+
+        let callbacks = {
+            let callbacks = Arc::new(self.callbacks);
+            let protocols = protocols.clone();
+            Callbacks {
+                on_endpoints: Some(Box::new({
+                    let protocols = protocols.clone();
+                    move |endpoints| {
+                        if let Some(ref callback) = callbacks.on_endpoints {
+                            callback(endpoints);
+                        }
+                        if let Some(protocols) = protocols.get() {
+                            for protocol in protocols.values() {
+                                protocol.on_endpoints(endpoints);
+                            }
+                        }
+                        first_update_tx.trigger();
+                    }
+                })),
+                // TODO: same as above
+                on_net_info: None,
+                // TODO: same as above
+                on_derp_active: None,
+            }
+        };
         let msock_opts = magicsock::Options {
             port: bind_port,
             secret_key,
             derp_map,
-            callbacks: self.callbacks,
+            callbacks,
             nodes_path: self.peers_path,
             discovery: self.discovery,
         };
-        MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
+        let ep = MagicEndpoint::bind(
+            Some(server_config),
+            msock_opts,
+            protocols.clone(),
+            self.keylog,
+            first_update_rx,
+        )
+        .await?;
+        let addr = ep.my_addr().await?;
+
+        // build the actual protocols
+        let mut built_protocols = HashMap::new();
+        for (alpn, protocol_builder) in self.protocols.into_iter() {
+            let protocol = protocol_builder(alpn, ep.clone(), addr.clone());
+            built_protocols.insert(alpn, protocol);
+        }
+        protocols.set(built_protocols).expect("only ever set once");
+
+        Ok(ep)
     }
 }
 
@@ -298,12 +404,34 @@ pub struct MagicEndpoint {
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     keylog: bool,
+    protocols: Arc<OnceCell<HashMap<Alpn, Arc<dyn Protocol>>>>,
+    first_update_rx: Arc<crate::util::NotifyReceiver>,
 }
 
 impl MagicEndpoint {
     /// Build a MagicEndpoint
     pub fn builder() -> MagicEndpointBuilder {
         MagicEndpointBuilder::default()
+    }
+
+    /// Get a protocol handler.
+    pub fn get_protocol<T: Protocol>(&self, alpn: Alpn) -> Result<Arc<T>> {
+        let protocols = self.protocols.get().expect("always set");
+        let proto = protocols
+            .get(alpn)
+            .ok_or_else(|| anyhow!("protocol not registered"))?;
+        let proto = Arc::clone(proto);
+        let proto = proto.as_any_arc();
+        match Arc::downcast::<T>(proto) {
+            Ok(proto) => Ok(proto),
+            Err(_err) => anyhow::bail!("Protocol does not match expected type"),
+        }
+    }
+
+    /// Wait until at least one address of the endpoint is available.
+    pub async fn my_addr_available(&self) -> Result<()> {
+        self.first_update_rx.recv().await?;
+        Ok(())
     }
 
     /// Create a quinn endpoint backed by a magicsock.
@@ -313,7 +441,9 @@ impl MagicEndpoint {
     async fn bind(
         server_config: Option<quinn::ServerConfig>,
         msock_opts: magicsock::Options,
+        protocols: Arc<OnceCell<HashMap<Alpn, Arc<dyn Protocol>>>>,
         keylog: bool,
+        first_update_rx: crate::util::NotifyReceiver,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
         let msock = magicsock::MagicSock::new(msock_opts).await?;
@@ -334,13 +464,16 @@ impl MagicEndpoint {
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
-
-        Ok(Self {
+        let this = Self {
             secret_key: Arc::new(secret_key),
             msock,
             endpoint,
             keylog,
-        })
+            protocols,
+            first_update_rx: Arc::new(first_update_rx),
+        };
+
+        Ok(this)
     }
 
     /// Accept an incoming connection on the socket.
@@ -388,6 +521,10 @@ impl MagicEndpoint {
     }
 
     /// Get the [`NodeAddr`] for this endpoint.
+    ///
+    /// When called immediately after binding the endpoint, the addresses in [`NodeAddr::info`] may
+    /// be empty. You can use [`Self::my_addr_available`] to wait for at least one address to be
+    /// discovered.
     pub async fn my_addr(&self) -> Result<NodeAddr> {
         let addrs = self.local_endpoints().await?;
         let derp = self.my_derp();
@@ -561,9 +698,40 @@ impl MagicEndpoint {
     pub(crate) fn magic_sock(&self) -> &MagicSock {
         &self.msock
     }
+
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
+    }
+
+    /// Handle and incoming connection.
+    ///
+    /// This checks the ALPN of the incoming connection, and if a matching protocol is registered,
+    /// passes the connection to the protocol handler.
+    ///
+    /// The future resolves to an error if no protocol handler is registered for the connection,
+    /// if the connection aborts, or if the protocol connection handler returns an error.
+    ///
+    /// Completes once the protocol connection handler completes. So this should be spawned on a
+    /// separate task usually.
+    // Is not implemented as an async fn so that we can return a future that does not capture
+    // a lifetime to
+    pub fn handle_connection(&self, conn: quinn::Connecting) -> impl Future<Output = Result<()>> {
+        let this = self.clone();
+        async move { this.handle_connection_owned(conn).await }
+    }
+
+    async fn handle_connection_owned(self, mut conn: quinn::Connecting) -> Result<()> {
+        let alpn = get_alpn(&mut conn).await?;
+        let protocols = self.protocols.get().expect("cell is always initialized");
+        let Some(handler) = protocols.get(alpn.as_bytes()) else {
+            anyhow::bail!("not handling connection: unknown ALPN");
+        };
+        let conn = conn.await?;
+        let fut = handler.handle_connection(conn);
+        tokio::pin!(fut);
+        fut.await?;
+        Ok(())
     }
 }
 

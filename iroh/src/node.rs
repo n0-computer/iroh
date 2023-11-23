@@ -283,7 +283,7 @@ where
     ///
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
-    /// get information about it.
+    /// get information abou it.
     pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
