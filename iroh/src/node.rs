@@ -169,7 +169,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db_and_store(db: D, docs: S) -> Self {
         Self {
-            bind_port: DEFAULT_BIND_PORT.into(),
+            bind_port: DEFAULT_BIND_PORT,
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
