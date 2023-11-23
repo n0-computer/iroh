@@ -1,6 +1,8 @@
 //! Default values used in [`iroh-net`][`crate`]
 
-use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use url::Url;
+
+use crate::derp::{DerpMap, DerpNode, DerpRegion};
 
 /// Hostname of the default NA Derp.
 pub const NA_DERP_HOSTNAME: &str = "use1-1.derp.iroh.network.";
@@ -29,41 +31,39 @@ pub fn default_derp_map() -> DerpMap {
 }
 
 /// Get the default [`DerpRegion`] for NA.
-pub fn default_na_derp_region() -> DerpRegion {
+pub fn default_na_derp_region() -> (Url, DerpRegion) {
     // The default NA derper run by number0.
+    let url: Url = format!("https://{NA_DERP_HOSTNAME}").parse().unwrap();
     let default_n0_derp = DerpNode {
-        name: "na-default-1".into(),
-        region_id: NA_REGION_ID,
-        url: format!("https://{NA_DERP_HOSTNAME}").parse().unwrap(),
+        url: url.clone(),
         stun_only: false,
         stun_port: DEFAULT_DERP_STUN_PORT,
-        ipv4: UseIpv4::Some(NA_DERP_IPV4),
-        ipv6: UseIpv6::TryDns,
     };
-    DerpRegion {
-        region_id: NA_REGION_ID,
-        nodes: vec![default_n0_derp.into()],
-        avoid: false,
-        region_code: "default-1".into(),
-    }
+    (
+        url,
+        DerpRegion {
+            nodes: vec![default_n0_derp.into()],
+            avoid: false,
+            region_code: "default-1".into(),
+        },
+    )
 }
 
 /// Get the default [`DerpRegion`] for EU.
-pub fn default_eu_derp_region() -> DerpRegion {
+pub fn default_eu_derp_region() -> (Url, DerpRegion) {
     // The default EU derper run by number0.
+    let url: Url = format!("https://{EU_DERP_HOSTNAME}").parse().unwrap();
     let default_n0_derp = DerpNode {
-        name: "eu-default-1".into(),
-        region_id: EU_REGION_ID,
-        url: format!("https://{EU_DERP_HOSTNAME}").parse().unwrap(),
+        url: url.clone(),
         stun_only: false,
         stun_port: DEFAULT_DERP_STUN_PORT,
-        ipv4: UseIpv4::Some(EU_DERP_IPV4),
-        ipv6: UseIpv6::TryDns,
     };
-    DerpRegion {
-        region_id: EU_REGION_ID,
-        nodes: vec![default_n0_derp.into()],
-        avoid: false,
-        region_code: "default-2".into(),
-    }
+    (
+        url,
+        DerpRegion {
+            nodes: vec![default_n0_derp.into()],
+            avoid: false,
+            region_code: "default-2".into(),
+        },
+    )
 }

@@ -7,6 +7,7 @@ use derive_more::Debug;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
+use url::Url;
 
 use crate::{
     config,
@@ -38,8 +39,8 @@ impl NodeAddr {
     }
 
     /// Add a derp region to the peer's [`AddrInfo`].
-    pub fn with_derp_region(mut self, derp_region: u16) -> Self {
-        self.info.derp_region = Some(derp_region);
+    pub fn with_derp_url(mut self, derp_url: Url) -> Self {
+        self.info.derp_url = Some(derp_url);
         self
     }
 
@@ -58,18 +59,18 @@ impl NodeAddr {
     }
 
     /// Get the derp region of this peer.
-    pub fn derp_region(&self) -> Option<u16> {
-        self.info.derp_region
+    pub fn derp_url(&self) -> Option<&Url> {
+        self.info.derp_url.as_ref()
     }
 }
 
-impl From<(PublicKey, Option<u16>, &[SocketAddr])> for NodeAddr {
-    fn from(value: (PublicKey, Option<u16>, &[SocketAddr])) -> Self {
-        let (node_id, derp_region, direct_addresses_iter) = value;
+impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
+    fn from(value: (PublicKey, Option<Url>, &[SocketAddr])) -> Self {
+        let (node_id, derp_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
             info: AddrInfo {
-                derp_region,
+                derp_url,
                 direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
         }
@@ -80,7 +81,7 @@ impl From<(PublicKey, Option<u16>, &[SocketAddr])> for NodeAddr {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
     /// The peer's home DERP region.
-    pub derp_region: Option<u16>,
+    pub derp_url: Option<Url>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
 }
@@ -88,7 +89,7 @@ pub struct AddrInfo {
 impl AddrInfo {
     /// Return whether this addressing information is empty.
     pub fn is_empty(&self) -> bool {
-        self.derp_region.is_none() && self.direct_addresses.is_empty()
+        self.derp_url.is_none() && self.direct_addresses.is_empty()
     }
 }
 
@@ -96,13 +97,13 @@ impl NodeAddr {
     /// Create a new [`NodeAddr`] from its parts.
     pub fn from_parts(
         node_id: PublicKey,
-        derp_region: Option<u16>,
+        derp_url: Option<Url>,
         direct_addresses: Vec<SocketAddr>,
     ) -> Self {
         Self {
             node_id,
             info: AddrInfo {
-                derp_region,
+                derp_url,
                 direct_addresses: direct_addresses.into_iter().collect(),
             },
         }
@@ -362,7 +363,7 @@ impl MagicEndpoint {
     /// Get the DERP region we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERP region.
-    pub fn my_derp(&self) -> Option<u16> {
+    pub fn my_derp(&self) -> Option<Url> {
         self.msock.my_derp()
     }
 
@@ -447,7 +448,7 @@ impl MagicEndpoint {
     /// connection without involving a DERP server. If no addresses are specified, the endpoint
     /// will try to dial the peer through the configured DERP servers.
     ///
-    /// If the `derp_region` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
+    /// If the `derp_url` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_url`, it will error.
     ///
     /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
@@ -456,12 +457,12 @@ impl MagicEndpoint {
         let NodeAddr { node_id, info } = node_addr;
         let addr = self.msock.get_mapping_addr(&node_id).await;
         let Some(addr) = addr else {
-            return Err(match (info.direct_addresses.is_empty(), info.derp_region) {
+            return Err(match (info.direct_addresses.is_empty(), info.derp_url) {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial node {node_id:?}")
                 }
-                (true, Some(region)) if !self.msock.has_derp_region(region) => {
-                    anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}. Unable to dial node {node_id:?}")
+                (true, Some(url)) if !self.msock.has_derp_url(&url) => {
+                    anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {url}. Unable to dial node {node_id:?}")
                 }
                 _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
             });
@@ -512,8 +513,8 @@ impl MagicEndpoint {
     /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
     /// present in the netmap.
     ///
-    /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
-    /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
+    /// If no UDP addresses are added, and `derp_url` is `None`, it will error.
+    /// If no UDP addresses are added, and the given `derp_url` cannot be dialed, it will error.
     // TODO: Make sync
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.msock.add_node_addr(node_addr);
@@ -672,7 +673,7 @@ mod tests {
                     .await
                     .unwrap();
                 info!("client connecting");
-                let node_addr = NodeAddr::new(server_peer_id).with_derp_region(region_id);
+                let node_addr = NodeAddr::new(server_peer_id).with_derp_url(region_id);
                 let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 
@@ -766,7 +767,7 @@ mod tests {
         let n_chunks_per_client = 2;
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let (derp_map, region_id, _guard) = run_derper().await.unwrap();
+        let (derp_map, derp_url, _guard) = run_derper().await.unwrap();
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
         let server = {
@@ -811,6 +812,7 @@ mod tests {
                 println!("[client] round {}", i + 1);
                 let derp_map = derp_map.clone();
                 let client_secret_key = client_secret_key.clone();
+                let derp_url = derp_url.clone();
                 let fut = async move {
                     info!("client binding");
                     let start = Instant::now();
@@ -823,7 +825,7 @@ mod tests {
                         .unwrap();
                     let eps = ep.local_addr().unwrap();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
-                    let node_addr = NodeAddr::new(server_node_id).with_derp_region(region_id);
+                    let node_addr = NodeAddr::new(server_node_id).with_derp_url(derp_url);
                     info!(to = ?node_addr, "client connecting");
                     let t = Instant::now();
                     let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();

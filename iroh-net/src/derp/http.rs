@@ -49,7 +49,7 @@ mod tests {
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
+    use crate::derp::{DerpNode, DerpRegion, ReceivedMessage};
     use crate::key::{PublicKey, SecretKey};
 
     #[tokio::test]
@@ -79,16 +79,11 @@ mod tests {
         };
         info!("addr: {addr}:{port}");
         let region = DerpRegion {
-            region_id: 1,
             avoid: false,
             nodes: vec![DerpNode {
-                name: "test_node".to_string(),
-                region_id: 1,
                 url: format!("http://localhost:{port}").parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
-                ipv4: UseIpv4::Some(addr),
-                ipv6: UseIpv6::Disabled,
             }
             .into()],
             region_code: "test_region".to_string(),
@@ -235,16 +230,11 @@ mod tests {
         info!("DERP listening on: {addr}:{port}");
 
         let region = DerpRegion {
-            region_id: 1,
             avoid: false,
             nodes: vec![DerpNode {
-                name: "test_node".to_string(),
-                region_id: 1,
                 url: format!("https://localhost:{port}").parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
-                ipv4: UseIpv4::Some(addr),
-                ipv6: UseIpv6::Disabled,
             }
             .into()],
             region_code: "test_region".to_string(),

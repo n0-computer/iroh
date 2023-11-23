@@ -50,7 +50,7 @@ impl MeshClients {
             MeshAddrs::Addrs(urls) => urls.to_owned(),
             MeshAddrs::DerpMap(derp_map) => {
                 let mut urls = Vec::new();
-                for region in derp_map.regions() {
+                for (_url, region) in derp_map.regions() {
                     for node in region.nodes.iter() {
                         // note: `node.host_name` is expected to include the scheme
                         let mut url = node.url.clone();

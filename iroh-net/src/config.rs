@@ -6,6 +6,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
+use url::Url;
+
 use super::portmapper;
 
 /// Fake WireGuard endpoint IP address that means to
@@ -82,7 +84,7 @@ pub struct NetInfo {
     /// connected to multiple DERP servers (to send to other nodes)
     /// but PreferredDERP is the instance number that the node
     /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_derp: u16,
+    pub preferred_derp: Option<Url>,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,

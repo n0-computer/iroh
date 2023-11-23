@@ -26,7 +26,7 @@ use url::Url;
 use crate::derp::{
     client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
     client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
-    DerpNode, DerpRegion, MeshKey, PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
+    DerpNode, DerpRegion, MeshKey, PacketForwarder, ReceivedMessage,
 };
 use crate::dns::DNS_RESOLVER;
 use crate::key::{PublicKey, SecretKey};
@@ -998,7 +998,7 @@ impl Actor {
     /// connect to.
     fn target_string(&self, reg: &DerpRegion) -> String {
         // TODO: if  self.Url, return the url string
-        format!("region {} ({})", reg.region_id, reg.region_code)
+        format!("region {}", reg.region_code)
     }
 
     async fn dial_url(&self) -> Result<TcpStream, ClientError> {
@@ -1135,74 +1135,62 @@ async fn dial_node(node: &DerpNode, prefer_ipv6: bool) -> Result<TcpStream, Clie
     // TODO: Add support for HTTP proxies.
     debug!("dial node: {:?}", node);
 
-    match (node.ipv4.is_enabled(), node.ipv6.is_enabled()) {
-        (true, true) => {
-            let node1 = node.clone();
-            let fut1 = Box::pin(
-                async move { start_dial(&node1, UseIp::Ipv4(node.ipv4), prefer_ipv6).await }
-                    .instrument(info_span!("dial", proto = "ipv4")),
-            );
+    let node1 = node.clone();
+    let fut1 = Box::pin(
+        async move { start_dial(&node1, prefer_ipv6).await }
+            .instrument(info_span!("dial", proto = "ipv4")),
+    );
 
-            let node2 = node.clone();
-            let fut2 = Box::pin(
-                async move { start_dial(&node2, UseIp::Ipv6(node.ipv6), prefer_ipv6).await }
-                    .instrument(info_span!("dial", proto = "ipv6")),
-            );
+    let node2 = node.clone();
+    let fut2 = Box::pin(
+        async move { start_dial(&node2, prefer_ipv6).await }
+            .instrument(info_span!("dial", proto = "ipv6")),
+    );
 
-            match futures::future::select(fut1, fut2).await {
-                futures::future::Either::Left((ipv4, ipv6)) => match ipv4 {
-                    Ok(conn) => Ok(conn),
-                    Err(_) => ipv6.await,
-                },
-                futures::future::Either::Right((ipv6, ipv4)) => match ipv6 {
-                    Ok(conn) => Ok(conn),
-                    Err(_) => ipv4.await,
-                },
-            }
-        }
-        (true, false) => start_dial(node, UseIp::Ipv4(node.ipv4), prefer_ipv6).await,
-        (false, true) => start_dial(node, UseIp::Ipv6(node.ipv6), prefer_ipv6).await,
-        (false, false) => Err(ClientError::IPDisabled),
+    match futures::future::select(fut1, fut2).await {
+        futures::future::Either::Left((ipv4, ipv6)) => match ipv4 {
+            Ok(conn) => Ok(conn),
+            Err(_) => ipv6.await,
+        },
+        futures::future::Either::Right((ipv6, ipv4)) => match ipv6 {
+            Ok(conn) => Ok(conn),
+            Err(_) => ipv4.await,
+        },
     }
 }
 
-async fn start_dial(
-    node: &DerpNode,
-    dst_primary: UseIp,
-    prefer_ipv6: bool,
-) -> Result<TcpStream, ClientError> {
-    trace!("dial start: {:?}", dst_primary);
-    if matches!(dst_primary, UseIp::Ipv4(_)) && prefer_ipv6 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        // Start v4 dial
-    }
-    let host: IpAddr = match dst_primary {
-        UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
-        UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
-        _ => {
-            let host = node
-                .url
-                .host()
-                .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
-            match host {
-                url::Host::Domain(domain) => {
-                    // Need to do a DNS lookup
-                    let addr = DNS_RESOLVER
-                        .lookup_ip(domain)
-                        .await
-                        .map_err(|e| ClientError::Dns(Some(e)))?
-                        .iter()
-                        .find(|addr| match dst_primary {
-                            UseIp::Ipv4(_) => addr.is_ipv4(),
-                            UseIp::Ipv6(_) => addr.is_ipv6(),
-                        });
-                    addr.ok_or_else(|| ClientError::Dns(None))?
+async fn resolve_host(node: &DerpNode, prefer_ipv6: bool) -> Result<IpAddr, ClientError> {
+    let host = node
+        .url
+        .host()
+        .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
+    match host {
+        url::Host::Domain(domain) => {
+            // Need to do a DNS lookup
+            let addrs = DNS_RESOLVER
+                .lookup_ip(domain)
+                .await
+                .map_err(|e| ClientError::Dns(Some(e)))?;
+
+            if prefer_ipv6 {
+                if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
+                    return Ok(addr);
                 }
-                url::Host::Ipv4(ip) => IpAddr::V4(ip),
-                url::Host::Ipv6(ip) => IpAddr::V6(ip),
             }
+            addrs
+                .into_iter()
+                .next()
+                .ok_or_else(|| ClientError::Dns(None))
         }
-    };
+        url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
+        url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
+    }
+}
+
+async fn start_dial(node: &DerpNode, prefer_ipv6: bool) -> Result<TcpStream, ClientError> {
+    trace!("dial start");
+
+    let host = resolve_host(node, prefer_ipv6).await?;
     let port =
         match node.url.port() {
             Some(port) => port,
@@ -1227,7 +1215,7 @@ async fn start_dial(
         .map_err(ClientError::DialIO)?;
     // TODO: ipv6 vs ipv4 specific connection
 
-    trace!("dial done: {:?}", dst_primary);
+    trace!("dial done");
     Ok(tcp_stream)
 }
 
@@ -1341,13 +1329,6 @@ impl PacketForwarder for Client {
     }
 }
 
-// TODO: move to net or some reusable place
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum UseIp {
-    Ipv4(UseIpv4),
-    Ipv6(UseIpv6),
-}
-
 fn downcast_upgrade(
     upgraded: Upgraded,
 ) -> anyhow::Result<(
@@ -1411,16 +1392,11 @@ mod tests {
     async fn test_recv_detail_connect_error() -> Result<()> {
         let key = SecretKey::generate();
         let bad_region = DerpRegion {
-            region_id: 1,
             avoid: false,
             nodes: vec![DerpNode {
-                name: "test_node".to_string(),
-                region_id: 1,
                 url: "https://bad.url".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
-                ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
-                ipv6: UseIpv6::Disabled,
             }
             .into()],
             region_code: "test_region".to_string(),
