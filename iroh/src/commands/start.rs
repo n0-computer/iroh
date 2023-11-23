@@ -43,11 +43,6 @@ pub enum RunType {
 
 #[derive(Args, Debug, Clone)]
 pub struct StartArgs {
-    /// Listening address to bind to.
-    ///
-    /// Only used with `start` or `--start`
-    #[clap(long, short, global = true, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
-    addr: SocketAddr,
     /// Use a token to authenticate requests for data.
     ///
     /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
@@ -208,7 +203,6 @@ impl StartArgs {
             .derp_mode(derp_mode)
             .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token)))
             .peers_data_path(peers_data_path)
-            .bind_addr(self.addr)
             .runtime(rt)
             .rpc_endpoint(rpc_endpoint)
             .secret_key(secret_key)
