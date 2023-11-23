@@ -8,7 +8,6 @@ use crate::{BlobFormat, Hash, HashAndFormat};
 
 pub mod io;
 pub mod progress;
-pub mod runtime;
 
 /// A tag
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]

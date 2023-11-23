@@ -8,19 +8,14 @@
 use indicatif::HumanBytes;
 use iroh::node::Node;
 use iroh_base::base32;
-use iroh_bytes::util::runtime;
 use iroh_sync::{store::Query, Entry};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let rt = runtime::Handle::from_current(1)?;
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
-    let node = Node::builder(db.clone(), store)
-        .runtime(&rt)
-        .spawn()
-        .await?;
+    let node = Node::builder(db.clone(), store).spawn().await?;
     let client = node.client();
     let doc = client.docs.create().await?;
     let author = client.authors.create().await?;

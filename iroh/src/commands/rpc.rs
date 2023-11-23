@@ -104,10 +104,7 @@ impl RpcStatus {
                     .await
                     .context("read rpc lock file")?;
                 let running_rpc_port = u16::from_le_bytes(buffer);
-                if iroh::client::quic::connect(running_rpc_port, None)
-                    .await
-                    .is_ok()
-                {
+                if iroh::client::quic::connect(running_rpc_port).await.is_ok() {
                     return Ok(RpcStatus::Running(running_rpc_port));
                 }
             }

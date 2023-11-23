@@ -13,6 +13,7 @@ use iroh_io::stats::{
 };
 use iroh_io::{AsyncStreamWriter, TokioStreamWriter};
 use serde::{Deserialize, Serialize};
+use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
@@ -369,7 +370,7 @@ pub async fn handle_connection<D: Map, E: EventSender>(
     db: D,
     events: E,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
-    rt: crate::util::runtime::Handle,
+    rt: LocalPoolHandle,
 ) {
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
@@ -395,7 +396,7 @@ pub async fn handle_connection<D: Map, E: EventSender>(
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
             let authorization_handler = authorization_handler.clone();
-            rt.local_pool().spawn_pinned(|| {
+            rt.spawn_pinned(|| {
                 async move {
                     if let Err(err) = handle_stream(db, reader, writer, authorization_handler).await
                     {

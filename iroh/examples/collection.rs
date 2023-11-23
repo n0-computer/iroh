@@ -6,9 +6,9 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run -p collection
-use iroh::bytes::util::runtime;
 use iroh::collection::{Blob, Collection};
 use iroh_bytes::BlobFormat;
+use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -39,8 +39,8 @@ async fn main() -> anyhow::Result<()> {
     // create a collection and add it to the db as well
     let collection = Collection::new(blobs, 0)?;
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let rt = runtime::Handle::from_current(1)?;
+    // create a new local pool handle with 1 worker thread
+    let rt = LocalPoolHandle::new(1);
 
     // create an in-memory doc store for iroh sync (not used here)
     let doc_store = iroh_sync::store::memory::Store::default();

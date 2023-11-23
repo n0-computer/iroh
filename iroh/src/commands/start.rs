@@ -16,12 +16,13 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_bytes::{protocol::RequestToken, util::runtime};
+use iroh_bytes::protocol::RequestToken;
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
 };
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
+use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
 
 use crate::config::{iroh_data_root, path_with_env, NodeConfig};
@@ -74,7 +75,7 @@ impl StartArgs {
 
     pub async fn run_with_command<F, T>(
         self,
-        rt: &runtime::Handle,
+        rt: &LocalPoolHandle,
         config: &NodeConfig,
         run_type: RunType,
         command: F,
@@ -84,7 +85,7 @@ impl StartArgs {
         T: Future<Output = Result<()>> + 'static,
     {
         #[cfg(feature = "metrics")]
-        let metrics_fut = start_metrics_server(config.metrics_addr, rt);
+        let metrics_fut = start_metrics_server(config.metrics_addr);
 
         let res = self
             .run_with_command_inner(rt, config, run_type, command)
@@ -102,7 +103,7 @@ impl StartArgs {
 
     async fn run_with_command_inner<F, T>(
         self,
-        rt: &runtime::Handle,
+        rt: &LocalPoolHandle,
         config: &NodeConfig,
         run_type: RunType,
         command: F,
@@ -122,7 +123,7 @@ impl StartArgs {
 
         let client = node.client();
 
-        let mut command_task = rt.local_pool().spawn_pinned(move || {
+        let mut command_task = rt.spawn_pinned(move || {
             async move {
                 match command(client).await {
                     Err(err) => Err(err),
@@ -164,7 +165,7 @@ impl StartArgs {
 
     async fn start_node(
         &self,
-        rt: &runtime::Handle,
+        rt: &LocalPoolHandle,
         token: Option<RequestToken>,
         derp_map: Option<DerpMap>,
     ) -> Result<Node<iroh_bytes::store::flat::Store>> {
@@ -297,13 +298,12 @@ fn create_spinner(msg: &'static str) -> ProgressBar {
 #[cfg(feature = "metrics")]
 pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
-    rt: &iroh_bytes::util::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         // metrics are initilaized in iroh::node::Node::spawn
         // here we only start the server
-        return Some(rt.main().spawn(async move {
+        return Some(tokio::task::spawn(async move {
             if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
                 eprintln!("Failed to start metrics server: {e}");
             }

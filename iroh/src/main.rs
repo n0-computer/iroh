@@ -24,9 +24,7 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
-    let tokio = tokio::runtime::Handle::current();
-    let tpc = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
-    let rt = iroh::bytes::util::runtime::Handle::new(tokio, tpc);
+    let rt = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())

@@ -29,15 +29,15 @@ use iroh_bytes::{
     protocol::{GetRequest, RangeSpecSeq, RequestToken},
     provider::{self, RequestAuthorizationHandler},
     store::{PartialMap, Store},
-    util::runtime,
     BlobFormat, Hash,
 };
 use iroh_sync::store;
+use tokio_util::task::LocalPoolHandle;
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
-fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_current(1).unwrap()
+fn test_runtime() -> LocalPoolHandle {
+    LocalPoolHandle::new(1)
 }
 
 fn test_node<D: Store>(
@@ -171,7 +171,7 @@ async fn multiple_clients() -> Result<()> {
         let peer_id = node.node_id();
         let content = content.to_vec();
 
-        tasks.push(rt.local_pool().spawn_pinned(move || {
+        tasks.push(rt.spawn_pinned(move || {
             async move {
                 let opts = get_options(peer_id, addrs);
                 let expected_data = &content;
@@ -195,10 +195,7 @@ async fn multiple_clients() -> Result<()> {
 
 // Run the test creating random data for each blob, using the size specified by the file
 // options
-async fn transfer_random_data<S>(
-    file_opts: Vec<(S, usize)>,
-    rt: &crate::runtime::Handle,
-) -> Result<()>
+async fn transfer_random_data<S>(file_opts: Vec<(S, usize)>, rt: &LocalPoolHandle) -> Result<()>
 where
     S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
@@ -214,7 +211,7 @@ where
 }
 
 // Run the test for a vec of filenames and blob data
-async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, rt: &crate::runtime::Handle) -> Result<()>
+async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, rt: &LocalPoolHandle) -> Result<()>
 where
     S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
@@ -498,7 +495,7 @@ async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
     let rt = test_runtime();
 
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();

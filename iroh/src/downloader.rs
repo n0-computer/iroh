@@ -43,7 +43,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
-use tokio_util::{sync::CancellationToken, time::delay_queue};
+use tokio_util::{sync::CancellationToken, task::LocalPoolHandle, time::delay_queue};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
@@ -224,7 +224,7 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader.
-    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: iroh_bytes::util::runtime::Handle) -> Self
+    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: LocalPoolHandle) -> Self
     where
         S: Store,
     {
@@ -240,7 +240,7 @@ impl Downloader {
 
             service.run().instrument(error_span!("downloader", %me))
         };
-        rt.local_pool().spawn_pinned(create_future);
+        rt.spawn_pinned(create_future);
         Self {
             next_id: Arc::new(AtomicU64::new(0)),
             msg_tx,
