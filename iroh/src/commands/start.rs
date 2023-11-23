@@ -1,7 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
-    sync::Arc,
     time::Duration,
 };
 
@@ -12,11 +11,11 @@ use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::{
     client::quic::RPC_ALPN,
-    node::{Node, StaticTokenAuthHandler},
+    node::Node,
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_bytes::{protocol::RequestToken, util::runtime};
+use iroh_bytes::util::runtime;
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
@@ -26,7 +25,7 @@ use tracing::{info_span, Instrument};
 
 use crate::config::{iroh_data_root, path_with_env, NodeConfig};
 
-use super::{rpc::RpcStatus, RequestTokenOptions};
+use super::rpc::RpcStatus;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -48,13 +47,6 @@ pub struct StartArgs {
     /// Only used with `start` or `--start`
     #[clap(long, short, global = true, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
     addr: SocketAddr,
-    /// Use a token to authenticate requests for data.
-    ///
-    /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
-    ///
-    /// Only used with `start` or `--start`
-    #[clap(long, global = true)]
-    request_token: Option<RequestTokenOptions>,
 
     /// The RPC port that the the Iroh node will listen on.
     ///
@@ -64,14 +56,6 @@ pub struct StartArgs {
 }
 
 impl StartArgs {
-    fn request_token(&self) -> Option<RequestToken> {
-        match self.request_token {
-            Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
-            Some(RequestTokenOptions::Token(ref token)) => Some(token.clone()),
-            None => None,
-        }
-    }
-
     pub async fn run_with_command<F, T>(
         self,
         rt: &runtime::Handle,
@@ -111,11 +95,10 @@ impl StartArgs {
         F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
         T: Future<Output = Result<()>> + 'static,
     {
-        let token = self.request_token();
         let derp_map = config.derp_map()?;
 
         let spinner = create_spinner("Iroh booting...");
-        let node = self.start_node(rt, token, derp_map).await?;
+        let node = self.start_node(rt, derp_map).await?;
         drop(spinner);
 
         eprintln!("{}", welcome_message(&node)?);
@@ -165,13 +148,8 @@ impl StartArgs {
     async fn start_node(
         &self,
         rt: &runtime::Handle,
-        token: Option<RequestToken>,
         derp_map: Option<DerpMap>,
     ) -> Result<Node<iroh_bytes::store::flat::Store>> {
-        if let Some(t) = token.as_ref() {
-            eprintln!("Request token: {}", t);
-        }
-
         let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
         match rpc_status {
             RpcStatus::Running(port) => {
@@ -206,7 +184,6 @@ impl StartArgs {
 
         Node::builder(bao_store, doc_store)
             .derp_mode(derp_mode)
-            .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token)))
             .peers_data_path(peers_data_path)
             .bind_addr(self.addr)
             .runtime(rt)

@@ -22,7 +22,6 @@ use iroh::{
     ticket::blob::Ticket,
 };
 use iroh_bytes::{
-    protocol::RequestToken,
     provider::{AddProgress, DownloadProgress},
     store::ValidateProgress,
     BlobFormat, Hash, HashAndFormat, Tag,
@@ -61,9 +60,6 @@ pub enum BlobCommands {
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,
-        /// Override the ticket token.
-        #[clap(long)]
-        request_token: Option<RequestToken>,
         /// If set, the ticket's direct addresses will not be used.
         #[clap(long)]
         override_addresses: bool,
@@ -101,9 +97,6 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Include an optional authentication token in the ticket.
-        #[clap(long)]
-        token: Option<String>,
         /// Do not include DERP reion information in the ticket. (advanced)
         #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
         no_derp: bool,
@@ -150,16 +143,15 @@ impl BlobCommands {
                 mut address,
                 derp_region,
                 recursive,
-                request_token,
                 override_addresses,
                 node,
                 out,
                 stable,
                 tag,
             } => {
-                let (node_addr, hash, format, token) = match ticket {
+                let (node_addr, hash, format) = match ticket {
                     TicketOrHash::Ticket(ticket) => {
-                        let (node_addr, hash, blob_format, maybe_token) = ticket.into_parts();
+                        let (node_addr, hash, blob_format) = ticket.into_parts();
 
                         // create the node address with the appropriate overrides
                         let node_addr = {
@@ -186,9 +178,7 @@ impl BlobCommands {
                             None => blob_format,
                         };
 
-                        // check if the token has an override
-                        let token = maybe_token.and(request_token);
-                        (node_addr, hash, blob_format, token)
+                        (node_addr, hash, blob_format)
                     }
                     TicketOrHash::Hash(hash) => {
                         // check if the blob format has an override
@@ -203,7 +193,7 @@ impl BlobCommands {
                         };
 
                         let node_addr = NodeAddr::from_parts(node, derp_region, address);
-                        (node_addr, hash, blob_format, request_token)
+                        (node_addr, hash, blob_format)
                     }
                 };
 
@@ -244,7 +234,6 @@ impl BlobCommands {
                         hash,
                         format,
                         peer: node_addr,
-                        token,
                         out: out_location,
                         tag,
                     })
@@ -270,11 +259,10 @@ impl BlobCommands {
             } => {
                 // TODO: This is where we are missing the request token from the running
                 // node (last argument to run_with_opts).
-                add_with_opts(iroh, path, options, None).await
+                add_with_opts(iroh, path, options).await
             }
             Self::Share {
                 hash,
-                token,
                 no_derp,
                 derp_only,
                 recursive,
@@ -311,10 +299,7 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
 
-                let request_token = token.map(RequestToken::new).transpose()?;
-
-                let ticket =
-                    Ticket::new(node_addr, hash, format, request_token).expect("correct ticket");
+                let ticket = Ticket::new(node_addr, hash, format).expect("correct ticket");
                 println!(
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
                     HumanBytes(blob_reader.size())
@@ -621,15 +606,14 @@ pub enum BlobSourceIroh {
 pub enum TicketOption {
     /// Do not print an all-in-one ticket
     None,
-    /// Print an all-in-one ticket. Optionally include a request token in the ticket.
-    Print(Option<RequestToken>),
+    /// Print an all-in-one ticket.
+    Print,
 }
 
 pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
     client: &iroh::client::Iroh<C>,
     source: BlobSource,
     opts: BlobAddOptions,
-    request_token: Option<RequestToken>,
 ) -> Result<()> {
     let tag = match opts.tag {
         Some(tag) => SetTagOption::Named(Tag::from(tag)),
@@ -637,7 +621,7 @@ pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
     };
     let ticket = match opts.no_ticket {
         true => TicketOption::None,
-        false => TicketOption::Print(request_token),
+        false => TicketOption::Print,
     };
     let source = match source {
         BlobSource::Stdin => BlobSourceIroh::Stdin,
@@ -699,9 +683,9 @@ pub async fn add<C: ServiceConnection<ProviderService>>(
     };
 
     print_add_response(hash, format, entries);
-    if let TicketOption::Print(token) = ticket {
+    if let TicketOption::Print = ticket {
         let status = client.node.status().await?;
-        let ticket = Ticket::new(status.addr, hash, format, token)?;
+        let ticket = Ticket::new(status.addr, hash, format)?;
         println!("All-in-one ticket: {ticket}");
     }
     Ok(())

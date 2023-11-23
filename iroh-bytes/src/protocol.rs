@@ -344,14 +344,8 @@
 //!
 //! In case nodes are permanently exchanging data, it is probably valuable to
 //! keep a connection open and reuse it for multiple requests.
-use std::fmt::{self, Display};
-use std::str::FromStr;
-
-use anyhow::{ensure, Result};
 use bao_tree::{ChunkNum, ChunkRanges};
-use bytes::Bytes;
 use derive_more::From;
-use iroh_base::base32;
 use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 mod range_spec;
@@ -363,58 +357,7 @@ use crate::Hash;
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// The ALPN used with quic for the iroh bytes protocol.
-pub const ALPN: [u8; 13] = *b"/iroh-bytes/2";
-
-/// Maximum size of a request token, matches a browser cookie max size:
-/// <https://datatracker.ietf.org/doc/html/rfc2109#section-6.3>.
-const MAX_REQUEST_TOKEN_SIZE: usize = 4096;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
-/// A Request token is an opaque byte sequence associated with a single request.
-/// Applications can use request tokens to implement request authorization,
-/// user association, etc.
-pub struct RequestToken {
-    bytes: Bytes,
-}
-
-impl RequestToken {
-    /// Creates a new request token from bytes.
-    pub fn new(bytes: impl Into<Bytes>) -> Result<Self> {
-        let bytes: Bytes = bytes.into();
-        ensure!(
-            bytes.len() < MAX_REQUEST_TOKEN_SIZE,
-            "request token is too large"
-        );
-        Ok(Self { bytes })
-    }
-
-    /// Generate a random 32 byte request token.
-    pub fn generate() -> Self {
-        Self {
-            bytes: rand::random::<[u8; 32]>().to_vec().into(),
-        }
-    }
-
-    /// Returns a reference the token bytes.
-    pub fn as_bytes(&self) -> &Bytes {
-        &self.bytes
-    }
-}
-
-impl FromStr for RequestToken {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        RequestToken::new(base32::parse_vec(s)?)
-    }
-}
-
-/// Serializes to base32.
-impl Display for RequestToken {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", base32::fmt(&self.bytes))
-    }
-}
+pub const ALPN: [u8; 13] = *b"/iroh-bytes/3";
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
 /// A request to the provider
@@ -423,28 +366,9 @@ pub enum Request {
     Get(GetRequest),
 }
 
-impl Request {
-    /// Gets the request token.
-    pub fn token(&self) -> Option<&RequestToken> {
-        match self {
-            Request::Get(get) => get.token(),
-        }
-    }
-
-    /// Sets the request token and returns a new request.
-    pub fn with_token(mut self, value: Option<RequestToken>) -> Self {
-        match &mut self {
-            Request::Get(get) => get.token = value,
-        }
-        self
-    }
-}
-
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct GetRequest {
-    /// Optional Request token
-    token: Option<RequestToken>,
     /// blake3 hash
     pub hash: Hash,
     /// The range of data to request
@@ -456,18 +380,13 @@ pub struct GetRequest {
 impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
-        Self {
-            hash,
-            ranges,
-            token: None,
-        }
+        Self { hash, ranges }
     }
 
     /// Request a collection and all its children
     pub fn all(hash: Hash) -> Self {
         Self {
             hash,
-            token: None,
             ranges: RangeSpecSeq::all(),
         }
     }
@@ -476,7 +395,6 @@ impl GetRequest {
     pub fn single(hash: Hash) -> Self {
         Self {
             hash,
-            token: None,
             ranges: RangeSpecSeq::from_ranges([ChunkRanges::all()]),
         }
     }
@@ -487,7 +405,6 @@ impl GetRequest {
     pub fn last_chunk(hash: Hash) -> Self {
         Self {
             hash,
-            token: None,
             ranges: RangeSpecSeq::from_ranges([ChunkRanges::from(ChunkNum(u64::MAX)..)]),
         }
     }
@@ -498,22 +415,11 @@ impl GetRequest {
     pub fn last_chunks(hash: Hash) -> Self {
         Self {
             hash,
-            token: None,
             ranges: RangeSpecSeq::from_ranges_infinite([
                 ChunkRanges::all(),
                 ChunkRanges::from(ChunkNum(u64::MAX)..),
             ]),
         }
-    }
-
-    /// Set the request token
-    pub fn with_token(self, token: Option<RequestToken>) -> Self {
-        Self { token, ..self }
-    }
-
-    /// Get the request token
-    pub fn token(&self) -> Option<&RequestToken> {
-        self.token.as_ref()
     }
 }
 
@@ -581,21 +487,18 @@ impl TryFrom<VarInt> for Closed {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use super::{GetRequest, Request, RequestToken};
+    use super::{GetRequest, Request};
 
     #[test]
     fn request_wire_format() {
         let hash = [0xda; 32].into();
-        let token = RequestToken::from(Bytes::from(b"TOKEN".as_slice()));
         let cases = [
             (
                 Request::from(GetRequest::single(hash)),
                 r"
                     00 # enum variant for GetRequest
-                    00 # no token
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     020001000100 # the RangeSpecSeq
             ",
@@ -604,18 +507,6 @@ mod tests {
                 Request::from(GetRequest::all(hash)),
                 r"
                     00 # enum variant for GetRequest
-                    00 # no token
-                    dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
-                    01000100 # the RangeSpecSeq
-            ",
-            ),
-            (
-                Request::from(GetRequest::all(hash).with_token(Some(token.clone()))),
-                r"
-                    00 # enum variant for GetRequest
-                    01 # a token
-                    05 # length 5
-                    54 4f 4b 45 4e # token content
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
             ",

@@ -1,9 +1,8 @@
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
-use iroh_bytes::{protocol::RequestToken, util::runtime};
+use iroh_bytes::util::runtime;
 
 use crate::config::{iroh_data_root, ConsoleEnv, NodeConfig};
 
@@ -159,23 +158,5 @@ async fn iroh_quic_connect(rt: runtime::Handle) -> Result<iroh::client::quic::Ir
                 .context("quic::connect")?;
             Ok(iroh)
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum RequestTokenOptions {
-    Random,
-    Token(RequestToken),
-}
-
-impl FromStr for RequestTokenOptions {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.to_lowercase().trim() == "random" {
-            return Ok(Self::Random);
-        }
-        let token = RequestToken::from_str(s)?;
-        Ok(Self::Token(token))
     }
 }
