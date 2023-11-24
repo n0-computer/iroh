@@ -4,7 +4,8 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
@@ -14,6 +15,7 @@ use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{
     actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
+    Record, RecordIdentifier,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -38,6 +40,113 @@ pub use iroh_sync::net::SYNC_ALPN;
 const ACTOR_CHANNEL_CAP: usize = 64;
 /// Capacity for the channels for [`SyncEngine::subscribe`].
 const SUBSCRIBE_CHANNEL_CAP: usize = 256;
+
+// pub struct ScopedEntry {
+//     id: RecordIdentifier,
+//     record: Record,
+//     scope: Scope
+// }
+pub enum ScopedEntry {
+    System(Entry),
+    User(Entry),
+}
+
+impl ScopedEntry {
+    fn new_system(entry: Entry) -> ScopedEntry {
+        Self::System(entry)
+    }
+
+    fn new_user(entry: Entry) -> ScopedEntry {
+        Self::User(entry)
+    }
+
+    fn as_user(self) -> Result<Entry> {
+        match self {
+            ScopedEntry::System(_) => panic!("Expected user entry, but got system entry"),
+            ScopedEntry::User(entry) => Ok(entry),
+        }
+    }
+
+    fn as_system(self) -> Result<Entry> {
+        match self {
+            ScopedEntry::System(entry) => Ok(entry),
+            ScopedEntry::User(_) => panic!("Expected system entry, but got user entry"),
+        }
+    }
+
+    fn from_entry(entry: Entry) -> Result<Self> {
+        let (id, record) = entry.into_parts();
+        let (scope, key) = strip_prefix(id.key_bytes())?;
+        Ok(match scope {
+            Scope::System => Self::System(entry),
+            Scope::User => Self::User(entry),
+        })
+    }
+
+    fn into_entry(self) -> Entry {
+        let (scope, entry) = self.into_parts();
+        let (id, record) = entry.into_parts();
+        let key = add_prefix(scope, id.key_bytes());
+        let real_id = RecordIdentifier::new(id.namespace().as_bytes(), id.author().as_bytes(), key);
+        Entry::new(real_id, record)
+    }
+    fn into_parts(self) -> (Scope, Entry) {
+        match self {
+            Self::System(entry) => (Scope::System, entry),
+            Self::User(entry) => (Scope::User, entry),
+        }
+    }
+}
+//
+// pub struct UserEntry {
+//     id: RecordIdentifier,
+//     record: Record
+// }
+
+///
+pub enum Scope {
+    ///
+    System,
+    ///
+    User,
+}
+
+impl Scope {
+    ///
+    pub fn to_byte(&self) -> u8 {
+        match self {
+            Self::System => 0,
+            Self::User => 1,
+        }
+    }
+
+    ///
+    pub fn from_byte(byte: u8) -> Result<Self> {
+        match byte {
+            0 => Ok(Self::System),
+            1 => Ok(Self::User),
+            _ => Err(anyhow!("Invalid section prefix")),
+        }
+    }
+}
+
+///
+pub fn add_prefix(section: Scope, key: Bytes) -> Bytes {
+    let mut new_key = BytesMut::with_capacity(key.len() + 1);
+    new_key.put_u8(section.to_byte());
+    new_key.extend_from_slice(&key);
+    new_key.freeze()
+}
+
+///
+pub fn strip_prefix(mut key: Bytes) -> Result<(Scope, Bytes)> {
+    if key.is_empty() {
+        return Err(anyhow!("Key does not have a section prefix"));
+    }
+    let section = Scope::from_byte(key[0])?;
+    key.advance(1);
+    Ok((section, key))
+}
 
 /// The sync engine coordinates actors that manage open documents, set-reconciliation syncs with
 /// peers and a gossip swarm for each syncing document.

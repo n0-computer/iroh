@@ -21,7 +21,7 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
+    {AuthorId, CapabilityKind, Entry, NamespaceId},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -648,7 +648,7 @@ impl RpcMsg<ProviderService> for DocSetRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetResponse {
     /// The newly-created entry.
-    pub entry: SignedEntry,
+    pub entry: Entry,
 }
 
 /// A request to the node to add the data at the given filepath as an entry to the document
@@ -852,7 +852,7 @@ impl ServerStreamingMsg<ProviderService> for DocGetManyRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetManyResponse {
     /// The document entry
-    pub entry: SignedEntry,
+    pub entry: Entry,
 }
 
 /// Get entries from a document
@@ -876,7 +876,7 @@ impl RpcMsg<ProviderService> for DocGetExactRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetExactResponse {
     /// The document entry
-    pub entry: Option<SignedEntry>,
+    pub entry: Option<Entry>,
 }
 
 /// Set a download policy

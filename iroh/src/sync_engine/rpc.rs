@@ -22,6 +22,8 @@ use crate::{
     sync_engine::SyncEngine,
 };
 
+use super::{add_prefix, Scope, ScopedEntry};
+
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;
 
@@ -172,6 +174,7 @@ impl SyncEngine {
         } = req;
         let len = value.len();
         let tag = bao_store.import_bytes(value, BlobFormat::Raw).await?;
+        let key = add_prefix(Scope::User, key);
         self.sync
             .insert_local(doc_id, author_id, key.clone(), *tag.hash(), len as u64)
             .await?;
@@ -180,6 +183,7 @@ impl SyncEngine {
             .get_exact(doc_id, author_id, key, false)
             .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
+        let entry = ScopedEntry::from_entry(entry.into())?.as_user()?;
         Ok(DocSetResponse { entry })
     }
 
