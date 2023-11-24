@@ -217,14 +217,14 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
     ensure!(p.len() > 2, "too short");
     match p[0] {
         0u8 => {
-            let s = std::str::from_utf8(&p[1..])?;
-            let u: Url = s.parse()?;
-            Ok(SendAddr::Derp(u))
-        }
-        1u8 => {
             ensure!(p.len() - 1 == EP_LENGTH, "invalid length");
             let addr = socket_addr_from_bytes(&p[1..]);
             Ok(SendAddr::Udp(addr))
+        }
+        1u8 => {
+            let s = std::str::from_utf8(&p[1..])?;
+            let u: Url = s.parse()?;
+            Ok(SendAddr::Derp(u))
         }
         _ => {
             bail!("invalid addr type {}", p[0]);
@@ -413,7 +413,7 @@ mod tests {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
                     src:  SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
                 }),
-                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
             },
             Test {
                 name: "pongv6",
@@ -421,7 +421,7 @@ mod tests {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
                     src: SendAddr::Udp("[fed0::12]:6666".parse().unwrap()),
                 }),
-                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
             },
             Test {
                 name: "call_me_maybe",

@@ -133,8 +133,6 @@ impl Probe {
 /// A [`ProbeSet`] implements [`IntoIterator`] similar to how [`Vec`] does.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct ProbeSet {
-    /// Name of this probe set, informational without uniqueness guarantee.
-    name: String,
     /// The [`ProbeProto`] all the probes in this set have.
     proto: ProbeProto,
     /// The probes in the set.
@@ -142,11 +140,9 @@ pub(super) struct ProbeSet {
 }
 
 impl ProbeSet {
-    fn new(url: &Url, proto: ProbeProto) -> Self {
-        let name = format!("region-{}-{}", url, proto.to_string().to_lowercase());
+    fn new(proto: ProbeProto) -> Self {
         Self {
             probes: Vec::new(),
-            name,
             proto,
         }
     }
@@ -174,7 +170,7 @@ impl<'a> IntoIterator for &'a ProbeSet {
 
 impl fmt::Display for ProbeSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, r#"ProbeSet("{}") {{"#, self.name)?;
+        writeln!(f, r#"ProbeSet("{}") {{"#, self.proto)?;
         for probe in self.probes.iter() {
             writeln!(f, "        {probe},")?;
         }
@@ -200,9 +196,9 @@ impl ProbePlan {
     pub(super) fn initial(derp_map: &DerpMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
 
-        for (url, derp_node) in derp_map.nodes() {
-            let mut stun_ipv4_probes = ProbeSet::new(url, ProbeProto::StunIpv4);
-            let mut stun_ipv6_probes = ProbeSet::new(url, ProbeProto::StunIpv6);
+        for (_url, derp_node) in derp_map.nodes() {
+            let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
+            let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
 
             for attempt in 0..3 {
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
@@ -228,8 +224,8 @@ impl ProbePlan {
             plan.add(stun_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
-            let mut https_probes = ProbeSet::new(url, ProbeProto::Https);
-            let mut icmp_probes = ProbeSet::new(url, ProbeProto::Icmp);
+            let mut https_probes = ProbeSet::new(ProbeProto::Https);
+            let mut icmp_probes = ProbeSet::new(ProbeProto::Icmp);
             for attempt in 0..3 {
                 let start = plan.max_delay() + DEFAULT_INITIAL_RETRANSMIT;
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
@@ -306,8 +302,8 @@ impl ProbePlan {
                 .map(|l| l * 120 / 100) // increases latency by 20%, why?
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
 
-            let mut stun_ipv4_probes = ProbeSet::new(url, ProbeProto::StunIpv4);
-            let mut stun_ipv6_probes = ProbeSet::new(url, ProbeProto::StunIpv6);
+            let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
+            let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
 
             for attempt in 0..attempts {
                 let delay = (retransmit_delay * attempt as u32)
@@ -333,8 +329,8 @@ impl ProbePlan {
             plan.add(stun_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
-            let mut https_probes = ProbeSet::new(url, ProbeProto::Https);
-            let mut icmp_probes = ProbeSet::new(url, ProbeProto::Icmp);
+            let mut https_probes = ProbeSet::new(ProbeProto::Https);
+            let mut icmp_probes = ProbeSet::new(ProbeProto::Icmp);
             let start = plan.max_delay();
             for attempt in 0..attempts {
                 let delay = start
@@ -396,7 +392,7 @@ impl fmt::Display for ProbePlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "ProbePlan {{")?;
         for probe_set in self.0.iter() {
-            writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.name)?;
+            writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
             for probe in probe_set.probes.iter() {
                 writeln!(f, "        {probe},")?;
             }
@@ -467,7 +463,6 @@ mod tests {
 
         let expected_plan: ProbePlan = [
             ProbeSet {
-                name: "region-1-stunipv4".into(),
                 proto: ProbeProto::StunIpv4,
                 probes: vec![
                     Probe::StunIpv4 {
@@ -485,7 +480,6 @@ mod tests {
                 ],
             },
             ProbeSet {
-                name: "region-1-https".into(),
                 proto: ProbeProto::Https,
                 probes: vec![
                     Probe::Https {
@@ -503,7 +497,6 @@ mod tests {
                 ],
             },
             ProbeSet {
-                name: "region-1-icmp".into(),
                 proto: ProbeProto::Icmp,
                 probes: vec![
                     Probe::Icmp {
@@ -521,7 +514,6 @@ mod tests {
                 ],
             },
             ProbeSet {
-                name: "region-2-stunipv4".into(),
                 proto: ProbeProto::StunIpv4,
                 probes: vec![
                     Probe::StunIpv4 {
@@ -539,7 +531,6 @@ mod tests {
                 ],
             },
             ProbeSet {
-                name: "region-2-https".into(),
                 proto: ProbeProto::Https,
                 probes: vec![
                     Probe::Https {
@@ -557,7 +548,6 @@ mod tests {
                 ],
             },
             ProbeSet {
-                name: "region-2-icmp".into(),
                 proto: ProbeProto::Icmp,
                 probes: vec![
                     Probe::Icmp {
@@ -621,7 +611,6 @@ mod tests {
             let plan = ProbePlan::with_last_report(&derp_map, &if_state, &last_report);
             let expected_plan: ProbePlan = [
                 ProbeSet {
-                    name: "region-1-stunipv4".into(),
                     proto: ProbeProto::StunIpv4,
                     probes: vec![
                         Probe::StunIpv4 {
@@ -643,7 +632,6 @@ mod tests {
                     ],
                 },
                 ProbeSet {
-                    name: "region-1-https".into(),
                     proto: ProbeProto::Https,
                     probes: vec![
                         Probe::Https {
@@ -665,7 +653,6 @@ mod tests {
                     ],
                 },
                 ProbeSet {
-                    name: "region-1-icmp".into(),
                     proto: ProbeProto::Icmp,
                     probes: vec![
                         Probe::Icmp {
@@ -687,7 +674,6 @@ mod tests {
                     ],
                 },
                 ProbeSet {
-                    name: "region-2-stunipv4".into(),
                     proto: ProbeProto::StunIpv4,
                     probes: vec![
                         Probe::StunIpv4 {
@@ -701,7 +687,6 @@ mod tests {
                     ],
                 },
                 ProbeSet {
-                    name: "region-2-https".into(),
                     proto: ProbeProto::Https,
                     probes: vec![
                         Probe::Https {
@@ -715,7 +700,6 @@ mod tests {
                     ],
                 },
                 ProbeSet {
-                    name: "region-2-icmp".into(),
                     proto: ProbeProto::Icmp,
                     probes: vec![
                         Probe::Icmp {
