@@ -8,7 +8,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -74,7 +74,7 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
+pub const DEFAULT_BIND_PORT: u16 = 11204;
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
@@ -121,7 +121,7 @@ where
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
 {
-    bind_addr: SocketAddr,
+    bind_port: u16,
     secret_key: SecretKey,
     rpc_endpoint: E,
     db: D,
@@ -140,7 +140,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db_and_store(db: D, docs: S) -> Self {
         Self {
-            bind_addr: DEFAULT_BIND_ADDR.into(),
+            bind_port: DEFAULT_BIND_PORT,
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
@@ -167,7 +167,7 @@ where
     ) -> Builder<D, S, E2> {
         // we can't use ..self here because the return type is different
         Builder {
-            bind_addr: self.bind_addr,
+            bind_port: self.bind_port,
             secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
@@ -205,8 +205,8 @@ where
     /// Binds the node service to a different socket.
     ///
     /// By default it binds to `127.0.0.1:11204`.
-    pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = addr;
+    pub fn bind_port(mut self, port: u16) -> Self {
+        self.bind_port = port;
         self
     }
 
@@ -279,7 +279,7 @@ where
             Some(path) => endpoint.peers_data_path(path),
             None => endpoint,
         };
-        let endpoint = endpoint.bind(self.bind_addr.port()).await?;
+        let endpoint = endpoint.bind(self.bind_port).await?;
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);
@@ -1738,7 +1738,6 @@ pub fn make_server_config(
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
-    use std::net::Ipv4Addr;
     use std::path::Path;
 
     use crate::rpc_protocol::WrapOption;
@@ -1760,7 +1759,7 @@ mod tests {
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_port(0)
             .runtime(&rt)
             .spawn()
             .await
@@ -1780,7 +1779,7 @@ mod tests {
         let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_port(0)
             .runtime(&test_runtime())
             .spawn()
             .await?;
@@ -1805,7 +1804,7 @@ mod tests {
         let db = iroh_bytes::store::mem::Store::new(rt);
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_port(0)
             .runtime(&test_runtime())
             .spawn()
             .await?;

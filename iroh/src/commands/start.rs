@@ -42,12 +42,6 @@ pub enum RunType {
 
 #[derive(Args, Debug, Clone)]
 pub struct StartArgs {
-    /// Listening address to bind to.
-    ///
-    /// Only used with `start` or `--start`
-    #[clap(long, short, global = true, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
-    addr: SocketAddr,
-
     /// The RPC port that the the Iroh node will listen on.
     ///
     /// Only used with `start` or `--start`
@@ -185,7 +179,6 @@ impl StartArgs {
         Node::builder(bao_store, doc_store)
             .derp_mode(derp_mode)
             .peers_data_path(peers_data_path)
-            .bind_addr(self.addr)
             .runtime(rt)
             .rpc_endpoint(rpc_endpoint)
             .secret_key(secret_key)
