@@ -949,6 +949,11 @@ impl Entry {
     pub fn sign(self, namespace: &NamespaceSecret, author: &Author) -> SignedEntry {
         SignedEntry::from_entry(self, namespace, author)
     }
+
+    /// Turn into a pair of [`RecordIdentifier`] and [`Record`].
+    pub fn into_parts(self) -> (RecordIdentifier, Record) {
+        (self.id, self.record)
+    }
 }
 
 const NAMESPACE_BYTES: std::ops::Range<usize> = 0..32;
