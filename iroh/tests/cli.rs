@@ -19,7 +19,6 @@ use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
 
-const ADDR: &str = "127.0.0.1:0";
 const RPC_PORT: &str = "4999";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
@@ -267,13 +266,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         make_rand_file(5000, &file3)?;
     }
     // leave the provider running for the entire test
-    let provider = make_provider_in(
-        &src_iroh_data_dir,
-        Input::Path(src.clone()),
-        false,
-        None,
-        None,
-    )?;
+    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false, None)?;
     let count = count_input_files(&src);
     let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     {
@@ -381,8 +374,6 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
             iroh_bin(),
             [
                 "start",
-                "--addr",
-                ADDR,
                 "--rpc-port",
                 "0",
                 "--add",
@@ -443,13 +434,7 @@ fn cli_provide_addresses() -> Result<()> {
     make_rand_file(1000, &path)?;
 
     let iroh_data_dir = dir.join("iroh-data-dir");
-    let mut provider = make_provider_in(
-        &iroh_data_dir,
-        Input::Path(path),
-        true,
-        Some("127.0.0.1:4333"),
-        Some(RPC_PORT),
-    )?;
+    let mut provider = make_provider_in(&iroh_data_dir, Input::Path(path), true, Some(RPC_PORT))?;
     // wait for the provider to start
     let _ticket = match_provide_output(&mut provider, 1, BlobOrCollection::Collection)?;
 
@@ -610,16 +595,9 @@ fn make_provider_in(
     iroh_data_dir: &Path,
     input: Input,
     wrap: bool,
-    addr: Option<&str>,
     rpc_port: Option<&str>,
 ) -> Result<ReaderHandle> {
-    let mut args = vec![
-        "start",
-        "--addr",
-        addr.unwrap_or(ADDR),
-        "--rpc-port",
-        rpc_port.unwrap_or("0"),
-    ];
+    let mut args = vec!["start", "--rpc-port", rpc_port.unwrap_or("0")];
     if wrap {
         args.push("--wrap");
     }
@@ -710,7 +688,7 @@ fn test_provide_get_loop(input: Input, output: Output) -> Result<()> {
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh-data-dir");
-    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), wrap, None, None)?;
+    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), wrap, None)?;
 
     // test provide output & scrape the ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs, input.is_blob_or_collection())?;
@@ -776,7 +754,7 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh-data-dir");
 
-    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), true, None, None)?;
+    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), true, None)?;
 
     // test provide output & get all in one ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs, BlobOrCollection::Collection)?;
