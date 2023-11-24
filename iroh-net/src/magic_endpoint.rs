@@ -149,7 +149,7 @@ impl NodeAddr {
 
 ///
 pub type ProtocolBuilder =
-    Box<dyn FnOnce(Alpn, MagicEndpoint, NodeAddr) -> Arc<dyn Protocol> + 'static>;
+    Box<dyn FnOnce(Alpn, MagicEndpoint, NodeAddr) -> Arc<dyn Protocol> + Send + 'static>;
 
 /// Builder for [MagicEndpoint]
 #[derive(derive_more::Debug)]
@@ -291,7 +291,7 @@ impl MagicEndpointBuilder {
     pub fn register_protocol(
         mut self,
         alpn: Alpn,
-        builder: impl FnOnce(Alpn, MagicEndpoint, NodeAddr) -> Arc<dyn Protocol> + 'static,
+        builder: impl FnOnce(Alpn, MagicEndpoint, NodeAddr) -> Arc<dyn Protocol> + Send + 'static,
     ) -> Self {
         self.protocols.insert(alpn, Box::new(builder));
         self
