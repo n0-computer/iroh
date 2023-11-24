@@ -944,11 +944,8 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
         port = DEFAULT_DERP_STUN_PORT;
     }
 
-    match proto {
-        ProbeProto::Https => {
-            anyhow::bail!("not implemented");
-        }
-        _ => {}
+    if proto == ProbeProto::Https {
+        anyhow::bail!("not implemented");
     }
 
     match n.url.host() {

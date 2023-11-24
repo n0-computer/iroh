@@ -41,14 +41,11 @@ pub(crate) async fn run_derper() -> Result<(DerpMap, Url, CleanupDropGuard)> {
     let url: Url = format!("https://localhost:{}", https_addr.port())
         .parse()
         .unwrap();
-    let m = DerpMap::from_nodes([(
-        url.clone(),
-        DerpNode {
-            url: url.clone(),
-            stun_only: false,
-            stun_port: stun_addr.port(),
-        },
-    )])
+    let m = DerpMap::from_nodes([DerpNode {
+        url: url.clone(),
+        stun_only: false,
+        stun_port: stun_addr.port(),
+    }])
     .expect("hardcoded");
 
     let (tx, rx) = oneshot::channel();

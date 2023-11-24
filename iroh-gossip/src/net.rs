@@ -693,7 +693,7 @@ mod test {
     #[tokio::test]
     async fn gossip_net_smoke() {
         let _guard = iroh_test::logging::setup();
-        let (derp_map, derp_region, cleanup) = util::run_derp_and_stun([127, 0, 0, 1].into())
+        let (derp_map, derp_url, cleanup) = util::run_derp_and_stun([127, 0, 0, 1].into())
             .await
             .unwrap();
 
@@ -701,15 +701,15 @@ mod test {
         let ep2 = create_endpoint(derp_map.clone()).await.unwrap();
         let ep3 = create_endpoint(derp_map.clone()).await.unwrap();
         let addr1 = AddrInfo {
-            derp_region: Some(derp_region),
+            derp_url: Some(derp_url.clone()),
             direct_addresses: Default::default(),
         };
         let addr2 = AddrInfo {
-            derp_region: Some(derp_region),
+            derp_url: Some(derp_url.clone()),
             direct_addresses: Default::default(),
         };
         let addr3 = AddrInfo {
-            derp_region: Some(derp_region),
+            derp_url: Some(derp_url.clone()),
             direct_addresses: Default::default(),
         };
 
@@ -731,7 +731,7 @@ mod test {
         debug!("----- adding peers  ----- ");
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        let addr1 = NodeAddr::new(pi1).with_derp_region(derp_region);
+        let addr1 = NodeAddr::new(pi1).with_derp_url(derp_url);
         ep2.add_node_addr(addr1.clone()).unwrap();
         ep3.add_node_addr(addr1).unwrap();
 
@@ -826,12 +826,13 @@ mod test {
 
         use anyhow::Result;
         use iroh_net::{
-            derp::{DerpMap, UseIpv4, UseIpv6},
+            derp::DerpMap,
             key::SecretKey,
             stun::{is, parse_binding_request, response},
         };
         use tokio::sync::oneshot;
         use tracing::{debug, info, trace};
+        use url::Url;
 
         /// A drop guard to clean up test infrastructure.
         ///
@@ -848,7 +849,7 @@ mod test {
         /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
         pub(crate) async fn run_derp_and_stun(
             stun_ip: IpAddr,
-        ) -> Result<(DerpMap, u16, CleanupDropGuard)> {
+        ) -> Result<(DerpMap, Url, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
             let server_key = SecretKey::generate();
@@ -862,17 +863,10 @@ mod test {
             info!("DERP listening on {:?}", http_addr);
 
             let (stun_addr, stun_drop_guard) = serve(stun_ip).await?;
-            let region_id = 1;
-            let derp_url = format!("http://localhost:{}", http_addr.port())
+            let derp_url: Url = format!("http://localhost:{}", http_addr.port())
                 .parse()
                 .unwrap();
-            let m = DerpMap::default_from_node(
-                derp_url,
-                stun_addr.port(),
-                UseIpv4::TryDns,
-                UseIpv6::Disabled,
-                region_id,
-            );
+            let m = DerpMap::default_from_node(derp_url.clone(), stun_addr.port());
 
             let (tx, rx) = oneshot::channel();
             tokio::spawn(async move {
@@ -883,7 +877,7 @@ mod test {
                 server.shutdown().await;
             });
 
-            Ok((m, region_id, CleanupDropGuard(tx)))
+            Ok((m, derp_url, CleanupDropGuard(tx)))
         }
 
         /// Sets up a simple STUN server.

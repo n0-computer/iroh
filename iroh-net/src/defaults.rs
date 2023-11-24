@@ -19,25 +19,23 @@ pub fn default_derp_map() -> DerpMap {
 }
 
 /// Get the default [`DerpRegion`] for NA.
-pub fn default_na_derp_node() -> (Url, DerpNode) {
+pub fn default_na_derp_node() -> DerpNode {
     // The default NA derper run by number0.
     let url: Url = format!("https://{NA_DERP_HOSTNAME}").parse().unwrap();
-    let default_n0_derp = DerpNode {
+    DerpNode {
         url: url.clone(),
         stun_only: false,
         stun_port: DEFAULT_DERP_STUN_PORT,
-    };
-    (url, default_n0_derp)
+    }
 }
 
 /// Get the default [`DerpNode`] for EU.
-pub fn default_eu_derp_node() -> (Url, DerpNode) {
+pub fn default_eu_derp_node() -> DerpNode {
     // The default EU derper run by number0.
     let url: Url = format!("https://{EU_DERP_HOSTNAME}").parse().unwrap();
-    let default_n0_derp = DerpNode {
+    DerpNode {
         url: url.clone(),
         stun_only: false,
         stun_port: DEFAULT_DERP_STUN_PORT,
-    };
-    (url, default_n0_derp)
+    }
 }

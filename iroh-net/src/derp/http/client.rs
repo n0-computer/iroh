@@ -916,8 +916,8 @@ impl Actor {
         }
 
         match self.url.scheme() {
-            "http" => return Some(80),
-            "https" => return Some(443),
+            "http" => Some(80),
+            "https" => Some(443),
             _ => None,
         }
     }

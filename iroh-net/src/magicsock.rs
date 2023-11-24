@@ -255,11 +255,6 @@ impl Inner {
         *self.my_derp.write().unwrap() = my_derp;
     }
 
-    /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    fn has_derp_url(&self, url: &Url) -> bool {
-        self.derp_map.contains_node(url)
-    }
-
     fn is_closing(&self) -> bool {
         self.closing.load(Ordering::Relaxed)
     }
@@ -1080,11 +1075,6 @@ impl MagicSock {
         Self::with_name(me.clone(), opts)
             .instrument(error_span!("magicsock", %me))
             .await
-    }
-
-    /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    pub fn has_derp_url(&self, url: &Url) -> bool {
-        self.inner.has_derp_url(url)
     }
 
     async fn with_name(me: String, opts: Options) -> Result<Self> {
@@ -2183,15 +2173,7 @@ impl Actor {
             return my_derp;
         }
 
-        let ids = {
-            let ids = self.inner.derp_map.urls().collect::<Vec<_>>();
-            if ids.is_empty() {
-                // No DERP regions in map.
-                return None;
-            }
-            ids
-        };
-
+        let ids = self.inner.derp_map.urls().collect::<Vec<_>>();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         ids.choose(&mut rng).map(|c| (*c).clone())
     }

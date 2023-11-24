@@ -29,6 +29,7 @@ use iroh_bytes::{
 use iroh_net::{key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
+use url::Url;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
@@ -54,9 +55,9 @@ pub enum BlobCommands {
         /// Additonal socket address to use to contact the node. Can be used multiple times.
         #[clap(long)]
         address: Vec<SocketAddr>,
-        /// Override the Derp region to use to contact the node.
+        /// Override the Derp URL to use to contact the node.
         #[clap(long)]
-        derp_region: Option<u16>,
+        derp_url: Option<Url>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,
@@ -100,7 +101,7 @@ pub enum BlobCommands {
         /// Do not include DERP reion information in the ticket. (advanced)
         #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
         no_derp: bool,
-        /// Include only the DERP region information in the ticket. (advanced)
+        /// Include only the DERP url information in the ticket. (advanced)
         #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
         derp_only: bool,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
@@ -141,7 +142,7 @@ impl BlobCommands {
             Self::Get {
                 ticket,
                 mut address,
-                derp_region,
+                derp_url,
                 recursive,
                 override_addresses,
                 node,
@@ -166,9 +167,9 @@ impl BlobCommands {
                             };
 
                             // prefer direct arg over ticket
-                            let derp_region = derp_region.or(info.derp_region);
+                            let derp_url = derp_url.or(info.derp_url);
 
-                            NodeAddr::from_parts(node_id, derp_region, addresses)
+                            NodeAddr::from_parts(node_id, derp_url, addresses)
                         };
 
                         // check if the blob format has an override
@@ -192,7 +193,7 @@ impl BlobCommands {
                             bail!("missing NodeId");
                         };
 
-                        let node_addr = NodeAddr::from_parts(node, derp_region, address);
+                        let node_addr = NodeAddr::from_parts(node, derp_url, address);
                         (node_addr, hash, blob_format)
                     }
                 };
@@ -203,7 +204,7 @@ impl BlobCommands {
 
                 if node_addr.info.is_empty() {
                     return Err(anyhow::anyhow!(
-                        "no derp region provided and no direct addresses provided"
+                        "no Derp url provided and no direct addresses provided"
                     ));
                 }
                 let tag = match tag {
@@ -269,8 +270,8 @@ impl BlobCommands {
                     NodeAddr::new(addr.node_id)
                         .with_direct_addresses(addr.direct_addresses().copied())
                 } else if derp_only {
-                    if let Some(region) = addr.derp_region() {
-                        NodeAddr::new(addr.node_id).with_derp_region(region)
+                    if let Some(url) = addr.derp_url() {
+                        NodeAddr::new(addr.node_id).with_derp_url(url.clone())
                     } else {
                         addr
                     }

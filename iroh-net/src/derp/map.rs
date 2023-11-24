@@ -46,12 +46,12 @@ impl DerpMap {
 
     /// Is this a known node?
     pub fn contains_node(&self, url: &Url) -> bool {
-        self.nodes.contains_key(&url)
+        self.nodes.contains_key(url)
     }
 
     /// Get the given node.
     pub fn get_node(&self, url: &Url) -> Option<&Arc<DerpNode>> {
-        self.nodes.get(&url)
+        self.nodes.get(url)
     }
 
     /// How many nodes are known?
@@ -94,12 +94,11 @@ impl DerpMap {
     }
 
     /// Constructs the [`DerpMap`] from an iterator of [`DerpNodes`]s.
-    pub fn from_nodes(value: impl IntoIterator<Item = (Url, DerpNode)>) -> Result<Self> {
+    pub fn from_nodes(value: impl IntoIterator<Item = DerpNode>) -> Result<Self> {
         let mut map = BTreeMap::new();
-        for (url, node) in value.into_iter() {
-            ensure!(!map.contains_key(&url), "Duplicate node url");
-            ensure!(url == node.url, "invalid node url");
-            map.insert(url, node.into());
+        for node in value.into_iter() {
+            ensure!(!map.contains_key(&node.url), "Duplicate node url");
+            map.insert(node.url.clone(), node.into());
         }
         Ok(DerpMap { nodes: map.into() })
     }

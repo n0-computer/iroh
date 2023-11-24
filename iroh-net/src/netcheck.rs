@@ -887,14 +887,11 @@ mod tests {
         let mut client = Client::new(None).context("failed to create netcheck client")?;
         let url: Url = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
 
-        let dm = DerpMap::from_nodes([(
-            url.clone(),
-            DerpNode {
-                url: url.clone(),
-                stun_only: true,
-                stun_port: DEFAULT_DERP_STUN_PORT,
-            },
-        )])
+        let dm = DerpMap::from_nodes([DerpNode {
+            url: url.clone(),
+            stun_only: true,
+            stun_port: DEFAULT_DERP_STUN_PORT,
+        }])
         .expect("hardcoded");
 
         for i in 0..10 {

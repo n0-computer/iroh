@@ -95,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     // configure our derp map
     let derp_mode = match (args.no_derp, args.derp) {
         (false, None) => DerpMode::Default,
-        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, 0)),
+        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url)),
         (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
@@ -305,8 +305,8 @@ fn fmt_derp_mode(derp_mode: &DerpMode) -> String {
         DerpMode::Disabled => "None".to_string(),
         DerpMode::Default => "Default Derp servers".to_string(),
         DerpMode::Custom(map) => map
-            .regions()
-            .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
+            .urls()
+            .map(|url| url.to_string())
             .collect::<Vec<_>>()
             .join(", "),
     }

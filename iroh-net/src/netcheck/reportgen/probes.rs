@@ -431,10 +431,10 @@ fn sort_regions<'a>(
             }
             (None, None) => {
                 // For both empty latencies sort by region_id.
-                a_url.cmp(&b_url)
+                a_url.cmp(b_url)
             }
             (Some(_), Some(_)) => match latencies_a.cmp(&latencies_b) {
-                std::cmp::Ordering::Equal => a_url.cmp(&b_url),
+                std::cmp::Ordering::Equal => a_url.cmp(b_url),
                 x => x,
             },
         }
@@ -456,7 +456,7 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let derp_map = default_derp_map();
-        let derp_node_1 = derp_map.nodes().nth(0).unwrap().1;
+        let derp_node_1 = derp_map.nodes().next().unwrap().1;
         let derp_node_2 = derp_map.nodes().nth(1).unwrap().1;
         let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(&derp_map, &if_state);
@@ -583,7 +583,7 @@ mod tests {
         for i in 0..10 {
             println!("round {}", i);
             let derp_map = default_derp_map();
-            let (u1, derp_node_1) = derp_map.nodes().nth(0).unwrap();
+            let (u1, derp_node_1) = derp_map.nodes().next().unwrap();
             let (u2, derp_node_2) = derp_map.nodes().nth(1).unwrap();
             let if_state = interfaces::State::fake();
             let mut latencies = RegionLatencies::new();
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn test_derp_region_sort_two_latencies() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             r1.0,
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn test_derp_region_sort_equal_latencies() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             r1.0,
@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn test_derp_region_sort_missing_latency() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(r1.0, None, r2.0, Some(Duration::from_millis(2)));
@@ -823,7 +823,7 @@ mod tests {
     #[test]
     fn test_derp_region_sort_no_latency() {
         let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().nth(0).unwrap();
+        let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(r1.0, None, r2.0, None);

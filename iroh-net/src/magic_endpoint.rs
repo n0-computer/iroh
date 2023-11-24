@@ -461,9 +461,6 @@ impl MagicEndpoint {
                 (true, None) => {
                     anyhow!("No UDP addresses or DERP region provided. Unable to dial node {node_id:?}")
                 }
-                (true, Some(url)) if !self.msock.has_derp_url(&url) => {
-                    anyhow!("No UDP addresses provided and we do not have any DERP configuration for DERP region {url}. Unable to dial node {node_id:?}")
-                }
                 _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
             });
         };
@@ -515,7 +512,6 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_url` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_url` cannot be dialed, it will error.
-    // TODO: Make sync
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.msock.add_node_addr(node_addr);
         Ok(())

@@ -972,9 +972,8 @@ mod tests {
         // set up clients
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
-        let (client_a, mut client_a_receiver) = ClientBuilder::new()
-            .server_url(derper_url.clone())
-            .build(a_secret_key)?;
+        let (client_a, mut client_a_receiver) =
+            ClientBuilder::new(derper_url.clone()).build(a_secret_key);
         let connect_client = client_a.clone();
 
         // give the derper some time to set up
@@ -996,9 +995,8 @@ mod tests {
 
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
-        let (client_b, mut client_b_receiver) = ClientBuilder::new()
-            .server_url(derper_url.clone())
-            .build(b_secret_key)?;
+        let (client_b, mut client_b_receiver) =
+            ClientBuilder::new(derper_url).build(b_secret_key)?;
         client_b.connect().await?;
 
         let msg = Bytes::from("hello, b");

@@ -187,12 +187,11 @@ pub mod test {
             let port = addr.port();
 
             let url: Url = format!("http://{host}:{port}").parse().unwrap();
-            let node = DerpNode {
+            DerpNode {
                 url: url.clone(),
                 stun_port: port,
                 stun_only,
-            };
-            (url, node)
+            }
         });
         DerpMap::from_nodes(nodes).expect("generated invalid region")
     }

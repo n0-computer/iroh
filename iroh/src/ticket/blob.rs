@@ -124,10 +124,10 @@ mod tests {
         let hash = Hash::from(hash);
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let derp_region = Some(0);
+        let derp_url = None;
         Ticket {
             hash,
-            node: NodeAddr::from_parts(peer, derp_region, vec![addr]),
+            node: NodeAddr::from_parts(peer, derp_url, vec![addr]),
             format: BlobFormat::HashSeq,
         }
     }
