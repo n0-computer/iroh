@@ -879,7 +879,7 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
             (r"Iroh is running", 1),
             (r"Node ID: [_\w\d-]*", 1),
             (r"", 1),
-            (r"Fetching: [\da-z]{59}", 1),
+            (r"Fetching: [\da-z]{52}", 1),
             (
                 r"Transferred (\d*.?\d*? ?[BKMGT]i?B?) in \d* seconds?, \d*.?\d* ?(?:B|KiB|MiB|GiB|TiB)/s",
                 1,
@@ -909,8 +909,8 @@ fn match_provide_output<T: Read>(
     let reader = BufReader::new(reader);
 
     let blob_or_collection_matcher = match kind {
-        BlobOrCollection::Collection => (r"Collection: [\da-z]{59}", 1),
-        BlobOrCollection::Blob => (r"Blob: [\da-z]{59}", 1),
+        BlobOrCollection::Collection => (r"Collection: [\da-z]{52}", 1),
+        BlobOrCollection::Blob => (r"Blob: [\da-z]{52}", 1),
     };
 
     let mut caps = assert_matches_line(
