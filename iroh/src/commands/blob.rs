@@ -256,11 +256,7 @@ impl BlobCommands {
             Self::Add {
                 source: path,
                 options,
-            } => {
-                // TODO: This is where we are missing the request token from the running
-                // node (last argument to run_with_opts).
-                add_with_opts(iroh, path, options).await
-            }
+            } => add_with_opts(iroh, path, options).await,
             Self::Share {
                 hash,
                 no_derp,

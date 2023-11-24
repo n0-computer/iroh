@@ -322,12 +322,6 @@
 //! In this case the provider will close just the stream used to send the response.
 //! The exact location of the missing data can be retrieved from the error.
 //!
-//! # Request tokens
-//!
-//! Request tokens are an optional feature of the protocol. They are opaque byte
-//! sequences that are associated with a single request. Applications can use
-//! request tokens to implement request level authorization.
-//!
 //! # Requesting multiple unrelated blobs
 //!
 //! Currently, the protocol does not support requesting multiple unrelated blobs
