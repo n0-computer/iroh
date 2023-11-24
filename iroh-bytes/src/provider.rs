@@ -1,7 +1,6 @@
 //! The server side API
 use std::fmt::Debug;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -17,7 +16,7 @@ use tracing::{debug, debug_span, info, trace, warn};
 use tracing_futures::Instrument;
 
 use crate::hashseq::parse_hash_seq;
-use crate::protocol::{GetRequest, RangeSpec, Request, RequestToken};
+use crate::protocol::{GetRequest, RangeSpec, Request};
 use crate::store::*;
 use crate::util::Tag;
 use crate::{BlobFormat, Hash};
@@ -45,8 +44,6 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
-        /// Token requester gve for this request, if any
-        token: Option<RequestToken>,
         /// The hash for which the client wants to receive data.
         hash: Hash,
     },
@@ -56,8 +53,6 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
-        /// Token requester gve for this request, if any
-        token: Option<RequestToken>,
         /// The size of the custom get request.
         len: usize,
     },
@@ -227,18 +222,6 @@ pub enum DownloadProgress {
     AllDone,
 }
 
-/// hook into the request handling to process authorization by examining
-/// the request and any given token. Any error returned will abort the request,
-/// and the error will be sent to the requester.
-pub trait RequestAuthorizationHandler: Send + Sync + Debug + 'static {
-    /// Handle the authorization request, given an opaque data blob from the requester.
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>>;
-}
-
 /// Read the request from the getter.
 ///
 /// Will fail if there is an error while reading, if the reader
@@ -368,7 +351,6 @@ pub async fn handle_connection<D: Map, E: EventSender>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
-    authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     rt: crate::util::runtime::Handle,
 ) {
     let remote_addr = connecting.remote_address();
@@ -394,11 +376,9 @@ pub async fn handle_connection<D: Map, E: EventSender>(
             };
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
-            let authorization_handler = authorization_handler.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
-                    if let Err(err) = handle_stream(db, reader, writer, authorization_handler).await
-                    {
+                    if let Err(err) = handle_stream(db, reader, writer).await {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -414,7 +394,6 @@ async fn handle_stream<D: Map, E: EventSender>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    authorization_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     // 1. Decode the request.
     debug!("reading request");
@@ -425,16 +404,6 @@ async fn handle_stream<D: Map, E: EventSender>(
             return Err(e);
         }
     };
-
-    // 2. Authorize the request (may be a no-op)
-    debug!("authorizing request");
-    if let Err(e) = authorization_handler
-        .authorize(request.token().cloned(), &request)
-        .await
-    {
-        writer.notify_transfer_aborted(None).await;
-        return Err(e);
-    }
 
     match request {
         Request::Get(request) => handle_get(db, request, writer).await,
@@ -455,7 +424,6 @@ pub async fn handle_get<D: Map, E: EventSender>(
             hash,
             connection_id: writer.connection_id(),
             request_id: writer.request_id(),
-            token: request.token().cloned(),
         })
         .await;
 
