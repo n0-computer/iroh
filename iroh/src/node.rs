@@ -8,7 +8,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -27,9 +27,7 @@ use iroh_bytes::store::{
 };
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::{
-    protocol::{Closed, Request, RequestToken},
-    provider::{AddProgress, RequestAuthorizationHandler},
-    BlobFormat, Hash, HashAndFormat, TempTag,
+    protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat, TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
@@ -76,7 +74,7 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
+pub const DEFAULT_BIND_PORT: u16 = 11204;
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
@@ -123,12 +121,11 @@ where
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
 {
-    bind_addr: SocketAddr,
+    bind_port: u16,
     secret_key: SecretKey,
     rpc_endpoint: E,
     db: D,
     keylog: bool,
-    auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_mode: DerpMode,
     gc_policy: GcPolicy,
     rt: Option<tokio_util::task::LocalPoolHandle>,
@@ -139,43 +136,16 @@ where
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
-/// A noop authorization handler that does not do any authorization.
-///
-/// This is the default. It does not have to be pub, since it is going to be
-/// boxed.
-#[derive(Debug)]
-struct NoopRequestAuthorizationHandler;
-
-impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        _request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        async move {
-            if let Some(token) = token {
-                anyhow::bail!(
-                    "no authorization handler defined, but token was provided: {:?}",
-                    token
-                );
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-}
-
 impl<D: Map, S: DocStore> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db_and_store(db: D, docs: S) -> Self {
         Self {
-            bind_addr: DEFAULT_BIND_ADDR.into(),
+            bind_port: DEFAULT_BIND_PORT,
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
-            auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
@@ -197,11 +167,10 @@ where
     ) -> Builder<D, S, E2> {
         // we can't use ..self here because the return type is different
         Builder {
-            bind_addr: self.bind_addr,
+            bind_port: self.bind_port,
             secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
-            auth_handler: self.auth_handler,
             rpc_endpoint: value,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
@@ -233,19 +202,11 @@ where
         self
     }
 
-    /// Configures a custom authorization handler.
-    pub fn custom_auth_handler(self, auth_handler: Arc<dyn RequestAuthorizationHandler>) -> Self {
-        Self {
-            auth_handler,
-            ..self
-        }
-    }
-
     /// Binds the node service to a different socket.
     ///
     /// By default it binds to `127.0.0.1:11204`.
-    pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = addr;
+    pub fn bind_port(mut self, port: u16) -> Self {
+        self.bind_port = port;
         self
     }
 
@@ -320,7 +281,7 @@ where
             Some(path) => endpoint.peers_data_path(path),
             None => endpoint,
         };
-        let endpoint = endpoint.bind(self.bind_addr.port()).await?;
+        let endpoint = endpoint.bind(self.bind_port).await?;
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);
@@ -382,7 +343,6 @@ where
                         handler,
                         self.rpc_endpoint,
                         internal_rpc,
-                        self.auth_handler,
                         gossip,
                     )
                     .await
@@ -426,7 +386,6 @@ where
         handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
-        auth_handler: Arc<dyn RequestAuthorizationHandler>,
         gossip: Gossip,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -489,10 +448,9 @@ where
                     };
                     let gossip = gossip.clone();
                     let inner = handler.inner.clone();
-                    let auth_handler = auth_handler.clone();
                     let sync = handler.inner.sync.clone();
                     tokio::task::spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, auth_handler).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -596,7 +554,6 @@ async fn handle_connection<D: BaoStore>(
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
     sync: SyncEngine,
-    auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
@@ -606,7 +563,6 @@ async fn handle_connection<D: BaoStore>(
                 connecting,
                 node.db.clone(),
                 node.callbacks.clone(),
-                auth_handler,
                 node.rt.clone(),
             )
             .await
@@ -758,7 +714,7 @@ impl<D: ReadableStore> Node<D> {
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
-        Ticket::new(me, hash, format, None)
+        Ticket::new(me, hash, format)
     }
 
     /// Return the [`NodeAddr`] for this node.
@@ -1773,64 +1729,10 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// Use a single token of opaque bytes to authorize all requests
-#[derive(Debug, Clone)]
-pub struct StaticTokenAuthHandler {
-    token: Option<RequestToken>,
-}
-
-impl StaticTokenAuthHandler {
-    /// Creates a new handler with provided token.
-    ///
-    /// The single static token provided can be used to authorise all the requests.  If it
-    /// is `None` no authorisation is performed and all requests are allowed.
-    pub fn new(token: Option<RequestToken>) -> Self {
-        Self { token }
-    }
-}
-
-impl RequestAuthorizationHandler for StaticTokenAuthHandler {
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        _request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        match &self.token {
-            None => async move {
-                if let Some(token) = token {
-                    anyhow::bail!(
-                        "no authorization handler defined, but token was provided: {:?}",
-                        token
-                    );
-                }
-                Ok(())
-            }
-            .boxed(),
-            Some(expect) => {
-                let expect = expect.clone();
-                async move {
-                    match token {
-                        Some(token) => {
-                            if token == expect {
-                                Ok(())
-                            } else {
-                                anyhow::bail!("invalid token")
-                            }
-                        }
-                        None => anyhow::bail!("no token provided"),
-                    }
-                }
-                .boxed()
-            }
-        }
-    }
-}
-
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
-    use std::net::Ipv4Addr;
     use std::path::Path;
 
     use crate::rpc_protocol::WrapOption;
@@ -1846,7 +1748,7 @@ mod tests {
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_port(0)
             .local_pool(&lp)
             .spawn()
             .await
@@ -1865,7 +1767,8 @@ mod tests {
         let db = iroh_bytes::store::mem::Store::new();
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_port(0)
+            .local_pool(&LocalPoolHandle::new(1))
             .spawn()
             .await?;
 
@@ -1887,10 +1790,7 @@ mod tests {
 
         let db = iroh_bytes::store::mem::Store::new();
         let doc_store = iroh_sync::store::memory::Store::default();
-        let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .spawn()
-            .await?;
+        let node = Node::builder(db, doc_store).bind_port(0).spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
 

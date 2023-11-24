@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::util::Tag;
-pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, BlobFormat, Hash};
+pub use iroh_bytes::{provider::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -101,9 +101,6 @@ pub struct BlobDownloadRequest {
     pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
     pub peer: NodeAddr,
-    /// This optional field contains a request token that can be used to authorize
-    /// the download request.
-    pub token: Option<RequestToken>,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
     /// This field contains the location to store the data at.

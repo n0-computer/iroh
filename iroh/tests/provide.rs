@@ -1,20 +1,19 @@
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt};
+use futures::FutureExt;
 use iroh::{
     collection::{Blob, Collection},
-    node::{Builder, Event, Node, StaticTokenAuthHandler},
+    node::{Builder, Event, Node},
 };
-use iroh_net::{key::SecretKey, MagicEndpoint, NodeAddr, NodeId};
+use iroh_net::{key::SecretKey, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
 use tokio::sync::mpsc;
@@ -26,8 +25,8 @@ use iroh_bytes::{
         fsm::{self, DecodeError},
         Stats,
     },
-    protocol::{GetRequest, RangeSpecSeq, RequestToken},
-    provider::{self, RequestAuthorizationHandler},
+    protocol::{GetRequest, RangeSpecSeq},
+    provider,
     store::{PartialMap, Store},
     BlobFormat, Hash,
 };
@@ -40,12 +39,9 @@ fn test_local_pool() -> LocalPoolHandle {
     LocalPoolHandle::new(1)
 }
 
-fn test_node<D: Store>(
-    db: D,
-    addr: SocketAddr,
-) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
+fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
     let store = iroh_sync::store::memory::Store::default();
-    Node::builder(db, store).bind_addr(addr)
+    Node::builder(db, store).bind_port(0)
 }
 
 #[tokio::test]
@@ -147,7 +143,6 @@ fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
-    let addr = "127.0.0.1:0".parse().unwrap();
 
     let mut db = iroh_bytes::store::readonly_mem::Store::default();
     let expect_hash = db.insert(content.as_slice());
@@ -161,8 +156,7 @@ async fn multiple_clients() -> Result<()> {
     )?;
     let hash = db.insert_many(collection.to_blobs()).unwrap();
     let lp = test_local_pool();
-    let node = test_node(db, addr).local_pool(&lp).spawn().await?;
-
+    let node = test_node(db).local_pool(&lp).spawn().await?;
     let mut tasks = Vec::new();
     for _i in 0..3 {
         let file_hash: Hash = expect_hash;
@@ -247,8 +241,7 @@ where
     // sort expects by name to match the canonical order of blobs
     expects.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(mdb.clone(), addr).local_pool(rt).spawn().await?;
+    let node = test_node(mdb.clone()).local_pool(rt).spawn().await?;
 
     let (events_sender, mut events_recv) = mpsc::unbounded_channel();
 
@@ -353,8 +346,7 @@ async fn test_server_close() {
     )
     .unwrap();
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let mut node = test_node(db, addr).local_pool(&lp).spawn().await.unwrap();
+    let mut node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
@@ -426,8 +418,7 @@ async fn test_ipv6() {
     let lp = test_local_pool();
 
     let (db, hash) = create_test_db([("test", b"hello")]);
-    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
-    let node = match test_node(db, addr).local_pool(&lp).spawn().await {
+    let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -455,8 +446,7 @@ async fn test_not_found() {
 
     let db = iroh_bytes::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
-    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
-    let node = match test_node(db, addr).local_pool(&lp).spawn().await {
+    let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -499,8 +489,7 @@ async fn test_chunk_not_found_1() {
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
-    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
-    let node = match test_node(db, addr).local_pool(&lp).spawn().await {
+    let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -537,38 +526,12 @@ async fn test_chunk_not_found_1() {
 async fn test_run_ticket() {
     let lp = test_local_pool();
     let (db, hash) = create_test_db([("test", b"hello")]);
-    let token = Some(RequestToken::generate());
-    let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
-    let node = test_node(db, addr)
-        .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token.clone())))
-        .local_pool(&lp)
-        .spawn()
-        .await
-        .unwrap();
+    let node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let no_token_ticket = node.ticket(hash, BlobFormat::HashSeq).await.unwrap();
+    let ticket = node.ticket(hash, BlobFormat::HashSeq).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = no_token_ticket.as_get_options(
-            SecretKey::generate(),
-            Some(iroh_net::defaults::default_derp_map()),
-        );
-        let request = GetRequest::all(no_token_ticket.hash());
-        let response = run_collection_get_request(opts, request).await;
-        assert!(response.is_err());
-        anyhow::Result::<_>::Ok(())
-    })
-    .await
-    .expect("timeout")
-    .expect("getting without token failed in an unexpected way");
-
-    let ticket = node
-        .ticket(hash, BlobFormat::HashSeq)
-        .await
-        .unwrap()
-        .with_token(token);
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = GetRequest::all(hash).with_token(ticket.token().cloned());
+        let request = GetRequest::all(hash);
         run_collection_get_request(
             ticket.as_get_options(
                 SecretKey::generate(),
@@ -612,8 +575,7 @@ async fn run_collection_get_request(
 async fn test_run_fsm() {
     let lp = test_local_pool();
     let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
-    let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
-    let node = test_node(db, addr).local_pool(&lp).spawn().await.unwrap();
+    let node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -662,8 +624,7 @@ async fn test_size_request_blob() {
     let last_chunk = last_chunk(&expected);
     let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db, addr).local_pool(&lp).spawn().await.unwrap();
+    let node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -690,12 +651,7 @@ async fn test_collection_stat() {
     let child1 = make_test_data(123456);
     let child2 = make_test_data(345678);
     let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db.clone(), addr)
-        .local_pool(&lp)
-        .spawn()
-        .await
-        .unwrap();
+    let node = test_node(db.clone()).local_pool(&lp).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -723,92 +679,4 @@ async fn test_collection_stat() {
     .await
     .expect("timeout")
     .expect("get failed");
-}
-
-#[derive(Clone, Debug)]
-struct CustomAuthHandler;
-
-impl RequestAuthorizationHandler for CustomAuthHandler {
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        _request: &iroh_bytes::protocol::Request,
-    ) -> BoxFuture<'static, Result<()>> {
-        async move {
-            match token {
-                Some(token) => {
-                    if token.as_bytes() != &[1, 2, 3, 4, 5, 6][..] {
-                        bail!("bad token")
-                    }
-                    Ok(())
-                }
-                None => {
-                    bail!("give token plz")
-                }
-            }
-        }
-        .boxed()
-    }
-}
-
-#[tokio::test]
-async fn test_token_passthrough() -> Result<()> {
-    let lp = test_local_pool();
-    let expected = b"hello".to_vec();
-    let (db, hash) = create_test_db([("test", expected.clone())]);
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-    let node = test_node(db, addr)
-        .custom_auth_handler(Arc::new(CustomAuthHandler))
-        .local_pool(&lp)
-        .spawn()
-        .await?;
-
-    let token = Some(RequestToken::new(vec![1, 2, 3, 4, 5, 6])?);
-    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
-    node.subscribe(move |event| {
-        let events_sender = events_sender.clone();
-        async move {
-            if let Event::ByteProvide(iroh_bytes::provider::Event::GetRequestReceived {
-                token: tok,
-                ..
-            }) = event
-            {
-                events_sender.send(tok).expect("receiver dropped");
-            }
-        }
-        .boxed()
-    })
-    .await?;
-
-    let addrs = node.local_endpoint_addresses().await?;
-    let peer_id = node.node_id();
-    tokio::time::timeout(Duration::from_secs(30), async move {
-        let endpoint = MagicEndpoint::builder()
-            .secret_key(SecretKey::generate())
-            .keylog(true)
-            .bind(0)
-            .await?;
-
-        let node_addr = NodeAddr::new(peer_id)
-            .with_derp_region(1)
-            .with_direct_addresses(addrs.clone());
-        endpoint
-            .connect(node_addr, &iroh_bytes::protocol::ALPN)
-            .await
-            .context("failed to connect to provider")?;
-        let request = GetRequest::all(hash).with_token(token);
-        let opts = get_options(peer_id, addrs);
-        let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;
-        let actual = &items[&0];
-        assert_eq!(actual, &expected);
-        anyhow::Ok(())
-    })
-    .await
-    .context("timeout")?
-    .context("get failed")?;
-
-    let token = events_recv.recv().await.unwrap().expect("missing token");
-    assert_eq!(token.as_bytes(), &[1, 2, 3, 4, 5, 6][..]);
-
-    Ok(())
 }

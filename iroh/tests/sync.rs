@@ -1,6 +1,5 @@
 use std::{
     future::Future,
-    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -31,7 +30,6 @@ use iroh_sync::{
 const TIMEOUT: Duration = Duration::from_secs(60);
 
 fn test_node(
-    addr: SocketAddr,
     secret_key: SecretKey,
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
     let db = iroh_bytes::store::mem::Store::new();
@@ -40,7 +38,6 @@ fn test_node(
         .local_pool(&LocalPoolHandle::new(1))
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
-        .bind_addr(addr)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
@@ -52,7 +49,7 @@ fn spawn_node(
 ) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store>>> + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
-        let node = test_node("127.0.0.1:0".parse()?, secret_key);
+        let node = test_node(secret_key);
         let node = node.spawn().await?;
         info!(?i, me = %node.node_id().fmt_short(), "node spawned");
         Ok(node)
@@ -723,10 +720,8 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 async fn doc_delete() -> Result<()> {
     let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
-    let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db, store)
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
-        .bind_addr(addr)
         .spawn()
         .await?;
     let client = node.client();
