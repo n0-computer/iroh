@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -40,12 +40,9 @@ fn test_runtime() -> runtime::Handle {
     runtime::Handle::from_current(1).unwrap()
 }
 
-fn test_node<D: Store>(
-    db: D,
-    addr: SocketAddr,
-) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
+fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
     let store = iroh_sync::store::memory::Store::default();
-    Node::builder(db, store).bind_addr(addr)
+    Node::builder(db, store).bind_port(0)
 }
 
 #[tokio::test]
@@ -147,7 +144,6 @@ fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
-    let addr = "127.0.0.1:0".parse().unwrap();
 
     let mut db = iroh_bytes::store::readonly_mem::Store::default();
     let expect_hash = db.insert(content.as_slice());
@@ -161,7 +157,7 @@ async fn multiple_clients() -> Result<()> {
     )?;
     let hash = db.insert_many(collection.to_blobs()).unwrap();
     let rt = test_runtime();
-    let node = test_node(db, addr).runtime(&rt).spawn().await?;
+    let node = test_node(db).runtime(&rt).spawn().await?;
 
     let mut tasks = Vec::new();
     for _i in 0..3 {
@@ -250,8 +246,7 @@ where
     // sort expects by name to match the canonical order of blobs
     expects.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(mdb.clone(), addr).runtime(rt).spawn().await?;
+    let node = test_node(mdb.clone()).runtime(rt).spawn().await?;
 
     let (events_sender, mut events_recv) = mpsc::unbounded_channel();
 
@@ -356,8 +351,7 @@ async fn test_server_close() {
     )
     .unwrap();
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
+    let mut node = test_node(db).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
@@ -429,8 +423,7 @@ async fn test_ipv6() {
     let rt = test_runtime();
 
     let (db, hash) = create_test_db([("test", b"hello")]);
-    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
-    let node = match test_node(db, addr).runtime(&rt).spawn().await {
+    let node = match test_node(db).runtime(&rt).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -458,8 +451,7 @@ async fn test_not_found() {
 
     let db = iroh_bytes::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
-    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
-    let node = match test_node(db, addr).runtime(&rt).spawn().await {
+    let node = match test_node(db).runtime(&rt).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -502,8 +494,7 @@ async fn test_chunk_not_found_1() {
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
-    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
-    let node = match test_node(db, addr).runtime(&rt).spawn().await {
+    let node = match test_node(db).runtime(&rt).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -541,8 +532,7 @@ async fn test_run_ticket() {
     let rt = test_runtime();
     let (db, hash) = create_test_db([("test", b"hello")]);
     let token = Some(RequestToken::generate());
-    let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
-    let node = test_node(db, addr)
+    let node = test_node(db)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token.clone())))
         .runtime(&rt)
         .spawn()
@@ -615,8 +605,7 @@ async fn run_collection_get_request(
 async fn test_run_fsm() {
     let rt = test_runtime();
     let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
-    let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
-    let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
+    let node = test_node(db).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -665,8 +654,7 @@ async fn test_size_request_blob() {
     let last_chunk = last_chunk(&expected);
     let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
+    let node = test_node(db).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -693,12 +681,7 @@ async fn test_collection_stat() {
     let child1 = make_test_data(123456);
     let child2 = make_test_data(345678);
     let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db.clone(), addr)
-        .runtime(&rt)
-        .spawn()
-        .await
-        .unwrap();
+    let node = test_node(db.clone()).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -759,8 +742,7 @@ async fn test_token_passthrough() -> Result<()> {
     let rt = test_runtime();
     let expected = b"hello".to_vec();
     let (db, hash) = create_test_db([("test", expected.clone())]);
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-    let node = test_node(db, addr)
+    let node = test_node(db)
         .custom_auth_handler(Arc::new(CustomAuthHandler))
         .runtime(&rt)
         .spawn()
