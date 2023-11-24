@@ -178,7 +178,11 @@ pub mod test {
     }
 
     pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        let nodes = stun.map(|addr| {
+        derp_map_of_opts(stun.map(|addr| (addr, false)))
+    }
+
+    pub fn derp_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> DerpMap {
+        let nodes = stun.map(|(addr, stun_only)| {
             let host = addr.ip();
             let port = addr.port();
 
@@ -186,7 +190,7 @@ pub mod test {
             let node = DerpNode {
                 url: url.clone(),
                 stun_port: port,
-                stun_only: true,
+                stun_only,
             };
             (url, node)
         });

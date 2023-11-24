@@ -38,14 +38,12 @@ pub(crate) async fn run_derper() -> Result<(DerpMap, Url, CleanupDropGuard)> {
     println!("DERP listening on {:?}", https_addr);
 
     let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(server.addr().ip()).await?;
-    let url: Url = format!("https://test-node.invalid:{}", https_addr.port())
+    let url: Url = format!("https://localhost:{}", https_addr.port())
         .parse()
         .unwrap();
     let m = DerpMap::from_nodes([(
         url.clone(),
         DerpNode {
-            // In test mode, the DERP client does not validate HTTPS certs, so the host
-            // name is irrelevant, but the port is used.
             url: url.clone(),
             stun_only: false,
             stun_port: stun_addr.port(),

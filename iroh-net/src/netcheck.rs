@@ -930,46 +930,46 @@ mod tests {
         Ok(())
     }
 
-    // TODO:
-    // #[tokio::test]
-    // async fn test_udp_blocked() -> Result<()> {
-    //     let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
-    //     let stun_addr = blackhole.local_addr()?;
-    //     let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
-    //     dm.get_node_mut(1, 0).unwrap().stun_only = true;
+    #[tokio::test]
+    async fn test_udp_blocked() -> Result<()> {
+        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+        let stun_addr = blackhole.local_addr()?;
+        let dm = stun::test::derp_map_of_opts([(stun_addr, true)].into_iter());
 
-    //     let mut client = Client::new(None)?;
+        let mut client = Client::new(None)?;
 
-    //     let r = client.get_report(dm, None, None).await?;
-    //     let mut r: Report = (*r).clone();
-    //     r.portmap_probe = None;
+        let r = client.get_report(dm, None, None).await?;
+        let mut r: Report = (*r).clone();
+        r.portmap_probe = None;
 
-    //     let have_pinger = Pinger::new().is_ok();
+        let have_pinger = Pinger::new().is_ok();
 
-    //     let want = Report {
-    //         // The ip_v4_can_send flag gets set differently across platforms.
-    //         // On Windows this test detects false, while on Linux detects true.
-    //         // That's not relevant to this test, so just accept what we're given.
-    //         ipv4_can_send: r.ipv4_can_send,
-    //         // OS IPv6 test is irrelevant here, accept whatever the current machine has.
-    //         os_has_ipv6: r.os_has_ipv6,
-    //         // Captive portal test is irrelevant; accept what the current report has.
-    //         captive_portal: r.captive_portal,
-    //         // We will fall back to sending ICMP pings.  These should succeed when we have a
-    //         // working pinger.
-    //         icmpv4: have_pinger,
-    //         // If we had a pinger, we'll have some latencies filled in and a preferred derp
-    //         region_latency: have_pinger
-    //             .then(|| r.region_latency.clone())
-    //             .unwrap_or_default(),
-    //         preferred_derp: have_pinger.then_some(r.preferred_derp).unwrap_or_default(),
-    //         ..Default::default()
-    //     };
+        let want = Report {
+            // The ip_v4_can_send flag gets set differently across platforms.
+            // On Windows this test detects false, while on Linux detects true.
+            // That's not relevant to this test, so just accept what we're given.
+            ipv4_can_send: r.ipv4_can_send,
+            // OS IPv6 test is irrelevant here, accept whatever the current machine has.
+            os_has_ipv6: r.os_has_ipv6,
+            // Captive portal test is irrelevant; accept what the current report has.
+            captive_portal: r.captive_portal,
+            // We will fall back to sending ICMP pings.  These should succeed when we have a
+            // working pinger.
+            icmpv4: have_pinger,
+            // If we had a pinger, we'll have some latencies filled in and a preferred derp
+            region_latency: have_pinger
+                .then(|| r.region_latency.clone())
+                .unwrap_or_default(),
+            preferred_derp: have_pinger
+                .then_some(r.preferred_derp.clone())
+                .unwrap_or_default(),
+            ..Default::default()
+        };
 
-    //     assert_eq!(r, want);
+        assert_eq!(r, want);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
