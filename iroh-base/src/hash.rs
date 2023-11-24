@@ -137,7 +137,7 @@ impl FromStr for Hash {
         anyhow::ensure!(sb.len() == 52, "invalid base32 length");
         // this is a base32 encoded hash, we can decode it directly
         let mut t = [0u8; 52];
-        t.copy_from_slice(&sb);
+        t.copy_from_slice(sb);
         // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
         std::str::from_utf8_mut(t.as_mut())
             .unwrap()
