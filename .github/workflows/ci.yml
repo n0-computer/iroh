@@ -285,7 +285,7 @@ jobs:
       # see https://github.com/cross-rs/cross/issues/1311.  So on
       # those platforms we only build but do not run tests.
       if: matrix.target != 'i686-unknown-linux-gnu'
-      run: cross build --all --target ${{ matrix.target }} -- --test-threads=12
+      run: cross build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
