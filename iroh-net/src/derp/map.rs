@@ -93,7 +93,7 @@ impl DerpMap {
         Self::default_from_node(url, DEFAULT_DERP_STUN_PORT)
     }
 
-    /// Constructs the [`DerpMap`] from an iterator of [`DerpNodes`]s.
+    /// Constructs the [`DerpMap`] from an iterator of [`DerpNode`]s.
     pub fn from_nodes(value: impl IntoIterator<Item = DerpNode>) -> Result<Self> {
         let mut map = BTreeMap::new();
         for node in value.into_iter() {
