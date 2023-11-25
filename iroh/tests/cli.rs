@@ -19,8 +19,6 @@ use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
 
-const RPC_PORT: &str = "4999";
-
 fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1);
     let content = Alphanumeric.sample_string(&mut rng, size);
@@ -266,7 +264,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         make_rand_file(5000, &file3)?;
     }
     // leave the provider running for the entire test
-    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false, None)?;
+    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
     let count = count_input_files(&src);
     let ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     {
@@ -372,14 +370,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     let iroh_provide = |path: &PathBuf| {
         cmd(
             iroh_bin(),
-            [
-                "start",
-                "--rpc-port",
-                "0",
-                "--add",
-                path.to_str().unwrap(),
-                "--wrap",
-            ],
+            ["start", "--add", path.to_str().unwrap(), "--wrap"],
         )
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .env_remove("RUST_LOG")
@@ -429,7 +420,7 @@ fn cli_provide_addresses() -> Result<()> {
     make_rand_file(1000, &path)?;
 
     let iroh_data_dir = dir.join("iroh-data-dir");
-    let mut provider = make_provider_in(&iroh_data_dir, Input::Path(path), true, Some(RPC_PORT))?;
+    let mut provider = make_provider_in(&iroh_data_dir, Input::Path(path), true)?;
     // wait for the provider to start
     let _ticket = match_provide_output(&mut provider, 1, BlobOrCollection::Collection)?;
 
@@ -466,7 +457,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
     let iroh_data_dir = dir.join("data-dir");
 
     println!("start");
-    let mut reader_handle = cmd(iroh_bin(), vec!["start", "--rpc-port", "0"])
+    let mut reader_handle = cmd(iroh_bin(), ["start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -493,14 +484,11 @@ fn cli_rpc_lock_restart() -> Result<()> {
 
     // Restart should work fine
     println!("restart");
-    let mut reader_handle = cmd(
-        iroh_bin(),
-        vec!["start", "--rpc-port", &rpc_port.to_string()],
-    )
-    .env_remove("RUST_LOG")
-    .env("IROH_DATA_DIR", &iroh_data_dir)
-    .stderr_to_stdout()
-    .reader()?;
+    let mut reader_handle = cmd(iroh_bin(), ["start"])
+        .env_remove("RUST_LOG")
+        .env("IROH_DATA_DIR", &iroh_data_dir)
+        .stderr_to_stdout()
+        .reader()?;
 
     assert_matches_line(
         BufReader::new(&mut reader_handle),
@@ -508,15 +496,12 @@ fn cli_rpc_lock_restart() -> Result<()> {
     );
 
     println!("double start");
-    let output = cmd(
-        iroh_bin(),
-        vec!["start", "--rpc-port", &rpc_port.to_string()],
-    )
-    .env_remove("RUST_LOG")
-    .env("IROH_DATA_DIR", &iroh_data_dir)
-    .stderr_capture()
-    .unchecked()
-    .run()?;
+    let output = cmd(iroh_bin(), ["start"])
+        .env_remove("RUST_LOG")
+        .env("IROH_DATA_DIR", &iroh_data_dir)
+        .stderr_capture()
+        .unchecked()
+        .run()?;
 
     let output = std::str::from_utf8(&output.stderr).unwrap();
     println!("{}", output);
@@ -586,13 +571,8 @@ fn iroh_bin() -> &'static str {
 }
 
 /// Makes a provider process with it's home directory in `iroh_data_dir`.
-fn make_provider_in(
-    iroh_data_dir: &Path,
-    input: Input,
-    wrap: bool,
-    rpc_port: Option<&str>,
-) -> Result<ReaderHandle> {
-    let mut args = vec!["start", "--rpc-port", rpc_port.unwrap_or("0")];
+fn make_provider_in(iroh_data_dir: &Path, input: Input, wrap: bool) -> Result<ReaderHandle> {
+    let mut args = vec!["start"];
     if wrap {
         args.push("--wrap");
     }
@@ -683,7 +663,7 @@ fn test_provide_get_loop(input: Input, output: Output) -> Result<()> {
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh-data-dir");
-    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), wrap, None)?;
+    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), wrap)?;
 
     // test provide output & scrape the ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs, input.is_blob_or_collection())?;
@@ -749,7 +729,7 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh-data-dir");
 
-    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), true, None)?;
+    let mut provider = make_provider_in(&iroh_data_dir, input.clone(), true)?;
 
     // test provide output & get all in one ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs, BlobOrCollection::Collection)?;
