@@ -280,8 +280,12 @@ jobs:
       # See https://github.com/cross-rs/cross/issues/1222
       run: cargo install cross --git https://github.com/cross-rs/cross
 
-    - name: check
-      run: cross check --all --target ${{ matrix.target }}
+    - name: build
+      # cross tests are currently broken vor armv7 and aarch64
+      # see https://github.com/cross-rs/cross/issues/1311.  So on
+      # those platforms we only build but do not run tests.
+      if: matrix.target != 'i686-unknown-linux-gnu'
+      run: cross build --all --target ${{ matrix.target }} -- --test-threads=12
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
