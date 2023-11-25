@@ -5,7 +5,6 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use clap::Args;
 use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -40,151 +39,132 @@ pub enum RunType {
     UntilStopped,
 }
 
-#[derive(Args, Debug, Clone)]
-pub struct StartArgs {
-    /// The RPC port that the the Iroh node will listen on.
-    ///
-    /// Only used with `start` or `--start`
-    #[clap(long, global = true, default_value_t = DEFAULT_RPC_PORT)]
-    rpc_port: u16,
+pub async fn run_with_command<F, T>(
+    rt: &LocalPoolHandle,
+    config: &NodeConfig,
+    run_type: RunType,
+    command: F,
+) -> Result<()>
+where
+    F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
+    T: Future<Output = Result<()>> + 'static,
+{
+    #[cfg(feature = "metrics")]
+    let metrics_fut = start_metrics_server(config.metrics_addr);
+
+    let res = run_with_command_inner(rt, config, run_type, command).await;
+
+    #[cfg(feature = "metrics")]
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
+    }
+
+    RpcStatus::clear(iroh_data_root()?).await?;
+
+    res
 }
 
-impl StartArgs {
-    pub async fn run_with_command<F, T>(
-        self,
-        rt: &LocalPoolHandle,
-        config: &NodeConfig,
-        run_type: RunType,
-        command: F,
-    ) -> Result<()>
-    where
-        F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
-        T: Future<Output = Result<()>> + 'static,
-    {
-        #[cfg(feature = "metrics")]
-        let metrics_fut = start_metrics_server(config.metrics_addr);
+async fn run_with_command_inner<F, T>(
+    rt: &LocalPoolHandle,
+    config: &NodeConfig,
+    run_type: RunType,
+    command: F,
+) -> Result<()>
+where
+    F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
+    T: Future<Output = Result<()>> + 'static,
+{
+    let derp_map = config.derp_map()?;
 
-        let res = self
-            .run_with_command_inner(rt, config, run_type, command)
-            .await;
+    let spinner = create_spinner("Iroh booting...");
+    let node = start_node(rt, derp_map).await?;
+    drop(spinner);
 
-        #[cfg(feature = "metrics")]
-        if let Some(metrics_fut) = metrics_fut {
-            metrics_fut.abort();
-        }
+    eprintln!("{}", welcome_message(&node)?);
 
-        RpcStatus::clear(iroh_data_root()?).await?;
+    let client = node.client();
 
-        res
-    }
-
-    async fn run_with_command_inner<F, T>(
-        self,
-        rt: &LocalPoolHandle,
-        config: &NodeConfig,
-        run_type: RunType,
-        command: F,
-    ) -> Result<()>
-    where
-        F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
-        T: Future<Output = Result<()>> + 'static,
-    {
-        let derp_map = config.derp_map()?;
-
-        let spinner = create_spinner("Iroh booting...");
-        let node = self.start_node(rt, derp_map).await?;
-        drop(spinner);
-
-        eprintln!("{}", welcome_message(&node)?);
-
-        let client = node.client();
-
-        let mut command_task = rt.spawn_pinned(move || {
-            async move {
-                match command(client).await {
-                    Err(err) => Err(err),
-                    Ok(()) => {
-                        // keep the task open forever if not running in single-command mode
-                        if run_type == RunType::UntilStopped {
-                            futures::future::pending().await
-                        }
-                        Ok(())
+    let mut command_task = rt.spawn_pinned(move || {
+        async move {
+            match command(client).await {
+                Err(err) => Err(err),
+                Ok(()) => {
+                    // keep the task open forever if not running in single-command mode
+                    if run_type == RunType::UntilStopped {
+                        futures::future::pending().await
                     }
+                    Ok(())
                 }
             }
-            .instrument(info_span!("command"))
-        });
-
-        let node2 = node.clone();
-        tokio::select! {
-            biased;
-            // always abort on signal-c
-            _ = tokio::signal::ctrl_c() => {
-                command_task.abort();
-                node.shutdown();
-                node.await?;
-            }
-            // abort if the command task finishes (will run forever if not in single-command mode)
-            res = &mut command_task => {
-                node.shutdown();
-                let _ = node.await;
-                res??;
-            }
-            // abort if the node future completes (shutdown called or error)
-            res = node2 => {
-                command_task.abort();
-                res?;
-            }
         }
-        Ok(())
+        .instrument(info_span!("command"))
+    });
+
+    let node2 = node.clone();
+    tokio::select! {
+        biased;
+        // always abort on signal-c
+        _ = tokio::signal::ctrl_c() => {
+            command_task.abort();
+            node.shutdown();
+            node.await?;
+        }
+        // abort if the command task finishes (will run forever if not in single-command mode)
+        res = &mut command_task => {
+            node.shutdown();
+            let _ = node.await;
+            res??;
+        }
+        // abort if the node future completes (shutdown called or error)
+        res = node2 => {
+            command_task.abort();
+            res?;
+        }
+    }
+    Ok(())
+}
+
+async fn start_node(
+    rt: &LocalPoolHandle,
+    derp_map: Option<DerpMap>,
+) -> Result<Node<iroh_bytes::store::flat::Store>> {
+    let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
+    match rpc_status {
+        RpcStatus::Running(port) => {
+            bail!("iroh is already running on port {}", port);
+        }
+        RpcStatus::Stopped => {
+            // all good, we can go ahead
+        }
     }
 
-    async fn start_node(
-        &self,
-        rt: &LocalPoolHandle,
-        derp_map: Option<DerpMap>,
-    ) -> Result<Node<iroh_bytes::store::flat::Store>> {
-        let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
-        match rpc_status {
-            RpcStatus::Running(port) => {
-                bail!("iroh is already running on port {}", port);
-            }
-            RpcStatus::Stopped => {
-                // all good, we can go ahead
-            }
-        }
+    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
+    let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
+    let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
+    let peers_data_path = path_with_env(IrohPaths::PeerData)?;
+    tokio::fs::create_dir_all(&blob_dir).await?;
+    tokio::fs::create_dir_all(&partial_blob_dir).await?;
+    let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir)
+        .await
+        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
+    let secret_key_path = Some(path_with_env(IrohPaths::SecretKey)?);
+    let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
 
-        let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
-        let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
-        let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
-        let peers_data_path = path_with_env(IrohPaths::PeerData)?;
-        tokio::fs::create_dir_all(&blob_dir).await?;
-        tokio::fs::create_dir_all(&partial_blob_dir).await?;
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir)
-                .await
-                .with_context(|| {
-                    format!("Failed to load iroh database from {}", blob_dir.display())
-                })?;
-        let secret_key_path = Some(path_with_env(IrohPaths::SecretKey)?);
-        let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
+    let secret_key = get_secret_key(secret_key_path).await?;
+    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT).await?;
+    let derp_mode = match derp_map {
+        None => DerpMode::Default,
+        Some(derp_map) => DerpMode::Custom(derp_map),
+    };
 
-        let secret_key = get_secret_key(secret_key_path).await?;
-        let rpc_endpoint = make_rpc_endpoint(&secret_key, self.rpc_port).await?;
-        let derp_mode = match derp_map {
-            None => DerpMode::Default,
-            Some(derp_map) => DerpMode::Custom(derp_map),
-        };
-
-        Node::builder(bao_store, doc_store)
-            .derp_mode(derp_mode)
-            .peers_data_path(peers_data_path)
-            .local_pool(rt)
-            .rpc_endpoint(rpc_endpoint)
-            .secret_key(secret_key)
-            .spawn()
-            .await
-    }
+    Node::builder(bao_store, doc_store)
+        .derp_mode(derp_mode)
+        .peers_data_path(peers_data_path)
+        .local_pool(rt)
+        .rpc_endpoint(rpc_endpoint)
+        .secret_key(secret_key)
+        .spawn()
+        .await
 }
 
 fn welcome_message<B: iroh_bytes::store::Store>(node: &Node<B>) -> Result<String> {
