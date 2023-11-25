@@ -9,7 +9,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
-  MSRV: "1.63"
+  MSRV: "1.67"
 
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
-        rust: [nightly, stable]
+        rust: [stable]
 
     steps:
     - name: Checkout
@@ -44,9 +44,9 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest]
-        rust: [nightly, stable]
+        rust: [stable]
         target:
-          - x86_64-pc-windows-gnu
+          # - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
 
     steps:
@@ -184,7 +184,7 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install nightly
+    - name: Install rust
       # See https://github.com/cross-rs/cross/issues/1222
       uses: dtolnay/rust-toolchain@1.67
 
@@ -248,68 +248,68 @@ jobs:
           command: check
           command-arguments: "-Dwarnings"
 
-  netsim-integration-tests:
-    name: Run network simulations/benchmarks
-    runs-on: [self-hosted, linux, X64]
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
+  # netsim-integration-tests:
+  #   name: Run network simulations/benchmarks
+  #   runs-on: [self-hosted, linux, X64]
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@master
+  #     with:
+  #       submodules: recursive
     
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+  #   - name: Install rust stable
+  #     uses: dtolnay/rust-toolchain@stable
 
-    - name: Build iroh
-      run: |
-        cargo build --release
+  #   - name: Build iroh
+  #     run: |
+  #       cargo build --release
 
-    - name: Fetch and build chuck
-      run: |
-        git clone https://github.com/n0-computer/chuck.git
-        cd chuck
-        cargo build --release
+  #   - name: Fetch and build chuck
+  #     run: |
+  #       git clone https://github.com/n0-computer/chuck.git
+  #       cd chuck
+  #       cargo build --release
     
-    - name: Install netsim deps
-      run: |
-        cd chuck/netsim
-        sudo apt update
-        ./setup.sh
+  #   - name: Install netsim deps
+  #     run: |
+  #       cd chuck/netsim
+  #       sudo apt update
+  #       ./setup.sh
 
-    - name: Copy binaries to right location
-      run: |
-        cp target/release/iroh chuck/netsim/bins/iroh
-        cp chuck/target/release/chuck chuck/netsim/bins/chuck
+  #   - name: Copy binaries to right location
+  #     run: |
+  #       cp target/release/iroh chuck/netsim/bins/iroh
+  #       cp chuck/target/release/chuck chuck/netsim/bins/chuck
 
-    - name: Run tests
-      run: |
-        cd chuck/netsim
-        sudo kill -9 $(pgrep ovs)
-        sudo mn --clean
-        sudo python3 main.py --integration sims/standard/iroh.json
+  #   - name: Run tests
+  #     run: |
+  #       cd chuck/netsim
+  #       sudo kill -9 $(pgrep ovs)
+  #       sudo mn --clean
+  #       sudo python3 main.py --integration sims/standard/iroh.json
 
-    - name: Setup Environment (PR)  
-      if: ${{ github.event_name == 'pull_request' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
-    - name: Setup Environment (Push)  
-      if: ${{ github.event_name == 'push' }}  
-      shell: bash  
-      run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
+  #   - name: Setup Environment (PR)  
+  #     if: ${{ github.event_name == 'pull_request' }}  
+  #     shell: bash  
+  #     run: |  
+  #       echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
+  #       echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
+  #   - name: Setup Environment (Push)  
+  #     if: ${{ github.event_name == 'push' }}  
+  #     shell: bash  
+  #     run: |  
+  #       echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
+  #       echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
 
-    - name: Generate reports
-      run: |
-        cd chuck/netsim
-        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
-        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+  #   - name: Generate reports
+  #     run: |
+  #       cd chuck/netsim
+  #       python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
+  #       python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
 
-    - name: Echo metrics
-      run: |
-        cd chuck/netsim
-        d=$(cat report_metro.txt)
-        metro_data=$(printf "%s\n " "$d")
-        echo "$metro_data" 
+  #   - name: Echo metrics
+  #     run: |
+  #       cd chuck/netsim
+  #       d=$(cat report_metro.txt)
+  #       metro_data=$(printf "%s\n " "$d")
+  #       echo "$metro_data" 

@@ -161,7 +161,7 @@ pub fn make_client_config(
         .with_custom_certificate_verifier(Arc::new(
             verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
         ))
-        .with_single_cert(vec![certificate], private_key)
+        .with_client_auth_cert(vec![certificate], private_key)
         .expect("Client cert key DER is valid; qed");
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
