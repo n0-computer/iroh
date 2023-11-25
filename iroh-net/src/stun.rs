@@ -178,7 +178,7 @@ pub mod test {
     }
 
     pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        derp_map_of_opts(stun.map(|addr| (addr, false)))
+        derp_map_of_opts(stun.map(|addr| (addr, true)))
     }
 
     pub fn derp_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> DerpMap {
