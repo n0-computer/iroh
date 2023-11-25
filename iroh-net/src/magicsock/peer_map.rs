@@ -558,8 +558,8 @@ mod tests {
         let node_c = SecretKey::generate().public();
         let node_d = SecretKey::generate().public();
 
-        let region_x: Url = "https://my-derp-1.com".parse().unwrap();
-        let region_y: Url = "https://my-derp-2.com".parse().unwrap();
+        let derp_x: Url = "https://my-derp-1.com".parse().unwrap();
+        let derp_y: Url = "https://my-derp-2.com".parse().unwrap();
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
@@ -569,9 +569,9 @@ mod tests {
         let direct_addresses_c = [addr(5000)];
 
         let node_addr_a = NodeAddr::new(node_a)
-            .with_derp_url(region_x)
+            .with_derp_url(derp_x)
             .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(node_b).with_derp_url(region_y);
+        let node_addr_b = NodeAddr::new(node_b).with_derp_url(derp_y);
         let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
         let node_addr_d = NodeAddr::new(node_d);
 

@@ -55,9 +55,9 @@ pub enum ClientError {
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
-    /// No derp nodes are available for the given region
-    #[error("DERP region is not available")]
-    DerpRegionNotAvail,
+    /// No derp nodes are available
+    #[error("DERP node is not available")]
+    DerpNodeNotAvail,
     /// No derp nodes are availabe with that name
     #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
@@ -272,8 +272,6 @@ impl ClientBuilder {
     }
 
     /// Build the [`Client`]
-    ///
-    /// Will error if there is no region or no url set.
     pub fn build(self, key: SecretKey) -> (Client, ClientReceiver) {
         // TODO: review TLS config
         let mut roots = rustls::RootCertStore::empty();
@@ -1215,7 +1213,7 @@ mod tests {
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect
         if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
-            bail!("expected client with bad derp region detail to return with an error");
+            bail!("expected client with bad derp node detail to return with an error");
         }
         Ok(())
     }

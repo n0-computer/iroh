@@ -26,7 +26,7 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The retransmit interval used when a previous report exists but is missing latency.
 ///
 /// When in an active steady-state, i.e. a previous report exists, we use the latency of the
-/// previous report to determine the retransmit interval.  However when this previous region
+/// previous report to determine the retransmit interval.  However when this previous derp
 /// latency is missing this default is used.
 ///
 /// This is a somewhat conservative guess because if we have no data, likely the DERP node
@@ -40,9 +40,9 @@ const DEFAULT_ACTIVE_RETRANSMIT_DELAY: Duration = Duration::from_millis(200);
 /// time.
 const ACTIVE_RETRANSMIT_EXTRA_DELAY: Duration = Duration::from_millis(50);
 
-/// The number of fastest regions to periodically re-query during incremental netcheck
-/// reports. (During a full report, all regions are scanned.)
-const NUM_INCREMENTAL_REGIONS: usize = 3;
+/// The number of fastest derpers to periodically re-query during incremental netcheck
+/// reports. (During a full report, all derpers are scanned.)
+const NUM_INCREMENTAL_DERPERS: usize = 3;
 
 /// The protocol used to time a node's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
@@ -75,9 +75,6 @@ pub(super) enum Probe {
         delay: Duration,
         node: Arc<DerpNode>,
     },
-    // TODO: Probably can remove DerpRegion since the DerpNode already contains the region
-    // ID which can then be looked up in the DerpMap.  But Https isn't even implemented
-    // right now so leave it.
     #[display("Https after {delay:?} to {node}")]
     Https {
         delay: Duration,
@@ -121,7 +118,7 @@ impl Probe {
 
 /// A probe set is a sequence of similar [`Probe`]s with delays between them.
 ///
-/// The probes are to the same region and of the same [`ProbeProto`] but will have different
+/// The probes are to the same Derper and of the same [`ProbeProto`] but will have different
 /// delays.  The delays are effectively retries, though they do not wait for the previous
 /// probe to be finished.  The first successful probe will cancel all other probes in the
 /// set.
@@ -256,17 +253,17 @@ impl ProbePlan {
         if_state: &interfaces::State,
         last_report: &Report,
     ) -> Self {
-        if last_report.region_latency.is_empty() {
+        if last_report.derp_latency.is_empty() {
             return Self::initial(derp_map, if_state);
         }
         let mut plan = Self(Default::default());
 
-        let had_stun_ipv4 = !last_report.region_v4_latency.is_empty();
-        let had_stun_ipv6 = !last_report.region_v6_latency.is_empty();
+        let had_stun_ipv4 = !last_report.derp_v4_latency.is_empty();
+        let had_stun_ipv6 = !last_report.derp_v6_latency.is_empty();
         let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
-        let sorted_regions = sort_regions(derp_map, last_report);
-        for (ri, (url, derp_node)) in sorted_regions.into_iter().enumerate() {
-            if ri == NUM_INCREMENTAL_REGIONS {
+        let sorted_derps = sort_derps(derp_map, last_report);
+        for (ri, (url, derp_node)) in sorted_derps.into_iter().enumerate() {
+            if ri == NUM_INCREMENTAL_DERPERS {
                 break;
             }
             let mut do4 = if_state.have_v4;
@@ -297,7 +294,7 @@ impl ProbePlan {
                 attempts = 4;
             }
             let retransmit_delay = last_report
-                .region_latency
+                .derp_latency
                 .get(url)
                 .map(|l| l * 120 / 100) // increases latency by 20%, why?
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
@@ -410,16 +407,16 @@ impl FromIterator<ProbeSet> for ProbePlan {
 
 /// Sorts the nodes in the [`DerpMap`] from fastest to slowest.
 ///
-/// This uses the latencies from the last report to determine the order.  Regions with no
+/// This uses the latencies from the last report to determine the order. Derp Nodes with no
 /// data are at the end.
-fn sort_regions<'a>(
+fn sort_derps<'a>(
     derp_map: &'a DerpMap,
     last_report: &Report,
 ) -> Vec<(&'a Url, &'a Arc<DerpNode>)> {
     let mut prev: Vec<_> = derp_map.nodes().collect();
     prev.sort_by(|(a_url, _a), (b_url, _b)| {
-        let latencies_a = last_report.region_latency.get(a_url);
-        let latencies_b = last_report.region_latency.get(b_url);
+        let latencies_a = last_report.derp_latency.get(a_url);
+        let latencies_b = last_report.derp_latency.get(b_url);
         match (latencies_a, latencies_b) {
             (Some(_), None) => {
                 // Non-zero sorts before zero.
@@ -430,7 +427,7 @@ fn sort_regions<'a>(
                 std::cmp::Ordering::Greater
             }
             (None, None) => {
-                // For both empty latencies sort by region_id.
+                // For both empty latencies sort by derp_id.
                 a_url.cmp(b_url)
             }
             (Some(_), Some(_)) => match latencies_a.cmp(&latencies_b) {
@@ -449,7 +446,7 @@ mod tests {
 
     use crate::defaults::default_derp_map;
     use crate::net::interfaces;
-    use crate::netcheck::RegionLatencies;
+    use crate::netcheck::DerpLatencies;
 
     use super::*;
 
@@ -586,9 +583,9 @@ mod tests {
             let (u1, derp_node_1) = derp_map.nodes().next().unwrap();
             let (u2, derp_node_2) = derp_map.nodes().nth(1).unwrap();
             let if_state = interfaces::State::fake();
-            let mut latencies = RegionLatencies::new();
-            latencies.update_region(u1.clone(), Duration::from_millis(2));
-            latencies.update_region(u2.clone(), Duration::from_millis(2));
+            let mut latencies = DerpLatencies::new();
+            latencies.update_derp(u1.clone(), Duration::from_millis(2));
+            latencies.update_derp(u2.clone(), Duration::from_millis(2));
             let last_report = Report {
                 udp: true,
                 ipv6: true,
@@ -601,9 +598,9 @@ mod tests {
                 hair_pinning: Some(true),
                 portmap_probe: None,
                 preferred_derp: Some(u1.clone()),
-                region_latency: latencies.clone(),
-                region_v4_latency: latencies.clone(),
-                region_v6_latency: latencies.clone(),
+                derp_latency: latencies.clone(),
+                derp_v4_latency: latencies.clone(),
+                derp_v6_latency: latencies.clone(),
                 global_v4: None,
                 global_v6: None,
                 captive_portal: None,
@@ -735,12 +732,12 @@ mod tests {
         url_2: &Url,
         latency_2: Option<Duration>,
     ) -> Report {
-        let mut latencies = RegionLatencies::new();
+        let mut latencies = DerpLatencies::new();
         if let Some(latency_1) = latency_1 {
-            latencies.update_region(url_1.clone(), latency_1);
+            latencies.update_derp(url_1.clone(), latency_1);
         }
         if let Some(latency_2) = latency_2 {
-            latencies.update_region(url_2.clone(), latency_2);
+            latencies.update_derp(url_2.clone(), latency_2);
         }
         Report {
             udp: true,
@@ -754,9 +751,9 @@ mod tests {
             hair_pinning: Some(true),
             portmap_probe: None,
             preferred_derp: Some(url_1.clone()),
-            region_latency: latencies.clone(),
-            region_v4_latency: latencies.clone(),
-            region_v6_latency: latencies.clone(),
+            derp_latency: latencies.clone(),
+            derp_v4_latency: latencies.clone(),
+            derp_v6_latency: latencies.clone(),
             global_v4: None,
             global_v6: None,
             captive_portal: None,
@@ -764,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_region_sort_two_latencies() {
+    fn test_derp_sort_two_latencies() {
         let derp_map = default_derp_map();
         let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
@@ -774,7 +771,7 @@ mod tests {
             r2.0,
             Some(Duration::from_millis(2)),
         );
-        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
             .iter()
             .map(|(url, _reg)| *url)
             .collect();
@@ -782,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_region_sort_equal_latencies() {
+    fn test_derp_sort_equal_latencies() {
         let derp_map = default_derp_map();
         let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
@@ -792,7 +789,7 @@ mod tests {
             r2.0,
             Some(Duration::from_millis(2)),
         );
-        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
@@ -800,20 +797,20 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_region_sort_missing_latency() {
+    fn test_derp_sort_missing_latency() {
         let derp_map = default_derp_map();
         let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(r1.0, None, r2.0, Some(Duration::from_millis(2)));
-        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
         assert_eq!(sorted, vec![r2.0, r1.0]);
 
         let last_report = create_last_report(r1.0, Some(Duration::from_millis(2)), r2.0, None);
-        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
@@ -821,17 +818,17 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_region_sort_no_latency() {
+    fn test_derp_derp_sort_no_latency() {
         let derp_map = default_derp_map();
         let r1 = derp_map.nodes().next().unwrap();
         let r2 = derp_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(r1.0, None, r2.0, None);
-        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
-        // sorted by region id only
+        // sorted by derp id only
         assert_eq!(sorted, vec![r1.0, r2.0]);
     }
 }

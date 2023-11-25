@@ -193,7 +193,7 @@ pub mod test {
                 stun_only,
             }
         });
-        DerpMap::from_nodes(nodes).expect("generated invalid region")
+        DerpMap::from_nodes(nodes).expect("generated invalid nodes")
     }
 
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.

@@ -137,7 +137,7 @@ pub struct Pong {
 pub enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
-    /// Derp, region id.
+    /// Derp Url.
     Derp(Url),
 }
 

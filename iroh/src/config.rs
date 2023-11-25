@@ -111,7 +111,7 @@ impl ConsolePaths {
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
 pub struct NodeConfig {
-    /// The regions for DERP to use.
+    /// The nodes for DERP to use.
     pub derp_nodes: Vec<DerpNode>,
     /// How often to run garbage collection.
     pub gc_policy: GcPolicy,

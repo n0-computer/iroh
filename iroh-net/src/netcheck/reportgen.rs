@@ -64,7 +64,7 @@ const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 /// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
-const ENOUGH_REGIONS: usize = 3;
+const ENOUGH_NODES: usize = 3;
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -350,8 +350,8 @@ impl Actor {
         let derp_node = probe_report.probe.node();
         if let Some(latency) = probe_report.delay {
             self.report
-                .region_latency
-                .update_region(derp_node.url.clone(), latency);
+                .derp_latency
+                .update_derp(derp_node.url.clone(), latency);
             match probe_report.probe {
                 Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
                     self.add_stun_addr_latency(derp_node, probe_report.addr, latency);
@@ -374,13 +374,13 @@ impl Actor {
 
     /// Whether running this probe would still improve our report.
     fn probe_would_help(&mut self, probe: Probe, derp_node: Arc<DerpNode>) -> bool {
-        // If the probe is for a region we don't yet know about, that would help.
-        if self.report.region_latency.get(&derp_node.url).is_none() {
+        // If the probe is for a derp we don't yet know about, that would help.
+        if self.report.derp_latency.get(&derp_node.url).is_none() {
             return true;
         }
 
         // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-        if probe.proto() == ProbeProto::StunIpv6 && self.report.region_v6_latency.is_empty() {
+        if probe.proto() == ProbeProto::StunIpv6 && self.report.derp_v6_latency.is_empty() {
             return true;
         }
 
@@ -412,20 +412,20 @@ impl Actor {
         debug!(derp_node = %derp_node.url, ?latency, "add udp node latency");
         self.report.udp = true;
 
-        // Once we've heard from enough regions (3), start a timer to
+        // Once we've heard from enough derps (3), start a timer to
         // give up on the other ones. The timer's duration is a
         // function of whether this is our initial full probe or an
         // incremental one. For incremental ones, wait for the
-        // duration of the slowest region. For initial ones, double that.
-        let enough_regions = std::cmp::min(self.derp_map.len(), ENOUGH_REGIONS);
-        if self.report.region_latency.len() == enough_regions {
-            let mut timeout = self.report.region_latency.max_latency();
+        // duration of the slowest derp. For initial ones, double that.
+        let enough_derps = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
+        if self.report.derp_latency.len() == enough_derps {
+            let mut timeout = self.report.derp_latency.max_latency();
             if !self.incremental {
                 timeout *= 2;
             }
             let reportcheck = self.addr();
             debug!(
-                reports=self.report.region_latency.len(),
+                reports=self.report.derp_latency.len(),
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
@@ -448,8 +448,8 @@ impl Actor {
             match ipp {
                 SocketAddr::V4(_) => {
                     self.report
-                        .region_v4_latency
-                        .update_region(derp_node.url.clone(), latency);
+                        .derp_v4_latency
+                        .update_derp(derp_node.url.clone(), latency);
                     self.report.ipv4 = true;
                     if self.report.global_v4.is_none() {
                         self.report.global_v4 = Some(ipp);
@@ -461,8 +461,8 @@ impl Actor {
                 }
                 SocketAddr::V6(_) => {
                     self.report
-                        .region_v6_latency
-                        .update_region(derp_node.url.clone(), latency);
+                        .derp_v6_latency
+                        .update_derp(derp_node.url.clone(), latency);
                     self.report.ipv6 = true;
                     self.report.global_v6 = Some(ipp);
                     // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
@@ -522,7 +522,7 @@ impl Actor {
         // it's unnecessary.
         if !self.incremental {
             // Even if we're doing a non-incremental update, we may want to try our
-            // preferred DERP region for captive portal detection.
+            // preferred DERP derp for captive portal detection.
             let preferred_derp = self
                 .last_report
                 .as_ref()
@@ -573,7 +573,7 @@ impl Actor {
     /// - Probes get aborted in several ways:
     ///   - A running it can fail and abort the entire probe set if it deems the
     ///     failure permanent.  Probes in a probe set are essentially retries.
-    ///   - Once there are [`ProbeReport`]s from enough regions, all remaining probes are
+    ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
     async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
@@ -883,8 +883,7 @@ async fn run_probe(
 /// The boolean return is whether we think we have a captive portal.
 #[allow(clippy::unnecessary_unwrap)] // NOTE: clippy's suggestion makes the code a lot more complex
 async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<Url>) -> Result<bool> {
-    // If we have a preferred DERP region with more than one node, try
-    // that; otherwise, pick a random one not marked as "Avoid".
+    // If we have a preferred DERP node, try that; otherwise, pick a random one not marked as "Avoid".
     let url = match preferred_derp {
         Some(url) => url,
         None => {

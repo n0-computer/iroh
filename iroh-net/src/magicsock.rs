@@ -118,7 +118,7 @@ pub struct Options {
 /// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding informations such as the derp region and current addresses
+/// allows finding informations such as the derp url and current addresses
 /// of a node given the id.
 ///
 /// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
@@ -206,9 +206,9 @@ struct Inner {
     /// If the last netcheck report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
-    /// None (or zero regions/nodes) means DERP is disabled.
+    /// None (or zero nodes) means DERP is disabled.
     derp_map: DerpMap,
-    /// Nearest DERP region ID; 0 means none/unknown.
+    /// Nearest DERP node ID; 0 means none/unknown.
     my_derp: std::sync::RwLock<Option<Url>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
@@ -241,16 +241,16 @@ struct Inner {
 }
 
 impl Inner {
-    /// Returns the derp region we are connected to, that has the best latency.
+    /// Returns the derp node we are connected to, that has the best latency.
     ///
-    /// If `0`, then we are not connected to any derp region.
+    /// If `None`, then we are not connected to any derp region.
     fn my_derp(&self) -> Option<Url> {
         self.my_derp.read().unwrap().clone()
     }
 
-    /// Sets the derp region with the best latency.
+    /// Sets the derp node with the best latency.
     ///
-    /// If we are not connected to any derp regions, set this to `0`.
+    /// If we are not connected to any derp nodes, set this to `None`.
     fn set_my_derp(&self, my_derp: Option<Url>) {
         *self.my_derp.write().unwrap() = my_derp;
     }
@@ -1308,9 +1308,9 @@ impl MagicSock {
         r.await.unwrap();
     }
 
-    /// Returns the DERP region with the best latency.
+    /// Returns the DERP node with the best latency.
     ///
-    /// If `None`, then we currently have no verified connection to a DERP node in any region.
+    /// If `None`, then we currently have no verified connection to a DERP node.
     pub fn my_derp(&self) -> Option<Url> {
         self.inner.my_derp()
     }
@@ -2105,10 +2105,10 @@ impl Actor {
                 preferred_derp: r.preferred_derp.clone(),
                 link_type: None,
             };
-            for (rid, d) in r.region_v4_latency.iter() {
+            for (rid, d) in r.derp_v4_latency.iter() {
                 ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
             }
-            for (rid, d) in r.region_v6_latency.iter() {
+            for (rid, d) in r.derp_v6_latency.iter() {
                 ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
             }
 
@@ -2158,13 +2158,13 @@ impl Actor {
     ///
     /// If no the [`DerpMap`] is empty, returns `0`.
     fn pick_derp_fallback(&self) -> Option<Url> {
-        // TODO: figure out which DERP region most of our nodes are using,
+        // TODO: figure out which DERP node most of our nodes are using,
         // and use that region as our fallback.
         //
         // If we already had selected something in the past and it has any
         // nodes, we want to stay on it. If there are no nodes at all,
         // stay on whatever DERP we previously picked. If we need to pick
-        // one and have no node info, pick a region randomly.
+        // one and have no node info, pick a node randomly.
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 

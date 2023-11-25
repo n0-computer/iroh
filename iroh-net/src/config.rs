@@ -1,21 +1,10 @@
 //! Configuration types.
 
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
+use std::{collections::BTreeMap, fmt::Display, net::SocketAddr};
 
 use url::Url;
 
 use super::portmapper;
-
-/// Fake WireGuard endpoint IP address that means to
-/// use DERP. When used (in the Node.DERP field), the port number of
-/// the WireGuard endpoint is the DERP region ID number to use.
-///
-/// Mnemonic: 3.3.40 are numbers above the keys D, E, R, P.
-pub const DERP_MAGIC_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 40));
 
 /// An endpoint IPPort and an associated type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -89,16 +78,15 @@ pub struct NetInfo {
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,
 
-    /// The fastest recent time to reach various DERP STUN servers, in seconds. The map key is the
-    /// "regionID-v4" or "-v6"; it was previously the DERP server's STUN host:port.
+    /// The fastest recent time to reach various DERP STUN servers, in seconds.
     ///
     /// This should only be updated rarely, or when there's a
     /// material change, as any change here also gets uploaded to the control plane.
-    pub derp_latency: HashMap<String, f64>,
+    pub derp_latency: BTreeMap<String, f64>,
 }
 
 impl NetInfo {
-    /// reports whether `self` and `other` are basically equal, ignoring changes in DERP ServerLatency & RegionLatency.
+    /// reports whether `self` and `other` are basically equal, ignoring changes in DERP ServerLatency & DerpLatency.
     pub fn basically_equal(&self, other: &Self) -> bool {
         self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
             && self.hair_pinning == other.hair_pinning

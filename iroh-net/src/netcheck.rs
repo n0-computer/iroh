@@ -2,7 +2,7 @@
 //!
 //! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,9 +32,9 @@ use Metrics as NetcheckMetrics;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-/// The maximum latency of all regions, if none are found yet.
+/// The maximum latency of all nodes, if none are found yet.
 ///
-/// Normally the max latency of all regions is computed, but if we don't yet know any region
+/// Normally the max latency of all nodes is computed, but if we don't yet know any nodes
 /// latencies we return this as default.  This is the value of the initial STUN probe
 /// delays.  It is only used as time to wait for further latencies to arrive, which *should*
 /// never happen unless there already is at least one latency.  Yet here we are, defining a
@@ -69,12 +69,12 @@ pub struct Report {
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
     pub preferred_derp: Option<Url>,
-    /// keyed by DERP Region ID
-    pub region_latency: RegionLatencies,
-    /// keyed by DERP Region ID
-    pub region_v4_latency: RegionLatencies,
-    /// keyed by DERP Region ID
-    pub region_v6_latency: RegionLatencies,
+    /// keyed by DERP Url
+    pub derp_latency: DerpLatencies,
+    /// keyed by DERP Url
+    pub derp_v4_latency: DerpLatencies,
+    /// keyed by DERP Url
+    pub derp_v6_latency: DerpLatencies,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
     /// `[ip]:port` of global IPv6
@@ -90,33 +90,33 @@ impl fmt::Display for Report {
     }
 }
 
-/// Latencies per DERP Region.
+/// Latencies per DERP node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct RegionLatencies(HashMap<Url, Duration>);
+pub struct DerpLatencies(BTreeMap<Url, Duration>);
 
-impl RegionLatencies {
+impl DerpLatencies {
     fn new() -> Self {
         Default::default()
     }
 
-    /// Updates a region's latency, if it is faster than before.
-    fn update_region(&mut self, url: Url, latency: Duration) {
+    /// Updates a derp's latency, if it is faster than before.
+    fn update_derp(&mut self, url: Url, latency: Duration) {
         let val = self.0.entry(url).or_insert(latency);
         if latency < *val {
             *val = latency;
         }
     }
 
-    /// Merges another [`RegionLatencies`] into this one.
+    /// Merges another [`DerpLatencies`] into this one.
     ///
-    /// For each region the latency is updated using [`RegionLatencies::update_region`].
-    fn merge(&mut self, other: &RegionLatencies) {
+    /// For each derp the latency is updated using [`DerpLatencies::update_derp`].
+    fn merge(&mut self, other: &DerpLatencies) {
         for (url, latency) in other.iter() {
-            self.update_region(url.clone(), latency);
+            self.update_derp(url.clone(), latency);
         }
     }
 
-    /// Returns the maximum latency for all regions.
+    /// Returns the maximum latency for all derps.
     ///
     /// If there are not yet any latencies this will return [`DEFAULT_MAX_LATENCY`].
     fn max_latency(&self) -> Duration {
@@ -127,7 +127,7 @@ impl RegionLatencies {
             .unwrap_or(DEFAULT_MAX_LATENCY)
     }
 
-    /// Returns an iterator over all the regions and their latencies.
+    /// Returns an iterator over all the derps and their latencies.
     pub fn iter(&self) -> impl Iterator<Item = (&'_ Url, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (k, *v))
     }
@@ -169,7 +169,7 @@ pub struct Client {
 
 #[derive(Debug)]
 struct Reports {
-    /// Do a full region scan, even if last is `Some`.
+    /// Do a full derp scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
     prev: HashMap<Instant, Arc<Report>>,
@@ -628,8 +628,8 @@ impl Actor {
         let now = Instant::now();
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
-        // region ID => its best recent latency in last MAX_AGE
-        let mut best_recent = RegionLatencies::new();
+        // derp ID => its best recent latency in last MAX_AGE
+        let mut best_recent = DerpLatencies::new();
 
         // chain the current report as we are still mutating it
         let prevs_iter = self
@@ -645,7 +645,7 @@ impl Actor {
                 to_remove.push(*t);
                 continue;
             }
-            best_recent.merge(&pr.region_latency);
+            best_recent.merge(&pr.derp_latency);
         }
 
         for t in to_remove {
@@ -655,11 +655,11 @@ impl Actor {
         // Then, pick which currently-alive DERP server from the
         // current report has the best latency over the past MAX_AGE.
         let mut best_any = Duration::default();
-        let mut old_region_cur_latency = Duration::default();
+        let mut old_derp_cur_latency = Duration::default();
         {
-            for (url, d) in r.region_latency.iter() {
+            for (url, d) in r.derp_latency.iter() {
                 if Some(url) == prev_derp.as_ref() {
-                    old_region_cur_latency = d;
+                    old_derp_cur_latency = d;
                 }
                 let best = best_recent.get(url).unwrap();
                 if r.preferred_derp.is_none() || best < best_any {
@@ -673,8 +673,8 @@ impl Actor {
             // where we are.
             if prev_derp.is_some()
                 && r.preferred_derp != prev_derp
-                && !old_region_cur_latency.is_zero()
-                && best_any > old_region_cur_latency / 3 * 2
+                && !old_derp_cur_latency.is_zero()
+                && best_any > old_derp_cur_latency / 3 * 2
             {
                 r.preferred_derp = prev_derp;
             }
@@ -726,14 +726,14 @@ impl Actor {
             write!(log, " derpdist=").ok();
             let mut need_comma = false;
             for rid in dm.urls() {
-                if let Some(d) = r.region_v4_latency.get(rid) {
+                if let Some(d) = r.derp_v4_latency.get(rid) {
                     if need_comma {
                         write!(log, ",").ok();
                     }
                     write!(log, "{}v4:{}", rid, d.as_millis()).ok();
                     need_comma = true;
                 }
-                if let Some(d) = r.region_v6_latency.get(rid) {
+                if let Some(d) = r.derp_v6_latency.get(rid) {
                     if need_comma {
                         write!(log, ",").ok();
                     }
@@ -857,15 +857,15 @@ mod tests {
 
             assert!(r.udp, "want UDP");
             assert_eq!(
-                r.region_latency.len(),
+                r.derp_latency.len(),
                 1,
                 "expected 1 key in DERPLatency; got {}",
-                r.region_latency.len()
+                r.derp_latency.len()
             );
             assert!(
-                r.region_latency.iter().next().is_some(),
+                r.derp_latency.iter().next().is_some(),
                 "expected key 1 in DERPLatency; got {:?}",
-                r.region_latency
+                r.derp_latency
             );
             assert!(r.global_v4.is_some(), "expected globalV4 set");
             assert!(r.preferred_derp.is_some(),);
@@ -905,15 +905,15 @@ mod tests {
 
             if r.udp {
                 assert_eq!(
-                    r.region_latency.len(),
+                    r.derp_latency.len(),
                     1,
                     "expected 1 key in DERPLatency; got {}",
-                    r.region_latency.len()
+                    r.derp_latency.len()
                 );
                 assert!(
-                    r.region_latency.iter().next().is_some(),
+                    r.derp_latency.iter().next().is_some(),
                     "expected key 1 in DERPLatency; got {:?}",
-                    r.region_latency
+                    r.derp_latency
                 );
                 assert!(r.global_v4.is_some(), "expected globalV4 set");
                 assert!(r.preferred_derp.is_some());
@@ -954,8 +954,8 @@ mod tests {
             // working pinger.
             icmpv4: have_pinger,
             // If we had a pinger, we'll have some latencies filled in and a preferred derp
-            region_latency: have_pinger
-                .then(|| r.region_latency.clone())
+            derp_latency: have_pinger
+                .then(|| r.derp_latency.clone())
                 .unwrap_or_default(),
             preferred_derp: have_pinger
                 .then_some(r.preferred_derp.clone())
@@ -981,7 +981,7 @@ mod tests {
                 assert!(s.starts_with('d'), "invalid derp server key");
                 let id: u16 = s[1..].parse().unwrap();
                 report
-                    .region_latency
+                    .derp_latency
                     .0
                     .insert(derp_url(id), Duration::from_secs(d));
             }

@@ -15,10 +15,10 @@ pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
 /// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
     DerpMap::from_nodes([default_na_derp_node(), default_eu_derp_node()])
-        .expect("default regions invalid")
+        .expect("default nodes invalid")
 }
 
-/// Get the default [`DerpRegion`] for NA.
+/// Get the default [`DerpNode`] for NA.
 pub fn default_na_derp_node() -> DerpNode {
     // The default NA derper run by number0.
     let url: Url = format!("https://{NA_DERP_HOSTNAME}").parse().unwrap();

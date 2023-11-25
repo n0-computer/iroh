@@ -38,7 +38,7 @@ impl NodeAddr {
         }
     }
 
-    /// Add a derp region to the peer's [`AddrInfo`].
+    /// Add a derp url to the peer's [`AddrInfo`].
     pub fn with_derp_url(mut self, derp_url: Url) -> Self {
         self.info.derp_url = Some(derp_url);
         self
@@ -58,7 +58,7 @@ impl NodeAddr {
         self.info.direct_addresses.iter()
     }
 
-    /// Get the derp region of this peer.
+    /// Get the derp url of this peer.
     pub fn derp_url(&self) -> Option<&Url> {
         self.info.derp_url.as_ref()
     }
@@ -80,7 +80,7 @@ impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
 /// Addressing information to connect to a peer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
-    /// The peer's home DERP region.
+    /// The peer's home DERP url.
     pub derp_url: Option<Url>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
@@ -171,7 +171,7 @@ impl MagicEndpointBuilder {
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// region with a configured derp node.  If an invalid [`DerpMap`] is provided [`bind`]
+    /// configured derp node.  If an invalid [`DerpMap`] is provided [`bind`]
     /// will result in an error.
     ///
     /// [`bind`]: MagicEndpointBuilder::bind
@@ -360,9 +360,9 @@ impl MagicEndpoint {
         self.msock.local_endpoints_change().await
     }
 
-    /// Get the DERP region we are connected to with the lowest latency.
+    /// Get the DERP url we are connected to with the lowest latency.
     ///
-    /// Returns `None` if we are not connected to any DERP region.
+    /// Returns `None` if we are not connected to any DERPer.
     pub fn my_derp(&self) -> Option<Url> {
         self.msock.my_derp()
     }
@@ -384,7 +384,7 @@ impl MagicEndpoint {
 
     /// Get information on all the nodes we have connection information about.
     ///
-    /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
+    /// Includes the node's [`PublicKey`], potential DERP Url, its addresses with any known
     /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     ///
@@ -397,7 +397,7 @@ impl MagicEndpoint {
 
     /// Get connection information about a specific node.
     ///
-    /// Includes the node's [`PublicKey`], potential DERP region, its addresses with any known
+    /// Includes the node's [`PublicKey`], potential DERP Url, its addresses with any known
     /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
     pub async fn connection_info(
@@ -450,7 +450,7 @@ impl MagicEndpoint {
     ///
     /// If the `derp_url` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_url`, it will error.
     ///
-    /// If no UDP addresses and no DERP region is provided, it will error.
+    /// If no UDP addresses and no DERP Url is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         self.add_node_addr(node_addr.clone())?;
 
@@ -459,7 +459,7 @@ impl MagicEndpoint {
         let Some(addr) = addr else {
             return Err(match (info.direct_addresses.is_empty(), info.derp_url) {
                 (true, None) => {
-                    anyhow!("No UDP addresses or DERP region provided. Unable to dial node {node_id:?}")
+                    anyhow!("No UDP addresses or DERP Url provided. Unable to dial node {node_id:?}")
                 }
                 _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
             });
@@ -620,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
-        let (derp_map, region_id, _guard) = run_derper().await.unwrap();
+        let (derp_map, derp_url, _guard) = run_derper().await.unwrap();
         let server_secret_key = SecretKey::generate();
         let server_peer_id = server_secret_key.public();
 
@@ -669,7 +669,7 @@ mod tests {
                     .await
                     .unwrap();
                 info!("client connecting");
-                let node_addr = NodeAddr::new(server_peer_id).with_derp_url(region_id);
+                let node_addr = NodeAddr::new(server_peer_id).with_derp_url(derp_url);
                 let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 

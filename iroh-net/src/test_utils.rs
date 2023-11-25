@@ -17,7 +17,7 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
 /// Runs a  DERP server with STUN enabled suitable for tests.
 ///
-/// The returned `u16` is the region ID of the DERP server in the returned [`DerpMap`], it
+/// The returned `Url` is the url of the DERP server in the returned [`DerpMap`], it
 /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint

@@ -730,7 +730,7 @@ mod test {
 
         debug!("----- adding peers  ----- ");
         let topic: TopicId = blake3::hash(b"foobar").into();
-        // share info that pi1 is on the same derp_region
+        // share info that pi1 is on the same derp_node
         let addr1 = NodeAddr::new(pi1).with_derp_url(derp_url);
         ep2.add_node_addr(addr1.clone()).unwrap();
         ep3.add_node_addr(addr1).unwrap();
@@ -843,7 +843,7 @@ mod test {
 
         /// Runs a  DERP server with STUN enabled suitable for tests.
         ///
-        /// The returned `u16` is the region ID of the DERP server in the returned [`DerpMap`], it
+        /// The returned `Url` is the url of the DERP server in the returned [`DerpMap`], it
         /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
         ///
         /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint

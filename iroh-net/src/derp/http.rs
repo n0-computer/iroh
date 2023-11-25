@@ -68,7 +68,7 @@ mod tests {
 
         let addr = server.addr();
 
-        // get dial info & create region
+        // get dial info
         let port = addr.port();
         let addr = {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
@@ -198,7 +198,7 @@ mod tests {
 
         let addr = server.addr();
 
-        // get dial info & create region
+        // get dial info
         let port = addr.port();
         let addr = {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {

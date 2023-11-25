@@ -22,12 +22,12 @@ pub enum DerpMode {
 /// Configuration of all the Derp servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerpMap {
-    /// A map of the different region IDs to the [`DerpRegion`] information
+    /// A map of the different derp IDs to the [`DerpNode`] information
     nodes: Arc<BTreeMap<Url, Arc<DerpNode>>>,
 }
 
 impl DerpMap {
-    /// Returns the sorted region URLs.
+    /// Returns the sorted DERP URLs.
     pub fn urls(&self) -> impl Iterator<Item = &Url> {
         self.nodes.keys()
     }
@@ -85,10 +85,10 @@ impl DerpMap {
         }
     }
 
-    /// Returns a [`DerpMap`] from a [`Url`] and a `region_id`
+    /// Returns a [`DerpMap`] from a [`Url`].
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    /// Region IDs are specified at <../../../docs/derp_regions.md>
+    /// Derp nodes are specified at <../../../docs/derp_nodes.md>
     pub fn from_url(url: Url) -> Self {
         Self::default_from_node(url, DEFAULT_DERP_STUN_PORT)
     }
@@ -112,7 +112,7 @@ impl fmt::Display for DerpMap {
 
 /// Information on a specific derp server.
 ///
-/// Includes the region in which it can be found, as well as how to dial the server.
+/// Includes the Url in where it can be dialed.
 #[derive(derive_more::Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpNode {
     /// The [`Url`] where this derp server can be dialed.

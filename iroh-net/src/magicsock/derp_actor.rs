@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
@@ -270,8 +270,8 @@ impl ActiveDerp {
 
 pub(super) struct DerpActor {
     conn: Arc<Inner>,
-    /// DERP regionID -> connection to a node in that region
-    active_derp: HashMap<Url, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
+    /// DERP Url -> connection to the node
+    active_derp: BTreeMap<Url, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
     ping_tasks: JoinSet<(Url, bool)>,
 }
@@ -280,7 +280,7 @@ impl DerpActor {
     pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
         DerpActor {
             conn,
-            active_derp: HashMap::default(),
+            active_derp: Default::default(),
             msg_sender,
             ping_tasks: Default::default(),
         }
@@ -391,7 +391,7 @@ impl DerpActor {
         }
     }
 
-    /// Connect to the given derp region.
+    /// Connect to the given derp node.
     async fn connect_derp(&mut self, url: &Url, peer: Option<&PublicKey>) -> derp::http::Client {
         // See if we have a connection open to that DERP node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
@@ -596,8 +596,8 @@ impl DerpActor {
             return;
         }
         // Need to collect to avoid double borrow
-        let regions: Vec<_> = self.active_derp.keys().cloned().collect();
-        for url in regions {
+        let urls: Vec<_> = self.active_derp.keys().cloned().collect();
+        for url in urls {
             self.close_derp(&url, why).await;
         }
         self.log_active_derp();

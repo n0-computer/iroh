@@ -87,7 +87,7 @@ pub(super) struct Endpoint {
     public_key: PublicKey,
     /// Last time we pinged all endpoints
     last_full_ping: Option<Instant>,
-    /// The region id of DERP node that we can relay over to communicate.
+    /// The url of DERP node that we can relay over to communicate.
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     derp_url: Option<(Url, EndpointState)>,
     /// Best non-DERP path.
@@ -124,9 +124,7 @@ impl Endpoint {
             quic_mapped_addr,
             public_key: options.public_key,
             last_full_ping: None,
-            derp_url: options
-                .derp_url
-                .map(|region| (region, EndpointState::default())),
+            derp_url: options.derp_url.map(|url| (url, EndpointState::default())),
             best_addr: Default::default(),
             sent_ping: HashMap::new(),
             direct_addr_state: HashMap::new(),
@@ -192,7 +190,7 @@ impl Endpoint {
         }
     }
 
-    /// Returns the derp region of this endpoint
+    /// Returns the derp url of this endpoint
     pub(super) fn derp_url(&self) -> Option<Url> {
         self.derp_url.as_ref().map(|(url, _state)| url.clone())
     }
@@ -319,9 +317,9 @@ impl Endpoint {
                         self.derp_url.is_some(),
                     );
                 }
-                SendAddr::Derp(region) => {
+                SendAddr::Derp(ref url) => {
                     if let Some((home_derp, relay_state)) = self.derp_url.as_mut() {
-                        if *home_derp == region {
+                        if home_derp == url {
                             // lost connectivity via relay
                             relay_state.last_ping = None;
                         }
@@ -408,7 +406,7 @@ impl Endpoint {
         // queue a ping to our derper, if needed.
         if let Some((url, state)) = self.derp_url.as_ref() {
             if state.needs_ping(&now) {
-                debug!(?url, "node's derp region needs ping");
+                debug!(?url, "node's derp needs ping");
                 if let Some(msg) =
                     self.start_ping(SendAddr::Derp(url.clone()), DiscoPingPurpose::Discovery)
                 {
@@ -493,7 +491,7 @@ impl Endpoint {
 
         if n.derp_url.is_some() && n.derp_url != self.derp_url() {
             debug!(
-                "Changing derp region from {:?} to {:?}",
+                "Changing derper from {:?} to {:?}",
                 self.derp_url, n.derp_url
             );
             self.derp_url = n
@@ -542,14 +540,14 @@ impl Endpoint {
             },
             SendAddr::Derp(ref url) => {
                 match self.derp_url.as_mut() {
-                    Some((home_region, _state)) if home_region != url => {
-                        // either the node changed regions or we didn't have a relay address for the
-                        // node. In both cases, trust the new confirmed region
+                    Some((home_url, _state)) if home_url != url => {
+                        // either the node changed derpers or we didn't have a relay address for the
+                        // node. In both cases, trust the new confirmed url
                         info!(%url, "new relay addr for node");
                         self.derp_url = Some((url.clone(), EndpointState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
-                    Some((_home_region, state)) => state.handle_ping(tx_id, now),
+                    Some((_home_url, state)) => state.handle_ping(tx_id, now),
                     None => {
                         info!(%url, "new relay addr for node");
                         self.derp_url = Some((url.clone(), EndpointState::with_ping(tx_id, now)));
@@ -679,8 +677,8 @@ impl Endpoint {
                             }
                         }
                     }
-                    SendAddr::Derp(ref region) => match self.derp_url.as_mut() {
-                        Some((home_region, state)) if home_region == region => {
+                    SendAddr::Derp(ref url) => match self.derp_url.as_mut() {
+                        Some((home_url, state)) if home_url == url => {
                             state.add_pong_reply(PongReply {
                                 latency,
                                 pong_at: now,
@@ -689,11 +687,11 @@ impl Endpoint {
                             });
                         }
                         other => {
-                            // if we are here then we sent this ping, but the region changed
+                            // if we are here then we sent this ping, but the url changed
                             // waiting for the response. It was either set to None or changed to
-                            // another region. This should either never happen or be extremely
+                            // another deper. This should either never happen or be extremely
                             // unlikely. Log and ignore for now
-                            warn!(stored=?other, received=?region, "disco: ignoring pong via derp for region different to last one stored");
+                            warn!(stored=?other, received=?url, "disco: ignoring pong via derp for different derper to last one stored");
                         }
                     },
                 }
@@ -787,11 +785,11 @@ impl Endpoint {
     pub(super) fn receive_derp(&mut self, url: &Url, _src: &PublicKey, now: Instant) {
         match self.derp_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
-                // We received on the expected region_id. update state.
+                // We received on the expected url. update state.
                 state.last_payload_msg = Some(now);
             }
             Some((_current_home, _state)) => {
-                // we have a different region set. we only update on ping, not on receive_derp.
+                // we have a different url. we only update on ping, not on receive_derp.
             }
             None => {
                 self.derp_url = Some((url.clone(), EndpointState::with_last_payload(now)));
@@ -806,11 +804,11 @@ impl Endpoint {
                 .direct_addr_state
                 .get(&(*addr).into())
                 .and_then(|ep| ep.last_ping),
-            SendAddr::Derp(region) => self
+            SendAddr::Derp(url) => self
                 .derp_url
                 .as_ref()
-                .filter(|(home_region, _state)| home_region == region)
-                .and_then(|(_home_region, state)| state.last_ping),
+                .filter(|(home_url, _state)| home_url == url)
+                .and_then(|(_home_url, state)| state.last_ping),
         }
     }
 
@@ -1143,7 +1141,7 @@ pub struct EndpointInfo {
     pub id: usize,
     /// The public key of the endpoint.
     pub public_key: PublicKey,
-    /// Derp region, if available.
+    /// Derper, if available.
     pub derp_url: Option<Url>,
     /// List of addresses at which this node might be reachable, plus any latency information we
     /// have about that address and the last time the address was used.
