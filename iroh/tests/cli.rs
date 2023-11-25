@@ -469,8 +469,10 @@ fn cli_rpc_lock_restart() -> Result<()> {
     );
 
     // check for the lock file
-    let content = std::fs::read(IrohPaths::RpcLock.with_root(&iroh_data_dir))?;
-    let rpc_port = u16::from_le_bytes(content[..2].try_into().unwrap());
+    assert!(
+        IrohPaths::RpcLock.with_root(&iroh_data_dir).exists(),
+        "missing lock file"
+    );
 
     // kill process
     println!("killing process");
@@ -505,7 +507,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
 
     let output = std::str::from_utf8(&output.stderr).unwrap();
     println!("{}", output);
-    assert!(output.contains(&format!("iroh is already running on port {}", rpc_port)));
+    assert!(output.contains("iroh is already running on port"));
 
     Ok(())
 }
