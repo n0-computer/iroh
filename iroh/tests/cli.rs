@@ -407,20 +407,15 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
         anyhow::Ok(())
     };
     provide(&foo_path)?;
-    let tokio = tokio::runtime::Builder::new_multi_thread().build()?;
-    let rt = iroh_bytes::util::runtime::Handle::new(
-        tokio.handle().clone(),
-        tokio_util::task::LocalPoolHandle::new(1),
-    );
     // should have some data now
     let db_path = IrohPaths::BaoFlatStoreComplete.with_root(&iroh_data_dir);
-    let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
+    let db = Store::load_blocking(&db_path, &db_path, &db_path)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Store::load_blocking(&db_path, &db_path, &db_path, &rt)?;
+    let db = Store::load_blocking(&db_path, &db_path, &db_path)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 6);
 

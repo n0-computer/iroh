@@ -28,15 +28,15 @@ use iroh_bytes::{
     protocol::{GetRequest, RangeSpecSeq},
     provider,
     store::{PartialMap, Store},
-    util::runtime,
     BlobFormat, Hash,
 };
 use iroh_sync::store;
+use tokio_util::task::LocalPoolHandle;
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
-fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_current(1).unwrap()
+fn test_local_pool() -> LocalPoolHandle {
+    LocalPoolHandle::new(1)
 }
 
 fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
@@ -47,10 +47,10 @@ fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEnd
 #[tokio::test]
 async fn basics() -> Result<()> {
     let _guard = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
     transfer_data(
         vec![("hello_world", "hello world!".as_bytes().to_vec())],
-        &rt,
+        &lp,
     )
     .await
 }
@@ -58,7 +58,7 @@ async fn basics() -> Result<()> {
 #[tokio::test]
 async fn multi_file() -> Result<()> {
     let _guard = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
 
     let file_opts = vec![
         ("1", 10),
@@ -67,13 +67,13 @@ async fn multi_file() -> Result<()> {
         // overkill, but it works! Just annoying to wait for
         // ("4", 1024 * 1024 * 90),
     ];
-    transfer_random_data(file_opts, &rt).await
+    transfer_random_data(file_opts, &lp).await
 }
 
 #[tokio::test]
 async fn many_files() -> Result<()> {
     let _guard = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
     let num_files = [10, 100];
     for num in num_files {
         println!("NUM_FILES: {num}");
@@ -84,7 +84,7 @@ async fn many_files() -> Result<()> {
                 (name, 10)
             })
             .collect();
-        transfer_random_data(file_opts, &rt).await?;
+        transfer_random_data(file_opts, &lp).await?;
     }
     Ok(())
 }
@@ -92,7 +92,7 @@ async fn many_files() -> Result<()> {
 #[tokio::test]
 async fn sizes() -> Result<()> {
     let _guard = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
 
     let sizes = [
         0,
@@ -108,7 +108,7 @@ async fn sizes() -> Result<()> {
 
     for size in sizes {
         let now = Instant::now();
-        transfer_random_data(vec![("hello_world", size)], &rt).await?;
+        transfer_random_data(vec![("hello_world", size)], &lp).await?;
         println!("  took {}ms", now.elapsed().as_millis());
     }
 
@@ -117,7 +117,7 @@ async fn sizes() -> Result<()> {
 
 #[tokio::test]
 async fn empty_files() -> Result<()> {
-    let rt = test_runtime();
+    let lp = test_local_pool();
     // try to transfer as many files as possible without hitting a limit
     // booo 400 is too small :(
     let num_files = 400;
@@ -125,7 +125,7 @@ async fn empty_files() -> Result<()> {
     for i in 0..num_files {
         file_opts.push((i.to_string(), 0));
     }
-    transfer_random_data(file_opts, &rt).await
+    transfer_random_data(file_opts, &lp).await
 }
 
 /// Create new get options with the given node id and addresses, using a
@@ -155,9 +155,8 @@ async fn multiple_clients() -> Result<()> {
         0,
     )?;
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    let rt = test_runtime();
-    let node = test_node(db).runtime(&rt).spawn().await?;
-
+    let lp = test_local_pool();
+    let node = test_node(db).local_pool(&lp).spawn().await?;
     let mut tasks = Vec::new();
     for _i in 0..3 {
         let file_hash: Hash = expect_hash;
@@ -166,7 +165,7 @@ async fn multiple_clients() -> Result<()> {
         let peer_id = node.node_id();
         let content = content.to_vec();
 
-        tasks.push(rt.local_pool().spawn_pinned(move || {
+        tasks.push(lp.spawn_pinned(move || {
             async move {
                 let opts = get_options(peer_id, addrs);
                 let expected_data = &content;
@@ -190,10 +189,7 @@ async fn multiple_clients() -> Result<()> {
 
 // Run the test creating random data for each blob, using the size specified by the file
 // options
-async fn transfer_random_data<S>(
-    file_opts: Vec<(S, usize)>,
-    rt: &crate::runtime::Handle,
-) -> Result<()>
+async fn transfer_random_data<S>(file_opts: Vec<(S, usize)>, rt: &LocalPoolHandle) -> Result<()>
 where
     S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
@@ -209,7 +205,7 @@ where
 }
 
 // Run the test for a vec of filenames and blob data
-async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, rt: &crate::runtime::Handle) -> Result<()>
+async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, rt: &LocalPoolHandle) -> Result<()>
 where
     S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
@@ -245,7 +241,7 @@ where
     // sort expects by name to match the canonical order of blobs
     expects.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let node = test_node(mdb.clone()).runtime(rt).spawn().await?;
+    let node = test_node(mdb.clone()).local_pool(rt).spawn().await?;
 
     let (events_sender, mut events_recv) = mpsc::unbounded_channel();
 
@@ -336,7 +332,7 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
 
 #[tokio::test]
 async fn test_server_close() {
-    let rt = test_runtime();
+    let lp = test_local_pool();
     // Prepare a Provider transferring a file.
     let _guard = iroh_test::logging::setup();
     let mut db = iroh_bytes::store::readonly_mem::Store::default();
@@ -350,7 +346,7 @@ async fn test_server_close() {
     )
     .unwrap();
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    let mut node = test_node(db).runtime(&rt).spawn().await.unwrap();
+    let mut node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
@@ -419,10 +415,10 @@ fn create_test_db(
 #[tokio::test]
 async fn test_ipv6() {
     let _guard = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
 
     let (db, hash) = create_test_db([("test", b"hello")]);
-    let node = match test_node(db).runtime(&rt).spawn().await {
+    let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -446,11 +442,11 @@ async fn test_ipv6() {
 #[tokio::test]
 async fn test_not_found() {
     let _ = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
 
     let db = iroh_bytes::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
-    let node = match test_node(db).runtime(&rt).spawn().await {
+    let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -487,13 +483,13 @@ async fn test_not_found() {
 #[tokio::test]
 async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
-    let rt = test_runtime();
+    let lp = test_local_pool();
 
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
-    let node = match test_node(db).runtime(&rt).spawn().await {
+    let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -528,9 +524,9 @@ async fn test_chunk_not_found_1() {
 
 #[tokio::test]
 async fn test_run_ticket() {
-    let rt = test_runtime();
+    let lp = test_local_pool();
     let (db, hash) = create_test_db([("test", b"hello")]);
-    let node = test_node(db).runtime(&rt).spawn().await.unwrap();
+    let node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
     let ticket = node.ticket(hash, BlobFormat::HashSeq).await.unwrap();
@@ -577,9 +573,9 @@ async fn run_collection_get_request(
 
 #[tokio::test]
 async fn test_run_fsm() {
-    let rt = test_runtime();
+    let lp = test_local_pool();
     let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
-    let node = test_node(db).runtime(&rt).spawn().await.unwrap();
+    let node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -623,12 +619,12 @@ fn make_test_data(n: usize) -> Vec<u8> {
 /// The verified last chunk also verifies the size.
 #[tokio::test]
 async fn test_size_request_blob() {
-    let rt = test_runtime();
+    let lp = test_local_pool();
     let expected = make_test_data(1024 * 64 + 1234);
     let last_chunk = last_chunk(&expected);
     let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
-    let node = test_node(db).runtime(&rt).spawn().await.unwrap();
+    let node = test_node(db).local_pool(&lp).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -651,11 +647,11 @@ async fn test_size_request_blob() {
 
 #[tokio::test]
 async fn test_collection_stat() {
-    let rt = test_runtime();
+    let lp = test_local_pool();
     let child1 = make_test_data(123456);
     let child2 = make_test_data(345678);
     let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
-    let node = test_node(db.clone()).runtime(&rt).spawn().await.unwrap();
+    let node = test_node(db.clone()).local_pool(&lp).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {

@@ -9,12 +9,13 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use clap::Parser;
+use iroh::rpc_protocol::ProviderService;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
-use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
 use iroh_bytes::store::Store;
 use iroh_net::key::SecretKey;
 use quic_rpc::transport::quinn::QuinnServerEndpoint;
 use quic_rpc::ServiceEndpoint;
+use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -45,7 +46,7 @@ fn make_rpc_endpoint(
 
 async fn run(db: impl Store) -> anyhow::Result<()> {
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let rt = runtime::Handle::from_current(1)?;
+    let lp = LocalPoolHandle::new(1);
     // create a random secret key
     let secret_key = SecretKey::generate();
     // create a rpc endpoint
@@ -56,7 +57,7 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
     let doc_store = iroh_sync::store::memory::Store::default();
     let node = iroh::node::Node::builder(db, doc_store)
         .secret_key(secret_key)
-        .runtime(&rt)
+        .local_pool(&lp)
         .rpc_endpoint(rpc_endpoint)
         .spawn()
         .await?;
@@ -86,17 +87,16 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
-    let rt = runtime::Handle::from_current(1)?;
 
     let args = Args::parse();
     match args.path {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
-            let db = iroh_bytes::store::flat::Store::load(&path, &path, &path, &rt).await?;
+            let db = iroh_bytes::store::flat::Store::load(&path, &path, &path).await?;
             run(db).await
         }
         None => {
-            let db = iroh_bytes::store::mem::Store::new(rt);
+            let db = iroh_bytes::store::mem::Store::new();
             run(db).await
         }
     }

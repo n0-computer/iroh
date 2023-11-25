@@ -16,10 +16,11 @@ use iroh::{
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
+use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{util::runtime, Hash};
+use iroh_bytes::Hash;
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
     store::{self, Query},
@@ -28,35 +29,27 @@ use iroh_sync::{
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Pick up the tokio runtime from the thread local and add a
-/// thread per core runtime.
-fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_current(1).unwrap()
-}
-
 fn test_node(
-    rt: runtime::Handle,
     secret_key: SecretKey,
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
+        .local_pool(&LocalPoolHandle::new(1))
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
-        .runtime(&rt)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
 // capturing that `&mut` lifetime in the returned future. This allows to call it in a loop while
 // still collecting the futures before awaiting them alltogether (see [`spawn_nodes`])
 fn spawn_node(
-    rt: runtime::Handle,
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
 ) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store>>> + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
-        let node = test_node(rt, secret_key);
+        let node = test_node(secret_key);
         let node = node.spawn().await?;
         info!(?i, me = %node.node_id().fmt_short(), "node spawned");
         Ok(node)
@@ -64,13 +57,12 @@ fn spawn_node(
 }
 
 async fn spawn_nodes(
-    rt: runtime::Handle,
     n: usize,
     mut rng: &mut (impl CryptoRng + Rng),
 ) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store>>> {
     let mut futs = vec![];
     for i in 0..n {
-        futs.push(spawn_node(rt.clone(), i, &mut rng));
+        futs.push(spawn_node(i, &mut rng));
     }
     futures::future::join_all(futs).await.into_iter().collect()
 }
@@ -84,8 +76,7 @@ pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
 async fn sync_simple() -> Result<()> {
     setup_logging();
     let mut rng = test_rng(b"sync_simple");
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 2, &mut rng).await?;
+    let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // create doc on node0
@@ -140,8 +131,7 @@ async fn sync_simple() -> Result<()> {
 async fn sync_subscribe_no_sync() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
     let doc = client.docs.create().await?;
     let mut sub = doc.subscribe().await?;
@@ -164,8 +154,7 @@ async fn sync_gossip_bulk() -> Result<()> {
     let mut rng = test_rng(b"sync_gossip_bulk");
     setup_logging();
 
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     let _peer0 = nodes[0].node_id();
@@ -249,8 +238,7 @@ async fn sync_gossip_bulk() -> Result<()> {
 async fn sync_full_basic() -> Result<()> {
     let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
-    let rt = test_runtime();
-    let mut nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let mut nodes = spawn_nodes(2, &mut rng).await?;
     let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // peer0: create doc and ticket
@@ -338,7 +326,7 @@ async fn sync_full_basic() -> Result<()> {
     // our gossip implementation does not allow us to filter message receivers this way.
 
     info!("peer2: spawn");
-    nodes.push(spawn_node(rt.clone(), nodes.len(), &mut rng).await?);
+    nodes.push(spawn_node(nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client());
     let doc2 = clients[2].docs.import(ticket).await?;
     let peer2 = nodes[2].node_id();
@@ -414,8 +402,7 @@ async fn sync_full_basic() -> Result<()> {
 async fn sync_open_close() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -439,8 +426,7 @@ async fn sync_open_close() -> Result<()> {
 async fn sync_subscribe_stop_close() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -732,12 +718,10 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 
 #[tokio::test]
 async fn doc_delete() -> Result<()> {
-    let rt = test_runtime();
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
     let node = Node::builder(db, store)
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
-        .runtime(&rt)
         .spawn()
         .await?;
     let client = node.client();
@@ -766,8 +750,7 @@ async fn doc_delete() -> Result<()> {
 async fn sync_drop_doc() -> Result<()> {
     let mut rng = test_rng(b"sync_drop_doc");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
