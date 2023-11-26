@@ -557,6 +557,13 @@ impl MagicEndpoint {
         Ok(())
     }
 
+    /// Call to notify the system of potential network changes.
+    ///
+    /// `is_major` indicates if the change was large enough to consider a full rebind.
+    pub async fn network_change(&self, is_major: bool) {
+        self.msock.network_change(is_major).await;
+    }
+
     #[cfg(test)]
     pub(crate) fn magic_sock(&self) -> &MagicSock {
         &self.msock
