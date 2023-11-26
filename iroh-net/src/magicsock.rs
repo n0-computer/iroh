@@ -1255,6 +1255,7 @@ impl MagicSock {
         });
 
         let inner2 = inner.clone();
+        let network_monitor = netmon::Monitor::new().await?;
         let main_actor_task = tokio::task::spawn(
             async move {
                 let actor = Actor {
@@ -1272,6 +1273,7 @@ impl MagicSock {
                     no_v4_send: false,
                     net_checker,
                     udp_disco_sender_task,
+                    network_monitor,
                 };
 
                 if let Err(err) = actor.run().await {
@@ -1426,12 +1428,10 @@ impl MagicSock {
     }
 
     /// Call to notify the system of potential network changes.
-    ///
-    /// `is_major` indicates if the change was large enough to consider a full rebind.
-    pub async fn network_change(&self, is_major: bool) {
+    pub async fn network_change(&self) {
         self.inner
             .actor_sender
-            .send(ActorMessage::NetworkChange(is_major))
+            .send(ActorMessage::NetworkChange)
             .await
             .ok();
     }
@@ -1562,7 +1562,7 @@ enum ActorMessage {
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
     NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
-    NetworkChange(bool),
+    NetworkChange,
 }
 
 struct Actor {
@@ -1596,15 +1596,16 @@ struct Actor {
 
     /// Task that sends disco messages over UDP.
     udp_disco_sender_task: tokio::task::JoinHandle<()>,
+
+    network_monitor: netmon::Monitor,
 }
 
 impl Actor {
     async fn run(mut self) -> Result<()> {
         // Setup network monitoring
-        let monitor = netmon::Monitor::new().await?;
-
         let (link_change_s, mut link_change_r) = mpsc::channel(8);
-        let _token = monitor
+        let _token = self
+            .network_monitor
             .subscribe(move |is_major| {
                 let link_change_s = link_change_s.clone();
                 async move {
@@ -1800,8 +1801,8 @@ impl Actor {
                 }
                 self.finalize_endpoints_update(why);
             }
-            ActorMessage::NetworkChange(is_major) => {
-                self.handle_network_change(is_major).await;
+            ActorMessage::NetworkChange => {
+                self.network_monitor.network_change().await.ok();
             }
         }
 
