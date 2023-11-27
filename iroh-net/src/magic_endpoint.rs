@@ -560,7 +560,7 @@ impl MagicEndpoint {
     /// Call to notify the system of potential network changes.
     ///
     /// On many systems iroh is able to detect network changes by itself, however
-    /// some systems like android do not expose this functionality to native code. 
+    /// some systems like android do not expose this functionality to native code.
     /// Android does however provide this functionality to Java code.  This
     /// function allows for notifying iroh of any potential network changes like
     /// this.
