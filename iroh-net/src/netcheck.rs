@@ -929,6 +929,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         // Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
