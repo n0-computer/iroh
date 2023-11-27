@@ -352,10 +352,9 @@ impl MagicEndpoint {
         self.msock.local_endpoints().await
     }
 
-    /// The same as `local_endpoints`, except it waits for the first endpoint update.
+    /// Returns the next non empty version of `local_endpoints`.
     pub async fn ensure_local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        self.msock.next_endpoint_update().await;
-        self.msock.local_endpoints().await
+        self.msock.ensure_local_endpoints().await
     }
 
     /// Get the DERP region we are connected to with the lowest latency.

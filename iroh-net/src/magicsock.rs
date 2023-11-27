@@ -32,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
@@ -40,7 +40,7 @@ use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
 use tokio::{
-    sync::{self, futures::Notified, mpsc, Mutex, Notify},
+    sync::{self, mpsc, watch, Mutex},
     time,
 };
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
@@ -220,15 +220,15 @@ struct Inner {
     disco_secrets: DiscoSecrets,
     udp_state: quinn_udp::UdpState,
 
-    // Send buffer used in `poll_send_udp`
+    /// Send buffer used in `poll_send_udp`
     send_buffer: parking_lot::Mutex<Vec<quinn_udp::Transmit>>,
-    // UDP disco (ping) queue
+    /// UDP disco (ping) queue
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
-    // optional discovery service
+    /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
-    // Our discovered endpoints
-    endpoints: parking_lot::RwLock<DiscoveredEndpoints>,
+    /// Our discovered endpoints
+    endpoints: watch::Sender<DiscoveredEndpoints>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -236,8 +236,6 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
-
-    endpoints_notifier: Notify,
 }
 
 impl Inner {
@@ -947,7 +945,7 @@ impl Inner {
     }
 
     fn send_queued_call_me_maybes(&self) {
-        let msg = self.endpoints.read().to_call_me_maybe_message();
+        let msg = self.endpoints.borrow().to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
         for (public_key, region_id) in self.pending_call_me_maybes.lock().drain() {
             if !self.send_disco_message_derp(region_id, public_key, msg.clone()) {
@@ -957,9 +955,9 @@ impl Inner {
     }
 
     fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
-        let endpoints = self.endpoints.read();
+        let endpoints = self.endpoints.borrow();
         if endpoints.fresh_enough() {
-            let msg = self.endpoints.read().to_call_me_maybe_message();
+            let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
             if !self.send_disco_message_derp(derp_region, dst_key, msg) {
                 warn!(node = %dst_key.fmt_short(), "derp channel full, dropping call-me-maybe");
@@ -1165,7 +1163,7 @@ impl MagicSock {
         };
 
         let udp_state = quinn_udp::UdpState::default();
-
+        let (endpoints_s, _) = watch::channel(Default::default());
         let inner = Arc::new(Inner {
             me,
             port: AtomicU16::new(port),
@@ -1190,10 +1188,9 @@ impl MagicSock {
             send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
-            endpoints: Default::default(),
+            endpoints: endpoints_s,
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
-            endpoints_notifier: Notify::new(),
         });
 
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -1253,11 +1250,29 @@ impl MagicSock {
         Ok(c)
     }
 
-    /// This resolves the next time the local endpoints are updated.
-    ///
-    /// If there was already an endpoint update, it will resolve immediately.
-    pub fn next_endpoint_update(&self) -> Notified<'_> {
-        self.inner.endpoints_notifier.notified()
+    /// This resolves when the local endpoints are not empty, or have changed
+    /// to a new version.
+    pub async fn ensure_local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
+        let mut listener = self.inner.endpoints.subscribe();
+        let eps = listener
+            .wait_for(|eps| {
+                if !eps.is_empty() {
+                    // we have found eps
+                    return true;
+                }
+                if self.inner.is_closing() || self.inner.is_closed() {
+                    // shutting down, return
+                    dbg!("shutdown");
+                    return true;
+                }
+                false
+            })
+            .await?;
+        if self.inner.is_closing() || self.inner.is_closed() {
+            bail!("shutting down");
+        }
+
+        Ok(eps.iter().cloned().collect())
     }
 
     /// Retrieve connection information about nodes in the network.
@@ -1362,6 +1377,9 @@ impl MagicSock {
         self.inner.closing.store(true, Ordering::Relaxed);
         self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
         self.inner.closed.store(true, Ordering::SeqCst);
+
+        // clear local eps
+        self.inner.endpoints.send_modify(|eps| eps.clear());
 
         let mut tasks = self.actor_tasks.lock().await;
         let task_count = tasks.len();
@@ -1693,7 +1711,7 @@ impl Actor {
                 let _ = s.send(self.inner.node_map.endpoint_info(&node_key));
             }
             ActorMessage::LocalEndpoints(s) => {
-                let eps: Vec<_> = self.inner.endpoints.read().iter().cloned().collect();
+                let eps: Vec<_> = self.inner.endpoints.borrow().iter().cloned().collect();
                 let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
@@ -1705,6 +1723,7 @@ impl Actor {
             }
             ActorMessage::Shutdown => {
                 debug!("shutting down");
+
                 self.udp_disco_sender_task.abort();
                 self.inner.node_map.notify_shutdown();
                 if let Some(path) = self.nodes_path.as_ref() {
@@ -1998,9 +2017,13 @@ impl Actor {
         // The STUN address(es) are always first.
         // Despite this sorting, clients are not relying on this sorting for decisions;
 
-        if self.inner.endpoints.write().set(&eps) {
+        let updated = self
+            .inner
+            .endpoints
+            .send_if_modified(|old_eps| old_eps.set(&eps));
+
+        if updated {
             log_endpoint_change(&eps);
-            self.inner.endpoints_notifier.notify_waiters();
 
             if let Some(ref discovery) = self.inner.discovery {
                 let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
@@ -2393,6 +2416,15 @@ impl DiscoveredEndpoints {
         self.last_endpoints.iter()
     }
 
+    fn is_empty(&self) -> bool {
+        self.last_endpoints.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.last_endpoints.clear();
+        self.last_endpoints_time.replace(Instant::now());
+    }
+
     #[must_use = "pending call-me-maybes must be sent out"]
     fn set(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
@@ -2753,27 +2785,16 @@ pub(crate) mod tests {
             let m = m.clone();
             let stacks = stacks.clone();
             tasks.spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = m.endpoint.magic_sock().next_endpoint_update() => {
-                            match m.endpoint.magic_sock().local_endpoints().await {
-                                Ok(new_eps) => {
-                                    debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                                    update_eps(&stacks, my_idx, new_eps);
-                                }
-                                Err(err) => {
-                                    warn!("err: {:?}", err);
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                while let Ok(new_eps) = m.endpoint.magic_sock().ensure_local_endpoints().await {
+                    debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
+                    update_eps(&stacks, my_idx, new_eps);
                 }
             });
         }
 
         Ok(move || {
             tasks.abort_all();
+            println!("tasks aborted");
         })
     }
 
