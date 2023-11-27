@@ -45,7 +45,7 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
@@ -259,7 +259,6 @@ where
         #[cfg(feature = "metrics")]
         crate::metrics::try_init_metrics_collection().ok();
 
-        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
@@ -271,12 +270,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
-            .derp_mode(self.derp_mode)
-            .on_endpoints(Box::new(move |eps| {
-                if !eps.is_empty() {
-                    endpoints_update_s.send(eps.to_vec()).ok();
-                }
-            }));
+            .derp_mode(self.derp_mode);
         let endpoint = match self.peers_data_path {
             Some(path) => endpoint.peers_data_path(path),
             None => endpoint,
@@ -334,10 +328,11 @@ where
                 inner: inner.clone(),
             };
             let me = endpoint.node_id().fmt_short();
+            let ep = endpoint.clone();
             tokio::task::spawn(
                 async move {
                     Self::run(
-                        endpoint,
+                        ep,
                         callbacks,
                         cb_receiver,
                         handler,
@@ -356,22 +351,27 @@ where
         };
 
         // spawn a task that updates the gossip endpoints.
-        let (first_endpoint_update_tx, first_endpoint_update_rx) = oneshot::channel();
-        let mut first_endpoint_update_tx = Some(first_endpoint_update_tx);
+        // TODO: track task
+        let ep = endpoint.clone();
         tokio::task::spawn(async move {
-            while let Ok(eps) = endpoints_update_r.recv_async().await {
-                if let Err(err) = gossip.update_endpoints(&eps) {
-                    warn!("Failed to update gossip endpoints: {err:?}");
-                }
-                if let Some(tx) = first_endpoint_update_tx.take() {
-                    tx.send(()).ok();
+            loop {
+                match ep.ensure_local_endpoints().await {
+                    Ok(eps) => {
+                        if let Err(err) = gossip.update_endpoints(&eps) {
+                            warn!("Failed to update gossip endpoints: {err:?}");
+                        }
+                    }
+                    Err(err) => {
+                        warn!("failed to retrieve local endpoints: {err:?}");
+                        break;
+                    }
                 }
             }
         });
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
-        tokio::time::timeout(ENDPOINT_WAIT, first_endpoint_update_rx)
+        tokio::time::timeout(ENDPOINT_WAIT, endpoint.ensure_local_endpoints())
             .await
             .context("waiting for endpoint")??;
 

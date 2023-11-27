@@ -40,7 +40,7 @@ use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
 use tokio::{
-    sync::{self, mpsc, Mutex},
+    sync::{self, futures::Notified, mpsc, Mutex, Notify},
     time,
 };
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
@@ -106,9 +106,6 @@ pub struct Options {
     /// The [`DerpMap`] to use, leave empty to not use a DERP server.
     pub derp_map: DerpMap,
 
-    /// Callbacks to emit on various socket events
-    pub callbacks: Callbacks,
-
     /// Path to store known nodes.
     pub nodes_path: Option<std::path::PathBuf>,
 
@@ -145,30 +142,12 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     fn resolve<'a>(&'a self, node_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
 }
 
-/// Contains options for `MagicSock::listen`.
-#[derive(derive_more::Debug, Default)]
-pub struct Callbacks {
-    /// Optionally provides a func to be called when endpoints change.
-    #[allow(clippy::type_complexity)]
-    #[debug("on_endpoints: Option<Box<..>>")]
-    pub on_endpoints: Option<Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>>,
-
-    /// Optionally provides a func to be called when a connection is made to a DERP server.
-    #[debug("on_derp_active: Option<Box<..>>")]
-    pub on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-
-    /// A callback that provides a `config::NetInfo` when discovered network conditions change.
-    #[debug("on_net_info: Option<Box<..>>")]
-    pub on_net_info: Option<Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>>,
-}
-
 impl Default for Options {
     fn default() -> Self {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
             derp_map: DerpMap::empty(),
-            callbacks: Default::default(),
             nodes_path: None,
             discovery: None,
         }
@@ -203,15 +182,6 @@ struct Inner {
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
-    #[allow(clippy::type_complexity)]
-    #[debug("on_endpoints: Option<Box<..>>")]
-    on_endpoints: Option<Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>>,
-    #[debug("on_derp_active: Option<Box<..>>")]
-    on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-    /// A callback that provides a `config::NetInfo` when discovered network conditions change.
-    #[debug("on_net_info: Option<Box<..>>")]
-    on_net_info: Option<Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>>,
-
     /// Used for receiving DERP messages.
     derp_recv_receiver: flume::Receiver<DerpRecvResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
@@ -266,6 +236,8 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
+
+    endpoints_notifier: Notify,
 }
 
 impl Inner {
@@ -1116,11 +1088,6 @@ impl EndpointUpdateState {
 
 impl MagicSock {
     /// Creates a magic `MagicSock` listening on `opts.port`.
-    ///
-    /// As the set of possible endpoints for a MagicSock changes, the [`Callbacks::on_endpoints`]
-    /// callback of [`Options::callbacks`] is called.
-    ///
-    /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
         if crate::util::derp_only_mode() {
@@ -1144,12 +1111,6 @@ impl MagicSock {
             port,
             secret_key,
             derp_map,
-            callbacks:
-                Callbacks {
-                    on_endpoints,
-                    on_derp_active,
-                    on_net_info,
-                },
             discovery,
             nodes_path,
         } = opts;
@@ -1207,9 +1168,6 @@ impl MagicSock {
 
         let inner = Arc::new(Inner {
             me,
-            on_endpoints,
-            on_derp_active,
-            on_net_info,
             port: AtomicU16::new(port),
             secret_key,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
@@ -1235,6 +1193,7 @@ impl MagicSock {
             endpoints: Default::default(),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
+            endpoints_notifier: Notify::new(),
         });
 
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -1292,6 +1251,13 @@ impl MagicSock {
         };
 
         Ok(c)
+    }
+
+    /// This resolves the next time the local endpoints are updated.
+    ///
+    /// If there was already an endpoint update, it will resolve immediately.
+    pub fn next_endpoint_update(&self) -> Notified<'_> {
+        self.inner.endpoints_notifier.notified()
     }
 
     /// Retrieve connection information about nodes in the network.
@@ -2034,9 +2000,8 @@ impl Actor {
 
         if self.inner.endpoints.write().set(&eps) {
             log_endpoint_change(&eps);
-            if let Some(ref cb) = self.inner.on_endpoints {
-                cb(&eps[..]);
-            }
+            self.inner.endpoints_notifier.notify_waiters();
+
             if let Some(ref discovery) = self.inner.discovery {
                 let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
                 let derp_region = Some(self.inner.my_derp()).filter(|x| *x != 0);
@@ -2074,16 +2039,10 @@ impl Actor {
                 return;
             }
             net_info_last.have_port_map = true;
-            let net_info = net_info_last.clone();
-            self.call_net_info_callback_locked(net_info);
+            self.net_info_last = Some(net_info_last.clone());
         }
     }
 
-    /// Calls the NetInfo callback (if previously
-    /// registered with SetNetInfoCallback) if ni has substantially changed
-    /// since the last state.
-    ///
-    /// callNetInfoCallback takes ownership of ni.
     #[instrument(level = "debug", skip_all)]
     async fn call_net_info_callback(&mut self, ni: config::NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
@@ -2092,16 +2051,7 @@ impl Actor {
             }
         }
 
-        self.call_net_info_callback_locked(ni);
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    fn call_net_info_callback_locked(&mut self, ni: config::NetInfo) {
-        self.net_info_last = Some(ni.clone());
-        if let Some(ref on_net_info) = self.inner.on_net_info {
-            debug!("net_info update: {:?}", ni);
-            on_net_info(ni);
-        }
+        self.net_info_last = Some(ni);
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -2733,7 +2683,6 @@ pub(crate) mod tests {
     /// Magicsock plus wrappers for sending packets
     #[derive(Clone)]
     struct MagicStack {
-        ep_ch: flume::Receiver<Vec<config::Endpoint>>,
         secret_key: SecretKey,
         endpoint: MagicEndpoint,
     }
@@ -2742,9 +2691,6 @@ pub(crate) mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
-            let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
-            let (ep_s, ep_r) = flume::bounded(16);
-
             let secret_key = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -2752,24 +2698,13 @@ pub(crate) mod tests {
 
             let endpoint = MagicEndpoint::builder()
                 .secret_key(secret_key.clone())
-                .on_endpoints(Box::new(move |eps: &[config::Endpoint]| {
-                    let _ = ep_s.send(eps.to_vec());
-                }))
-                .on_derp_active(Box::new(move || {
-                    on_derp_s.try_send(()).ok();
-                }))
                 .transport_config(transport_config)
                 .derp_mode(DerpMode::Custom(derp_map))
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;
 
-            tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
-                .await
-                .context("wait for derp connection")?;
-
             Ok(Self {
-                ep_ch: ep_r,
                 secret_key,
                 endpoint,
             })
@@ -2795,10 +2730,12 @@ pub(crate) mod tests {
     fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
         fn update_eps(ms: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
             let me = &ms[my_idx];
+
             for (i, m) in ms.iter().enumerate() {
                 if i == my_idx {
                     continue;
                 }
+
                 let addr = NodeAddr {
                     node_id: me.public(),
                     info: crate::AddrInfo {
@@ -2818,14 +2755,16 @@ pub(crate) mod tests {
             tasks.spawn(async move {
                 loop {
                     tokio::select! {
-                        res = m.ep_ch.recv_async() => match res {
-                            Ok(new_eps) => {
-                                debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                                update_eps(&stacks, my_idx, new_eps);
-                            }
-                            Err(err) => {
-                                warn!("err: {:?}", err);
-                                break;
+                        _ = m.endpoint.magic_sock().next_endpoint_update() => {
+                            match m.endpoint.magic_sock().local_endpoints().await {
+                                Ok(new_eps) => {
+                                    debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
+                                    update_eps(&stacks, my_idx, new_eps);
+                                }
+                                Err(err) => {
+                                    warn!("err: {:?}", err);
+                                    break;
+                                }
                             }
                         }
                     }

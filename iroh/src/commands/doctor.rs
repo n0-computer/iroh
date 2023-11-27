@@ -16,7 +16,6 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use iroh_net::{
-    config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, DerpMode, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
@@ -572,20 +571,6 @@ async fn make_endpoint(
     );
     tracing::info!("derp map {:#?}", derp_map);
 
-    let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
-    let on_net_info = |ni: config::NetInfo| {
-        tracing::info!("got net info {:#?}", ni);
-    };
-
-    let on_endpoints = move |ep: &[config::Endpoint]| {
-        tracing::info!("got endpoint {:#?}", ep);
-    };
-
-    let on_derp_active = move || {
-        tracing::info!("got derp active");
-        on_derp_s.try_send(()).ok();
-    };
-
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -593,19 +578,17 @@ async fn make_endpoint(
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![DR_DERP_ALPN.to_vec()])
-        .transport_config(transport_config)
-        .on_net_info(Box::new(on_net_info))
-        .on_endpoints(Box::new(on_endpoints))
-        .on_derp_active(Box::new(on_derp_active));
+        .transport_config(transport_config);
+
     let endpoint = match derp_map {
         Some(derp_map) => endpoint.derp_mode(DerpMode::Custom(derp_map)),
         None => endpoint,
     };
     let endpoint = endpoint.bind(0).await?;
 
-    tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
+    tokio::time::timeout(Duration::from_secs(10), endpoint.ensure_local_endpoints())
         .await
-        .context("wait for derp connection")?;
+        .context("wait for derp connection")??;
 
     Ok(endpoint)
 }
