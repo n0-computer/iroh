@@ -32,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{inc, inc_by};
@@ -40,10 +40,11 @@ use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
 use tokio::{
-    sync::{self, mpsc, watch, Mutex},
+    sync::{self, mpsc, Mutex},
     time,
 };
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
+use watchable::Watchable;
 
 use crate::{
     config::{self, DERP_MAGIC_IP},
@@ -228,7 +229,7 @@ struct Inner {
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
     /// Our discovered endpoints
-    endpoints: watch::Sender<DiscoveredEndpoints>,
+    endpoints: Watchable<DiscoveredEndpoints>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -945,7 +946,7 @@ impl Inner {
     }
 
     fn send_queued_call_me_maybes(&self) {
-        let msg = self.endpoints.borrow().to_call_me_maybe_message();
+        let msg = self.endpoints.read().to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
         for (public_key, region_id) in self.pending_call_me_maybes.lock().drain() {
             if !self.send_disco_message_derp(region_id, public_key, msg.clone()) {
@@ -955,7 +956,7 @@ impl Inner {
     }
 
     fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
-        let endpoints = self.endpoints.borrow();
+        let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
@@ -1163,7 +1164,6 @@ impl MagicSock {
         };
 
         let udp_state = quinn_udp::UdpState::default();
-        let (endpoints_s, _) = watch::channel(Default::default());
         let inner = Arc::new(Inner {
             me,
             port: AtomicU16::new(port),
@@ -1188,7 +1188,7 @@ impl MagicSock {
             send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
-            endpoints: endpoints_s,
+            endpoints: Watchable::new(Default::default()),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
         });
@@ -1253,26 +1253,10 @@ impl MagicSock {
     /// This resolves when the local endpoints are not empty, or have changed
     /// to a new version.
     pub async fn ensure_local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        let mut listener = self.inner.endpoints.subscribe();
-        let eps = listener
-            .wait_for(|eps| {
-                if !eps.is_empty() {
-                    // we have found eps
-                    return true;
-                }
-                if self.inner.is_closing() || self.inner.is_closed() {
-                    // shutting down, return
-                    dbg!("shutdown");
-                    return true;
-                }
-                false
-            })
-            .await?;
-        if self.inner.is_closing() || self.inner.is_closed() {
-            bail!("shutting down");
-        }
+        let mut watcher = self.inner.endpoints.watch();
+        let eps = watcher.next_value_async().await?;
 
-        Ok(eps.iter().cloned().collect())
+        Ok(eps.into_iter().collect())
     }
 
     /// Retrieve connection information about nodes in the network.
@@ -1377,9 +1361,7 @@ impl MagicSock {
         self.inner.closing.store(true, Ordering::Relaxed);
         self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
         self.inner.closed.store(true, Ordering::SeqCst);
-
-        // clear local eps
-        self.inner.endpoints.send_modify(|eps| eps.clear());
+        self.inner.endpoints.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
         let task_count = tasks.len();
@@ -1711,7 +1693,7 @@ impl Actor {
                 let _ = s.send(self.inner.node_map.endpoint_info(&node_key));
             }
             ActorMessage::LocalEndpoints(s) => {
-                let eps: Vec<_> = self.inner.endpoints.borrow().iter().cloned().collect();
+                let eps: Vec<_> = self.inner.endpoints.read().iter().cloned().collect();
                 let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
@@ -2020,10 +2002,11 @@ impl Actor {
         let updated = self
             .inner
             .endpoints
-            .send_if_modified(|old_eps| old_eps.set(&eps));
-
+            .update(DiscoveredEndpoints::new(eps))
+            .is_ok();
         if updated {
-            log_endpoint_change(&eps);
+            let eps = self.inner.endpoints.read();
+            eps.log_endpoint_change();
 
             if let Some(ref discovery) = self.inner.discovery {
                 let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
@@ -2388,20 +2371,7 @@ fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
     Ok((pconn4, pconn6))
 }
 
-fn log_endpoint_change(endpoints: &[config::Endpoint]) {
-    debug!("endpoints changed: {}", {
-        let mut s = String::new();
-        for (i, ep) in endpoints.iter().enumerate() {
-            if i > 0 {
-                s += ", ";
-            }
-            s += &format!("{} ({})", ep.addr, ep.typ);
-        }
-        s
-    });
-}
-
-#[derive(derive_more::Debug, Default)]
+#[derive(derive_more::Debug, Default, Clone)]
 struct DiscoveredEndpoints {
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
@@ -2411,29 +2381,26 @@ struct DiscoveredEndpoints {
     last_endpoints_time: Option<Instant>,
 }
 
+impl PartialEq for DiscoveredEndpoints {
+    fn eq(&self, other: &Self) -> bool {
+        endpoint_sets_equal(&self.last_endpoints, &other.last_endpoints)
+    }
+}
+
 impl DiscoveredEndpoints {
+    fn new(endpoints: Vec<config::Endpoint>) -> Self {
+        Self {
+            last_endpoints: endpoints,
+            last_endpoints_time: Some(Instant::now()),
+        }
+    }
+
+    fn into_iter(self) -> impl Iterator<Item = config::Endpoint> {
+        self.last_endpoints.into_iter()
+    }
+
     fn iter(&self) -> impl Iterator<Item = &config::Endpoint> + '_ {
         self.last_endpoints.iter()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.last_endpoints.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.last_endpoints.clear();
-        self.last_endpoints_time.replace(Instant::now());
-    }
-
-    #[must_use = "pending call-me-maybes must be sent out"]
-    fn set(&mut self, endpoints: &[config::Endpoint]) -> bool {
-        self.last_endpoints_time = Some(Instant::now());
-        if endpoint_sets_equal(endpoints, &self.last_endpoints) {
-            return false;
-        }
-        self.last_endpoints.clear();
-        self.last_endpoints.extend_from_slice(endpoints);
-        true
     }
 
     fn fresh_enough(&self) -> bool {
@@ -2446,6 +2413,19 @@ impl DiscoveredEndpoints {
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
         let my_number = self.last_endpoints.iter().map(|ep| ep.addr).collect();
         disco::CallMeMaybe { my_number }
+    }
+
+    fn log_endpoint_change(&self) {
+        debug!("endpoints changed: {}", {
+            let mut s = String::new();
+            for (i, ep) in self.last_endpoints.iter().enumerate() {
+                if i > 0 {
+                    s += ", ";
+                }
+                s += &format!("{} ({})", ep.addr, ep.typ);
+            }
+            s
+        });
     }
 }
 
