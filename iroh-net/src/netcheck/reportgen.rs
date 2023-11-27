@@ -955,7 +955,9 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
                 if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
                     for addr in addrs {
                         let addr = ip::to_canonical(addr);
-                        if addr.is_ipv4() && proto == ProbeProto::StunIpv4 {
+                        if addr.is_ipv4()
+                            && matches!(proto, ProbeProto::StunIpv4 | ProbeProto::Icmp)
+                        {
                             return Ok(SocketAddr::new(addr, port));
                         }
                         if addr.is_ipv6() && proto == ProbeProto::StunIpv6 {

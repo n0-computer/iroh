@@ -929,16 +929,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
+        // Create a "STUN server", which will never respond to anything.  This is how UDP to
+        // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
         let dm = stun::test::derp_map_of_opts([(stun_addr, true)].into_iter());
 
+        // Now create a client and generate a report.
         let mut client = Client::new(None)?;
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
+        // This test wants to ensure that the ICMP part of the probe works when UDP is
+        // blocked.  Unfortunately on some systems we simply don't have permissions to
+        // create raw ICMP pings and we'll have to silenty accept this test is useless (if
+        // we could, this would be a skip instead).
         let have_pinger = Pinger::new().is_ok();
 
         let want = Report {
@@ -950,8 +957,8 @@ mod tests {
             os_has_ipv6: r.os_has_ipv6,
             // Captive portal test is irrelevant; accept what the current report has.
             captive_portal: r.captive_portal,
-            // We will fall back to sending ICMP pings.  These should succeed when we have a
-            // working pinger.
+            // This is the test: we will fall back to sending ICMP pings.  These should
+            // succeed when we have a working pinger.
             icmpv4: have_pinger,
             // If we had a pinger, we'll have some latencies filled in and a preferred derp
             derp_latency: have_pinger
