@@ -557,6 +557,20 @@ impl MagicEndpoint {
         Ok(())
     }
 
+    /// Call to notify the system of potential network changes.
+    ///
+    /// On many systems iroh is able to detect network changes by itself, however
+    /// some systems like android do not expose this functionality to native code.
+    /// Android does however provide this functionality to Java code.  This
+    /// function allows for notifying iroh of any potential network changes like
+    /// this.
+    ///
+    /// Even when the network did not change, or iroh was already able to detect
+    /// the network change itself, there is no harm in calling this function.
+    pub async fn network_change(&self) {
+        self.msock.network_change().await;
+    }
+
     #[cfg(test)]
     pub(crate) fn magic_sock(&self) -> &MagicSock {
         &self.msock

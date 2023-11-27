@@ -75,6 +75,7 @@ pub(super) type Callback = Box<dyn Fn(bool) -> BoxFuture<'static, ()> + Sync + S
 pub(super) enum ActorMessage {
     Subscribe(Callback, oneshot::Sender<CallbackToken>),
     Unsubscribe(CallbackToken, oneshot::Sender<()>),
+    NetworkChange,
 }
 
 impl Actor {
@@ -142,6 +143,11 @@ impl Actor {
                     ActorMessage::Unsubscribe(token, s) => {
                         self.callbacks.remove(&token);
                         s.send(()).ok();
+                    }
+                    ActorMessage::NetworkChange => {
+                        trace!("external network activitiy detected");
+                        last_event.replace(false);
+                        debounce_interval.reset_immediately();
                     }
                 },
                 else => {
