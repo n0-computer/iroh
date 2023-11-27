@@ -2774,7 +2774,6 @@ pub(crate) mod tests {
 
         Ok(move || {
             tasks.abort_all();
-            println!("tasks aborted");
         })
     }
 
