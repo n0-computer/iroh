@@ -8,13 +8,6 @@ other();
 
 console.log("lets get fancy");
 
-for await (const event of Iroh.subscribe()) {
-  if (event.InsertLocal != null) {
-    console.log("doc event: InsertLocal", event.InsertLocal.entry.record);
-  }
-  if (event.InsertRemote != null) {
-    console.log("doc event: InsertRemote", event.InsertRemote.entry.record);
-  }
-}
-
+const url = new URL("./worker.js", import.meta.url)
+const worker = new Worker(url, { type: "module" });
 
