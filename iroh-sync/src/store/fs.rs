@@ -121,6 +121,7 @@ impl Store {
             let _table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
             let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
+            let _table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
         }
         write_tx.commit()?;
 
