@@ -17,6 +17,7 @@ pub mod doc;
 pub mod doctor;
 pub mod node;
 pub mod rpc;
+pub mod runtime;
 pub mod start;
 pub mod tag;
 
@@ -75,6 +76,9 @@ pub enum Commands {
         /// Commands for doctor - defined in the mod
         #[clap(subcommand)]
         command: self::doctor::Commands,
+    },
+    Runtime {
+        path: PathBuf,
     },
 }
 
@@ -140,6 +144,23 @@ impl Cli {
             Commands::Doctor { command } => {
                 let config = NodeConfig::from_env(self.config.as_deref())?;
                 self::doctor::run(command, &config).await
+            }
+            Commands::Runtime { path } => {
+                let _env = ConsoleEnv::for_cli()?;
+                if self.start {
+                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    start::run_with_command(
+                        &rt,
+                        &config,
+                        RunType::SingleCommand,
+                        |iroh| async move { self::runtime::exec(&iroh, path).await },
+                    )
+                    .await
+                } else {
+                    todo!();
+                    // let iroh = iroh_quic_connect().await.context("rpc connect")?;
+                    // runtime_exec(&iroh, path).await
+                }
             }
         }
     }

@@ -51,6 +51,10 @@ tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
 walkdir = "2"
 
+# Runtime
+deno_core = "^0.232.0"
+deno_runtime = "^0.133.0"
+
 # CLI
 clap = { version = "4", features = ["derive"], optional = true }
 comfy-table = { version = "7.0.1", optional = true }
