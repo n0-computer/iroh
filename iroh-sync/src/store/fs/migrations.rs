@@ -118,11 +118,11 @@ fn migration_003_namespaces_delete_v1(tx: &WriteTransaction) -> Result<MigrateOu
     Ok(MigrateOutcome::Execute(1))
 }
 
-/// migration 003: populate the by_key index table(which did not exist before)
+/// migration 004: populate the by_key index table(which did not exist before)
 fn migration_004_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateOutcome> {
     let mut by_key_table = tx.open_table(RECORDS_BY_KEY_TABLE)?;
     let records_table = tx.open_table(RECORDS_TABLE)?;
-    if !by_key_table.is_empty()? || records_table.is_empty()? {
+    if !by_key_table.is_empty()? {
         return Ok(MigrateOutcome::Skip);
     }
 
