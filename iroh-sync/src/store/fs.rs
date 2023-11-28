@@ -903,4 +903,22 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_migration_004_populate_by_key_index() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+
+        let store = Store::new(dbfile.path())?;
+
+        // check that the new table is there, even if empty
+        {
+            let read_tx = store.db.begin_read()?;
+            let record_by_key_table = read_tx.open_table(RECORDS_BY_KEY_TABLE)?;
+            assert_eq!(record_by_key_table.len()?, 0);
+        }
+
+        // TODO: write test checking that the indexing is done correctly
+
+        Ok(())
+    }
 }
