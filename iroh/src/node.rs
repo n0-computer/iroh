@@ -8,7 +8,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -18,20 +18,16 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_base::rpc::RpcResult;
 use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::provider::GetProgress;
+use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
     Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
-    protocol::{Closed, Request, RequestToken},
-    provider::{AddProgress, RequestAuthorizationHandler},
-    util::runtime,
-    util::Hash,
-    BlobFormat, HashAndFormat, TempTag,
+    protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat, TempTag,
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
@@ -41,7 +37,7 @@ use iroh_net::{
     config::Endpoint,
     derp::DerpMode,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, PeerAddr,
+    tls, MagicEndpoint, NodeAddr,
 };
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -52,22 +48,25 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
-use crate::dial::Ticket;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    DeleteTagRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, SetTagOption,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocExportProgress,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
+use crate::ticket::blob::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -75,7 +74,7 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
+pub const DEFAULT_BIND_PORT: u16 = 11204;
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
@@ -122,15 +121,14 @@ where
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
 {
-    bind_addr: SocketAddr,
+    bind_port: u16,
     secret_key: SecretKey,
     rpc_endpoint: E,
     db: D,
     keylog: bool,
-    auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_mode: DerpMode,
     gc_policy: GcPolicy,
-    rt: Option<runtime::Handle>,
+    rt: Option<tokio_util::task::LocalPoolHandle>,
     docs: S,
     /// Path to store peer data. If `None`, peer data will not be persisted.
     peers_data_path: Option<PathBuf>,
@@ -138,43 +136,16 @@ where
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
-/// A noop authorization handler that does not do any authorization.
-///
-/// This is the default. It does not have to be pub, since it is going to be
-/// boxed.
-#[derive(Debug)]
-struct NoopRequestAuthorizationHandler;
-
-impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        _request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        async move {
-            if let Some(token) = token {
-                anyhow::bail!(
-                    "no authorization handler defined, but token was provided: {:?}",
-                    token
-                );
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-}
-
 impl<D: Map, S: DocStore> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db_and_store(db: D, docs: S) -> Self {
         Self {
-            bind_addr: DEFAULT_BIND_ADDR.into(),
+            bind_port: DEFAULT_BIND_PORT,
             secret_key: SecretKey::generate(),
             db,
             keylog: false,
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
-            auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             gc_policy: GcPolicy::Disabled,
             rt: None,
             docs,
@@ -196,11 +167,10 @@ where
     ) -> Builder<D, S, E2> {
         // we can't use ..self here because the return type is different
         Builder {
-            bind_addr: self.bind_addr,
+            bind_port: self.bind_port,
             secret_key: self.secret_key,
             db: self.db,
             keylog: self.keylog,
-            auth_handler: self.auth_handler,
             rpc_endpoint: value,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
@@ -232,19 +202,11 @@ where
         self
     }
 
-    /// Configures a custom authorization handler.
-    pub fn custom_auth_handler(self, auth_handler: Arc<dyn RequestAuthorizationHandler>) -> Self {
-        Self {
-            auth_handler,
-            ..self
-        }
-    }
-
     /// Binds the node service to a different socket.
     ///
     /// By default it binds to `127.0.0.1:11204`.
-    pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = addr;
+    pub fn bind_port(mut self, port: u16) -> Self {
+        self.bind_port = port;
         self
     }
 
@@ -273,7 +235,7 @@ where
     /// Sets the tokio runtime to use.
     ///
     /// If not set, the current runtime will be picked up.
-    pub fn runtime(mut self, rt: &runtime::Handle) -> Self {
+    pub fn local_pool(mut self, rt: &LocalPoolHandle) -> Self {
         self.rt = Some(rt.clone());
         self
     }
@@ -285,7 +247,9 @@ where
     /// get information about it.
     pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
-        let rt = self.rt.context("runtime not set")?;
+        let lp = self
+            .rt
+            .unwrap_or_else(|| LocalPoolHandle::new(num_cpus::get()));
         // Initialize the metrics collection.
         //
         // The metrics are global per process. Subsequent calls do not change the metrics
@@ -317,7 +281,7 @@ where
             Some(path) => endpoint.peers_data_path(path),
             None => endpoint,
         };
-        let endpoint = endpoint.bind(self.bind_addr.port()).await?;
+        let endpoint = endpoint.bind(self.bind_port).await?;
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);
@@ -325,14 +289,15 @@ where
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
+        let addr = endpoint.my_addr().await?;
+
         // initialize the gossip protocol
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
+        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), rt.clone()).await;
+        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
-            rt.clone(),
             endpoint.clone(),
             gossip.clone(),
             self.docs,
@@ -345,16 +310,12 @@ where
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.db.clone();
             let callbacks = callbacks.clone();
-            let task = rt
-                .local_pool()
-                .spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
+            let task = lp.spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
             Some(AbortingJoinHandle(task))
         } else {
             None
         };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
-        let rt2 = rt.clone();
-        let rt3 = rt.clone();
         let inner = Arc::new(NodeInner {
             db: self.db,
             endpoint: endpoint.clone(),
@@ -364,7 +325,7 @@ where
             callbacks: callbacks.clone(),
             cb_sender,
             gc_task,
-            rt: rt.clone(),
+            rt: lp.clone(),
             sync,
         });
         let task = {
@@ -372,8 +333,8 @@ where
             let handler = RpcHandler {
                 inner: inner.clone(),
             };
-            let me = endpoint.peer_id().fmt_short();
-            rt2.main().spawn(
+            let me = endpoint.node_id().fmt_short();
+            tokio::task::spawn(
                 async move {
                     Self::run(
                         endpoint,
@@ -382,8 +343,6 @@ where
                         handler,
                         self.rpc_endpoint,
                         internal_rpc,
-                        self.auth_handler,
-                        rt3,
                         gossip,
                     )
                     .await
@@ -399,7 +358,7 @@ where
         // spawn a task that updates the gossip endpoints.
         let (first_endpoint_update_tx, first_endpoint_update_rx) = oneshot::channel();
         let mut first_endpoint_update_tx = Some(first_endpoint_update_tx);
-        rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             while let Ok(eps) = endpoints_update_r.recv_async().await {
                 if let Err(err) = gossip.update_endpoints(&eps) {
                     warn!("Failed to update gossip endpoints: {err:?}");
@@ -427,8 +386,6 @@ where
         handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
-        auth_handler: Arc<dyn RequestAuthorizationHandler>,
-        rt: runtime::Handle,
         gossip: Gossip,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -447,7 +404,7 @@ where
         // is only initialized once the endpoint is fully bound
         if let Ok(local_endpoints) = server.local_endpoints().await {
             if !local_endpoints.is_empty() {
-                debug!(me = ?server.peer_id(), "gossip initial update: {local_endpoints:?}");
+                debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
                 gossip.update_endpoints(&local_endpoints).ok();
             }
         }
@@ -461,7 +418,7 @@ where
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
+                            handle_rpc_request(msg, chan, &handler);
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -472,7 +429,7 @@ where
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
+                            handle_rpc_request(msg, chan, &handler);
                         }
                         Err(_) => {
                             info!("last controller dropped, shutting down");
@@ -491,10 +448,9 @@ where
                     };
                     let gossip = gossip.clone();
                     let inner = handler.inner.clone();
-                    let auth_handler = auth_handler.clone();
                     let sync = handler.inner.sync.clone();
-                    rt.main().spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, auth_handler).await {
+                    tokio::task::spawn(async move {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -598,7 +554,6 @@ async fn handle_connection<D: BaoStore>(
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
     sync: SyncEngine,
-    auth_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
@@ -608,7 +563,6 @@ async fn handle_connection<D: BaoStore>(
                 connecting,
                 node.db.clone(),
                 node.callbacks.clone(),
-                auth_handler,
                 node.rt.clone(),
             )
             .await
@@ -660,7 +614,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: Map> {
+pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -677,7 +631,8 @@ struct NodeInner<D> {
     callbacks: Callbacks,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
-    rt: runtime::Handle,
+    #[debug("rt")]
+    rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
 }
 
@@ -696,6 +651,15 @@ impl<D: ReadableStore> Node<D> {
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
     pub fn builder<S: DocStore>(bao_store: D, doc_store: S) -> Builder<D, S> {
         Builder::with_db_and_store(bao_store, doc_store)
+    }
+
+    /// Returns the [`MagicEndpoint`] of the node.
+    ///
+    /// This can be used to establish connections to other nodes under any
+    /// ALPNs other than the iroh internal ones. This is useful for some advanced
+    /// use cases.
+    pub fn magic_endpoint(&self) -> &MagicEndpoint {
+        &self.inner.endpoint
     }
 
     /// The address on which the node socket is bound.
@@ -718,7 +682,7 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Returns the [`PublicKey`] of the node.
-    pub fn peer_id(&self) -> PublicKey {
+    pub fn node_id(&self) -> PublicKey {
         self.inner.secret_key.public()
     }
 
@@ -750,17 +714,17 @@ impl<D: ReadableStore> Node<D> {
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
-        Ticket::new(me, hash, format, None)
+        Ticket::new(me, hash, format)
     }
 
-    /// Return the [`PeerAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<PeerAddr> {
+    /// Return the [`NodeAddr`] for this node.
+    pub async fn my_addr(&self) -> Result<NodeAddr> {
         self.inner.endpoint.my_addr().await
     }
 
     /// Get the DERP region we are connected to.
-    pub async fn my_derp(&self) -> Option<u16> {
-        self.inner.endpoint.my_derp().await
+    pub fn my_derp(&self) -> Option<u16> {
+        self.inner.endpoint.my_derp()
     }
 
     /// Aborts the node.
@@ -780,7 +744,7 @@ impl<D: ReadableStore> Node<D> {
     }
 }
 
-impl<D: Map> NodeInner<D> {
+impl<D> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -801,7 +765,7 @@ impl<D: Map> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: Map> Future for Node<D> {
+impl<D> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -815,7 +779,7 @@ struct RpcHandler<D> {
 }
 
 impl<D: BaoStore> RpcHandler<D> {
-    fn rt(&self) -> runtime::Handle {
+    fn rt(&self) -> LocalPoolHandle {
         self.inner.rt.clone()
     }
 
@@ -843,7 +807,7 @@ impl<D: BaoStore> RpcHandler<D> {
         _msg: BlobListIncompleteRequest,
     ) -> impl Stream<Item = BlobListIncompleteResponse> + Send + 'static {
         let db = self.inner.db.clone();
-        let local = self.inner.rt.local_pool().clone();
+        let local = self.inner.rt.clone();
         futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
@@ -868,7 +832,7 @@ impl<D: BaoStore> RpcHandler<D> {
         _msg: BlobListCollectionsRequest,
     ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
         let db = self.inner.db.clone();
-        let local = self.inner.rt.local_pool().clone();
+        let local = self.inner.rt.clone();
         let tags = db.tags();
         futures::stream::iter(tags).filter_map(move |(name, HashAndFormat { hash, format })| {
             let db = db.clone();
@@ -930,7 +894,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
-        self.rt().main().spawn(async move {
+        tokio::task::spawn(async move {
             if let Err(e) = db.validate(tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
@@ -945,7 +909,7 @@ impl<D: BaoStore> RpcHandler<D> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
-        self.rt().local_pool().spawn_pinned(|| async move {
+        self.rt().spawn_pinned(|| async move {
             if let Err(e) = self.blob_add_from_path0(msg, tx).await {
                 tx2.send_async(AddProgress::Abort(e.into())).await.ok();
             }
@@ -953,13 +917,149 @@ impl<D: BaoStore> RpcHandler<D> {
         rx.into_stream().map(BlobAddPathResponse)
     }
 
+    fn doc_import_file(
+        self,
+        msg: DocImportFileRequest,
+    ) -> impl Stream<Item = DocImportFileResponse> {
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
+        let tx2 = tx.clone();
+        self.rt().spawn_pinned(|| async move {
+            if let Err(e) = self.doc_import_file0(msg, tx).await {
+                tx2.send_async(DocImportProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream().map(DocImportFileResponse)
+    }
+
+    async fn doc_import_file0(
+        self,
+        msg: DocImportFileRequest,
+        progress: flume::Sender<DocImportProgress>,
+    ) -> anyhow::Result<()> {
+        use iroh_bytes::store::ImportMode;
+        use std::collections::BTreeMap;
+
+        let progress = FlumeProgressSender::new(progress);
+        let names = Arc::new(Mutex::new(BTreeMap::new()));
+        // convert import progress to provide progress
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id, name } => {
+                names.lock().unwrap().insert(id, name);
+                None
+            }
+            ImportProgress::Size { id, size } => {
+                let name = names.lock().unwrap().remove(&id)?;
+                Some(DocImportProgress::Found { id, name, size })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(DocImportProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => {
+                Some(DocImportProgress::IngestDone { hash, id })
+            }
+            _ => None,
+        });
+        let DocImportFileRequest {
+            doc_id,
+            author_id,
+            key,
+            path: root,
+            in_place,
+        } = msg;
+        // Check that the path is absolute and exists.
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
+        anyhow::ensure!(
+            root.exists(),
+            "trying to add missing path: {}",
+            root.display()
+        );
+
+        let import_mode = match in_place {
+            true => ImportMode::TryReference,
+            false => ImportMode::Copy,
+        };
+
+        let (temp_tag, size) = self
+            .inner
+            .db
+            .import_file(root, import_mode, BlobFormat::Raw, import_progress)
+            .await?;
+
+        let hash_and_format = temp_tag.inner();
+        let HashAndFormat { hash, .. } = *hash_and_format;
+        self.inner
+            .sync
+            .doc_set_hash(DocSetHashRequest {
+                doc_id,
+                author_id,
+                key: key.clone(),
+                hash,
+                size,
+            })
+            .await?;
+        drop(temp_tag);
+        progress.send(DocImportProgress::AllDone { key }).await?;
+        Ok(())
+    }
+
+    fn doc_export_file(
+        self,
+        msg: DocExportFileRequest,
+    ) -> impl Stream<Item = DocExportFileResponse> {
+        let (tx, rx) = flume::bounded(1024);
+        let tx2 = tx.clone();
+        self.rt().spawn_pinned(|| async move {
+            if let Err(e) = self.doc_export_file0(msg, tx).await {
+                tx2.send_async(DocExportProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream().map(DocExportFileResponse)
+    }
+
+    async fn doc_export_file0(
+        self,
+        msg: DocExportFileRequest,
+        progress: flume::Sender<DocExportProgress>,
+    ) -> anyhow::Result<()> {
+        let progress = FlumeProgressSender::new(progress);
+        let DocExportFileRequest { entry, path } = msg;
+        let key = bytes::Bytes::from(entry.key().to_vec());
+        let export_progress = progress.clone().with_filter_map(move |x| match x {
+            DownloadProgress::Export {
+                id,
+                hash,
+                size,
+                target,
+            } => Some(DocExportProgress::Found {
+                id,
+                key: key.clone(),
+                size,
+                outpath: target,
+                hash,
+            }),
+            DownloadProgress::ExportProgress { id, offset } => {
+                Some(DocExportProgress::Progress { id, offset })
+            }
+            _ => None,
+        });
+        self.blob_export(path, entry.content_hash(), false, false, export_progress)
+            .await?;
+        progress.send(DocExportProgress::AllDone).await?;
+        Ok(())
+    }
+
     async fn blob_export(
         self,
-        out: String,
+        out: PathBuf,
         hash: Hash,
         recursive: bool,
         stable: bool,
-        progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
@@ -983,7 +1083,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 let id = progress.new_id();
                 let progress1 = progress.clone();
                 db.export(*hash, path, mode, move |offset| {
-                    Ok(progress1.try_send(GetProgress::ExportProgress { id, offset })?)
+                    Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
             }
@@ -992,7 +1092,7 @@ impl<D: BaoStore> RpcHandler<D> {
             let id = progress.new_id();
             let entry = db.get(&hash).context("entry not there")?;
             progress
-                .send(GetProgress::Export {
+                .send(DownloadProgress::Export {
                     id,
                     hash,
                     target: out,
@@ -1001,7 +1101,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 .await?;
             let progress1 = progress.clone();
             db.export(hash, path, mode, move |offset| {
-                Ok(progress1.try_send(GetProgress::ExportProgress { id, offset })?)
+                Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
             })
             .await?;
         }
@@ -1011,11 +1111,10 @@ impl<D: BaoStore> RpcHandler<D> {
     async fn blob_download0(
         self,
         msg: BlobDownloadRequest,
-        progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
-        let local = self.inner.rt.local_pool().clone();
+        let local = self.inner.rt.clone();
         let hash = msg.hash;
-        debug!("share: {:?}", msg);
         let format = msg.format;
         let db = self.inner.db.clone();
         let haf = HashAndFormat { hash, format };
@@ -1025,7 +1124,7 @@ impl<D: BaoStore> RpcHandler<D> {
             .endpoint
             .connect(msg.peer, &iroh_bytes::protocol::ALPN)
             .await?;
-        progress.send(GetProgress::Connected).await?;
+        progress.send(DownloadProgress::Connected).await?;
         let progress2 = progress.clone();
         let progress3 = progress.clone();
         let db = self.inner.db.clone();
@@ -1047,18 +1146,23 @@ impl<D: BaoStore> RpcHandler<D> {
         let _export = local.spawn_pinned(move || async move {
             let stats = download.await.unwrap()?;
             progress
-                .send(GetProgress::NetworkDone {
+                .send(DownloadProgress::NetworkDone {
                     bytes_written: stats.bytes_written,
                     bytes_read: stats.bytes_read,
                     elapsed: stats.elapsed,
                 })
                 .await?;
-            if let DownloadLocation::External { path, in_place } = msg.out {
-                if let Err(cause) = this
-                    .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
-                    .await
-                {
-                    progress.send(GetProgress::Abort(cause.into())).await?;
+            match msg.out {
+                DownloadLocation::External { path, in_place } => {
+                    if let Err(cause) = this
+                        .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
+                        .await
+                    {
+                        progress.send(DownloadProgress::Abort(cause.into())).await?;
+                    }
+                }
+                DownloadLocation::Internal => {
+                    // nothing to do
                 }
             }
             match msg.tag {
@@ -1070,18 +1174,21 @@ impl<D: BaoStore> RpcHandler<D> {
                 }
             }
             drop(temp_pin);
-            progress.send(GetProgress::AllDone).await?;
+            progress.send(DownloadProgress::AllDone).await?;
             anyhow::Ok(())
         });
         Ok(())
     }
 
-    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = GetProgress> {
+    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadProgress> {
         async move {
             let (sender, receiver) = flume::bounded(1024);
             let sender = FlumeProgressSender::new(sender);
             if let Err(cause) = self.blob_download0(msg, sender.clone()).await {
-                sender.send(GetProgress::Abort(cause.into())).await.unwrap();
+                sender
+                    .send(DownloadProgress::Abort(cause.into()))
+                    .await
+                    .unwrap();
             };
             receiver.into_stream()
         }
@@ -1127,7 +1234,11 @@ impl<D: BaoStore> RpcHandler<D> {
         } = msg;
         // Check that the path is absolute and exists.
         anyhow::ensure!(root.is_absolute(), "path must be absolute");
-        anyhow::ensure!(root.exists(), "path must exist");
+        anyhow::ensure!(
+            root.exists(),
+            "trying to add missing path: {}",
+            root.display()
+        );
 
         let import_mode = match in_place {
             true => ImportMode::TryReference,
@@ -1212,6 +1323,7 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
+    #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
         let res = Ok(NodeStatsResponse {
@@ -1235,6 +1347,8 @@ impl<D: BaoStore> RpcHandler<D> {
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
     }
+
+    #[allow(clippy::unused_async)]
     async fn node_shutdown(self, request: NodeShutdownRequest) {
         if request.force {
             info!("hard shutdown requested");
@@ -1266,7 +1380,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let (tx, rx) = flume::bounded(32);
         let this = self.clone();
 
-        self.rt().local_pool().spawn_pinned(|| async move {
+        self.rt().spawn_pinned(|| async move {
             if let Err(err) = this.blob_add_stream0(msg, stream, tx.clone()).await {
                 tx.send_async(AddProgress::Abort(err.into())).await.ok();
             }
@@ -1335,7 +1449,7 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let entry = self.inner.db.get(&req.hash);
-        self.inner.rt.local_pool().spawn_pinned(move || async move {
+        self.inner.rt.spawn_pinned(move || async move {
             if let Err(err) = read_loop(entry, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
@@ -1379,7 +1493,7 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = RpcResult<NodeConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
-        self.rt().local_pool().spawn_pinned(|| async move {
+        self.rt().spawn_pinned(|| async move {
             match self.inner.endpoint.connection_infos().await {
                 Ok(mut conn_infos) => {
                     conn_infos.sort_by_key(|n| n.public_key.to_string());
@@ -1411,10 +1525,9 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
     handler: &RpcHandler<D>,
-    rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
-    rt.main().spawn(async move {
+    tokio::task::spawn(async move {
         use ProviderRequest::*;
         debug!("handling rpc request: {msg}");
         match msg {
@@ -1536,6 +1649,14 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                 })
                 .await
             }
+            DocImportFile(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::doc_import_file)
+                    .await
+            }
+            DocExportFile(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::doc_export_file)
+                    .await
+            }
             DocDel(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_del(req).await
@@ -1554,9 +1675,9 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                 })
                 .await
             }
-            DocGetOne(msg) => {
+            DocGetExact(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_get_one(req).await
+                    handler.inner.sync.doc_get_exact(req).await
                 })
                 .await
             }
@@ -1580,7 +1701,7 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             DocSubscribe(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
-                    async move { handler.inner.sync.doc_subscribe(req).await }.flatten_stream()
+                    async move { handler.inner.sync.doc_subscribe(req) }.flatten_stream()
                 })
                 .await
             }
@@ -1608,85 +1729,27 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// Use a single token of opaque bytes to authorize all requests
-#[derive(Debug, Clone)]
-pub struct StaticTokenAuthHandler {
-    token: Option<RequestToken>,
-}
-
-impl StaticTokenAuthHandler {
-    /// Creates a new handler with provided token.
-    ///
-    /// The single static token provided can be used to authorise all the requests.  If it
-    /// is `None` no authorisation is performed and all requests are allowed.
-    pub fn new(token: Option<RequestToken>) -> Self {
-        Self { token }
-    }
-}
-
-impl RequestAuthorizationHandler for StaticTokenAuthHandler {
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        _request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        match &self.token {
-            None => async move {
-                if let Some(token) = token {
-                    anyhow::bail!(
-                        "no authorization handler defined, but token was provided: {:?}",
-                        token
-                    );
-                }
-                Ok(())
-            }
-            .boxed(),
-            Some(expect) => {
-                let expect = expect.clone();
-                async move {
-                    match token {
-                        Some(token) => {
-                            if token == expect {
-                                Ok(())
-                            } else {
-                                anyhow::bail!("invalid token")
-                            }
-                        }
-                        None => anyhow::bail!("no token provided"),
-                    }
-                }
-                .boxed()
-            }
-        }
-    }
-}
-
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
-    use std::net::Ipv4Addr;
     use std::path::Path;
 
     use crate::rpc_protocol::WrapOption;
 
     use super::*;
 
-    /// Pick up the tokio runtime from the thread local and add a
-    /// thread per core runtime.
-    fn test_runtime() -> runtime::Handle {
-        runtime::Handle::from_current(1).unwrap()
-    }
-
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
-        let rt = test_runtime();
+        let _guard = iroh_test::logging::setup();
+
+        let lp = LocalPoolHandle::new(1);
         let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(&rt)
+            .bind_port(0)
+            .local_pool(&lp)
             .spawn()
             .await
             .unwrap();
@@ -1698,13 +1761,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_blob_stream() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         use std::io::Cursor;
-        let rt = runtime::Handle::from_current(1)?;
-        let db = iroh_bytes::store::mem::Store::new(rt);
+        let db = iroh_bytes::store::mem::Store::new();
         let doc_store = iroh_sync::store::memory::Store::default();
         let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(&test_runtime())
+            .bind_port(0)
+            .local_pool(&LocalPoolHandle::new(1))
             .spawn()
             .await?;
 
@@ -1722,14 +1786,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
-        let rt = runtime::Handle::from_current(1)?;
-        let db = iroh_bytes::store::mem::Store::new(rt);
+        let _guard = iroh_test::logging::setup();
+
+        let db = iroh_bytes::store::mem::Store::new();
         let doc_store = iroh_sync::store::memory::Store::default();
-        let node = Node::builder(db, doc_store)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(&test_runtime())
-            .spawn()
-            .await?;
+        let node = Node::builder(db, doc_store).bind_port(0).spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
 

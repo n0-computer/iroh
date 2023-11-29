@@ -1,213 +1,216 @@
-use std::{
-    fmt,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-};
+use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
-use iroh::{
-    client::quic::RPC_ALPN,
-    node::{Node, StaticTokenAuthHandler},
-    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
-    util::{fs::load_secret_key, path::IrohPaths},
-};
-use iroh_bytes::{protocol::RequestToken, util::runtime};
-use iroh_net::{
-    derp::{DerpMap, DerpMode},
-    key::SecretKey,
-};
-use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
-use tracing::{info_span, Instrument};
+use anyhow::Result;
+use clap::Subcommand;
+use colored::Colorize;
+use comfy_table::Table;
+use comfy_table::{presets::NOTHING, Cell};
+use futures::{Stream, StreamExt};
+use human_time::ToHumanTimeString;
+use iroh::client::Iroh;
+use iroh::rpc_protocol::ProviderService;
+use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, magicsock::DirectAddrInfo};
+use quic_rpc::ServiceConnection;
 
-use crate::{commands::add, config::path_with_env};
-
-use super::{BlobAddOptions, MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS};
-
-#[derive(Debug)]
-pub struct StartOptions {
-    pub addr: SocketAddr,
-    pub rpc_port: RpcPort,
-    pub keylog: bool,
-    pub request_token: Option<RequestToken>,
-    pub derp_map: Option<DerpMap>,
+#[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum NodeCommands {
+    /// Get information about the different connections we have made
+    Connections,
+    /// Get connection information about a particular node
+    Connection { node_id: PublicKey },
+    /// Get status of the running node.
+    Status,
+    /// Get statistics and metrics from the running node.
+    Stats,
+    /// Shutdown the running node.
+    Shutdown {
+        /// Shutdown mode.
+        ///
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
+        /// for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
-pub async fn run(rt: &runtime::Handle, opts: StartOptions, add_opts: BlobAddOptions) -> Result<()> {
-    if let Some(ref path) = add_opts.path {
-        ensure!(
-            path.exists(),
-            "Cannot provide nonexistent path: {}",
-            path.display()
-        );
-    }
+impl NodeCommands {
+    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
+        match self {
+            Self::Connections => {
+                let connections = iroh.node.connections().await?;
+                let timestamp = time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc2822)
+                    .unwrap_or_else(|_| String::from("failed to get current time"));
 
-    let token = opts.request_token.clone();
-    if let Some(t) = token.as_ref() {
-        println!("Request token: {}", t);
-    }
-
-    let node = start_daemon_node(rt, opts).await?;
-    let client = node.client();
-
-    let add_task = {
-        tokio::spawn(
-            async move {
-                if let Err(e) = add::run_with_opts(&client, add_opts, token).await {
-                    eprintln!("Failed to add data: {}", e);
-                    std::process::exit(1);
+                println!(
+                    " {}: {}\n\n{}",
+                    "current time".bold(),
+                    timestamp,
+                    fmt_connections(connections).await
+                );
+            }
+            Self::Connection { node_id } => {
+                let conn_info = iroh.node.connection_info(node_id).await?;
+                match conn_info {
+                    Some(info) => println!("{}", fmt_connection(info)),
+                    None => println!("Not Found"),
                 }
             }
-            .instrument(info_span!("node-add")),
-        )
-    };
-
-    let node2 = node.clone();
-    tokio::select! {
-        biased;
-        _ = tokio::signal::ctrl_c() => {
-            println!("Shutting down provider...");
-            node2.shutdown();
+            Self::Shutdown { force } => {
+                iroh.node.shutdown(force).await?;
+            }
+            Self::Stats => {
+                let stats = iroh.node.stats().await?;
+                for (name, details) in stats.iter() {
+                    println!(
+                        "{:23} : {:>6}    ({})",
+                        name, details.value, details.description
+                    );
+                }
+            }
+            Self::Status => {
+                let response = iroh.node.status().await?;
+                println!("Listening addresses: {:#?}", response.listen_addrs);
+                println!("Node public key: {}", response.addr.node_id);
+                println!("Version: {}", response.version);
+            }
         }
-        res = node => {
-            res?;
-        }
+        Ok(())
     }
-
-    // the future holds a reference to the temp file, so we need to
-    // keep it for as long as the provider is running. The drop(fut)
-    // makes this explicit.
-    add_task.abort();
-    drop(add_task);
-    Ok(())
 }
 
-async fn start_daemon_node(
-    rt: &runtime::Handle,
-    opts: StartOptions,
-) -> Result<Node<iroh_bytes::store::flat::Store>> {
-    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
-    let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
-    let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
-    let peer_data_path = path_with_env(IrohPaths::PeerData)?;
-    tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let bao_store =
-        iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir, rt)
-            .await
-            .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let key = Some(path_with_env(IrohPaths::SecretKey)?);
-    let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
-    spawn_daemon_node(rt, bao_store, doc_store, key, peer_data_path, opts).await
-}
-
-async fn spawn_daemon_node<B: iroh_bytes::store::Store, D: iroh_sync::store::Store>(
-    rt: &runtime::Handle,
-    bao_store: B,
-    doc_store: D,
-    key: Option<PathBuf>,
-    peers_data_path: PathBuf,
-    opts: StartOptions,
-) -> Result<Node<B>> {
-    let secret_key = get_secret_key(key).await?;
-
-    let mut builder = Node::builder(bao_store, doc_store)
-        .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
-        .peers_data_path(peers_data_path)
-        .keylog(opts.keylog);
-    if let Some(dm) = opts.derp_map {
-        builder = builder.derp_mode(DerpMode::Custom(dm));
-    }
-    let builder = builder.bind_addr(opts.addr).runtime(rt);
-
-    let provider = if let Some(rpc_port) = opts.rpc_port.into() {
-        let rpc_endpoint = make_rpc_endpoint(&secret_key, rpc_port)?;
-        builder
-            .rpc_endpoint(rpc_endpoint)
-            .secret_key(secret_key)
-            .spawn()
-            .await?
-    } else {
-        builder.secret_key(secret_key).spawn().await?
-    };
-    let eps = provider.local_endpoints().await?;
-    println!("Listening addresses:");
-    for ep in eps {
-        println!("  {}", ep.addr);
-    }
-    let region = provider.my_derp().await;
-    println!(
-        "DERP Region: {}",
-        region.map_or("None".to_string(), |r| r.to_string())
+async fn fmt_connections(
+    mut infos: impl Stream<Item = Result<ConnectionInfo, anyhow::Error>> + Unpin,
+) -> String {
+    let mut table = Table::new();
+    table.load_preset(NOTHING).set_header(
+        ["node id", "region", "conn type", "latency", "last used"]
+            .into_iter()
+            .map(bold_cell),
     );
-    println!("PeerID: {}", provider.peer_id());
-    println!();
-    Ok(provider)
+    while let Some(Ok(conn_info)) = infos.next().await {
+        let node_id: Cell = conn_info.public_key.to_string().into();
+        let region = conn_info
+            .derp_region
+            .map_or(String::new(), |region| region.to_string())
+            .into();
+        let conn_type = conn_info.conn_type.to_string().into();
+        let latency = match conn_info.latency {
+            Some(latency) => latency.to_human_time_string(),
+            None => String::from("unknown"),
+        }
+        .into();
+        let last_used = conn_info
+            .last_used
+            .map(fmt_how_long_ago)
+            .map(Cell::new)
+            .unwrap_or_else(never);
+        table.add_row([node_id, region, conn_type, latency, last_used]);
+    }
+    table.to_string()
 }
 
-async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
-    match key {
-        Some(key_path) => load_secret_key(key_path).await,
-        None => {
-            // No path provided, just generate one
-            Ok(SecretKey::generate())
+fn fmt_connection(info: ConnectionInfo) -> String {
+    let ConnectionInfo {
+        id: _,
+        public_key,
+        derp_region,
+        addrs,
+        conn_type,
+        latency,
+        last_used,
+    } = info;
+    let timestamp = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc2822)
+        .unwrap_or_else(|_| String::from("failed to get current time"));
+    let mut table = Table::new();
+    table.load_preset(NOTHING);
+    table.add_row([bold_cell("current time"), timestamp.into()]);
+    table.add_row([bold_cell("node id"), public_key.to_string().into()]);
+    let derp_region = derp_region
+        .map(|r| r.to_string())
+        .unwrap_or_else(|| String::from("unknown"));
+    table.add_row([bold_cell("derp region"), derp_region.into()]);
+    table.add_row([bold_cell("connection type"), conn_type.to_string().into()]);
+    table.add_row([bold_cell("latency"), fmt_latency(latency).into()]);
+    table.add_row([
+        bold_cell("last used"),
+        last_used
+            .map(fmt_how_long_ago)
+            .map(Cell::new)
+            .unwrap_or_else(never),
+    ]);
+    table.add_row([bold_cell("known addresses"), addrs.len().into()]);
+
+    let general_info = table.to_string();
+
+    let addrs_info = fmt_addrs(addrs);
+    format!("{general_info}\n\n{addrs_info}",)
+}
+
+fn direct_addr_row(info: DirectAddrInfo) -> comfy_table::Row {
+    let DirectAddrInfo {
+        addr,
+        latency,
+        last_control,
+        last_payload,
+    } = info;
+
+    let last_control = match last_control {
+        None => never(),
+        Some((how_long_ago, kind)) => {
+            format!("{kind} ( {} )", fmt_how_long_ago(how_long_ago)).into()
         }
+    };
+    let last_payload = last_payload
+        .map(fmt_how_long_ago)
+        .map(Cell::new)
+        .unwrap_or_else(never);
+
+    [
+        addr.into(),
+        fmt_latency(latency).into(),
+        last_control,
+        last_payload,
+    ]
+    .into()
+}
+
+fn fmt_addrs(addrs: Vec<DirectAddrInfo>) -> comfy_table::Table {
+    let mut table = Table::new();
+    table.load_preset(NOTHING).set_header(
+        vec!["addr", "latency", "last control", "last data"]
+            .into_iter()
+            .map(bold_cell),
+    );
+    table.add_rows(addrs.into_iter().map(direct_addr_row));
+    table
+}
+
+fn never() -> Cell {
+    Cell::new("never").add_attribute(comfy_table::Attribute::Dim)
+}
+
+fn fmt_how_long_ago(duration: Duration) -> String {
+    duration
+        .to_human_time_string()
+        .split_once(',')
+        .map(|(first, _rest)| first)
+        .unwrap_or("-")
+        .to_string()
+}
+
+fn fmt_latency(latency: Option<Duration>) -> String {
+    match latency {
+        Some(latency) => latency.to_human_time_string(),
+        None => String::from("unknown"),
     }
 }
 
-/// Makes a an RPC endpoint that uses a QUIC transport
-fn make_rpc_endpoint(
-    secret_key: &SecretKey,
-    rpc_port: u16,
-) -> Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
-    let rpc_quinn_endpoint = quinn::Endpoint::server(
-        iroh::node::make_server_config(
-            secret_key,
-            MAX_RPC_STREAMS,
-            MAX_RPC_CONNECTIONS,
-            vec![RPC_ALPN.to_vec()],
-        )?,
-        rpc_addr,
-    )?;
-    let rpc_endpoint =
-        QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
-    Ok(rpc_endpoint)
-}
-
-#[derive(Debug, Clone)]
-pub enum RpcPort {
-    Enabled(u16),
-    Disabled,
-}
-
-impl From<RpcPort> for Option<u16> {
-    fn from(value: RpcPort) -> Self {
-        match value {
-            RpcPort::Enabled(port) => Some(port),
-            RpcPort::Disabled => None,
-        }
-    }
-}
-
-impl fmt::Display for RpcPort {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RpcPort::Enabled(port) => write!(f, "{port}"),
-            RpcPort::Disabled => write!(f, "disabled"),
-        }
-    }
-}
-
-impl FromStr for RpcPort {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "disabled" {
-            Ok(RpcPort::Disabled)
-        } else {
-            Ok(RpcPort::Enabled(s.parse()?))
-        }
-    }
+fn bold_cell(s: &str) -> Cell {
+    Cell::new(s).add_attribute(comfy_table::Attribute::Bold)
 }

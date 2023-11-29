@@ -75,6 +75,7 @@ pub(super) type Callback = Box<dyn Fn(bool) -> BoxFuture<'static, ()> + Sync + S
 pub(super) enum ActorMessage {
     Subscribe(Callback, oneshot::Sender<CallbackToken>),
     Unsubscribe(CallbackToken, oneshot::Sender<()>),
+    NetworkChange,
 }
 
 impl Actor {
@@ -84,7 +85,7 @@ impl Actor {
 
         // Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
         let (mon_sender, mon_receiver) = flume::bounded(MON_CHAN_CAPACITY);
-        let route_monitor = RouteMonitor::new(mon_sender).await?;
+        let route_monitor = RouteMonitor::new(mon_sender)?;
         let (actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
 
         Ok(Actor {
@@ -142,6 +143,11 @@ impl Actor {
                     ActorMessage::Unsubscribe(token, s) => {
                         self.callbacks.remove(&token);
                         s.send(()).ok();
+                    }
+                    ActorMessage::NetworkChange => {
+                        trace!("external network activitiy detected");
+                        last_event.replace(false);
+                        debounce_interval.reset_immediately();
                     }
                 },
                 else => {

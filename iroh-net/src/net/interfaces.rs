@@ -89,8 +89,7 @@ impl Interface {
     pub(crate) fn fake() -> Self {
         use std::net::Ipv4Addr;
 
-        use default_net::interface::{InterfaceType, MacAddr};
-        use default_net::Gateway;
+        use default_net::{interface::InterfaceType, mac::MacAddr, Gateway};
 
         Self {
             iface: default_net::Interface {
@@ -99,7 +98,7 @@ impl Interface {
                 friendly_name: None,
                 description: None,
                 if_type: InterfaceType::Ethernet,
-                mac_addr: Some(MacAddr::new([2, 3, 4, 5, 6, 7])),
+                mac_addr: Some(MacAddr::new(2, 3, 4, 5, 6, 7)),
                 ipv4: vec![Ipv4Net {
                     addr: Ipv4Addr::from([192, 168, 0, 189]),
                     prefix_len: 24,
@@ -110,7 +109,7 @@ impl Interface {
                 transmit_speed: None,
                 receive_speed: None,
                 gateway: Some(Gateway {
-                    mac_addr: MacAddr::new([2, 3, 4, 5, 6, 8]),
+                    mac_addr: MacAddr::new(2, 3, 4, 5, 6, 8),
                     ip_addr: IpAddr::V4(Ipv4Addr::from([192, 168, 0, 1])),
                 }),
             },

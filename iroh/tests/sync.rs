@@ -1,6 +1,5 @@
 use std::{
     future::Future,
-    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,68 +11,58 @@ use iroh::{
     client::mem::Doc,
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync_engine::{LiveEvent, SyncEvent},
+    sync_engine::LiveEvent,
 };
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
+use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{util::runtime, Hash};
+use iroh_bytes::Hash;
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
-    store::{self, GetFilter},
-    AuthorId, ContentStatus, Entry, NamespaceId,
+    store::{self, Query},
+    AuthorId, ContentStatus, Entry,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Pick up the tokio runtime from the thread local and add a
-/// thread per core runtime.
-fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_current(1).unwrap()
-}
-
 fn test_node(
-    rt: runtime::Handle,
-    addr: SocketAddr,
     secret_key: SecretKey,
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
+        .local_pool(&LocalPoolHandle::new(1))
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
-        .runtime(&rt)
-        .bind_addr(addr)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
 // capturing that `&mut` lifetime in the returned future. This allows to call it in a loop while
 // still collecting the futures before awaiting them alltogether (see [`spawn_nodes`])
 fn spawn_node(
-    rt: runtime::Handle,
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
 ) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store>>> + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
-        let node = test_node(rt, "127.0.0.1:0".parse()?, secret_key);
+        let node = test_node(secret_key);
         let node = node.spawn().await?;
-        info!(?i, me = %node.peer_id().fmt_short(), "node spawned");
+        info!(?i, me = %node.node_id().fmt_short(), "node spawned");
         Ok(node)
     }
 }
 
 async fn spawn_nodes(
-    rt: runtime::Handle,
     n: usize,
     mut rng: &mut (impl CryptoRng + Rng),
 ) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store>>> {
     let mut futs = vec![];
     for i in 0..n {
-        futs.push(spawn_node(rt.clone(), i, &mut rng));
+        futs.push(spawn_node(i, &mut rng));
     }
     futures::future::join_all(futs).await.into_iter().collect()
 }
@@ -87,15 +76,13 @@ pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
 async fn sync_simple() -> Result<()> {
     setup_logging();
     let mut rng = test_rng(b"sync_simple");
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 2, &mut rng).await?;
+    let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // create doc on node0
-    let peer0 = nodes[0].peer_id();
+    let peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
-    let doc_id = doc0.id();
     let hash0 = doc0
         .set_bytes(author0, b"k1".to_vec(), b"v1".to_vec())
         .await?;
@@ -105,7 +92,7 @@ async fn sync_simple() -> Result<()> {
     let mut events0 = doc0.subscribe().await?;
 
     info!("node1: join");
-    let peer1 = nodes[1].peer_id();
+    let peer1 = nodes[1].node_id();
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
     let mut events1 = doc1.subscribe().await?;
     info!("node1: assert 4 events");
@@ -115,7 +102,7 @@ async fn sync_simple() -> Result<()> {
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
     )
@@ -128,7 +115,7 @@ async fn sync_simple() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
         ],
     )
     .await;
@@ -144,8 +131,7 @@ async fn sync_simple() -> Result<()> {
 async fn sync_subscribe_no_sync() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
     let doc = client.docs.create().await?;
     let mut sub = doc.subscribe().await?;
@@ -168,17 +154,16 @@ async fn sync_gossip_bulk() -> Result<()> {
     let mut rng = test_rng(b"sync_gossip_bulk");
     setup_logging();
 
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
-    let _peer0 = nodes[0].peer_id();
+    let _peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let mut ticket = doc0.share(ShareMode::Write).await?;
     // unset peers to not yet start sync
-    let peers = ticket.peers.clone();
-    ticket.peers = vec![];
+    let peers = ticket.nodes.clone();
+    ticket.nodes = vec![];
     let doc1 = clients[1].docs.import(ticket).await?;
     let mut events = doc1.subscribe().await?;
 
@@ -253,16 +238,14 @@ async fn sync_gossip_bulk() -> Result<()> {
 async fn sync_full_basic() -> Result<()> {
     let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
-    let rt = test_runtime();
-    let mut nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let mut nodes = spawn_nodes(2, &mut rng).await?;
     let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // peer0: create doc and ticket
-    let peer0 = nodes[0].peer_id();
+    let peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let mut events0 = doc0.subscribe().await?;
-    let doc_id = doc0.id();
     let key0 = b"k1";
     let value0 = b"v1";
     let hash0 = doc0
@@ -279,7 +262,7 @@ async fn sync_full_basic() -> Result<()> {
     let ticket = doc0.share(ShareMode::Write).await?;
 
     info!("peer1: spawn");
-    let peer1 = nodes[1].peer_id();
+    let peer1 = nodes[1].node_id();
     let author1 = clients[1].authors.create().await?;
     info!("peer1: join doc");
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
@@ -292,7 +275,7 @@ async fn sync_full_basic() -> Result<()> {
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
     )
@@ -304,7 +287,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
         ],
     )
     .await;
@@ -343,10 +326,10 @@ async fn sync_full_basic() -> Result<()> {
     // our gossip implementation does not allow us to filter message receivers this way.
 
     info!("peer2: spawn");
-    nodes.push(spawn_node(rt.clone(), nodes.len(), &mut rng).await?);
+    nodes.push(spawn_node(nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client());
     let doc2 = clients[2].docs.import(ticket).await?;
-    let peer2 = nodes[2].peer_id();
+    let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;
 
     info!("peer2: wait for 8 events (from sync with peers)");
@@ -359,8 +342,8 @@ async fn sync_full_basic() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
             // 2 SyncFinished events
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
             // 2 InsertRemote events
             Box::new(
                 move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
@@ -378,8 +361,8 @@ async fn sync_full_basic() -> Result<()> {
         // before the peer shows up as a neighbor, we run sync again for the NeighborUp event.
         vec![
             // 2 SyncFinished events
-            Box::new(move |e| match_sync_finished(e, peer0, doc_id)),
-            Box::new(move |e| match_sync_finished(e, peer1, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer0)),
+            Box::new(move |e| match_sync_finished(e, peer1)),
         ]
     ).await;
     assert_latest(&doc2, b"k1", b"v1").await;
@@ -391,7 +374,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
-            Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer2)),
         ],
     )
     .await;
@@ -402,7 +385,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
-            Box::new(move |e| match_sync_finished(e, peer2, doc_id)),
+            Box::new(move |e| match_sync_finished(e, peer2)),
         ],
     )
     .await;
@@ -419,8 +402,7 @@ async fn sync_full_basic() -> Result<()> {
 async fn sync_open_close() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -444,8 +426,7 @@ async fn sync_open_close() -> Result<()> {
 async fn sync_subscribe_stop_close() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -479,6 +460,228 @@ async fn sync_subscribe_stop_close() -> Result<()> {
 
     Ok(())
 }
+
+// TODO: reenable when passing consistently
+// /// Test sync between many nodes with propagation through sync reports.
+// #[tokio::test(flavor = "multi_thread")]
+// async fn sync_big() -> Result<()> {
+//     setup_logging();
+//     let mut rng = test_rng(b"sync_big");
+//     let rt = test_runtime();
+//     let n_nodes = std::env::var("NODES")
+//         .map(|v| v.parse().expect("NODES must be a number"))
+//         .unwrap_or(10);
+//     let n_entries_init = 1;
+
+//     tokio::task::spawn(async move {
+//         for i in 0.. {
+//             tokio::time::sleep(Duration::from_secs(1)).await;
+//             info!("tick {i}");
+//         }
+//     });
+
+//     let nodes = spawn_nodes(rt, n_nodes, &mut rng).await?;
+//     let peer_ids = nodes.iter().map(|node| node.node_id()).collect::<Vec<_>>();
+//     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+//     let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
+
+//     let doc0 = clients[0].docs.create().await?;
+//     let mut ticket = doc0.share(ShareMode::Write).await?;
+//     // do not join for now, just import without any peer info
+//     let peer0 = ticket.nodes[0].clone();
+//     ticket.nodes = vec![];
+
+//     let mut docs = vec![];
+//     docs.push(doc0);
+//     docs.extend_from_slice(
+//         &collect_futures(
+//             clients
+//                 .iter()
+//                 .skip(1)
+//                 .map(|c| c.docs.import(ticket.clone())),
+//         )
+//         .await?,
+//     );
+
+//     let mut expected = vec![];
+
+//     // create initial data on each node
+//     publish(&docs, &mut expected, n_entries_init, |i, j| {
+//         (
+//             authors[i],
+//             format!("init/{}/{j}", peer_ids[i].fmt_short()),
+//             format!("init:{i}:{j}"),
+//         )
+//     })
+//     .await?;
+
+//     // assert initial data
+//     for (i, doc) in docs.iter().enumerate() {
+//         let entries = get_all_with_content(doc).await?;
+//         let mut expected = expected
+//             .iter()
+//             .filter(|e| e.author == authors[i])
+//             .cloned()
+//             .collect::<Vec<_>>();
+//         expected.sort();
+//         assert_eq!(entries, expected, "phase1 pre-sync correct");
+//     }
+
+//     // setup event streams
+//     let events = collect_futures(docs.iter().map(|d| d.subscribe())).await?;
+
+//     // join nodes together
+//     for (i, doc) in docs.iter().enumerate().skip(1) {
+//         info!(me = %peer_ids[i].fmt_short(), peer = %peer0.peer_id.fmt_short(), "join");
+//         doc.start_sync(vec![peer0.clone()]).await?;
+//     }
+
+//     // wait for InsertRemote events stuff to happen
+//     info!("wait for all peers to receive insert events");
+//     let expected_inserts = (n_nodes - 1) * n_entries_init;
+//     let mut tasks = tokio::task::JoinSet::default();
+//     for (i, events) in events.into_iter().enumerate() {
+//         let doc = docs[i].clone();
+//         let me = doc.id().fmt_short();
+//         let expected = expected.clone();
+//         let fut = async move {
+//             wait_for_events(events, expected_inserts, TIMEOUT, |e| {
+//                 matches!(e, LiveEvent::InsertRemote { .. })
+//             })
+//             .await?;
+//             let entries = get_all(&doc).await?;
+//             if entries != expected {
+//                 Err(anyhow!(
+//                     "node {i} failed (has {} entries but expected to have {})",
+//                     entries.len(),
+//                     expected.len()
+//                 ))
+//             } else {
+//                 info!(
+//                     "received and checked all {} expected entries",
+//                     expected.len()
+//                 );
+//                 Ok(())
+//             }
+//         }
+//         .instrument(error_span!("sync-test", %me));
+//         let fut = fut.map(move |r| r.with_context(move || format!("node {i} ({me})")));
+//         tasks.spawn(fut);
+//     }
+
+//     while let Some(res) = tasks.join_next().await {
+//         res??;
+//     }
+
+//     assert_all_docs(&docs, &peer_ids, &expected, "after initial sync").await;
+
+//     info!("shutdown");
+//     for node in nodes {
+//         node.shutdown();
+//     }
+
+//     Ok(())
+// }
+
+// /// Get all entries of a document.
+// async fn get_all(doc: &Doc) -> anyhow::Result<Vec<Entry>> {
+//     let entries = doc.get_many(GetFilter::All).await?;
+//     let entries = entries.collect::<Vec<_>>().await;
+//     entries.into_iter().collect()
+// }
+
+// /// Get all entries of a document with the blob content.
+// async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
+//     let entries = doc.get_many(GetFilter::All).await?;
+//     let entries = entries.and_then(|entry| async {
+//         let content = doc.read_to_bytes(&entry).await;
+//         content.map(|c| (entry, c))
+//     });
+//     let entries = entries.collect::<Vec<_>>().await;
+//     let entries = entries.into_iter().collect::<Result<Vec<_>>>()?;
+//     Ok(entries)
+// }
+
+// async fn publish(
+//     docs: &[Doc],
+//     expected: &mut Vec<ExpectedEntry>,
+//     n: usize,
+//     cb: impl Fn(usize, usize) -> (AuthorId, String, String),
+// ) -> anyhow::Result<()> {
+//     for (i, doc) in docs.iter().enumerate() {
+//         for j in 0..n {
+//             let (author, key, value) = cb(i, j);
+//             doc.set_bytes(author, key.as_bytes().to_vec(), value.as_bytes().to_vec())
+//                 .await?;
+//             expected.push(ExpectedEntry { author, key, value });
+//         }
+//     }
+//     expected.sort();
+//     Ok(())
+// }
+
+// /// Collect an iterator into futures by joining them all and failing if any future failed.
+// async fn collect_futures<T>(
+//     futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
+// ) -> anyhow::Result<Vec<T>> {
+//     futures::future::join_all(futs)
+//         .await
+//         .into_iter()
+//         .collect::<Result<Vec<_>>>()
+// }
+
+// /// Collect `count` events from the `events` stream, only collecting events for which `matcher`
+// /// returns true.
+// async fn wait_for_events(
+//     mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
+//     count: usize,
+//     timeout: Duration,
+//     matcher: impl Fn(&LiveEvent) -> bool,
+// ) -> anyhow::Result<Vec<LiveEvent>> {
+//     let mut res = Vec::with_capacity(count);
+//     let sleep = tokio::time::sleep(timeout);
+//     tokio::pin!(sleep);
+//     while res.len() < count {
+//         tokio::select! {
+//             () = &mut sleep => {
+//                 bail!("Failed to collect {count} elements in {timeout:?} (collected only {})", res.len());
+//             },
+//             event = events.try_next() => {
+//                 let event = event?;
+//                 match event {
+//                     None => bail!("stream ended after {} items, but expected {count}", res.len()),
+//                     Some(event) => if matcher(&event) {
+//                         res.push(event);
+//                         debug!("recv event {} of {count}", res.len());
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     Ok(res)
+// }
+
+// async fn assert_all_docs(
+//     docs: &[Doc],
+//     peer_ids: &[PublicKey],
+//     expected: &Vec<ExpectedEntry>,
+//     label: &str,
+// ) {
+//     info!("validate all peers: {label}");
+//     for (i, doc) in docs.iter().enumerate() {
+//         let entries = get_all(doc).await.unwrap_or_else(|err| {
+//             panic!("failed to get entries for peer {:?}: {err:?}", peer_ids[i])
+//         });
+//         assert_eq!(
+//             &entries,
+//             expected,
+//             "{label}: peer {i} {:?} failed (have {} but expected {})",
+//             peer_ids[i],
+//             entries.len(),
+//             expected.len()
+//         );
+//     }
+// }
 
 #[derive(Debug, Ord, Eq, PartialEq, PartialOrd, Clone)]
 struct ExpectedEntry {
@@ -515,14 +718,10 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 
 #[tokio::test]
 async fn doc_delete() -> Result<()> {
-    let rt = test_runtime();
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
-    let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db, store)
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
-        .runtime(&rt)
-        .bind_addr(addr)
         .spawn()
         .await?;
     let client = node.client();
@@ -535,7 +734,7 @@ async fn doc_delete() -> Result<()> {
     let deleted = doc.del(author, b"foo".to_vec()).await?;
     assert_eq!(deleted, 1);
 
-    let entry = doc.get_one(author, b"foo".to_vec()).await?;
+    let entry = doc.get_exact(author, b"foo".to_vec(), false).await?;
     assert!(entry.is_none());
 
     // wait for gc
@@ -551,8 +750,7 @@ async fn doc_delete() -> Result<()> {
 async fn sync_drop_doc() -> Result<()> {
     let mut rng = test_rng(b"sync_drop_doc");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -565,7 +763,7 @@ async fn sync_drop_doc() -> Result<()> {
     assert!(matches!(ev, Some(Ok(LiveEvent::InsertLocal { .. }))));
 
     client.docs.drop_doc(doc.id()).await?;
-    let res = doc.get_one(author, b"foo".to_vec()).await;
+    let res = doc.get_exact(author, b"foo".to_vec(), true).await;
     assert!(res.is_err());
     let res = doc
         .set_bytes(author, b"foo".to_vec(), b"bar".to_vec())
@@ -585,9 +783,9 @@ async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
 }
 
 async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let filter = GetFilter::Key(key.to_vec());
+    let query = Query::single_latest_per_key().key_exact(key);
     let entry = doc
-        .get_many(filter)
+        .get_many(query)
         .await?
         .next()
         .await
@@ -707,15 +905,9 @@ async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
 
 /// Asserts that the event is a [`LiveEvent::SyncFinished`] and that the contained [`SyncEvent`]
 /// has no error and matches `peer` and `namespace`.
-fn match_sync_finished(event: &LiveEvent, peer: PublicKey, namespace: NamespaceId) -> bool {
+fn match_sync_finished(event: &LiveEvent, peer: PublicKey) -> bool {
     let LiveEvent::SyncFinished(e) = event else {
         return false;
     };
-    e == &SyncEvent {
-        peer,
-        namespace,
-        result: Ok(()),
-        origin: e.origin.clone(),
-        finished: e.finished,
-    }
+    e.peer == peer && e.result == Ok(())
 }

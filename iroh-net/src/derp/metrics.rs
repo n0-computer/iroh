@@ -60,7 +60,7 @@ pub struct Metrics {
     pub accepts: Counter,
     /// Number of connections we have removed because of an error
     pub disconnects: Counter,
-    // TODO: enable when we can have multiple connections for one peer id
+    // TODO: enable when we can have multiple connections for one node id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
     // TODO: only important stat that we cannot track right now
@@ -115,7 +115,7 @@ impl Default for Metrics {
 
             accepts: Counter::new("Number of times this server has accepted a connection."),
             disconnects: Counter::new("Number of clients that have then disconnected."),
-            // TODO: enable when we can have multiple connections for one peer id
+            // TODO: enable when we can have multiple connections for one node id
             // pub duplicate_client_keys: Counter::new("Number of dupliate client keys."),
             // pub duplicate_client_conns: Counter::new("Number of duplicate client connections."),
             // TODO: only important stat that we cannot track right now

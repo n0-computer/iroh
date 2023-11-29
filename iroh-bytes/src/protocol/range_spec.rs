@@ -230,7 +230,7 @@ impl RangeSpecSeq {
     /// Thus the first call to `.next()` returns the range spec for the first blob, the next
     /// call returns the range spec of the second blob, etc.
     pub fn iter(&self) -> RequestRangeSpecIter<'_> {
-        let before_first = self.0.get(0).map(|(c, _)| *c).unwrap_or_default();
+        let before_first = self.0.first().map(|(c, _)| *c).unwrap_or_default();
         RequestRangeSpecIter {
             current: &EMPTY_RANGE_SPEC,
             count: before_first,
@@ -269,7 +269,7 @@ pub struct RequestRangeSpecIter<'a> {
 
 impl<'a> RequestRangeSpecIter<'a> {
     pub fn new(ranges: &'a [(u64, RangeSpec)]) -> Self {
-        let before_first = ranges.get(0).map(|(c, _)| *c).unwrap_or_default();
+        let before_first = ranges.first().map(|(c, _)| *c).unwrap_or_default();
         RequestRangeSpecIter {
             current: &EMPTY_RANGE_SPEC,
             count: before_first,
@@ -298,7 +298,7 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
             } else if let Some(((_, new), rest)) = self.remaining.split_first() {
                 // get next current value, new count, and set remaining
                 self.current = new;
-                self.count = rest.get(0).map(|(c, _)| *c).unwrap_or_default();
+                self.count = rest.first().map(|(c, _)| *c).unwrap_or_default();
                 self.remaining = rest;
                 continue;
             } else {
@@ -321,6 +321,10 @@ pub struct NonEmptyRequestRangeSpecIter<'a> {
 impl<'a> NonEmptyRequestRangeSpecIter<'a> {
     fn new(inner: RequestRangeSpecIter<'a>) -> Self {
         Self { inner, count: 0 }
+    }
+
+    pub(crate) fn offset(&self) -> u64 {
+        self.count
     }
 }
 

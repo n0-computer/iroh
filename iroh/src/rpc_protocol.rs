@@ -7,23 +7,21 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::{BlobFormat, Tag};
-pub use iroh_bytes::{protocol::RequestToken, provider::GetProgress, Hash};
-use iroh_gossip::proto::util::base32;
+use iroh_bytes::util::Tag;
+pub use iroh_bytes::{provider::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, PeerAddr},
+    magic_endpoint::{ConnectionInfo, NodeAddr},
 };
 
 use iroh_sync::{
     actor::OpenState,
-    store::GetFilter,
-    sync::{NamespaceId, SignedEntry},
-    AuthorId,
+    store::Query,
+    {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -31,9 +29,11 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress, util::RpcResult};
+pub use iroh_base::rpc::{RpcError, RpcResult};
+pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
+pub use crate::ticket::doc::Ticket as DocTicket;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -100,10 +100,7 @@ pub struct BlobDownloadRequest {
     /// well.
     pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
-    pub peer: PeerAddr,
-    /// This optional field contains a request token that can be used to authorize
-    /// the download request.
-    pub token: Option<RequestToken>,
+    pub peer: NodeAddr,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
     /// This field contains the location to store the data at.
@@ -118,7 +115,7 @@ pub enum DownloadLocation {
     /// Store at the provided path.
     External {
         /// The path to store the data at.
-        path: String,
+        path: PathBuf,
         /// If this flag is true, the data is shared in place, i.e. it is moved to the
         /// out path instead of being copied. The database itself contains only a
         /// reference to the out path of the file.
@@ -134,7 +131,7 @@ impl Msg<ProviderService> for BlobDownloadRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
-    type Response = GetProgress;
+    type Response = DownloadProgress;
 }
 
 /// A request to the node to validate the integrity of all provided data
@@ -341,8 +338,8 @@ impl RpcMsg<ProviderService> for NodeStatusRequest {
 /// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusResponse {
-    /// The peer id and socket addresses of this node.
-    pub addr: PeerAddr,
+    /// The node id and socket addresses of this node.
+    pub addr: NodeAddr,
     /// The bound listening addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
     /// The version of the node
@@ -478,6 +475,8 @@ impl ServerStreamingMsg<ProviderService> for DocListRequest {
 pub struct DocListResponse {
     /// The document id
     pub id: NamespaceId,
+    /// The capability over the document.
+    pub capability: CapabilityKind,
 }
 
 /// Create a new document
@@ -493,46 +492,6 @@ impl RpcMsg<ProviderService> for DocCreateRequest {
 pub struct DocCreateResponse {
     /// The document id
     pub id: NamespaceId,
-}
-
-/// Contains both a key (either secret or public) to a document, and a list of peers to join.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DocTicket {
-    /// either a public or private key
-    pub key: KeyBytes,
-    /// a list of peers
-    pub peers: Vec<PeerAddr>,
-}
-impl DocTicket {
-    /// Create a new doc ticket
-    pub fn new(key: KeyBytes, peers: Vec<PeerAddr>) -> Self {
-        Self { key, peers }
-    }
-    /// Serialize the ticket to a byte array.
-    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let bytes = postcard::to_stdvec(&self)?;
-        Ok(bytes)
-    }
-    /// Parse ticket from a byte array.
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        let slf = postcard::from_bytes(bytes)?;
-        Ok(slf)
-    }
-}
-impl FromStr for DocTicket {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(&base32::parse_vec(s)?)
-    }
-}
-impl fmt::Display for DocTicket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            base32::fmt(self.to_bytes().expect("failed to serialize"))
-        )
-    }
 }
 
 /// Import a document from a ticket.
@@ -622,7 +581,7 @@ pub struct DocStartSyncRequest {
     /// The document id
     pub doc_id: NamespaceId,
     /// List of peers to join
-    pub peers: Vec<PeerAddr>,
+    pub peers: Vec<NodeAddr>,
 }
 
 impl RpcMsg<ProviderService> for DocStartSyncRequest {
@@ -689,6 +648,141 @@ pub struct DocSetResponse {
     pub entry: SignedEntry,
 }
 
+/// A request to the node to add the data at the given filepath as an entry to the document
+///
+/// Will produce a stream of [`DocImportProgress`] messages.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocImportFileRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+    /// Author of this entry.
+    pub author_id: AuthorId,
+    /// Key of this entry.
+    pub key: Bytes,
+    /// The filepath to the data
+    ///
+    /// This should be an absolute path valid for the file system on which
+    /// the node runs. Usually the cli will run on the same machine as the
+    /// node, so this should be an absolute path on the cli machine.
+    pub path: PathBuf,
+    /// True if the provider can assume that the data will not change, so it
+    /// can be shared in place.
+    pub in_place: bool,
+}
+
+impl Msg<ProviderService> for DocImportFileRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocImportFileRequest {
+    type Response = DocImportFileResponse;
+}
+
+/// Wrapper around [`DocImportProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocImportFileResponse(pub DocImportProgress);
+
+/// Progress messages for an doc import operation
+///
+/// An import operation involves computing the outboard of a file, and then
+/// either copying or moving the file into the database, then setting the author, hash, size, and tag of that file as an entry in the doc
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DocImportProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found {
+        /// A new unique id for this entry.
+        id: u64,
+        /// The name of the entry.
+        name: String,
+        /// The size of the entry in bytes.
+        size: u64,
+    },
+    /// We got progress ingesting item `id`.
+    Progress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done adding `id` to the data store and the hash is `hash`.
+    IngestDone {
+        /// The unique id of the entry.
+        id: u64,
+        /// The hash of the entry.
+        hash: Hash,
+    },
+    /// We are done setting the entry to the doc
+    AllDone {
+        /// The key of the entry
+        key: Bytes,
+    },
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
+/// A request to the node to save the data of the entry to the given filepath
+///
+/// Will produce a stream of [`DocExportProgress`] messages.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocExportFileRequest {
+    /// The entry you want to export
+    pub entry: Entry,
+    /// The filepath to where the data should be saved
+    ///
+    /// This should be an absolute path valid for the file system on which
+    /// the node runs. Usually the cli will run on the same machine as the
+    /// node, so this should be an absolute path on the cli machine.
+    pub path: PathBuf,
+}
+
+impl Msg<ProviderService> for DocExportFileRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocExportFileRequest {
+    type Response = DocExportFileResponse;
+}
+
+/// Wrapper around [`DocExportProgress`].
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocExportFileResponse(pub DocExportProgress);
+
+/// Progress messages for an doc export operation
+///
+/// An export operation involves reading the entry from the database ans saving the entry to the
+/// given `outpath`
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DocExportProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found {
+        /// A new unique id for this entry.
+        id: u64,
+        /// The hash of the entry.
+        hash: Hash,
+        /// The key to the entry.
+        key: Bytes,
+        /// The size of the entry in bytes.
+        size: u64,
+        /// The path to where we are writing the entry
+        outpath: PathBuf,
+    },
+    /// We got progress exporting item `id`.
+    Progress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done writing the entry to the filesystem
+    AllDone,
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocDelRequest {
@@ -739,8 +833,8 @@ pub struct DocSetHashResponse {}
 pub struct DocGetManyRequest {
     /// The document id
     pub doc_id: NamespaceId,
-    /// Filter entries by this [`GetFilter`]
-    pub filter: GetFilter,
+    /// Query to run
+    pub query: Query,
 }
 
 impl Msg<ProviderService> for DocGetManyRequest {
@@ -760,22 +854,24 @@ pub struct DocGetManyResponse {
 
 /// Get entries from a document
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetOneRequest {
+pub struct DocGetExactRequest {
     /// The document id
     pub doc_id: NamespaceId,
-    /// Key
+    /// Key matcher
     pub key: Bytes,
-    /// Author
+    /// Author matcher
     pub author: AuthorId,
+    /// Whether to include empty entries (prefix deletion markers)
+    pub include_empty: bool,
 }
 
-impl RpcMsg<ProviderService> for DocGetOneRequest {
-    type Response = RpcResult<DocGetOneResponse>;
+impl RpcMsg<ProviderService> for DocGetExactRequest {
+    type Response = RpcResult<DocGetExactResponse>;
 }
 
-/// Response to [`DocGetOneRequest`]
+/// Response to [`DocGetExactRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocGetOneResponse {
+pub struct DocGetExactResponse {
     /// The document entry
     pub entry: Option<SignedEntry>,
 }
@@ -862,7 +958,7 @@ pub struct CounterStats {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatsResponse {
     /// Map of statistics
-    pub stats: HashMap<String, CounterStats>,
+    pub stats: BTreeMap<String, CounterStats>,
 }
 
 /// The RPC service for the iroh provider process.
@@ -904,7 +1000,9 @@ pub enum ProviderRequest {
     DocSet(DocSetRequest),
     DocSetHash(DocSetHashRequest),
     DocGet(DocGetManyRequest),
-    DocGetOne(DocGetOneRequest),
+    DocGetExact(DocGetExactRequest),
+    DocImportFile(DocImportFileRequest),
+    DocExportFile(DocExportFileRequest),
     DocDel(DocDelRequest),
     DocStartSync(DocStartSyncRequest),
     DocLeave(DocLeaveRequest),
@@ -930,7 +1028,7 @@ pub enum ProviderResponse {
     BlobRead(RpcResult<BlobReadResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobDownload(GetProgress),
+    BlobDownload(DownloadProgress),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
@@ -949,7 +1047,9 @@ pub enum ProviderResponse {
     DocSet(RpcResult<DocSetResponse>),
     DocSetHash(RpcResult<DocSetHashResponse>),
     DocGet(RpcResult<DocGetManyResponse>),
-    DocGetOne(RpcResult<DocGetOneResponse>),
+    DocGetExact(RpcResult<DocGetExactResponse>),
+    DocImportFile(DocImportFileResponse),
+    DocExportFile(DocExportFileResponse),
     DocDel(RpcResult<DocDelResponse>),
     DocShare(RpcResult<DocShareResponse>),
     DocStartSync(RpcResult<DocStartSyncResponse>),

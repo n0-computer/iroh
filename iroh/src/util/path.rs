@@ -27,6 +27,9 @@ pub enum IrohPaths {
     #[strum(serialize = "peers.postcard")]
     /// Path to store known peer data.
     PeerData,
+    #[strum(serialize = "rpc.lock")]
+    /// Path to RPC lock file, containing the RPC port if running.
+    RpcLock,
 }
 
 impl AsRef<Path> for IrohPaths {

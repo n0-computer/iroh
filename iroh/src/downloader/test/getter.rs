@@ -14,15 +14,15 @@ struct TestingGetterInner {
     /// How long requests take.
     request_duration: Duration,
     /// History of requests performed by the [`Getter`] and if they were successful.
-    request_history: Vec<(DownloadKind, PublicKey)>,
+    request_history: Vec<(DownloadKind, NodeId)>,
 }
 
 impl Getter for TestingGetter {
     // since for testing we don't need a real connection, just keep track of what peer is the
     // request being sent to
-    type Connection = PublicKey;
+    type Connection = NodeId;
 
-    fn get(&mut self, kind: DownloadKind, peer: PublicKey) -> GetFut {
+    fn get(&mut self, kind: DownloadKind, peer: NodeId) -> GetFut {
         let mut inner = self.0.write();
         let tt = TempTag::new(kind.hash_and_format(), None);
         inner.request_history.push((kind, peer));
@@ -41,7 +41,7 @@ impl TestingGetter {
     }
     /// Verify that the request history is as expected
     #[track_caller]
-    pub(super) fn assert_history(&self, history: &[(DownloadKind, PublicKey)]) {
+    pub(super) fn assert_history(&self, history: &[(DownloadKind, NodeId)]) {
         assert_eq!(self.0.read().request_history, history);
     }
 }

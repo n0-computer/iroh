@@ -3,12 +3,13 @@
 use std::{
     collections::HashMap,
     env, fmt,
+    net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use config::{Environment, File, Value};
 use iroh::{node::GcPolicy, util::path::IrohPaths};
 use iroh_net::{
@@ -38,10 +39,7 @@ pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
 
 /// Get the path for this [`IrohPaths`] by joining the name to `IROH_DATA_DIR` environment variable.
 pub fn path_with_env(p: IrohPaths) -> Result<PathBuf> {
-    let mut root = iroh_data_root()?;
-    if !root.is_absolute() {
-        root = std::env::current_dir()?.join(root);
-    }
+    let root = iroh_data_root()?;
     Ok(p.with_root(root))
 }
 
@@ -117,6 +115,9 @@ pub struct NodeConfig {
     pub derp_regions: Vec<DerpRegion>,
     /// How often to run garbage collection.
     pub gc_policy: GcPolicy,
+    /// Bind address on which to serve Prometheus metrics
+    #[cfg(feature = "metrics")]
+    pub metrics_addr: Option<SocketAddr>,
 }
 
 impl Default for NodeConfig {
@@ -125,6 +126,8 @@ impl Default for NodeConfig {
             // TODO(ramfox): this should probably just be a derp map
             derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
             gc_policy: GcPolicy::Disabled,
+            #[cfg(feature = "metrics")]
+            metrics_addr: None,
         }
     }
 }
@@ -135,6 +138,13 @@ impl NodeConfig {
     /// Optionally provide an additional configuration source.
     pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
+        if let Some(path) = additional_config_source {
+            ensure!(
+                path.is_file(),
+                "Config file does not exist: {}",
+                path.display()
+            );
+        }
         let sources = [Some(config_path.as_path()), additional_config_source];
         let config = Self::load(
             // potential config files
@@ -384,19 +394,19 @@ pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
-    if let Some(val) = env::var_os("IROH_DATA_DIR") {
-        return Ok(PathBuf::from(val));
-    }
-    let path = dirs_next::data_dir().ok_or_else(|| {
-        anyhow!("operating environment provides no directory for application data")
-    })?;
-    Ok(path.join(IROH_DIR))
-}
-
-/// Path that leads to a file in the iroh data directory.
-#[allow(dead_code)]
-pub fn iroh_data_path(file_name: &Path) -> Result<PathBuf> {
-    let path = iroh_data_root()?.join(file_name);
+    let path = if let Some(val) = env::var_os("IROH_DATA_DIR") {
+        PathBuf::from(val)
+    } else {
+        let path = dirs_next::data_dir().ok_or_else(|| {
+            anyhow!("operating environment provides no directory for application data")
+        })?;
+        path.join(IROH_DIR)
+    };
+    let path = if !path.is_absolute() {
+        std::env::current_dir()?.join(path)
+    } else {
+        path
+    };
     Ok(path)
 }
 

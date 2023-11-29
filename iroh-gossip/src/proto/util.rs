@@ -10,37 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Utilities for working with byte array identifiers
-pub mod base32 {
-    /// Convert to a base32 string
-    pub fn fmt(bytes: impl AsRef<[u8]>) -> String {
-        let mut text = data_encoding::BASE32_NOPAD.encode(bytes.as_ref());
-        text.make_ascii_lowercase();
-        text
-    }
-    /// Convert to a base32 string limited to the first 10 bytes
-    pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
-        let len = bytes.as_ref().len().min(10);
-        let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
-        text.make_ascii_lowercase();
-        text.push('…');
-        text
-    }
-    /// Parse from a base32 string into a byte array
-    pub fn parse_array<const N: usize>(input: &str) -> anyhow::Result<[u8; N]> {
-        data_encoding::BASE32_NOPAD
-            .decode(input.to_ascii_uppercase().as_bytes())?
-            .try_into()
-            .map_err(|_| ::anyhow::anyhow!("Failed to parse: invalid byte length"))
-    }
-    /// Decode form a base32 string to a vector of bytes
-    pub fn parse_vec(input: &str) -> anyhow::Result<Vec<u8>> {
-        data_encoding::BASE32_NOPAD
-            .decode(input.to_ascii_uppercase().as_bytes())
-            .map_err(Into::into)
-    }
-}
-
 /// Implement methods, display, debug and conversion traits for 32 byte identifiers.
 macro_rules! idbytes_impls {
     ($ty:ty, $name:expr) => {
@@ -64,27 +33,20 @@ macro_rules! idbytes_impls {
 
         impl ::std::fmt::Display for $ty {
             fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-                write!(f, "{}", $crate::proto::util::base32::fmt(&self.0))
+                write!(f, "{}", ::iroh_base::base32::fmt(&self.0))
             }
         }
 
         impl ::std::fmt::Debug for $ty {
             fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-                write!(
-                    f,
-                    "{}({})",
-                    $name,
-                    $crate::proto::util::base32::fmt_short(&self.0)
-                )
+                write!(f, "{}({})", $name, ::iroh_base::base32::fmt_short(&self.0))
             }
         }
 
         impl ::std::str::FromStr for $ty {
             type Err = ::anyhow::Error;
             fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
-                Ok(Self::from_bytes($crate::proto::util::base32::parse_array(
-                    s,
-                )?))
+                Ok(Self::from_bytes(::iroh_base::base32::parse_array(s)?))
             }
         }
 
@@ -470,7 +432,7 @@ mod test {
             &format!("{id}"),
             "aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaq"
         );
-        assert_eq!(&format!("{id:?}"), "Id(aeaqcaibaeaqcaib…)");
+        assert_eq!(&format!("{id:?}"), "Id(aeaqcaibaeaqcaib)");
         assert_eq!(id.as_bytes(), &[1u8; 32]);
     }
 

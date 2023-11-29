@@ -135,8 +135,8 @@ use super::{
     PartialMapEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use crate::util::{BlobFormat, HashAndFormat, LivenessTracker, Tag};
-use crate::{Hash, TempTag, IROH_BLOCK_SIZE};
+use crate::util::{LivenessTracker, Tag};
+use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkRanges};
@@ -362,10 +362,7 @@ impl PartialMap for Store {
 
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        self.0
-            .options
-            .rt
-            .spawn_blocking(move || this.insert_complete_sync(entry))
+        tokio::task::spawn_blocking(move || this.insert_complete_sync(entry))
             .map(flatten_to_io)
             .boxed()
     }
@@ -378,7 +375,6 @@ struct Options {
     meta_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
-    rt: tokio::runtime::Handle,
 }
 
 impl Options {
@@ -678,8 +674,7 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        self.rt()
-            .spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -694,16 +689,14 @@ impl super::Store for Store {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let this = self.clone();
-        self.rt()
-            .spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
+        tokio::task::spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
             .map(flatten_to_io)
             .boxed()
     }
 
     fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let this = self.clone();
-        self.rt()
-            .spawn_blocking(move || this.import_bytes_sync(data, format))
+        tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format))
             .map(flatten_to_io)
             .boxed()
     }
@@ -714,7 +707,6 @@ impl super::Store for Store {
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
-        let rt = self.rt().clone();
         let this = self.clone();
         async move {
             let id = progress.new_id();
@@ -734,30 +726,28 @@ impl super::Store for Store {
                 offset += chunk.len() as u64;
                 progress.try_send(ImportProgress::CopyProgress { id, offset })?;
             }
+            writer.flush().await?;
+            drop(writer);
             let file = ImportFile::TempFile(temp_data_path);
-            rt.spawn_blocking(move || this.finalize_import_sync(file, format, id, progress))
-                .map(flatten_to_io)
-                .await
+            tokio::task::spawn_blocking(move || {
+                this.finalize_import_sync(file, format, id, progress)
+            })
+            .map(flatten_to_io)
+            .await
         }
         .boxed()
     }
 
     fn create_tag(&self, value: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
         let this = self.clone();
-        self.0
-            .options
-            .rt
-            .spawn_blocking(move || this.create_tag_sync(value))
+        tokio::task::spawn_blocking(move || this.create_tag_sync(value))
             .map(flatten_to_io)
             .boxed()
     }
 
     fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        self.0
-            .options
-            .rt
-            .spawn_blocking(move || this.set_tag_sync(name, value))
+        tokio::task::spawn_blocking(move || this.set_tag_sync(name, value))
             .map(flatten_to_io)
             .boxed()
     }
@@ -786,10 +776,7 @@ impl super::Store for Store {
         tracing::debug!("delete: {:?}", hash);
         let this = self.clone();
         let hash = *hash;
-        self.0
-            .options
-            .rt
-            .spawn_blocking(move || this.delete_sync(hash))
+        tokio::task::spawn_blocking(move || this.delete_sync(hash))
             .map(flatten_to_io)
             .boxed()
     }
@@ -837,10 +824,6 @@ impl ImportFile {
 }
 
 impl Store {
-    fn rt(&self) -> &tokio::runtime::Handle {
-        &self.0.options.rt
-    }
-
     fn temp_path(&self) -> PathBuf {
         self.0.options.partial_path.join(temp_name())
     }
@@ -1195,9 +1178,8 @@ impl Store {
         complete_path: PathBuf,
         partial_path: PathBuf,
         meta_path: PathBuf,
-        rt: crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
-        tracing::debug!(
+        tracing::info!(
             "loading database from {} {}",
             complete_path.display(),
             partial_path.display()
@@ -1454,7 +1436,6 @@ impl Store {
                 meta_path,
                 move_threshold: 1024 * 128,
                 inline_threshold: 1024 * 16,
-                rt: rt.main().clone(),
             },
             complete_io_mutex: Mutex::new(()),
         })))
@@ -1465,13 +1446,11 @@ impl Store {
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
         meta_path: impl AsRef<Path>,
-        rt: &crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
         let meta_path = meta_path.as_ref().to_path_buf();
-        let rt = rt.clone();
-        let db = Self::load_sync(complete_path, partial_path, meta_path, rt)?;
+        let db = Self::load_sync(complete_path, partial_path, meta_path)?;
         Ok(db)
     }
 
@@ -1480,16 +1459,14 @@ impl Store {
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
         meta_path: impl AsRef<Path>,
-        rt: &crate::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
         let meta_path = meta_path.as_ref().to_path_buf();
-        let rtc = rt.clone();
-        let db = rt
-            .main()
-            .spawn_blocking(move || Self::load_sync(complete_path, partial_path, meta_path, rtc))
-            .await??;
+        let db = tokio::task::spawn_blocking(move || {
+            Self::load_sync(complete_path, partial_path, meta_path)
+        })
+        .await??;
         Ok(db)
     }
 

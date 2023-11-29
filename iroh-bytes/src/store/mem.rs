@@ -22,9 +22,9 @@ use crate::{
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
-        runtime, BlobFormat, HashAndFormat, LivenessTracker,
+        LivenessTracker,
     },
-    Hash, Tag, TempTag, IROH_BLOCK_SIZE,
+    BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
 };
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
@@ -182,13 +182,12 @@ impl AsyncSliceWriter for MemFile {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 /// A full in memory database for iroh-bytes.
 pub struct Store(Arc<Inner>);
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Inner {
-    rt: runtime::Handle,
     state: RwLock<State>,
 }
 
@@ -373,10 +372,7 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        self.0
-            .rt
-            .main()
-            .spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -458,25 +454,22 @@ impl super::Store for Store {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
         let this = self.clone();
-        self.0
-            .rt
-            .main()
-            .spawn_blocking(move || {
-                let id = progress.new_id();
-                progress.blocking_send(ImportProgress::Found {
-                    id,
-                    name: path.to_string_lossy().to_string(),
-                })?;
-                progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                // todo: provide progress for reading into mem
-                let bytes: Bytes = std::fs::read(path)?.into();
-                let size = bytes.len() as u64;
-                progress.blocking_send(ImportProgress::Size { id, size })?;
-                let tag = this.import_bytes_sync(id, bytes, format, progress)?;
-                Ok((tag, size))
-            })
-            .map(flatten_to_io)
-            .boxed()
+        tokio::task::spawn_blocking(move || {
+            let id = progress.new_id();
+            progress.blocking_send(ImportProgress::Found {
+                id,
+                name: path.to_string_lossy().to_string(),
+            })?;
+            progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+            // todo: provide progress for reading into mem
+            let bytes: Bytes = std::fs::read(path)?.into();
+            let size = bytes.len() as u64;
+            progress.blocking_send(ImportProgress::Size { id, size })?;
+            let tag = this.import_bytes_sync(id, bytes, format, progress)?;
+            Ok((tag, size))
+        })
+        .map(flatten_to_io)
+        .boxed()
     }
 
     fn import_stream(
@@ -511,14 +504,11 @@ impl super::Store for Store {
 
     fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
         let this = self.clone();
-        self.0
-            .rt
-            .main()
-            .spawn_blocking(move || {
-                this.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())
-            })
-            .map(flatten_to_io)
-            .boxed()
+        tokio::task::spawn_blocking(move || {
+            this.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())
+        })
+        .map(flatten_to_io)
+        .boxed()
     }
 
     fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
@@ -582,11 +572,8 @@ impl LivenessTracker for Inner {
 
 impl Store {
     /// Create a new in memory database, using the given runtime.
-    pub fn new(rt: runtime::Handle) -> Self {
-        Self(Arc::new(Inner {
-            rt,
-            state: RwLock::new(State::default()),
-        }))
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn import_bytes_sync(

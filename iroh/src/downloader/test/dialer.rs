@@ -17,15 +17,15 @@ pub(super) struct TestingDialer(Arc<RwLock<TestingDialerInner>>);
 
 struct TestingDialerInner {
     /// Peers that are being dialed.
-    dialing: HashSet<PublicKey>,
+    dialing: HashSet<NodeId>,
     /// Queue of dials.
-    dial_futs: delay_queue::DelayQueue<PublicKey>,
+    dial_futs: delay_queue::DelayQueue<NodeId>,
     /// History of attempted dials.
-    dial_history: Vec<PublicKey>,
+    dial_history: Vec<NodeId>,
     /// How long does a dial last.
     dial_duration: Duration,
     /// Fn deciding if a dial is successful.
-    dial_outcome: Box<fn(&PublicKey) -> bool>,
+    dial_outcome: Box<fn(&NodeId) -> bool>,
 }
 
 impl Default for TestingDialerInner {
@@ -41,15 +41,15 @@ impl Default for TestingDialerInner {
 }
 
 impl Dialer for TestingDialer {
-    type Connection = PublicKey;
+    type Connection = NodeId;
 
-    fn queue_dial(&mut self, peer_id: PublicKey) {
+    fn queue_dial(&mut self, node_id: NodeId) {
         let mut inner = self.0.write();
-        inner.dial_history.push(peer_id);
+        inner.dial_history.push(node_id);
         // for now assume every dial works
         let dial_duration = inner.dial_duration;
-        if inner.dialing.insert(peer_id) {
-            inner.dial_futs.insert(peer_id, dial_duration);
+        if inner.dialing.insert(node_id) {
+            inner.dial_futs.insert(node_id, dial_duration);
         }
     }
 
@@ -57,24 +57,24 @@ impl Dialer for TestingDialer {
         self.0.read().dialing.len()
     }
 
-    fn is_pending(&self, peer: &PublicKey) -> bool {
-        self.0.read().dialing.contains(peer)
+    fn is_pending(&self, node: &NodeId) -> bool {
+        self.0.read().dialing.contains(node)
     }
 }
 
 impl futures::Stream for TestingDialer {
-    type Item = (PublicKey, anyhow::Result<PublicKey>);
+    type Item = (NodeId, anyhow::Result<NodeId>);
 
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut inner = self.0.write();
         match inner.dial_futs.poll_expired(cx) {
             Poll::Ready(Some(expired)) => {
-                let peer = expired.into_inner();
-                let report_ok = (inner.dial_outcome)(&peer);
+                let node = expired.into_inner();
+                let report_ok = (inner.dial_outcome)(&node);
                 let result = report_ok
-                    .then_some(peer)
+                    .then_some(node)
                     .ok_or_else(|| anyhow::anyhow!("dialing test set to fail"));
-                Poll::Ready(Some((peer, result)))
+                Poll::Ready(Some((node, result)))
             }
             _ => Poll::Pending,
         }
@@ -83,7 +83,7 @@ impl futures::Stream for TestingDialer {
 
 impl TestingDialer {
     #[track_caller]
-    pub(super) fn assert_history(&self, history: &[PublicKey]) {
+    pub(super) fn assert_history(&self, history: &[NodeId]) {
         assert_eq!(self.0.read().dial_history, history)
     }
 

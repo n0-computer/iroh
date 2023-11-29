@@ -8,8 +8,8 @@ use iroh_bytes::get::fsm::EndBlobNext;
 use iroh_bytes::get::Stats;
 use iroh_bytes::hashseq::HashSeq;
 use iroh_bytes::store::MapEntry;
-use iroh_bytes::util::BlobFormat;
-use iroh_bytes::{Hash, TempTag};
+use iroh_bytes::util::TempTag;
+use iroh_bytes::{BlobFormat, Hash};
 use iroh_io::AsyncSliceReaderExt;
 use serde::{Deserialize, Serialize};
 

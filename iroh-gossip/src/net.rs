@@ -4,7 +4,9 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_net::{key::PublicKey, magic_endpoint::get_peer_id, AddrInfo, MagicEndpoint, PeerAddr};
+use iroh_net::{
+    key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint, NodeAddr,
+};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
 use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
@@ -21,8 +23,9 @@ pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
-/// Maximum message size is limited to 1024 bytes.
-pub const MAX_MESSAGE_SIZE: usize = 1024;
+/// Maximum message size is limited currently. The limit is more-or-less arbitrary.
+// TODO: Make the limit configurable.
+pub const MAX_MESSAGE_SIZE: usize = 4096;
 
 /// Channel capacity for all subscription broadcast channels (single)
 const SUBSCRIBE_ALL_CAP: usize = 2048;
@@ -74,13 +77,16 @@ pub struct Gossip {
 
 impl Gossip {
     /// Spawn a gossip actor and get a handle for it
-    pub fn from_endpoint(endpoint: MagicEndpoint, config: proto::Config) -> Self {
-        let peer_id = endpoint.peer_id();
+    pub fn from_endpoint(
+        endpoint: MagicEndpoint,
+        config: proto::Config,
+        my_addr: &AddrInfo,
+    ) -> Self {
+        let peer_id = endpoint.node_id();
         let dialer = Dialer::new(endpoint.clone());
-        let peer_data = Default::default();
         let state = proto::State::new(
             peer_id,
-            peer_data,
+            encode_peer_data(my_addr).unwrap(),
             config,
             rand::rngs::StdRng::from_entropy(),
         );
@@ -88,7 +94,7 @@ impl Gossip {
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
         let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
-        let me = endpoint.peer_id().fmt_short();
+        let me = endpoint.node_id().fmt_short();
         let actor = Actor {
             endpoint,
             state,
@@ -127,7 +133,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_addr`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_node_addr`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
@@ -224,7 +230,7 @@ impl Gossip {
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
     pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
-        let peer_id = get_peer_id(&conn).await?;
+        let peer_id = get_remote_node_id(&conn)?;
         self.send(ToActor::ConnIncoming(peer_id, ConnOrigin::Accept, conn))
             .await?;
         Ok(())
@@ -367,7 +373,7 @@ impl Actor {
                 new_endpoints = self.on_endpoints_rx.recv() => {
                     match new_endpoints {
                         Some(endpoints) => {
-                            let addr = self.endpoint.my_addr_with_endpoints(endpoints).await?;
+                            let addr = self.endpoint.my_addr_with_endpoints(endpoints)?;
                             let peer_data = encode_peer_data(&addr.info)?;
                             self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
                         }
@@ -544,16 +550,13 @@ impl Actor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => match decode_peer_data(&data) {
-                    Err(err) => warn!("Failed to decode {data:?} from {peer}: {err}"),
+                OutEvent::PeerData(node_id, data) => match decode_peer_data(&data) {
+                    Err(err) => warn!("Failed to decode {data:?} from {node_id}: {err}"),
                     Ok(info) => {
-                        debug!(peer = ?peer, "add known addrs: {info:?}");
-                        let peer_addr = PeerAddr {
-                            peer_id: peer,
-                            info,
-                        };
-                        if let Err(err) = self.endpoint.add_peer_addr(peer_addr).await {
-                            debug!(peer = ?peer, "add known failed: {err:?}");
+                        debug!(peer = ?node_id, "add known addrs: {info:?}");
+                        let node_addr = NodeAddr { node_id, info };
+                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
+                            debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
                 },
@@ -631,11 +634,17 @@ async fn connection_loop(
 }
 
 fn encode_peer_data(info: &AddrInfo) -> anyhow::Result<PeerData> {
-    Ok(PeerData::new(postcard::to_stdvec(info)?))
+    let bytes = postcard::to_stdvec(info)?;
+    anyhow::ensure!(!bytes.is_empty(), "encoding empty peer data: {:?}", info);
+    Ok(PeerData::new(bytes))
 }
 
 fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
-    let info = postcard::from_bytes(peer_data.as_bytes())?;
+    let bytes = peer_data.as_bytes();
+    if bytes.is_empty() {
+        return Ok(AddrInfo::default());
+    }
+    let info = postcard::from_bytes(bytes)?;
     Ok(info)
 }
 
@@ -643,7 +652,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
-    use iroh_net::PeerAddr;
+    use iroh_net::NodeAddr;
     use iroh_net::{
         derp::{DerpMap, DerpMode},
         MagicEndpoint,
@@ -691,14 +700,26 @@ mod test {
         let ep1 = create_endpoint(derp_map.clone()).await.unwrap();
         let ep2 = create_endpoint(derp_map.clone()).await.unwrap();
         let ep3 = create_endpoint(derp_map.clone()).await.unwrap();
+        let addr1 = AddrInfo {
+            derp_region: Some(derp_region),
+            direct_addresses: Default::default(),
+        };
+        let addr2 = AddrInfo {
+            derp_region: Some(derp_region),
+            direct_addresses: Default::default(),
+        };
+        let addr3 = AddrInfo {
+            derp_region: Some(derp_region),
+            direct_addresses: Default::default(),
+        };
 
-        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default());
-        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default());
-        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default());
-        debug!("peer1 {:?}", ep1.peer_id());
-        debug!("peer2 {:?}", ep2.peer_id());
-        debug!("peer3 {:?}", ep3.peer_id());
-        let pi1 = ep1.peer_id();
+        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default(), &addr1);
+        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default(), &addr2);
+        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default(), &addr3);
+        debug!("peer1 {:?}", ep1.node_id());
+        debug!("peer2 {:?}", ep2.node_id());
+        debug!("peer3 {:?}", ep3.node_id());
+        let pi1 = ep1.node_id();
 
         let cancel = CancellationToken::new();
         let tasks = [
@@ -707,11 +728,14 @@ mod test {
             spawn(endpoint_loop(ep3.clone(), go2.clone(), cancel.clone())),
         ];
 
+        debug!("----- adding peers  ----- ");
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
-        let addr1 = PeerAddr::new(pi1).with_derp_region(derp_region);
-        ep2.add_peer_addr(addr1.clone()).await.unwrap();
-        ep3.add_peer_addr(addr1).await.unwrap();
+        let addr1 = NodeAddr::new(pi1).with_derp_region(derp_region);
+        ep2.add_node_addr(addr1.clone()).unwrap();
+        ep3.add_node_addr(addr1).unwrap();
+
+        debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed
         go1.join(topic, vec![]).await.unwrap();
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();

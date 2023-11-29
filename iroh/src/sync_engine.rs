@@ -9,11 +9,11 @@ use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
-use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
+use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
-use iroh_net::{key::PublicKey, MagicEndpoint, PeerAddr};
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{
-    actor::SyncHandle, sync::NamespaceId, ContentStatus, ContentStatusCallback, Entry, InsertOrigin,
+    actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -25,11 +25,13 @@ use crate::downloader::Downloader;
 mod gossip;
 mod live;
 pub mod rpc;
+mod state;
 
 use gossip::GossipActor;
 use live::{LiveActor, ToLiveActor};
 
-pub use self::live::{Origin, SyncEvent};
+pub use self::live::SyncEvent;
+pub use self::state::{Origin, SyncReason};
 pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
@@ -44,7 +46,6 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 /// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
 pub struct SyncEngine {
-    pub(crate) rt: Handle,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
@@ -59,7 +60,6 @@ impl SyncEngine {
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
     pub fn spawn<S: iroh_sync::store::Store, B: iroh_bytes::store::Store>(
-        rt: Handle,
         endpoint: MagicEndpoint,
         gossip: Gossip,
         replica_store: S,
@@ -68,7 +68,7 @@ impl SyncEngine {
     ) -> Self {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
-        let me = endpoint.peer_id().fmt_short();
+        let me = endpoint.node_id().fmt_short();
 
         let content_status_cb = {
             let bao_store = bao_store.clone();
@@ -97,7 +97,7 @@ impl SyncEngine {
             downloader,
             live_actor_tx.clone(),
         );
-        let live_actor_task = rt.main().spawn(
+        let live_actor_task = tokio::task::spawn(
             async move {
                 if let Err(err) = actor.run().await {
                     error!("sync actor failed: {err:?}");
@@ -105,7 +105,7 @@ impl SyncEngine {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let gossip_actor_task = rt.main().spawn(
+        let gossip_actor_task = tokio::task::spawn(
             async move {
                 if let Err(err) = gossip_actor.run().await {
                     error!("gossip recv actor failed: {err:?}");
@@ -128,7 +128,6 @@ impl SyncEngine {
         .shared();
 
         Self {
-            rt,
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
@@ -141,7 +140,7 @@ impl SyncEngine {
     ///
     /// If `peers` is non-empty, it will both do an initial set-reconciliation sync with each peer,
     /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
-    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::StartSync {
@@ -155,7 +154,7 @@ impl SyncEngine {
     }
 
     /// Join and sync with a set of peers for a document that is already syncing.
-    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerAddr>) -> Result<()> {
+    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::JoinPeers {
@@ -257,7 +256,6 @@ pub(crate) fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
 
 /// Events informing about actions of the live sync progres.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
-#[allow(clippy::large_enum_variant)]
 pub enum LiveEvent {
     /// A local insertion.
     InsertLocal {

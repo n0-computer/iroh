@@ -1,16 +1,21 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use iroh::client::quic::Iroh;
+use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh_base::base32::fmt_short;
+use quic_rpc::ServiceConnection;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    commands::{sync::fmt_short, RpcCommands},
+    commands::rpc::RpcCommands,
     config::{ConsoleEnv, ConsolePaths},
 };
 
-pub async fn run(iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+pub async fn run<C>(iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
     println!("{}", "Welcome to the Iroh console!".purple().bold());
     println!("Type `{}` for a list of commands.", "help".bold());
     let mut from_repl = Repl::spawn(env.clone());
@@ -65,7 +70,11 @@ impl Repl {
                         Some(ReplCmd::Rpc(cmd)) => self.cmd_tx.blocking_send((cmd, reply_tx))?,
                     }
                 }
-                Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
+                Err(ReadlineError::Interrupted) => {
+                    println!("KeyboardInterrupt (press Ctrl-D to exit)");
+                    continue;
+                }
+                Err(ReadlineError::Eof) => break,
                 Err(ReadlineError::WindowResized) => continue,
                 Err(err) => return Err(err.into()),
             }

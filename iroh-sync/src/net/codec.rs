@@ -295,12 +295,11 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, GetFilter, Store},
-        sync::Namespace,
-        AuthorId,
+        store::{self, Query, Store},
+        AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
-    use iroh_bytes::Hash;
+    use iroh_base::hash::Hash;
     use iroh_net::key::SecretKey;
     use rand_core::{CryptoRngCore, SeedableRng};
 
@@ -316,7 +315,7 @@ mod tests {
         // For now uses same author on both sides.
         let author = alice_store.new_author(&mut rng).unwrap();
 
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
 
         let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
         alice_replica
@@ -331,7 +330,7 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(bob_replica.namespace(), GetFilter::All)
+                .get_many(bob_replica.id(), Query::all(),)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -340,7 +339,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(alice_replica.namespace(), GetFilter::All)
+                .get_many(alice_replica.id(), Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -397,7 +396,7 @@ mod tests {
 
         assert_eq!(
             bob_store
-                .get_many(namespace.id(), GetFilter::All)
+                .get_many(namespace.id(), Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -406,7 +405,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(namespace.id(), GetFilter::All)
+                .get_many(namespace.id(), Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -462,7 +461,7 @@ mod tests {
 
     fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
-            .get_many(namespace, GetFilter::All)
+            .get_many(namespace, Query::all())
             .unwrap()
             .map(|entry| {
                 entry.map(|entry| {
@@ -492,7 +491,7 @@ mod tests {
 
                 let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
                 let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
-                let namespace = Namespace::new(&mut rng);
+                let namespace = NamespaceSecret::new(&mut rng);
 
                 let mut all_messages = vec![];
 
@@ -635,7 +634,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
-        let namespace = Namespace::new(&mut rng);
+        let namespace = NamespaceSecret::new(&mut rng);
         let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
         let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
 
@@ -655,12 +654,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            get_messages(&alice_store, alice_replica.namespace()),
+            get_messages(&alice_store, alice_replica.id()),
             vec![(author.id(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, bob_replica.namespace()),
+            get_messages(&bob_store, bob_replica.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 

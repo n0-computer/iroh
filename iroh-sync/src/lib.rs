@@ -2,14 +2,14 @@
 //!
 //! The crate operates on [Replicas](Replica). A replica contains an unlimited number of
 //! [Entrys][Entry]. Each entry is identified by a key, its author, and the replica's
-//! namespace. Its value is the [32-byte BLAKE3 hash](iroh_bytes::Hash)
+//! namespace. Its value is the [32-byte BLAKE3 hash](iroh_base::hash::Hash)
 //! of the entry's content data, the size of this content data, and a timestamp.
 //! The content data itself is not stored or transfered through a replica.
 //!
 //! All entries in a replica are signed with two keypairs:
 //!
-//! * The [Namespace] key, as a token of write capability. The public key is the [NamespaceId], which
-//!   also serves as the unique identifier for a replica.
+//! * The [`NamespaceSecret`] key, as a token of write capability. The public key is the
+//!   [`NamespaceId`], which also serves as the unique identifier for a replica.
 //! * The [Author] key, as a proof of authorship. Any number of authors may be created, and
 //!   their semantic meaning is application-specific. The public key of an author is the [AuthorId].
 //!
@@ -30,6 +30,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub mod actor;
+mod heads;
 mod keys;
 #[cfg(feature = "metrics")]
 pub mod metrics;
@@ -39,5 +40,6 @@ mod ranger;
 pub mod store;
 pub mod sync;
 
-pub use keys::*;
-pub use sync::*;
+pub use self::heads::*;
+pub use self::keys::*;
+pub use self::sync::*;

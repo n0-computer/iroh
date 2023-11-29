@@ -964,7 +964,7 @@ mod tests {
         // set up clients
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
-        let client_a = ClientBuilder::new()
+        let (client_a, mut client_a_receiver) = ClientBuilder::new()
             .server_url(derper_url.clone())
             .build(a_secret_key)?;
         let connect_client = client_a.clone();
@@ -988,7 +988,7 @@ mod tests {
 
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
-        let client_b = ClientBuilder::new()
+        let (client_b, mut client_b_receiver) = ClientBuilder::new()
             .server_url(derper_url)
             .build(b_secret_key)?;
         client_b.connect().await?;
@@ -996,7 +996,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await?;
 
-        let (res, _) = client_b.recv_detail().await?;
+        let (res, _) = client_b_receiver.recv().await.unwrap()?;
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(a_key, source);
             assert_eq!(msg, data);
@@ -1007,7 +1007,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await?;
 
-        let (res, _) = client_a.recv_detail().await?;
+        let (res, _) = client_a_receiver.recv().await.unwrap()?;
         if let ReceivedMessage::ReceivedPacket { source, data } = res {
             assert_eq!(b_key, source);
             assert_eq!(msg, data);

@@ -11,6 +11,8 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   MSRV: "1.66"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   netsim:
@@ -42,11 +44,15 @@ jobs:
       if: github.event_name == 'issue_comment'
       uses: actions/checkout@master
       with:
+        repository: ${{ github.event.issue.repository.full_name }}
         submodules: recursive
         ref: ${{ steps.refs.outputs.head_ref }}
 
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
+    
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh
       run: |
@@ -117,8 +123,8 @@ jobs:
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
-          sudo python3 main.py sims/iroh
-          sudo python3 main.py sims/integration
+          sudo python3 main.py --integration sims/iroh
+          sudo python3 main.py --integration sims/integration
         else
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json

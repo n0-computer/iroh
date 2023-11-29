@@ -2,21 +2,21 @@
 
 use anyhow::anyhow;
 use futures::Stream;
-use iroh_bytes::{store::Store as BaoStore, util::BlobFormat};
-use iroh_sync::{sync::Namespace, Author};
+use iroh_bytes::{store::Store as BaoStore, BlobFormat};
+use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
 
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
-        DocDelResponse, DocDropRequest, DocDropResponse, DocGetManyRequest, DocGetManyResponse,
-        DocGetOneRequest, DocGetOneResponse, DocImportRequest, DocImportResponse, DocLeaveRequest,
-        DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
-        DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest,
-        DocShareResponse, DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest,
-        DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult,
-        ShareMode,
+        DocDelResponse, DocDropRequest, DocDropResponse, DocGetExactRequest, DocGetExactResponse,
+        DocGetManyRequest, DocGetManyResponse, DocImportRequest, DocImportResponse,
+        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest,
+        DocOpenResponse, DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse,
+        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
+        DocStatusRequest, DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
+        RpcResult, ShareMode,
     },
     sync_engine::SyncEngine,
 };
@@ -46,7 +46,7 @@ impl SyncEngine {
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
-        self.rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_authors(tx).await {
                 tx2.send_async(Err(err)).await.ok();
@@ -59,10 +59,11 @@ impl SyncEngine {
     }
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
-        let namespace = Namespace::new(&mut rand::rngs::OsRng {});
-        self.sync.import_namespace(namespace.clone()).await?;
-        self.sync.open(namespace.id(), Default::default()).await?;
-        Ok(DocCreateResponse { id: namespace.id() })
+        let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
+        let id = namespace.id();
+        self.sync.import_namespace(namespace.into()).await?;
+        self.sync.open(id, Default::default()).await?;
+        Ok(DocCreateResponse { id })
     }
 
     pub async fn doc_drop(&self, req: DocDropRequest) -> RpcResult<DocDropResponse> {
@@ -77,14 +78,16 @@ impl SyncEngine {
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
-        self.rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_replicas(tx).await {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
-        rx.into_stream()
-            .map(|r| r.map(|id| DocListResponse { id }).map_err(Into::into))
+        rx.into_stream().map(|r| {
+            r.map(|(id, capability)| DocListResponse { id, capability })
+                .map_err(Into::into)
+        })
     }
 
     pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
@@ -104,22 +107,21 @@ impl SyncEngine {
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
         let me = self.endpoint.my_addr().await?;
-        let key = match req.mode {
-            ShareMode::Read => {
-                // TODO: support readonly docs
-                // *replica.namespace().as_bytes()
-                return Err(anyhow!("creating read-only shares is not yet supported").into());
+        let capability = match req.mode {
+            ShareMode::Read => iroh_sync::Capability::Read(req.doc_id),
+            ShareMode::Write => {
+                let secret = self.sync.export_secret_key(req.doc_id).await?;
+                iroh_sync::Capability::Write(secret)
             }
-            ShareMode::Write => self.sync.export_secret_key(req.doc_id).await?.to_bytes(),
         };
         self.start_sync(req.doc_id, vec![]).await?;
         Ok(DocShareResponse(DocTicket {
-            key,
-            peers: vec![me],
+            capability,
+            nodes: vec![me],
         }))
     }
 
-    pub async fn doc_subscribe(
+    pub fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
     ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
@@ -131,9 +133,11 @@ impl SyncEngine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket { key, peers }) = req;
-        let namespace = Namespace::from_bytes(&key);
-        let doc_id = self.sync.import_namespace(namespace).await?;
+        let DocImportRequest(DocTicket {
+            capability,
+            nodes: peers,
+        }) = req;
+        let doc_id = self.sync.import_namespace(capability).await?;
         self.sync.open(doc_id, Default::default()).await?;
         self.start_sync(doc_id, peers).await?;
         Ok(DocImportResponse { doc_id })
@@ -172,7 +176,7 @@ impl SyncEngine {
             .await?;
         let entry = self
             .sync
-            .get_one(doc_id, author_id, key)
+            .get_exact(doc_id, author_id, key, false)
             .await?
             .ok_or_else(|| anyhow!("failed to get entry after insertion"))?;
         Ok(DocSetResponse { entry })
@@ -206,14 +210,14 @@ impl SyncEngine {
         &self,
         req: DocGetManyRequest,
     ) -> impl Stream<Item = RpcResult<DocGetManyResponse>> {
-        let DocGetManyRequest { doc_id, filter } = req;
+        let DocGetManyRequest { doc_id, query } = req;
         let (tx, rx) = flume::bounded(ITER_CHANNEL_CAP);
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
-        self.rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             let tx2 = tx.clone();
-            if let Err(err) = sync.get_many(doc_id, filter, tx).await {
+            if let Err(err) = sync.get_many(doc_id, query, tx).await {
                 tx2.send_async(Err(err)).await.ok();
             }
         });
@@ -223,13 +227,17 @@ impl SyncEngine {
         })
     }
 
-    pub async fn doc_get_one(&self, req: DocGetOneRequest) -> RpcResult<DocGetOneResponse> {
-        let DocGetOneRequest {
+    pub async fn doc_get_exact(&self, req: DocGetExactRequest) -> RpcResult<DocGetExactResponse> {
+        let DocGetExactRequest {
             doc_id,
             author,
             key,
+            include_empty,
         } = req;
-        let entry = self.sync.get_one(doc_id, author, key).await?;
-        Ok(DocGetOneResponse { entry })
+        let entry = self
+            .sync
+            .get_exact(doc_id, author, key, include_empty)
+            .await?;
+        Ok(DocGetExactResponse { entry })
     }
 }

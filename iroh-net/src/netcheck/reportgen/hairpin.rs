@@ -13,15 +13,14 @@
 //! requests to it will fail which is intentional.
 
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use crate::net::UdpSocket;
 use crate::netcheck::{self, reportgen, Inflight};
 use crate::stun;
 use crate::util::CancelOnDrop;
@@ -34,33 +33,31 @@ const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 /// Dropping it will abort the actor.
 #[derive(Debug)]
 pub(super) struct Client {
-    addr: Addr,
-    has_started: bool,
+    addr: Option<oneshot::Sender<Message>>,
     _drop_guard: CancelOnDrop,
 }
 
 impl Client {
     pub(super) fn new(netcheck: netcheck::Addr, reportgen: reportgen::Addr) -> Self {
-        let (msg_tx, msg_rx) = mpsc::channel(32);
-        let mut actor = Actor {
-            msg_tx,
+        let (addr, msg_rx) = oneshot::channel();
+
+        let actor = Actor {
             msg_rx,
             netcheck,
             reportgen,
         };
-        let addr = actor.addr();
+
         let task =
             tokio::spawn(async move { actor.run().await }.instrument(info_span!("hairpin.actor")));
         Self {
-            addr,
-            has_started: false,
+            addr: Some(addr),
             _drop_guard: CancelOnDrop::new("hairpin actor", task.abort_handle()),
         }
     }
 
     /// Returns `true` if we have started a hairpin check before.
     pub(super) fn has_started(&self) -> bool {
-        self.has_started
+        self.addr.is_none()
     }
 
     /// Starts the hairpin check.
@@ -71,21 +68,9 @@ impl Client {
     ///
     /// Will do nothing if this actor is already finished or a check has already started.
     pub(super) fn start_check(&mut self, dst: SocketAddr) {
-        self.has_started = true;
-        self.addr.try_send(Message::StartCheck(dst)).ok();
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Addr {
-    sender: mpsc::Sender<Message>,
-}
-
-impl Deref for Addr {
-    type Target = mpsc::Sender<Message>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.sender
+        if let Some(addr) = self.addr.take() {
+            addr.send(Message::StartCheck(dst)).ok();
+        }
     }
 }
 
@@ -100,37 +85,29 @@ enum Message {
 
 #[derive(Debug)]
 struct Actor {
-    msg_tx: mpsc::Sender<Message>,
-    msg_rx: mpsc::Receiver<Message>,
+    msg_rx: oneshot::Receiver<Message>,
     netcheck: netcheck::Addr,
     reportgen: reportgen::Addr,
 }
 
 impl Actor {
-    fn addr(&self) -> Addr {
-        Addr {
-            sender: self.msg_tx.clone(),
-        }
-    }
-
-    async fn run(&mut self) {
+    async fn run(self) {
         match self.run_inner().await {
             Ok(_) => debug!("hairpin actor finished successfully"),
             Err(err) => error!("Hairpin actor failed: {err:#}"),
         }
     }
 
-    async fn run_inner(&mut self) -> Result<()> {
-        let sock = UdpSocket::bind("0.0.0.0:0")
-            .await
-            .context("Failed to bind hairpin socket on 0.0.0.0:0")?;
-        if let Err(err) = Self::prepare_hairpin(&sock).await {
+    async fn run_inner(self) -> Result<()> {
+        let socket = UdpSocket::bind_v4(0).context("Failed to bind hairpin socket on 0.0.0.0:0")?;
+
+        if let Err(err) = Self::prepare_hairpin(&socket).await {
             warn!("unable to send hairpin prep: {err:#}");
             // Continue anyway, most routers are fine.
         }
 
-        // We only have one message to handle, no need for a loop.
-        let Some(Message::StartCheck(dst)) = self.msg_rx.recv().await else {
+        // We only have one message to handle
+        let Ok(Message::StartCheck(dst)) = self.msg_rx.await else {
             return Ok(());
         };
 
@@ -149,26 +126,34 @@ impl Actor {
             .context("netcheck actor gone")?;
         msg_response_rx.await.context("netcheck actor died")?;
 
-        if let Err(err) = sock.send_to(&stun::request(txn), dst).await {
+        if let Err(err) = socket.send_to(&stun::request(txn), dst).await {
             warn!(%dst, "failed to send hairpin check");
             return Err(err.into());
         }
 
+        let now = Instant::now();
         let hairpinning_works = match tokio::time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).await {
             Ok(Ok(_)) => true,
             Ok(Err(_)) => bail!("netcheck actor dropped stun response channel"),
             Err(_) => false, // Elapsed
         };
+        tracing::debug!(
+            "hairpinning done in {:?}, res: {:?}",
+            now.elapsed(),
+            hairpinning_works
+        );
 
         self.reportgen
             .send(super::Message::HairpinResult(hairpinning_works))
             .await
             .context("Failed to send hairpin result to reportgen actor")?;
 
+        trace!("reportgen notified");
+
         Ok(())
     }
 
-    async fn prepare_hairpin(sock: &UdpSocket) -> Result<()> {
+    async fn prepare_hairpin(socket: &UdpSocket) -> Result<()> {
         // At least the Apple Airport Extreme doesn't allow hairpin
         // sends from a private socket until it's seen traffic from
         // that src IP:port to something else out on the internet.
@@ -181,11 +166,12 @@ impl Actor {
         // that do and don't require this separately. But for now help it.
         let documentation_ip: SocketAddr = "203.0.113.1:12345".parse().unwrap();
 
-        sock.send_to(
-            b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
-            documentation_ip,
-        )
-        .await?;
+        socket
+            .send_to(
+                b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
+                documentation_ip,
+            )
+            .await?;
         Ok(())
     }
 }
@@ -195,14 +181,18 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use bytes::BytesMut;
-    use tokio::sync::mpsc::error::TrySendError;
+    use tokio::sync::mpsc;
     use tracing::info;
 
     use super::*;
 
     #[tokio::test]
     async fn test_hairpin_success() {
-        test_hairpin(true).await;
+        for i in 0..100 {
+            let now = Instant::now();
+            test_hairpin(true).await;
+            println!("done round {} in {:?}", i + 1, now.elapsed());
+        }
     }
 
     #[tokio::test]
@@ -231,8 +221,8 @@ mod tests {
         // emulate this by binding a random socket which we pretend is our publicly
         // discovered address.  The hairpin actor will send it a request and we return it
         // via the inflight channel.
-        let public_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        actor.start_check(dbg!(public_sock.local_addr().unwrap()));
+        let public_sock = UdpSocket::bind_local_v4(0).unwrap();
+        actor.start_check(public_sock.local_addr().unwrap());
 
         // This bit is our dummy netcheck actor: it handles the inflight request and sends
         // back the STUN request once it arrives.
@@ -278,22 +268,6 @@ mod tests {
 
         // Cleanup: our dummy netcheck actor should finish
         dummy_netcheck.await.expect("error in dummy netcheck actor");
-
-        // The hairpin actor should now also shut down, we check by trying to send a
-        // message.
-        let now = Instant::now();
-        let dummy_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 10));
-        let shutdown = loop {
-            if now.elapsed() > Duration::from_secs(1) {
-                break false;
-            }
-            match actor.addr.try_send(Message::StartCheck(dummy_addr)) {
-                Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-                Err(TrySendError::Closed(_)) => break true,
-                Err(TrySendError::Full(_)) => panic!("filled up addr mpsc"),
-            }
-        };
-        assert!(shutdown);
     }
 
     #[tokio::test]
@@ -311,17 +285,17 @@ mod tests {
         };
 
         // Create hairpin actor
-        let client = Client::new(netcheck_addr, reportstate_addr);
+        let mut client = Client::new(netcheck_addr, reportstate_addr);
 
         // Save the addr, drop the client
-        let addr = client.addr.clone();
+        let addr = client.addr.take();
         drop(client);
         tokio::task::yield_now().await;
 
         // Check the actor is gone
         let sockaddr = SocketAddr::from((Ipv4Addr::LOCALHOST, 10));
-        match addr.try_send(Message::StartCheck(sockaddr)) {
-            Err(TrySendError::Closed(_)) => (),
+        match addr.unwrap().send(Message::StartCheck(sockaddr)) {
+            Err(_) => (),
             _ => panic!("actor still running"),
         }
     }

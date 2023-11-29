@@ -14,13 +14,10 @@ use iroh_bytes::{
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
-    provider::GetProgress,
+    provider::DownloadProgress,
     store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
-    util::{
-        progress::{IdGenerator, ProgressSender},
-        Hash,
-    },
-    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
+    util::progress::{IdGenerator, ProgressSender},
+    BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE,
 };
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
@@ -32,7 +29,7 @@ pub async fn get<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     hash_and_format: &HashAndFormat,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let HashAndFormat { hash, format } = hash_and_format;
     let res = match format {
@@ -53,11 +50,10 @@ pub async fn get_blob<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     hash: &Hash,
-    progress: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let end = if let Some(entry) = db.get_partial(hash) {
-        trace!("got partial data for {}", hash,);
-
+        trace!("got partial data for {}", hash);
         let required_ranges = get_missing_ranges_blob::<D>(&entry)
             .await
             .ok()
@@ -132,14 +128,14 @@ pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
 /// is not needed.
 async fn get_blob_inner<D: BaoStore>(
     db: &D,
-    header: AtBlobHeader,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    at_header: AtBlobHeader,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<AtEndBlob> {
     use iroh_io::AsyncSliceWriter;
-
-    let hash = header.hash();
     // read the size
-    let (content, size) = header.next().await?;
+    let (at_content, size) = at_header.next().await?;
+    let hash = at_content.hash();
+    let child_offset = at_content.offset();
     // create the temp file pair
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
@@ -151,13 +147,20 @@ async fn get_blob_inner<D: BaoStore>(
     };
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
-    sender.send(GetProgress::Found { id, hash, size }).await?;
+    sender
+        .send(DownloadProgress::Found {
+            id,
+            hash,
+            size,
+            child: child_offset,
+        })
+        .await?;
     let sender2 = sender.clone();
     let on_write = move |offset: u64, _length: usize| {
         // if try send fails it means that the receiver has been dropped.
         // in that case we want to abort the write_all_with_outboard.
         sender2
-            .try_send(GetProgress::Progress { id, offset })
+            .try_send(DownloadProgress::Progress { id, offset })
             .map_err(|e| {
                 tracing::info!("aborting download of {}", hash);
                 e
@@ -166,7 +169,7 @@ async fn get_blob_inner<D: BaoStore>(
     };
     let mut pw = ProgressSliceWriter2::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
-    let end = content
+    let end = at_content
         .write_all_with_outboard(of.as_mut(), &mut pw)
         .await?;
     // sync the data file
@@ -177,7 +180,7 @@ async fn get_blob_inner<D: BaoStore>(
     }
     db.insert_complete(entry).await?;
     // notify that we are done
-    sender.send(GetProgress::Done { id }).await?;
+    sender.send(DownloadProgress::Done { id }).await?;
     Ok(end)
 }
 
@@ -191,17 +194,16 @@ fn needs_outboard(size: u64) -> bool {
 /// for large blobs where the outboard is present.
 async fn get_blob_inner_partial<D: BaoStore>(
     db: &D,
-    header: AtBlobHeader,
+    at_header: AtBlobHeader,
     entry: D::PartialEntry,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<AtEndBlob> {
     // TODO: the data we get is validated at this point, but we need to check
     // that it actually contains the requested ranges. Or DO WE?
     use iroh_io::AsyncSliceWriter;
 
-    let hash = header.hash();
     // read the size
-    let (content, size) = header.next().await?;
+    let (at_content, size) = at_header.next().await?;
     // open the data file in any case
     let df = entry.data_writer().await?;
     let mut of = if needs_outboard(size) {
@@ -211,13 +213,22 @@ async fn get_blob_inner_partial<D: BaoStore>(
     };
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
-    sender.send(GetProgress::Found { id, hash, size }).await?;
+    let hash = at_content.hash();
+    let child_offset = at_content.offset();
+    sender
+        .send(DownloadProgress::Found {
+            id,
+            hash,
+            size,
+            child: child_offset,
+        })
+        .await?;
     let sender2 = sender.clone();
     let on_write = move |offset: u64, _length: usize| {
         // if try send fails it means that the receiver has been dropped.
         // in that case we want to abort the write_all_with_outboard.
         sender2
-            .try_send(GetProgress::Progress { id, offset })
+            .try_send(DownloadProgress::Progress { id, offset })
             .map_err(|e| {
                 tracing::info!("aborting download of {}", hash);
                 e
@@ -226,7 +237,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     };
     let mut pw = ProgressSliceWriter2::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
-    let end = content
+    let at_end = at_content
         .write_all_with_outboard(of.as_mut(), &mut pw)
         .await?;
     // sync the data file
@@ -239,8 +250,8 @@ async fn get_blob_inner_partial<D: BaoStore>(
     // rename the files or not.
     db.insert_complete(entry).await?;
     // notify that we are done
-    sender.send(GetProgress::Done { id }).await?;
-    Ok(end)
+    sender.send(DownloadProgress::Done { id }).await?;
+    Ok(at_end)
 }
 
 /// Given a sequence of hashes, figure out what is missing
@@ -280,23 +291,22 @@ pub async fn get_hash_seq<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     root_hash: &Hash,
-    sender: impl ProgressSender<Msg = GetProgress> + IdGenerator,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     use tracing::info as log;
     let finishing = if let Some(entry) = db.get(root_hash) {
         log!("already got collection - doing partial download");
         // got the collection
         let reader = entry.data_reader().await?;
-        let (mut collection, count) = parse_hash_seq(reader).await?;
+        let (mut hash_seq, children) = parse_hash_seq(reader).await?;
         sender
-            .send(GetProgress::FoundCollection {
+            .send(DownloadProgress::FoundHashSeq {
                 hash: *root_hash,
-                num_blobs: Some(count),
-                total_blobs_size: None,
+                children,
             })
             .await?;
         let mut children: Vec<Hash> = vec![];
-        while let Some(hash) = collection.next().await? {
+        while let Some(hash) = hash_seq.next().await? {
             children.push(hash);
         }
         let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
@@ -365,10 +375,9 @@ pub async fn get_hash_seq<D: BaoStore>(
         let reader = entry.data_reader().await?;
         let (mut collection, count) = parse_hash_seq(reader).await?;
         sender
-            .send(GetProgress::FoundCollection {
+            .send(DownloadProgress::FoundHashSeq {
                 hash: *root_hash,
-                num_blobs: Some(count),
-                total_blobs_size: None,
+                children: count,
             })
             .await?;
         let mut children = vec![];

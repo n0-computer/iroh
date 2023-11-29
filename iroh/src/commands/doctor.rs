@@ -4,6 +4,8 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
+    str::FromStr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -18,8 +20,13 @@ use iroh_net::{
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     derp::{DerpMap, DerpMode, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
-    netcheck, portmapper, MagicEndpoint, PeerAddr,
+    magic_endpoint,
+    magicsock::EndpointInfo,
+    netcheck, portmapper,
+    util::AbortingJoinHandle,
+    MagicEndpoint, NodeAddr, NodeId,
 };
+use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -53,7 +60,6 @@ impl std::str::FromStr for SecretKeyOption {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
     /// or the settings from the config file.
@@ -85,7 +91,7 @@ pub enum Commands {
     },
     /// Connect to an iroh doctor accept node.
     Connect {
-        /// hex peer id of the node to connect to
+        /// hex node id of the node to connect to
         dial: PublicKey,
 
         /// One or more remote endpoints to use when dialing
@@ -143,6 +149,8 @@ pub enum Commands {
         #[clap(long, default_value_t = 5)]
         count: usize,
     },
+    /// Inspect a ticket.
+    TicketInspect { ticket: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -152,6 +160,7 @@ enum TestStreamRequest {
     Send { bytes: u64, block_size: u32 },
 }
 
+#[derive(Debug, Clone, Copy)]
 struct TestConfig {
     size: u64,
     iterations: Option<u64>,
@@ -159,18 +168,22 @@ struct TestConfig {
 
 fn update_pb(
     task: &'static str,
-    pb: ProgressBar,
+    pb: Option<ProgressBar>,
     total_bytes: u64,
     mut updates: sync::mpsc::Receiver<u64>,
 ) -> tokio::task::JoinHandle<()> {
-    pb.set_message(task);
-    pb.set_position(0);
-    pb.set_length(total_bytes);
-    tokio::spawn(async move {
-        while let Some(position) = updates.recv().await {
-            pb.set_position(position);
-        }
-    })
+    if let Some(pb) = pb {
+        pb.set_message(task);
+        pb.set_position(0);
+        pb.set_length(total_bytes);
+        tokio::spawn(async move {
+            while let Some(position) = updates.recv().await {
+                pb.set_position(position);
+            }
+        })
+    } else {
+        tokio::spawn(futures::future::ready(()))
+    }
 }
 
 /// handle a test stream request
@@ -182,12 +195,13 @@ async fn handle_test_request(
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
     recv.read_exact(&mut buf).await?;
     let request: TestStreamRequest = postcard::from_bytes(&buf)?;
+    let pb = Some(gui.pb.clone());
     match request {
         TestStreamRequest::Echo { bytes } => {
             // copy the stream back
             let (mut send, updates) = ProgressWriter::new(&mut send);
             let t0 = Instant::now();
-            let progress = update_pb("echo", gui.pb.clone(), bytes, updates);
+            let progress = update_pb("echo", pb, bytes, updates);
             tokio::io::copy(&mut recv, &mut send).await?;
             let elapsed = t0.elapsed();
             drop(send);
@@ -197,7 +211,7 @@ async fn handle_test_request(
         TestStreamRequest::Drain { bytes } => {
             // drain the stream
             let (mut send, updates) = ProgressWriter::new(tokio::io::sink());
-            let progress = update_pb("recv", gui.pb.clone(), bytes, updates);
+            let progress = update_pb("recv", pb, bytes, updates);
             let t0 = Instant::now();
             tokio::io::copy(&mut recv, &mut send).await?;
             let elapsed = t0.elapsed();
@@ -208,7 +222,7 @@ async fn handle_test_request(
         TestStreamRequest::Send { bytes, block_size } => {
             // send the requested number of bytes, in blocks of the requested size
             let (mut send, updates) = ProgressWriter::new(&mut send);
-            let progress = update_pb("send", gui.pb.clone(), bytes, updates);
+            let progress = update_pb("send", pb, bytes, updates);
             let t0 = Instant::now();
             send_blocks(&mut send, bytes, block_size).await?;
             drop(send);
@@ -242,8 +256,8 @@ async fn report(
     stun_port: u16,
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::default().await;
-    let mut client = netcheck::Client::new(Some(port_mapper)).await?;
+    let port_mapper = portmapper::Client::default();
+    let mut client = netcheck::Client::new(Some(port_mapper))?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -270,15 +284,16 @@ struct Gui {
     send_pb: ProgressBar,
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
-    counter_task: Option<tokio::task::JoinHandle<()>>,
+    #[allow(dead_code)]
+    counter_task: Option<AbortingJoinHandle<()>>,
 }
 
 impl Gui {
-    fn new() -> Self {
+    fn new(endpoint: MagicEndpoint, node_id: NodeId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
-        let pb = indicatif::ProgressBar::hidden();
         let counters = mp.add(ProgressBar::hidden());
+        let conn_info = mp.add(ProgressBar::hidden());
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
@@ -288,19 +303,21 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
+        conn_info.set_style(style.clone());
         counters.set_style(style);
-        let pb = mp.add(pb);
+        let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(indicatif::ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = tokio::spawn(async move {
+        let counter_task = AbortingJoinHandle(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
+                Self::update_connection_info(&conn_info, &endpoint, &node_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        });
+        }));
         Self {
             mp,
             pb,
@@ -310,6 +327,45 @@ impl Gui {
             echo_pb,
             counter_task: Some(counter_task),
         }
+    }
+
+    async fn update_connection_info(
+        target: &ProgressBar,
+        endpoint: &MagicEndpoint,
+        node_id: &NodeId,
+    ) {
+        let format_latency = |x: Option<Duration>| {
+            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
+                .unwrap_or_else(|| "unknown".to_string())
+        };
+        let msg = match endpoint.connection_info(*node_id).await {
+            Ok(Some(EndpointInfo {
+                derp_region,
+                conn_type,
+                latency,
+                addrs,
+                ..
+            })) => {
+                let derp_region = derp_region
+                    .map(|x| x.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let latency = format_latency(latency);
+                let addrs = addrs
+                    .into_iter()
+                    .map(|addr_info| {
+                        format!("{} ({})", addr_info.addr, format_latency(addr_info.latency))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "derp region: {}, latency: {}, connection type: {}, addrs: [{}]",
+                    derp_region, latency, conn_type, addrs
+                )
+            }
+            Ok(None) => "connection info unavailable".to_string(),
+            Err(cause) => format!("error getting connection info: {}", cause),
+        };
+        target.set_message(msg);
     }
 
     fn update_counters(target: &ProgressBar) {
@@ -359,27 +415,35 @@ Ipv6:
             HumanBytes((b as f64 / d.as_secs_f64()) as u64)
         ));
     }
-}
 
-impl Drop for Gui {
-    fn drop(&mut self) {
-        if let Some(task) = self.counter_task.take() {
-            task.abort();
-        }
+    fn clear(&self) {
+        self.mp.clear().ok();
     }
 }
 
-async fn active_side(connection: quinn::Connection, config: &TestConfig) -> anyhow::Result<()> {
+async fn active_side(
+    connection: quinn::Connection,
+    config: &TestConfig,
+    gui: Option<&Gui>,
+) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
-    let gui = Gui::new();
-    let Gui { pb, .. } = &gui;
-    for _ in 0..n {
-        let d = send_test(&connection, config, pb).await?;
-        gui.set_send(config.size, d);
-        let d = recv_test(&connection, config, pb).await?;
-        gui.set_recv(config.size, d);
-        let d = echo_test(&connection, config, pb).await?;
-        gui.set_echo(config.size, d);
+    if let Some(gui) = gui {
+        let pb = Some(&gui.pb);
+        for _ in 0..n {
+            let d = send_test(&connection, config, pb).await?;
+            gui.set_send(config.size, d);
+            let d = recv_test(&connection, config, pb).await?;
+            gui.set_recv(config.size, d);
+            let d = echo_test(&connection, config, pb).await?;
+            gui.set_echo(config.size, d);
+        }
+    } else {
+        let pb = None;
+        for _ in 0..n {
+            let _d = send_test(&connection, config, pb).await?;
+            let _d = recv_test(&connection, config, pb).await?;
+            let _d = echo_test(&connection, config, pb).await?;
+        }
     }
     Ok(())
 }
@@ -397,14 +461,14 @@ async fn send_test_request(
 async fn echo_test(
     connection: &quinn::Connection,
     config: &TestConfig,
-    pb: &indicatif::ProgressBar,
+    pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
     send_test_request(&mut send, &TestStreamRequest::Echo { bytes: size }).await?;
     let (mut sink, updates) = ProgressWriter::new(tokio::io::sink());
     let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-    let progress = update_pb("echo", pb.clone(), size, updates);
+    let progress = update_pb("echo", pb.cloned(), size, updates);
     let t0 = Instant::now();
     send_blocks(&mut send, size, 1024 * 1024).await?;
     send.finish().await?;
@@ -418,7 +482,7 @@ async fn echo_test(
 async fn send_test(
     connection: &quinn::Connection,
     config: &TestConfig,
-    pb: &indicatif::ProgressBar,
+    pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -426,7 +490,7 @@ async fn send_test(
     let (mut send_with_progress, updates) = ProgressWriter::new(&mut send);
     let copying =
         tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
-    let progress = update_pb("send", pb.clone(), size, updates);
+    let progress = update_pb("send", pb.cloned(), size, updates);
     let t0 = Instant::now();
     send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
     drop(send_with_progress);
@@ -442,7 +506,7 @@ async fn send_test(
 async fn recv_test(
     connection: &quinn::Connection,
     config: &TestConfig,
-    pb: &indicatif::ProgressBar,
+    pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -457,7 +521,7 @@ async fn recv_test(
     )
     .await?;
     let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-    let progress = update_pb("recv", pb.clone(), size, updates);
+    let progress = update_pb("recv", pb.cloned(), size, updates);
     send.finish().await?;
     let received = copying.await??;
     anyhow::ensure!(received == size);
@@ -467,8 +531,12 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
-    let gui = Gui::new();
+async fn passive_side(
+    endpoint: MagicEndpoint,
+    connection: quinn::Connection,
+) -> anyhow::Result<()> {
+    let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
+    let gui = Gui::new(endpoint, remote_peer_id);
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -543,7 +611,7 @@ async fn make_endpoint(
 }
 
 async fn connect(
-    peer_id: PublicKey,
+    node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
     derp_region: Option<u16>,
@@ -551,17 +619,17 @@ async fn connect(
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, derp_map).await?;
 
-    tracing::info!("dialing {:?}", peer_id);
-    let peer_addr = PeerAddr::from_parts(peer_id, derp_region, direct_addresses);
-    let conn = endpoint.connect(peer_addr, &DR_DERP_ALPN).await;
+    tracing::info!("dialing {:?}", node_id);
+    let node_addr = NodeAddr::from_parts(node_id, derp_region, direct_addresses);
+    let conn = endpoint.connect(node_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
-            if let Err(cause) = passive_side(connection).await {
+            if let Err(cause) = passive_side(endpoint.clone(), connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }
         Err(cause) => {
-            eprintln!("unable to connect to {peer_id}: {cause}");
+            eprintln!("unable to connect to {node_id}: {cause}");
         }
     }
 
@@ -595,26 +663,48 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(derp_region) = endpoint.my_derp().await {
+    if let Some(derp_region) = endpoint.my_derp() {
         println!(
             "iroh doctor connect {} --derp-region {}",
             secret_key.public(),
             derp_region,
         );
     }
+    let connections = Arc::new(AtomicU64::default());
     while let Some(connecting) = endpoint.accept().await {
-        match connecting.await {
-            Ok(connection) => {
-                println!("\nAccepted connection. Performing test.\n");
-                let t0 = Instant::now();
-                if let Err(cause) = active_side(connection, &config).await {
-                    println!("error after {}: {cause}", t0.elapsed().as_secs_f64());
+        let connections = connections.clone();
+        let endpoint = endpoint.clone();
+        tokio::task::spawn(async move {
+            let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
+            match connecting.await {
+                Ok(connection) => {
+                    if n == 0 {
+                        let Ok(remote_peer_id) = magic_endpoint::get_remote_node_id(&connection)
+                        else {
+                            return;
+                        };
+                        println!("Accepted connection from {}", remote_peer_id);
+                        let t0 = Instant::now();
+                        let gui = Gui::new(endpoint.clone(), remote_peer_id);
+                        let res = active_side(connection, &config, Some(&gui)).await;
+                        gui.clear();
+                        let dt = t0.elapsed().as_secs_f64();
+                        if let Err(cause) = res {
+                            eprintln!("Test finished after {dt}s: {cause}",);
+                        } else {
+                            eprintln!("Test finished after {dt}s",);
+                        }
+                    } else {
+                        // silent
+                        active_side(connection, &config, None).await.ok();
+                    }
                 }
-            }
-            Err(cause) => {
-                eprintln!("error accepting connection {cause}");
-            }
-        }
+                Err(cause) => {
+                    eprintln!("error accepting connection {cause}");
+                }
+            };
+            connections.sub(1, portable_atomic::Ordering::SeqCst);
+        });
     }
 
     Ok(())
@@ -636,7 +726,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
         enable_pcp,
         enable_nat_pmp,
     };
-    let port_mapper = portmapper::Client::new(config).await;
+    let port_mapper = portmapper::Client::new(config);
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
@@ -658,7 +748,7 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
 
 async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     println!("probing port mapping protocols with {config:?}");
-    let port_mapper = portmapper::Client::new(config).await;
+    let port_mapper = portmapper::Client::new(config);
     let probe_rx = port_mapper.probe();
     let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
     println!("{probe}");
@@ -700,10 +790,13 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                 hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
             };
 
-            let client = clients.get(&region.region_id).cloned().unwrap();
+            let client = clients
+                .get(&region.region_id)
+                .map(|(c, _)| c.clone())
+                .unwrap();
 
             let start = std::time::Instant::now();
-            assert!(!client.is_connected().await);
+            assert!(!client.is_connected().await?);
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
@@ -714,22 +807,8 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                     region_details.error = Some(e.to_string());
                 }
                 Ok(_) => {
-                    assert!(client.is_connected().await);
+                    assert!(client.is_connected().await?);
                     region_details.connect = Some(start.elapsed());
-
-                    let c = client.clone();
-                    let t = tokio::task::spawn(async move {
-                        loop {
-                            match c.recv_detail().await {
-                                Ok(msg) => {
-                                    tracing::debug!("derp: {:?}", msg);
-                                }
-                                Err(err) => {
-                                    tracing::warn!("derp: {:?}", err);
-                                }
-                            }
-                        }
-                    });
 
                     match client.ping().await {
                         Ok(latency) => {
@@ -740,12 +819,11 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                             region_details.error = Some(e.to_string());
                         }
                     }
-                    t.abort();
                 }
             }
             // disconnect, to be able to measure reconnects
-            client.close_for_reconnect().await;
-            assert!(!client.is_connected().await);
+            client.close_for_reconnect().await?;
+            assert!(!client.is_connected().await?);
             if region_details.error.is_none() {
                 success.push(region_details);
             } else {
@@ -838,6 +916,27 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
+fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
+    let (kind, _) = iroh::ticket::Kind::parse_prefix(ticket)?;
+    match kind {
+        iroh::ticket::Kind::Blob => {
+            let ticket = iroh::ticket::blob::Ticket::from_str(ticket)
+                .context("failed parsing blob ticket")?;
+            println!("Blob ticket:\n{ticket:#?}");
+        }
+        iroh::ticket::Kind::Doc => {
+            let ticket =
+                iroh::ticket::doc::Ticket::from_str(ticket).context("failed parsing doc ticket")?;
+            println!("Document ticket:\n{ticket:#?}");
+        }
+        iroh::ticket::Kind::Node => {
+            println!("node tickets are yet to be implemented :)");
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     match command {
         Commands::Report {
@@ -896,5 +995,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let config = NodeConfig::from_env(None)?;
             derp_regions(count, config).await
         }
+        Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
     }
 }

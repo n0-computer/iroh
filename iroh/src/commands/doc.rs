@@ -12,23 +12,27 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
+use iroh_base::base32::fmt_short;
+use quic_rpc::ServiceConnection;
 use tokio::io::AsyncReadExt;
 
 use iroh::{
-    client::quic::{Doc, Iroh},
-    rpc_protocol::{DocTicket, SetTagOption, ShareMode, WrapOption},
+    client::{Doc, Iroh},
+    rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
     util::fs::{path_content_info, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
-use iroh_sync::{store::GetFilter, AuthorId, Entry, NamespaceId};
+use iroh_sync::{
+    store::{Query, SortDirection},
+    AuthorId, Entry, NamespaceId,
+};
 
 use crate::config::ConsoleEnv;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DisplayContentMode {
     /// Displays the content if small enough, otherwise it displays the content hash.
     Auto,
@@ -36,6 +40,8 @@ pub enum DisplayContentMode {
     Content,
     /// Display the hash of the content.
     Hash,
+    /// Display the shortened hash of the content.
+    ShortHash,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -79,7 +85,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
@@ -102,10 +108,10 @@ pub enum DocCommands {
         #[clap(short, long)]
         prefix: bool,
         /// Filter by author.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// How to show the contents of the key.
-        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        #[clap(short, long, value_enum, default_value_t=DisplayContentMode::Auto)]
         mode: DisplayContentMode,
     },
     /// Delete all entries below a key prefix.
@@ -120,7 +126,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Prefix to delete. All entries whose key starts with or is equal to the prefix will be
         /// deleted.
@@ -136,12 +142,18 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         /// Filter by author.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
+        /// How to sort the entries
+        #[clap(long, default_value_t=Sorting::Author)]
+        sort: Sorting,
+        /// Sort in descending order
+        #[clap(long)]
+        desc: bool,
         /// How to show the contents of the keys.
-        #[clap(short, long, default_value_t=DisplayContentMode::Hash)]
+        #[clap(short, long, value_enum, default_value_t=DisplayContentMode::ShortHash)]
         mode: DisplayContentMode,
     },
     /// Import data into a document
@@ -156,7 +168,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also be set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Prefix to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
         #[clap(long)]
@@ -218,23 +230,29 @@ pub enum DocCommands {
     },
 }
 
-#[derive(Debug, Clone, Parser)]
-pub enum AuthorCommands {
-    /// Set the active author (only works within the Iroh console).
-    Switch { author: AuthorId },
-    /// Create a new author.
-    New {
-        /// Switch to the created author (only in the Iroh console).
-        #[clap(long)]
-        switch: bool,
-    },
-    /// List authors.
-    #[clap(alias = "ls")]
-    List,
+#[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum Sorting {
+    /// Sort by author, then key
+    #[default]
+    Author,
+    /// Sort by key, then author
+    Key,
+}
+impl From<Sorting> for iroh_sync::store::SortBy {
+    fn from(value: Sorting) -> Self {
+        match value {
+            Sorting::Author => Self::AuthorKey,
+            Sorting::Key => Self::KeyAuthor,
+        }
+    }
 }
 
 impl DocCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Switch { id: doc } => {
                 env.set_doc(doc)?;
@@ -268,8 +286,8 @@ impl DocCommands {
             }
             Self::List => {
                 let mut stream = iroh.docs.list().await?;
-                while let Some(id) = stream.try_next().await? {
-                    println!("{}", id)
+                while let Some((id, kind)) = stream.try_next().await? {
+                    println!("{id} {kind}")
                 }
             }
             Self::Share { doc, mode } => {
@@ -324,22 +342,15 @@ impl DocCommands {
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let key = key.as_bytes().to_vec();
-                let filter = match (author, prefix) {
-                    (None, false) => GetFilter::Key(key),
-                    (None, true) => GetFilter::Prefix(key),
-                    (Some(author), true) => GetFilter::AuthorAndPrefix(author, key),
-                    (Some(author), false) => {
-                        // Special case: Author and key, this means single entry.
-                        let entry = doc
-                            .get_one(author, key)
-                            .await?
-                            .ok_or_else(|| anyhow!("Entry not found"))?;
-                        println!("{}", fmt_entry(&doc, &entry, mode).await);
-                        return Ok(());
-                    }
+                let query = Query::all();
+                let query = match (author, prefix) {
+                    (None, false) => query.key_exact(key),
+                    (None, true) => query.key_prefix(key),
+                    (Some(author), true) => query.author(author).key_prefix(key),
+                    (Some(author), false) => query.author(author).key_exact(key),
                 };
 
-                let mut stream = doc.get_many(filter).await?;
+                let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -349,11 +360,23 @@ impl DocCommands {
                 prefix,
                 author,
                 mode,
+                sort,
+                desc,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let filter = GetFilter::author_prefix(author, prefix);
-
-                let mut stream = doc.get_many(filter).await?;
+                let mut query = Query::all();
+                if let Some(author) = author {
+                    query = query.author(author);
+                }
+                if let Some(prefix) = prefix {
+                    query = query.key_prefix(prefix);
+                }
+                let direction = match desc {
+                    true => SortDirection::Desc,
+                    false => SortDirection::Asc,
+                };
+                query = query.sort_by(sort.into(), direction);
+                let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&doc, &entry, mode).await);
                 }
@@ -420,8 +443,8 @@ impl DocCommands {
                 let key_str = key.clone();
                 let key = key.as_bytes().to_vec();
                 let path: PathBuf = canonicalize_path(&out)?;
-                let stream = doc.get_many(GetFilter::Key(key)).await?;
-                let entry = match get_latest(stream).await? {
+                let mut stream = doc.get_many(Query::key_exact(key)).await?;
+                let entry = match stream.try_next().await? {
                     None => {
                         println!("<unable to find entry for key {key_str}>");
                         return Ok(());
@@ -479,12 +502,14 @@ impl DocCommands {
                                 }
                                 iroh_sync::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                            .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
                                 iroh_sync::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::Hash).await;
+                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                            .await;
                                     format!("<missing: {} ({})>", content, human_len(&entry))
                                 }
                             };
@@ -503,14 +528,11 @@ impl DocCommands {
                                 Origin::Connect(_) => "we initiated",
                             };
                             match event.result {
-                                Ok(_) => println!(
-                                    "synced doc {} with peer {} ({origin})",
-                                    fmt_short(event.namespace),
-                                    fmt_short(event.peer)
-                                ),
+                                Ok(()) => {
+                                    println!("synced peer {} ({origin})", fmt_short(event.peer))
+                                }
                                 Err(err) => println!(
-                                    "failed to sync doc {} with peer {} ({origin}): {err}",
-                                    fmt_short(event.namespace),
+                                    "failed to sync with peer {} ({origin}): {err}",
                                     fmt_short(event.peer)
                                 ),
                             }
@@ -547,46 +569,29 @@ impl DocCommands {
     }
 }
 
-async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
+async fn get_doc<C>(
+    iroh: &Iroh<C>,
+    env: &ConsoleEnv,
+    id: Option<NamespaceId>,
+) -> anyhow::Result<Doc<C>>
+where
+    C: ServiceConnection<ProviderService>,
+{
     iroh.docs
         .open(env.doc(id)?)
         .await?
         .context("Document not found")
 }
 
-impl AuthorCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
-        match self {
-            Self::Switch { author } => {
-                env.set_author(author)?;
-                println!("Active author is now {}", fmt_short(author.as_bytes()));
-            }
-            Self::List => {
-                let mut stream = iroh.authors.list().await?;
-                while let Some(author_id) = stream.try_next().await? {
-                    println!("{}", author_id);
-                }
-            }
-            Self::New { switch } => {
-                if switch && !env.is_console() {
-                    bail!("The --switch flag is only supported within the Iroh console.");
-                }
-
-                let author_id = iroh.authors.create().await?;
-                println!("{}", author_id);
-
-                if switch {
-                    env.set_author(author_id)?;
-                    println!("Active author is now {}", fmt_short(author_id.as_bytes()));
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
-async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
+async fn fmt_content<C>(
+    doc: &Doc<C>,
+    entry: &Entry,
+    mode: DisplayContentMode,
+) -> Result<String, String>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
     let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
@@ -617,9 +622,13 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
             let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
             Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
-        DisplayContentMode::Hash => {
+        DisplayContentMode::ShortHash => {
             let hash = entry.record().content_hash();
             Ok(fmt_short(hash.as_bytes()))
+        }
+        DisplayContentMode::Hash => {
+            let hash = entry.record().content_hash();
+            Ok(hash.to_string())
         }
     }
 }
@@ -630,20 +639,16 @@ fn human_len(entry: &Entry) -> HumanBytes {
 }
 
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
+async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
+where
+    C: ServiceConnection<ProviderService>,
+{
     let id = entry.id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
     let author = fmt_short(id.author());
     let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
     let len = human_len(entry);
     format!("@{author}: {key} = {content} ({len})")
-}
-
-/// Format the first 5 bytes of a byte string in bas32
-pub fn fmt_short(hash: impl AsRef<[u8]>) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
-    text.make_ascii_lowercase();
-    format!("{}…", &text)
 }
 
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
@@ -666,15 +671,18 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 /// document via the hash of the blob.
 /// It also creates and powers the [`ImportProgressBar`].
 #[tracing::instrument(skip_all)]
-async fn import_coordinator(
-    doc: Doc,
+async fn import_coordinator<C>(
+    doc: Doc<C>,
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,
     blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
     expected_size: u64,
     expected_entries: u64,
-) -> Result<()> {
+) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
         doc.id(),
@@ -845,24 +853,4 @@ impl ImportProgressBar {
     fn all_done(self) {
         self.mp.clear().ok();
     }
-}
-
-/// Get the latest entry for a key. If `None`, then an entry of the given key
-/// could not be found.
-async fn get_latest(stream: impl Stream<Item = Result<Entry>>) -> Result<Option<Entry>> {
-    let entry = stream
-        .try_fold(None, |acc: Option<Entry>, cur: Entry| async move {
-            match acc {
-                None => Ok(Some(cur)),
-                Some(prev) => {
-                    if cur.timestamp() > prev.timestamp() {
-                        Ok(Some(cur))
-                    } else {
-                        Ok(Some(prev))
-                    }
-                }
-            }
-        })
-        .await?;
-    Ok(entry)
 }

@@ -2,11 +2,13 @@
 members = [
   "iroh",
   "iroh-bytes",
+  "iroh-base",
   "iroh-gossip",
   "iroh-metrics",
   "iroh-net",
   "iroh-sync",
   "iroh-test",
+  "iroh-net/bench"
 ]
 resolver = "2"
 
@@ -21,3 +23,10 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
+
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unused-async = "warn"

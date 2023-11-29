@@ -43,7 +43,7 @@ impl MeshClients {
         }
     }
 
-    pub(crate) async fn mesh(
+    pub(crate) fn mesh(
         &mut self,
     ) -> anyhow::Result<Vec<tokio::sync::mpsc::Receiver<MeshClientEvent>>> {
         let addrs = match &self.mesh_addrs {
@@ -63,7 +63,7 @@ impl MeshClients {
         };
         let mut meshed_once_recvs = Vec::new();
         for addr in addrs {
-            let client = ClientBuilder::new()
+            let (client, client_receiver) = ClientBuilder::new()
                 .mesh_key(Some(self.mesh_key))
                 .server_url(addr)
                 .build(self.server_key.clone())
@@ -74,7 +74,7 @@ impl MeshClients {
             self.tasks.spawn(
                 async move {
                     if let Err(e) = client
-                        .run_mesh_client(packet_forwarder_handler, Some(sender))
+                        .run_mesh_client(packet_forwarder_handler, Some(sender), client_receiver)
                         .await
                     {
                         tracing::warn!("{e:?}");
@@ -173,14 +173,14 @@ mod tests {
 
         let alice_key = SecretKey::generate();
         println!("client alice: {:?}", alice_key.public());
-        let alice = ClientBuilder::new()
+        let (alice, mut alice_receiver) = ClientBuilder::new()
             .server_url(a_url)
             .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
         println!("client bob: {:?}", bob_key.public());
-        let bob = ClientBuilder::new()
+        let (bob, mut bob_receiver) = ClientBuilder::new()
             .server_url(b_url)
             .build(bob_key.clone())?;
         let _ = bob.connect().await?;
@@ -220,11 +220,10 @@ mod tests {
 
         // ensure we get the message, but allow other chatter between the
         // client and the server
-        let b = bob.clone();
         let alice_pub_key = alice_key.public();
         tokio::time::timeout(Duration::from_secs(5), async move {
             loop {
-                let (recv, _) = b.recv_detail().await?;
+                let (recv, _) = bob_receiver.recv().await.unwrap()?;
                 if let ReceivedMessage::ReceivedPacket { source, data } = recv {
                     assert_eq!(alice_pub_key, source);
                     assert_eq!(msg, data);
@@ -246,7 +245,7 @@ mod tests {
         // client and the server
         tokio::time::timeout(Duration::from_secs(5), async move {
             loop {
-                let (recv, _) = alice.recv_detail().await?;
+                let (recv, _) = alice_receiver.recv().await.unwrap()?;
                 if let ReceivedMessage::ReceivedPacket { source, data } = recv {
                     assert_eq!(bob_key.public(), source);
                     assert_eq!(msg, data);

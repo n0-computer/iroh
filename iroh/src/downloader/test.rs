@@ -16,16 +16,13 @@ impl Downloader {
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
 
-        iroh_bytes::util::runtime::Handle::from_current(1)
-            .unwrap()
-            .local_pool()
-            .spawn_pinned(move || async move {
-                // we want to see the logs of the service
-                let _guard = iroh_test::logging::setup();
+        LocalPoolHandle::new(1).spawn_pinned(move || async move {
+            // we want to see the logs of the service
+            let _guard = iroh_test::logging::setup();
 
-                let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
-                service.run().await
-            });
+            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+            service.run().await
+        });
 
         Downloader {
             next_id: Arc::new(AtomicU64::new(0)),
@@ -50,7 +47,7 @@ async fn smoke_test() {
         hash: Hash::new([0u8; 32]),
     };
     let handle = downloader
-        .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
         .await;
     // wait for the download result to be reported
     handle.await.expect("should report success");
@@ -79,7 +76,7 @@ async fn deduplication() {
     let mut handles = Vec::with_capacity(10);
     for _ in 0..10 {
         let h = downloader
-            .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+            .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
             .await;
         handles.push(h);
     }
@@ -111,10 +108,10 @@ async fn cancellation() {
         hash: Hash::new([0u8; 32]),
     };
     let handle_a = downloader
-        .queue(kind_1.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .queue(kind_1.clone(), vec![(peer, Role::Candidate).into()])
         .await;
     let handle_b = downloader
-        .queue(kind_1.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .queue(kind_1.clone(), vec![(peer, Role::Candidate).into()])
         .await;
     downloader.cancel(handle_a).await;
 
@@ -123,10 +120,10 @@ async fn cancellation() {
         hash: Hash::new([1u8; 32]),
     };
     let handle_c = downloader
-        .queue(kind_2.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .queue(kind_2.clone(), vec![(peer, Role::Candidate).into()])
         .await;
     let handle_d = downloader
-        .queue(kind_2.clone(), vec![(peer, PeerRole::Candidate).into()])
+        .queue(kind_2.clone(), vec![(peer, Role::Candidate).into()])
         .await;
     downloader.cancel(handle_c).await;
     downloader.cancel(handle_d).await;
@@ -164,7 +161,7 @@ async fn max_concurrent_requests() {
             hash: Hash::new([i; 32]),
         };
         let h = downloader
-            .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+            .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
             .await;
         expected_history.push((kind, peer));
         handles.push(h);
@@ -193,7 +190,7 @@ async fn max_concurrent_requests_per_peer() {
     getter.set_request_duration(Duration::from_millis(500));
     // set the concurreny limit very low to ensure it's hit
     let concurrency_limits = ConcurrencyLimits {
-        max_concurrent_requests_per_peer: 1,
+        max_concurrent_requests_per_node: 1,
         max_concurrent_requests: 10000, // all requests can be performed at the same time
         ..Default::default()
     };
@@ -209,7 +206,7 @@ async fn max_concurrent_requests_per_peer() {
             hash: Hash::new([i; 32]),
         };
         let h = downloader
-            .queue(kind.clone(), vec![(peer, PeerRole::Candidate).into()])
+            .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
             .await;
         handles.push(h);
     }
@@ -238,9 +235,9 @@ async fn peer_role_provider() {
         .queue(
             kind.clone(),
             vec![
-                (peer_candidate1, PeerRole::Candidate).into(),
-                (peer_provider, PeerRole::Provider).into(),
-                (peer_candidate2, PeerRole::Candidate).into(),
+                (peer_candidate1, Role::Candidate).into(),
+                (peer_provider, Role::Provider).into(),
+                (peer_candidate2, Role::Candidate).into(),
             ],
         )
         .await;

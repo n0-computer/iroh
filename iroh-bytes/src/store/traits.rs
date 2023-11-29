@@ -5,14 +5,15 @@ use crate::{
     hashseq::parse_hash_seq,
     util::{
         progress::{IdGenerator, ProgressSender},
-        BlobFormat, HashAndFormat, RpcError, Tag,
+        Tag,
     },
-    Hash, TempTag,
+    BlobFormat, Hash, HashAndFormat, TempTag,
 };
 use bao_tree::{blake3, ChunkRanges};
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
+use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
@@ -332,13 +333,13 @@ async fn gc_mark_task<'a>(
                 warn!("gc: {} creating data reader failed", hash);
                 continue;
             };
-            let Ok((mut iter, count)) = parse_hash_seq(reader).await else {
+            let Ok((mut stream, count)) = parse_hash_seq(reader).await else {
                 warn!("gc: {} parse failed", hash);
                 continue;
             };
             info!("parsed collection {} {:?}", hash, count);
             loop {
-                let item = match iter.next().await {
+                let item = match stream.next().await {
                     Ok(Some(item)) => item,
                     Ok(None) => break,
                     Err(_err) => {
