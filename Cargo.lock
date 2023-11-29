@@ -4159,6 +4159,7 @@ checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
 [[package]]
 name = "nfsserve"
 version = "0.10.1"
+source = "git+https://github.com/dignifiedquire/nfsserve?branch=refactor-split-example#532e5cfee2f34d81aeba052a60e5c053a6ca1970"
 dependencies = [
  "anyhow",
  "async-trait",

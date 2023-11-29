@@ -52,7 +52,7 @@ tracing = "0.1"
 walkdir = "2"
 
 # Mount
-nfsserve = { path = "../../nfsserve" }
+nfsserve = { git = "https://github.com/dignifiedquire/nfsserve", branch = "refactor-split-example" }
 async-trait = "0.1"
 ctrlc = "3.4"
 
