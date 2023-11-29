@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use iroh::{
-    client::{mem::Doc, LiveEvent},
+    client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
     rpc_protocol::ShareMode,
 };
@@ -23,7 +23,7 @@ use iroh_bytes::Hash;
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
     store::{self, Query},
-    AuthorId, ContentStatus, Entry,
+    AuthorId, ContentStatus,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
