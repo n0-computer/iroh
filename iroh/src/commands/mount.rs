@@ -4,8 +4,10 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::StreamExt;
 use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh_sync::store::Query;
 use nfsserve::{
     nfs::{
         self, fattr3, fileid3, filename3, ftype3, nfspath3, nfsstat3, nfstime3, sattr3, specdata3,
@@ -24,8 +26,9 @@ where
 {
     let path = path.canonicalize()?;
     println!("mounting {}", path.display());
-
     let fs = IrohFs::new(iroh.clone()).await?;
+
+    println!("fs prepared");
     perform_mount_and_wait_for_ctrlc(
         &path,
         fs,
@@ -124,29 +127,58 @@ where
         ];
 
         let mut docs = iroh.docs.list().await?;
-        let mut current_id = 1;
-        let mut children = Vec::new();
+        let mut current_id = 2;
+        let mut root_children = Vec::new();
         while let Some(item) = docs.next().await {
-            let (doc, cap) = item?;
-            let id = current_id;
+            let (doc_id, cap) = item?;
+            let dir_id = current_id;
             current_id += 1;
+
+            let mut children = Vec::new();
+            let mut files = Vec::new();
+
+            let doc = iroh.docs.open(doc_id).await?.unwrap();
+
+            let mut keys = doc.get_many(Query::all()).await?;
+            while let Some(entry) = keys.next().await {
+                let entry = entry?;
+                let name = String::from_utf8_lossy(&entry.key()).replace("/", "-");
+                let content = doc
+                    .read_to_bytes(&entry)
+                    .await
+                    .unwrap_or_else(|_| Bytes::new());
+                let id = current_id;
+                current_id += 1;
+                children.push(id);
+                files.push(make_file(&name, id, dir_id, &content));
+            }
 
             // TODO: store cap to indicate read/write
             entries.push(make_dir(
-                &format!("doc:{}", doc),
-                id, // current id
-                1,  // parent id
-                Vec::new(),
+                &format!("doc:{}", doc_id),
+                dir_id, // current id
+                1,      // parent id
+                children,
             ));
-            children.push(id);
+            entries.extend(files);
+            root_children.push(dir_id);
         }
 
         let root_dir = make_dir(
-            "/", 1, // current id. Must match position in entries
+            "/",
+            1, // current id. Must match position in entries
             1, // parent id
-            children,
+            root_children,
         );
         entries.insert(1, root_dir);
+
+        for entry in &entries {
+            println!("{}:{} in {}:", entry.id, entry.name, entry.parent);
+            match &entry.contents {
+                FSContents::File(d) => println!("  {}bytes", d.len()),
+                FSContents::Directory(children) => println!("  {:?}", children),
+            }
+        }
 
         Ok(Self {
             fs: Mutex::new(entries),
