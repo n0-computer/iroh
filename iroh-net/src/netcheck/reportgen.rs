@@ -880,9 +880,6 @@ async fn run_probe(
     Ok(result)
 }
 
-// /// Sends a IPv4 or IPv6 STUN request waiting for a response.
-// async fn send_stun_req(sock: &Arc<UdpSocket>, )
-
 /// Reports whether or not we think the system is behind a
 /// captive portal, detected by making a request to a URL that we know should
 /// return a "204 No Content" response and checking if that's what we get.
