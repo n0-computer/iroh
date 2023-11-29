@@ -15,6 +15,8 @@ pub mod blob;
 pub mod console;
 pub mod doc;
 pub mod doctor;
+pub mod mount;
+mod mount_runner;
 pub mod node;
 pub mod rpc;
 pub mod runtime;
@@ -78,6 +80,10 @@ pub enum Commands {
         command: self::doctor::Commands,
     },
     Runtime {
+        path: PathBuf,
+    },
+    Mount {
+        /// Mount target.
         path: PathBuf,
     },
 }
@@ -160,6 +166,22 @@ impl Cli {
                     todo!();
                     // let iroh = iroh_quic_connect().await.context("rpc connect")?;
                     // runtime_exec(&iroh, path).await
+                }
+            }
+            Commands::Mount { path } => {
+                let _env = ConsoleEnv::for_cli()?;
+                if self.start {
+                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    start::run_with_command(
+                        &rt,
+                        &config,
+                        RunType::SingleCommand,
+                        |iroh| async move { self::mount::exec(&iroh, path).await },
+                    )
+                    .await
+                } else {
+                    let iroh = iroh_quic_connect().await.context("rpc connect")?;
+                    self::mount::exec(&iroh, path).await
                 }
             }
         }

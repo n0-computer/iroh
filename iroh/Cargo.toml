@@ -51,6 +51,11 @@ tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
 walkdir = "2"
 
+# Mount
+nfsserve = { path = "../../nfsserve" }
+async-trait = "0.1"
+ctrlc = "3.4"
+
 # Runtime
 deno_core = "^0.232.0"
 deno_runtime = "^0.133.0"
