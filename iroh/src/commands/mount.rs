@@ -7,7 +7,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use iroh::{client::Iroh, rpc_protocol::ProviderService};
 use iroh_bytes::Hash;
-use iroh_sync::store::Query;
+use iroh_sync::{store::Query, AuthorId, NamespaceId};
 use nfsserve::{
     nfs::{
         self, fattr3, fileid3, filename3, ftype3, nfspath3, nfsstat3, nfstime3, sattr3, specdata3,
@@ -16,6 +16,7 @@ use nfsserve::{
 };
 use quic_rpc::ServiceConnection;
 use tokio::sync::Mutex;
+use tracing::error;
 
 use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 
@@ -45,8 +46,18 @@ where
 
 #[derive(Debug, Clone)]
 enum FSContents {
-    File(Hash),
-    Directory(Vec<fileid3>),
+    File {
+        content_hash: Hash,
+        content_len: u64,
+        author: AuthorId,
+        namespace: NamespaceId,
+        key: Bytes,
+    },
+    Directory {
+        content: Vec<fileid3>,
+        namespace: NamespaceId,
+        author: AuthorId,
+    },
 }
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -58,15 +69,24 @@ struct FSEntry {
     contents: FSContents,
 }
 
-fn make_file(name: &str, id: fileid3, parent: fileid3, contents: Hash, size: u64) -> FSEntry {
+fn make_file(
+    name: &str,
+    id: fileid3,
+    parent: fileid3,
+    content_hash: Hash,
+    content_len: u64,
+    author: AuthorId,
+    namespace: NamespaceId,
+    key: Bytes,
+) -> FSEntry {
     let attr = fattr3 {
         ftype: ftype3::NF3REG,
         mode: 0o755,
         nlink: 1,
         uid: 507,
         gid: 507,
-        size,
-        used: size,
+        size: content_len,
+        used: content_len,
         rdev: specdata3::default(),
         fsid: 0,
         fileid: 2,
@@ -79,11 +99,24 @@ fn make_file(name: &str, id: fileid3, parent: fileid3, contents: Hash, size: u64
         attr,
         name: name.as_bytes().into(),
         parent,
-        contents: FSContents::File(contents),
+        contents: FSContents::File {
+            content_hash,
+            content_len,
+            namespace,
+            author,
+            key,
+        },
     }
 }
 
-fn make_dir(name: &str, id: fileid3, parent: fileid3, contents: Vec<fileid3>) -> FSEntry {
+fn make_dir(
+    name: &str,
+    id: fileid3,
+    parent: fileid3,
+    content: Vec<fileid3>,
+    namespace: NamespaceId,
+    author: AuthorId,
+) -> FSEntry {
     let attr = fattr3 {
         ftype: ftype3::NF3DIR,
         mode: 0o777,
@@ -104,7 +137,11 @@ fn make_dir(name: &str, id: fileid3, parent: fileid3, contents: Vec<fileid3>) ->
         attr,
         name: name.as_bytes().into(),
         parent,
-        contents: FSContents::Directory(contents),
+        contents: FSContents::Directory {
+            content,
+            namespace,
+            author,
+        },
     }
 }
 
@@ -123,8 +160,21 @@ where
     C: ServiceConnection<ProviderService>,
 {
     async fn new(iroh: Iroh<C>) -> Result<Self> {
+        // TODO: better
+        let author = iroh.authors.create().await?;
+        let none_author = AuthorId::default();
+        let none_ns = NamespaceId::default();
         let mut entries = vec![
-            make_file("", 0, 0, Hash::EMPTY, 0), // fileid 0 is special
+            make_file(
+                "",
+                0,
+                0,
+                Hash::EMPTY,
+                0,
+                none_author,
+                none_ns,
+                Bytes::default(),
+            ), // fileid 0 is special
         ];
 
         let mut docs = iroh.docs.list().await?;
@@ -153,6 +203,9 @@ where
                     dir_id,
                     entry.content_hash(),
                     entry.content_len(),
+                    entry.author(),
+                    entry.namespace(),
+                    entry.key().to_vec().into(),
                 ));
             }
 
@@ -162,6 +215,8 @@ where
                 dir_id, // current id
                 1,      // parent id
                 children,
+                doc_id,
+                author,
             ));
             entries.extend(files);
             root_children.push(dir_id);
@@ -172,6 +227,8 @@ where
             1, // current id. Must match position in entries
             1, // parent id
             root_children,
+            none_ns,
+            none_author,
         );
         entries.insert(1, root_dir);
 
@@ -199,23 +256,52 @@ where
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
-        // {
-        //     let mut fs = self.fs.lock().unwrap();
-        //     let mut fssize = fs[id as usize].attr.size;
-        //     if let FSContents::File(bytes) = &mut fs[id as usize].contents {
-        //         let offset = offset as usize;
-        //         if offset + data.len() > bytes.len() {
-        //             bytes.resize(offset + data.len(), 0);
-        //             bytes[offset..].copy_from_slice(data);
-        //             fssize = bytes.len() as u64;
-        //         }
-        //     }
-        //     fs[id as usize].attr.size = fssize;
-        //     fs[id as usize].attr.used = fssize;
-        // }
-        // self.getattr(id).await
-        // TODO:
-        Err(nfsstat3::NFS3ERR_NOTSUPP)
+        {
+            let mut fs = self.fs.lock().await;
+            let mut fssize = fs[id as usize].attr.size;
+            if let FSContents::File {
+                content_hash,
+                content_len,
+                author,
+                namespace,
+                key,
+            } = &mut fs[id as usize].contents
+            {
+                // get the full content
+                let mut bytes = self
+                    .iroh
+                    .blobs
+                    .read_to_bytes(*content_hash)
+                    .await
+                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+                    .to_vec();
+                let offset = offset as usize;
+                if offset + data.len() > bytes.len() {
+                    bytes.resize(offset + data.len(), 0);
+                    bytes[offset..].copy_from_slice(data);
+                    fssize = bytes.len() as u64;
+                }
+
+                // store back
+                let doc = self
+                    .iroh
+                    .docs
+                    .open(*namespace)
+                    .await
+                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+                    .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+                let hash = doc
+                    .set_bytes(*author, key.clone(), bytes)
+                    .await
+                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+                *content_hash = hash;
+                *content_len = fssize;
+            }
+            fs[id as usize].attr.size = fssize;
+            fs[id as usize].attr.used = fssize;
+        }
+        self.getattr(id).await
     }
 
     async fn create(
@@ -224,22 +310,53 @@ where
         filename: &filename3,
         _attr: sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
-        // let newid: fileid3;
-        // {
-        //     let mut fs = self.fs.lock().unwrap();
-        //     newid = fs.len() as fileid3;
-        //     fs.push(make_file(
-        //         std::str::from_utf8(filename).unwrap(),
-        //         newid,
-        //         dirid,
-        //         "".as_bytes(),
-        //     ));
-        //     if let FSContents::Directory(dir) = &mut fs[dirid as usize].contents {
-        //         dir.push(newid);
-        //     }
-        // }
-        // Ok((newid, self.getattr(newid).await.unwrap()))
-        Err(nfsstat3::NFS3ERR_NOTSUPP)
+        let newid: fileid3;
+        {
+            let mut fs = self.fs.lock().await;
+            newid = fs.len() as fileid3;
+            let file = if let FSContents::Directory {
+                content,
+                namespace,
+                author,
+            } = &mut fs[dirid as usize].contents
+            {
+                let bytes = Bytes::default();
+                let doc = self
+                    .iroh
+                    .docs
+                    .open(*namespace)
+                    .await
+                    .map_err(|err| {
+                        error!("open {}: {:?}", namespace, err);
+                        nfsstat3::NFS3ERR_SERVERFAULT
+                    })?
+                    .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+                let key: Bytes = filename.as_ref().to_vec().into();
+
+                // Not writing, as we are not storing empty entries
+                let hash = Hash::EMPTY;
+                content.push(newid);
+
+                Some(make_file(
+                    std::str::from_utf8(filename).unwrap(),
+                    newid,
+                    dirid,
+                    hash,
+                    0,
+                    *author,
+                    *namespace,
+                    key,
+                ))
+            } else {
+                None
+            };
+
+            if let Some(file) = file {
+                fs.push(file);
+            }
+        }
+        Ok((newid, self.getattr(newid).await.unwrap()))
     }
 
     async fn create_exclusive(
@@ -253,9 +370,9 @@ where
     async fn lookup(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3> {
         let fs = self.fs.lock().await;
         let entry = fs.get(dirid as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        if let FSContents::File(_) = entry.contents {
+        if let FSContents::File { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
-        } else if let FSContents::Directory(dir) = &entry.contents {
+        } else if let FSContents::Directory { content, .. } = &entry.contents {
             // if looking for dir/. its the current directory
             if filename[..] == [b'.'] {
                 return Ok(dirid);
@@ -264,7 +381,7 @@ where
             if filename[..] == [b'.', b'.'] {
                 return Ok(entry.parent);
             }
-            for i in dir {
+            for i in content {
                 if let Some(f) = fs.get(*i as usize) {
                     if f.name[..] == filename[..] {
                         return Ok(*i);
@@ -324,12 +441,56 @@ where
         }
         match setattr.size {
             nfs::set_size3::size(s) => {
-                return Err(nfsstat3::NFS3ERR_NOTSUPP);
-                // entry.attr.size = s;
-                // entry.attr.used = s;
-                // if let FSContents::File(bytes) = &mut entry.contents {
-                //     bytes.resize(s as usize, 0);
-                // }
+                entry.attr.size = s;
+                entry.attr.used = s;
+
+                if let FSContents::File {
+                    content_hash,
+                    content_len,
+                    author,
+                    namespace,
+                    key,
+                } = &mut entry.contents
+                {
+                    // get the full content
+                    let mut bytes = self
+                        .iroh
+                        .blobs
+                        .read_to_bytes(*content_hash)
+                        .await
+                        .map_err(|err| {
+                            error!("read_to_bytes {}: {:?} {:?}", namespace, key, err);
+                            nfsstat3::NFS3ERR_SERVERFAULT
+                        })?
+                        .to_vec();
+
+                    bytes.resize(s as usize, 0);
+
+                    // store back
+                    let doc = self
+                        .iroh
+                        .docs
+                        .open(*namespace)
+                        .await
+                        .map_err(|err| {
+                            error!("open {}: {:?}", namespace, err);
+                            nfsstat3::NFS3ERR_SERVERFAULT
+                        })?
+                        .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+                    let hash = if bytes.is_empty() {
+                        Hash::EMPTY
+                    } else {
+                        doc.set_bytes(*author, key.clone(), bytes)
+                            .await
+                            .map_err(|err| {
+                                error!("set_bytes {}: {:?} {:?}", namespace, key, err);
+                                nfsstat3::NFS3ERR_SERVERFAULT
+                            })?
+                    };
+                    *content_hash = hash;
+                    *content_len = s;
+                };
             }
             nfs::set_size3::Void => {}
         }
@@ -344,9 +505,9 @@ where
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
         let fs = self.fs.lock().await;
         let entry = fs.get(id as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        if let FSContents::Directory(_) = entry.contents {
+        if let FSContents::Directory { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_ISDIR);
-        } else if let FSContents::File(hash) = &entry.contents {
+        } else if let FSContents::File { content_hash, .. } = &entry.contents {
             let mut start = offset as usize;
             let mut end = offset as usize + count as usize;
 
@@ -354,7 +515,7 @@ where
             let bytes = self
                 .iroh
                 .blobs
-                .read_to_bytes(*hash)
+                .read_to_bytes(*content_hash)
                 .await
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
             let eof = end >= bytes.len();
@@ -377,24 +538,24 @@ where
     ) -> Result<ReadDirResult, nfsstat3> {
         let fs = self.fs.lock().await;
         let entry = fs.get(dirid as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        if let FSContents::File(_) = entry.contents {
+        if let FSContents::File { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
-        } else if let FSContents::Directory(dir) = &entry.contents {
+        } else if let FSContents::Directory { content, .. } = &entry.contents {
             let mut ret = ReadDirResult {
                 entries: Vec::new(),
                 end: false,
             };
             let mut start_index = 0;
             if start_after > 0 {
-                if let Some(pos) = dir.iter().position(|&r| r == start_after) {
+                if let Some(pos) = content.iter().position(|&r| r == start_after) {
                     start_index = pos + 1;
                 } else {
                     return Err(nfsstat3::NFS3ERR_BAD_COOKIE);
                 }
             }
-            let remaining_length = dir.len() - start_index;
+            let remaining_length = content.len() - start_index;
 
-            for i in dir[start_index..].iter() {
+            for i in content[start_index..].iter() {
                 ret.entries.push(DirEntry {
                     fileid: *i,
                     name: fs[(*i) as usize].name.clone(),
