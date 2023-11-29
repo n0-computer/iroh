@@ -256,51 +256,50 @@ where
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
+        let mut fs = self.fs.lock().await;
+        let mut fssize = fs[id as usize].attr.size;
+        if let FSContents::File {
+            content_hash,
+            content_len,
+            author,
+            namespace,
+            key,
+        } = &mut fs[id as usize].contents
         {
-            let mut fs = self.fs.lock().await;
-            let mut fssize = fs[id as usize].attr.size;
-            if let FSContents::File {
-                content_hash,
-                content_len,
-                author,
-                namespace,
-                key,
-            } = &mut fs[id as usize].contents
-            {
-                // get the full content
-                let mut bytes = self
-                    .iroh
-                    .blobs
-                    .read_to_bytes(*content_hash)
-                    .await
-                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-                    .to_vec();
-                let offset = offset as usize;
-                if offset + data.len() > bytes.len() {
-                    bytes.resize(offset + data.len(), 0);
-                    bytes[offset..].copy_from_slice(data);
-                    fssize = bytes.len() as u64;
-                }
-
-                // store back
-                let doc = self
-                    .iroh
-                    .docs
-                    .open(*namespace)
-                    .await
-                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-                    .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
-                let hash = doc
-                    .set_bytes(*author, key.clone(), bytes)
-                    .await
-                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
-                *content_hash = hash;
-                *content_len = fssize;
+            // get the full content
+            let mut bytes = self
+                .iroh
+                .blobs
+                .read_to_bytes(*content_hash)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+                .to_vec();
+            let offset = offset as usize;
+            if offset + data.len() > bytes.len() {
+                bytes.resize(offset + data.len(), 0);
+                bytes[offset..].copy_from_slice(data);
+                fssize = bytes.len() as u64;
             }
-            fs[id as usize].attr.size = fssize;
-            fs[id as usize].attr.used = fssize;
+
+            // store back
+            let doc = self
+                .iroh
+                .docs
+                .open(*namespace)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+                .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+            let hash = doc
+                .set_bytes(*author, key.clone(), bytes)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+            *content_hash = hash;
+            *content_len = fssize;
         }
+        fs[id as usize].attr.size = fssize;
+        fs[id as usize].attr.used = fssize;
+
         self.getattr(id).await
     }
 
@@ -578,7 +577,46 @@ where
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
     #[allow(unused)]
     async fn remove(&self, dirid: fileid3, filename: &filename3) -> Result<(), nfsstat3> {
-        return Err(nfsstat3::NFS3ERR_NOTSUPP);
+        let mut fs = self.fs.lock().await;
+        let fid = fs
+            .iter()
+            .position(|e| e.name.as_ref() == filename.as_ref())
+            .ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        if let FSContents::File {
+            content_hash,
+            content_len,
+            author,
+            namespace,
+            key,
+        } = &mut fs[fid as usize].contents
+        {
+            let doc = self
+                .iroh
+                .docs
+                .open(*namespace)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+                .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+            doc.del(*author, key.clone()).await.map_err(|err| {
+                error!("delete {:?}: {:?}", key, err);
+                nfsstat3::NFS3ERR_SERVERFAULT
+            })?;
+        } else {
+            return Err(nfsstat3::NFS3ERR_ISDIR);
+        }
+
+        let entry = fs.get_mut(dirid as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+
+        if let FSContents::Directory { content, .. } = &mut entry.contents {
+            let idx = content
+                .iter()
+                .position(|r| *r as usize == fid)
+                .ok_or(nfsstat3::NFS3ERR_NOENT)?;
+            content.remove(idx);
+        }
+
+        Ok(())
     }
 
     /// Removes a file.
