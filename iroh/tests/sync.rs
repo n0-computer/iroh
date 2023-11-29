@@ -8,10 +8,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use iroh::{
-    client::mem::Doc,
+    client::{mem::Doc, LiveEvent},
     node::{Builder, Node},
     rpc_protocol::ShareMode,
-    sync_engine::LiveEvent,
 };
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -790,7 +789,7 @@ async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
         .next()
         .await
         .ok_or_else(|| anyhow!("entry not found"))??;
-    let content = doc.read_to_bytes(&entry).await?;
+    let content = entry.content_bytes(doc).await?;
     Ok(content.to_vec())
 }
 
