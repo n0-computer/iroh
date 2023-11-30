@@ -124,6 +124,49 @@ where
     Ok(())
 }
 
+/// Migrate the flat store from v0 to v1. This can not be done in the store itself, since the
+/// constructor of the store now only takes a single directory.
+fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
+    let iroh_data_root = iroh_data_root()?;
+    let complete_v0 = iroh_data_root.join("blobs.v0");
+    let partial_v0 = iroh_data_root.join("blobs-partial.v0");
+    let meta_v0 = iroh_data_root.join("blobs-meta.v0");
+    let complete_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
+        .unwrap()
+        .join("complete");
+    let partial_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
+        .unwrap()
+        .join("partial");
+    let meta_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
+        .unwrap()
+        .join("meta");
+    if complete_v0.exists() && !complete_v1.exists() {
+        tracing::info!(
+            "moving complete files from {} to {}",
+            complete_v0.display(),
+            complete_v1.display()
+        );
+        std::fs::rename(complete_v0, complete_v1).context("migrating complete store failed")?;
+    }
+    if partial_v0.exists() && !partial_v1.exists() {
+        tracing::info!(
+            "moving partial files from {} to {}",
+            partial_v0.display(),
+            partial_v1.display()
+        );
+        std::fs::rename(partial_v0, partial_v1).context("migrating partial store failed")?;
+    }
+    if meta_v0.exists() && !meta_v1.exists() {
+        tracing::info!(
+            "moving meta files from {} to {}",
+            meta_v0.display(),
+            meta_v1.display()
+        );
+        std::fs::rename(meta_v0, meta_v1).context("migrating meta store failed")?;
+    }
+    Ok(())
+}
+
 async fn start_node(
     rt: &LocalPoolHandle,
     derp_map: Option<DerpMap>,
@@ -138,13 +181,11 @@ async fn start_node(
         }
     }
 
-    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
-    let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
-    let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
+    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreDir)?;
     let peers_data_path = path_with_env(IrohPaths::PeerData)?;
     tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir)
+    tokio::task::spawn_blocking(migrate_flat_store_v0_v1).await??;
+    let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let secret_key_path = Some(path_with_env(IrohPaths::SecretKey)?);

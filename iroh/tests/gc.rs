@@ -210,11 +210,13 @@ mod flat {
     }
 
     fn data_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
-        path(root, "data")
+        // this assumes knowledge of the internal directory structure of the flat store
+        path(root.join("complete"), "data")
     }
 
     fn outboard_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
-        path(root, "obao4")
+        // this assumes knowledge of the internal directory structure of the flat store
+        path(root.join("complete"), "obao4")
     }
 
     async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
@@ -251,14 +253,14 @@ mod flat {
 
     /// count the number of partial data files for a hash
     fn count_partial_data(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root, "data")
+        count_partial(root.join("partial"), "data")
     }
 
     /// count the number of partial outboard files for a hash
     fn count_partial_outboard(
         root: PathBuf,
     ) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root, "obao4")
+        count_partial(root.join("partial"), "obao4")
     }
 
     /// Test gc for sequences of hashes that protect their children from deletion.
@@ -269,8 +271,7 @@ mod flat {
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone()).await?;
+        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(123456);
@@ -425,8 +426,7 @@ mod flat {
         let count_partial_data = count_partial_data(dir.clone());
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone()).await?;
+        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
 
@@ -465,8 +465,7 @@ mod flat {
         let count_partial_data = count_partial_data(dir.clone());
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone()).await?;
+        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 
