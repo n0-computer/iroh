@@ -55,6 +55,7 @@ walkdir = "2"
 nfsserve = { git = "https://github.com/dignifiedquire/nfsserve", branch = "refactor-split-example" }
 async-trait = "0.1"
 ctrlc = "3.4"
+filetime = "0.2"
 
 # Runtime
 deno_core = "^0.232.0"

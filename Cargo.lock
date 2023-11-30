@@ -3337,6 +3337,7 @@ dependencies = [
  "dirs-next",
  "duct",
  "ed25519-dalek",
+ "filetime",
  "flume 0.11.0",
  "futures",
  "genawaiter",

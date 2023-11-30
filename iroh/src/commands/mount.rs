@@ -69,6 +69,14 @@ struct FSEntry {
     contents: FSContents,
 }
 
+fn now() -> nfstime3 {
+    let now = filetime::FileTime::now();
+    nfstime3 {
+        seconds: now.seconds() as _,
+        nseconds: now.nanoseconds(),
+    }
+}
+
 fn make_file(
     name: &str,
     id: fileid3,
@@ -89,9 +97,9 @@ fn make_file(
         used: content_len,
         rdev: specdata3::default(),
         fsid: 0,
-        fileid: 2,
+        fileid: id,
         atime: nfstime3::default(),
-        mtime: nfstime3::default(),
+        mtime: now(),
         ctime: nfstime3::default(),
     };
     FSEntry {
@@ -127,9 +135,9 @@ fn make_dir(
         used: 0,
         rdev: specdata3::default(),
         fsid: 0,
-        fileid: 1,
+        fileid: id,
         atime: nfstime3::default(),
-        mtime: nfstime3::default(),
+        mtime: now(),
         ctime: nfstime3::default(),
     };
     FSEntry {
@@ -296,6 +304,12 @@ where
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
             *content_hash = hash;
             *content_len = fssize;
+            tracing::info!(
+                "written {} bytes at offset {}: final size: {}",
+                data.len(),
+                offset,
+                fssize
+            );
         }
         fs[id as usize].attr.size = fssize;
         fs[id as usize].attr.used = fssize;
@@ -319,8 +333,7 @@ where
                 author,
             } = &mut fs[dirid as usize].contents
             {
-                let bytes = Bytes::default();
-                let doc = self
+                let _doc = self
                     .iroh
                     .docs
                     .open(*namespace)
@@ -360,10 +373,65 @@ where
 
     async fn create_exclusive(
         &self,
-        _dirid: fileid3,
-        _filename: &filename3,
+        dirid: fileid3,
+        filename: &filename3,
     ) -> Result<fileid3, nfsstat3> {
-        Err(nfsstat3::NFS3ERR_NOTSUPP)
+        let newid: fileid3;
+        {
+            let mut fs = self.fs.lock().await;
+            newid = fs.len() as fileid3;
+            let file = if let FSContents::Directory {
+                content,
+                namespace,
+                author,
+            } = &mut fs[dirid as usize].contents
+            {
+                let doc = self
+                    .iroh
+                    .docs
+                    .open(*namespace)
+                    .await
+                    .map_err(|err| {
+                        error!("open {}: {:?}", namespace, err);
+                        nfsstat3::NFS3ERR_SERVERFAULT
+                    })?
+                    .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+                let key: Bytes = filename.as_ref().to_vec().into();
+
+                let old_entry = doc
+                    .get_exact(*author, &key, false)
+                    .await
+                    .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+                if old_entry.is_some() {
+                    error!("already exists: {:?}", std::str::from_utf8(filename));
+                    return Err(nfsstat3::NFS3ERR_EXIST);
+                }
+
+                // Not writing, as we are not storing empty entries
+                let hash = Hash::EMPTY;
+                content.push(newid);
+
+                Some(make_file(
+                    std::str::from_utf8(filename).unwrap(),
+                    newid,
+                    dirid,
+                    hash,
+                    0,
+                    *author,
+                    *namespace,
+                    key,
+                ))
+            } else {
+                None
+            };
+
+            if let Some(file) = file {
+                fs.push(file);
+            }
+        }
+        Ok(newid)
     }
 
     async fn lookup(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3> {
@@ -575,7 +643,6 @@ where
     /// Removes a file.
     /// If not supported dur to readonly file system
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
-    #[allow(unused)]
     async fn remove(&self, dirid: fileid3, filename: &filename3) -> Result<(), nfsstat3> {
         let mut fs = self.fs.lock().await;
         let fid = fs
@@ -583,11 +650,10 @@ where
             .position(|e| e.name.as_ref() == filename.as_ref())
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
         if let FSContents::File {
-            content_hash,
-            content_len,
             author,
             namespace,
             key,
+            ..
         } = &mut fs[fid as usize].contents
         {
             let doc = self
@@ -622,7 +688,6 @@ where
     /// Removes a file.
     /// If not supported dur to readonly file system
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
-    #[allow(unused)]
     async fn rename(
         &self,
         from_dirid: fileid3,
@@ -630,28 +695,79 @@ where
         to_dirid: fileid3,
         to_filename: &filename3,
     ) -> Result<(), nfsstat3> {
-        return Err(nfsstat3::NFS3ERR_NOTSUPP);
+        let mut fs = self.fs.lock().await;
+
+        // read new entry
+        let fid = fs
+            .iter()
+            .position(|e| e.name.as_ref() == from_filename.as_ref())
+            .ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        let entry = fs.get(fid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+
+        let FSContents::File {
+            content_hash,
+            namespace,
+            author,
+            content_len,
+            ..
+        } = &entry.contents
+        else {
+            return Err(nfsstat3::NFS3ERR_ISDIR);
+        };
+
+        let new_key: Bytes = to_filename.as_ref().to_vec().into();
+        let doc = self
+            .iroh
+            .docs
+            .open(*namespace)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+            .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+        doc.set_hash(*author, new_key, *content_hash, *content_len)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+        // update dir entrires
+
+        // remove from old
+        let FSContents::Directory { content, .. } = &mut fs[from_dirid as usize].contents else {
+            return Err(nfsstat3::NFS3ERR_NOENT);
+        };
+        let Some(pos) = content.iter().position(|v| *v as usize == fid) else {
+            return Err(nfsstat3::NFS3ERR_NOENT);
+        };
+        content.remove(pos);
+
+        // insert into new dir
+        let FSContents::Directory { content, .. } = &mut fs[to_dirid as usize].contents else {
+            return Err(nfsstat3::NFS3ERR_NOENT);
+        };
+        content.push(fid as u64);
+
+        Ok(())
     }
 
-    #[allow(unused)]
     async fn mkdir(
         &self,
         _dirid: fileid3,
-        _dirname: &filename3,
+        dirname: &filename3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
-        Err(nfsstat3::NFS3ERR_ROFS)
+        error!("missing mkdir {:?}", std::str::from_utf8(dirname));
+        return Err(nfsstat3::NFS3ERR_NOTSUPP);
     }
 
     async fn symlink(
         &self,
         _dirid: fileid3,
-        _linkname: &filename3,
+        linkname: &filename3,
         _symlink: &nfspath3,
         _attr: &sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         Err(nfsstat3::NFS3ERR_ROFS)
     }
     async fn readlink(&self, _id: fileid3) -> Result<nfspath3, nfsstat3> {
+        error!("missing readlink");
         return Err(nfsstat3::NFS3ERR_NOTSUPP);
     }
 }
