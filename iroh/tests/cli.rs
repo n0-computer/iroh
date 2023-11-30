@@ -157,8 +157,9 @@ enum MakePartialResult {
 /// Take an iroh_data_dir containing a flat file database and convert some of the files to partial files.
 #[cfg(feature = "flat-db")]
 fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResult) -> Result<()> {
-    let complete_dir = IrohPaths::BaoFlatStoreComplete.with_root(&dir);
-    let partial_dir = IrohPaths::BaoFlatStorePartial.with_root(&dir);
+    let bao_root = IrohPaths::BaoFlatStoreDir.with_root(&dir);
+    let complete_dir = bao_root.join("complete");
+    let partial_dir = bao_root.join("partial");
     use iroh_bytes::store::flat::FileName;
     let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
     for entry in std::fs::read_dir(&complete_dir)
@@ -224,14 +225,8 @@ fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResu
 }
 
 fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
-    let dirs = [
-        IrohPaths::BaoFlatStoreComplete,
-        IrohPaths::BaoFlatStorePartial,
-        IrohPaths::BaoFlatStoreMeta,
-    ];
-    for dir in dirs.into_iter() {
-        copy_dir_all(&dir.clone().with_root(src), &dir.with_root(tgt))?;
-    }
+    let dir = &IrohPaths::BaoFlatStoreDir;
+    copy_dir_all(dir.with_root(src), dir.with_root(tgt))?;
     Ok(())
 }
 
@@ -399,14 +394,14 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     };
     provide(&foo_path)?;
     // should have some data now
-    let db_path = IrohPaths::BaoFlatStoreComplete.with_root(&iroh_data_dir);
-    let db = Store::load_blocking(&db_path, &db_path, &db_path)?;
+    let db_path = IrohPaths::BaoFlatStoreDir.with_root(&iroh_data_dir);
+    let db = Store::load_blocking(&db_path)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Store::load_blocking(&db_path, &db_path, &db_path)?;
+    let db = Store::load_blocking(&db_path)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 6);
 

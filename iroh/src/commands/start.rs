@@ -138,13 +138,10 @@ async fn start_node(
         }
     }
 
-    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreComplete)?;
-    let partial_blob_dir = path_with_env(IrohPaths::BaoFlatStorePartial)?;
-    let meta_dir = path_with_env(IrohPaths::BaoFlatStoreMeta)?;
+    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreDir)?;
     let peers_data_path = path_with_env(IrohPaths::PeerData)?;
     tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::fs::create_dir_all(&partial_blob_dir).await?;
-    let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir, &partial_blob_dir, &meta_dir)
+    let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let secret_key_path = Some(path_with_env(IrohPaths::SecretKey)?);

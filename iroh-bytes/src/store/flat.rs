@@ -1173,17 +1173,27 @@ impl Store {
         Ok(())
     }
 
+    /// Path to the directory where complete files and outboard files are stored.
+    pub(crate) fn complete_path(root: &Path) -> PathBuf {
+        root.join("complete")
+    }
+
+    /// Path to the directory where partial files and outboard are stored.
+    pub(crate) fn partial_path(root: &Path) -> PathBuf {
+        root.join("partial")
+    }
+
+    /// Path to the directory where metadata is stored.
+    pub(crate) fn meta_path(root: &Path) -> PathBuf {
+        root.join("meta")
+    }
+
     /// scan a directory for data
-    pub(crate) fn load_sync(
-        complete_path: PathBuf,
-        partial_path: PathBuf,
-        meta_path: PathBuf,
-    ) -> anyhow::Result<Self> {
-        tracing::info!(
-            "loading database from {} {}",
-            complete_path.display(),
-            partial_path.display()
-        );
+    pub(crate) fn load_sync(path: &Path) -> anyhow::Result<Self> {
+        tracing::info!("loading database from {}", path.display(),);
+        let complete_path = Self::complete_path(path);
+        let partial_path = Self::partial_path(path);
+        let meta_path = Self::meta_path(path);
         std::fs::create_dir_all(&complete_path)?;
         std::fs::create_dir_all(&partial_path)?;
         std::fs::create_dir_all(&meta_path)?;
@@ -1442,31 +1452,15 @@ impl Store {
     }
 
     /// Blocking load a database from disk.
-    pub fn load_blocking(
-        complete_path: impl AsRef<Path>,
-        partial_path: impl AsRef<Path>,
-        meta_path: impl AsRef<Path>,
-    ) -> anyhow::Result<Self> {
-        let complete_path = complete_path.as_ref().to_path_buf();
-        let partial_path = partial_path.as_ref().to_path_buf();
-        let meta_path = meta_path.as_ref().to_path_buf();
-        let db = Self::load_sync(complete_path, partial_path, meta_path)?;
+    pub fn load_blocking(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let db = Self::load_sync(path.as_ref())?;
         Ok(db)
     }
 
     /// Load a database from disk.
-    pub async fn load(
-        complete_path: impl AsRef<Path>,
-        partial_path: impl AsRef<Path>,
-        meta_path: impl AsRef<Path>,
-    ) -> anyhow::Result<Self> {
-        let complete_path = complete_path.as_ref().to_path_buf();
-        let partial_path = partial_path.as_ref().to_path_buf();
-        let meta_path = meta_path.as_ref().to_path_buf();
-        let db = tokio::task::spawn_blocking(move || {
-            Self::load_sync(complete_path, partial_path, meta_path)
-        })
-        .await??;
+    pub async fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let db = tokio::task::spawn_blocking(move || Self::load_sync(&path)).await??;
         Ok(db)
     }
 
