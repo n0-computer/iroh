@@ -1,43 +1,42 @@
-use std::{future::Future, io, net::SocketAddr, pin::Pin};
+use std::net::SocketAddr;
 
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Body, Error, Request, Response, Server,
-};
+use anyhow::{anyhow, Result};
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use tokio::net::TcpListener;
 
-use tracing::info;
+use tracing::{error, info};
 
 use crate::core::Core;
 
 /// Start a HTTP server to report metrics.
-pub async fn run(metrics_addr: SocketAddr) -> Result<(), Error> {
+pub async fn run(metrics_addr: SocketAddr) -> Result<()> {
     info!("Starting metrics server on {metrics_addr}");
-    Server::bind(&metrics_addr)
-        .serve(make_service_fn(move |_conn| async move {
-            let handler = make_handler();
-            Ok::<_, io::Error>(service_fn(handler))
-        }))
-        .await
+    let listener = TcpListener::bind(metrics_addr).await?;
+    loop {
+        let (stream, _addr) = listener.accept().await?;
+        let io = hyper_util::rt::TokioIo::new(stream);
+        tokio::spawn(async move {
+            if let Err(err) = hyper::server::conn::http1::Builder::new()
+                .serve_connection(io, service_fn(handler))
+                .await
+            {
+                error!("Error serving metrics connection: {err:#}");
+            }
+        });
+    }
 }
 
-/// This function returns an HTTP handler fn that will respond with the
-/// OpenMetrics encoding of our metrics.
-fn make_handler(
-) -> impl Fn(Request<Body>) -> Pin<Box<dyn Future<Output = io::Result<Response<Body>>> + Send>> {
-    // This closure accepts a request and responds with the OpenMetrics encoding of our metrics.
-    move |_req: Request<Body>| {
-        Box::pin(async move {
-            let core = Core::get()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
-            core.encode()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                .map(|r| {
-                    let body = Body::from(r);
-                    Response::builder()
-                        .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                        .body(body)
-                        .expect("Failed to build response")
-                })
-        })
-    }
+/// HTTP handler that will respond with the OpenMetrics encoding of our metrics.
+async fn handler(
+    _req: Request<hyper::body::Incoming>,
+) -> Result<Response<http_body_util::Full<hyper::body::Bytes>>> {
+    let core = Core::get().ok_or_else(|| anyhow!("metrics disabled"))?;
+    core.encode().map_err(anyhow::Error::new).map(|r| {
+        let body = http_body_util::Full::new(hyper::body::Bytes::from(r));
+        Response::builder()
+            .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .body(body)
+            .expect("Failed to build response")
+    })
 }
