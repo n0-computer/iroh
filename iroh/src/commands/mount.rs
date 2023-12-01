@@ -279,6 +279,17 @@ where
             key,
         } = &mut file.contents
         {
+            // offset 1048576
+            // len     117682
+
+            // final size 1166258
+
+            info!(
+                "writing to {:?} - {} bytes at {}",
+                std::str::from_utf8(key),
+                data.len(),
+                offset,
+            );
             // get the full content
             let mut bytes = self
                 .iroh
@@ -287,12 +298,17 @@ where
                 .await
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
                 .to_vec();
-            let offset = offset as usize;
-            if offset + data.len() > bytes.len() {
-                bytes.resize(offset + data.len(), 0);
-                bytes[offset..].copy_from_slice(data);
-                fssize = bytes.len() as u64;
+
+            let start = offset as usize;
+            let end = start + data.len();
+
+            // resize buffer if needed
+            if end > bytes.len() {
+                bytes.resize(end, 0);
             }
+
+            bytes[start..end].copy_from_slice(data);
+            fssize = bytes.len() as u64;
 
             // store back
             let doc = self
@@ -316,6 +332,7 @@ where
                 fssize
             );
         }
+        file.attr.mtime = now();
         file.attr.size = fssize;
         file.attr.used = fssize;
 
