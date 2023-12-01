@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
-use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh::{
+    client::{Doc, Iroh},
+    rpc_protocol::ProviderService,
+};
 use iroh_bytes::Hash;
 use iroh_sync::{store::Query, AuthorId, NamespaceId};
 use nfsserve::{
@@ -22,13 +25,13 @@ use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 
 const HOSTPORT: u32 = 11111;
 
-pub async fn exec<C>(iroh: &Iroh<C>, path: PathBuf) -> Result<()>
+pub async fn exec<C>(iroh: &Iroh<C>, doc: NamespaceId, path: PathBuf) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let path = path.canonicalize()?;
-    println!("mounting {}", path.display());
-    let fs = IrohFs::new(iroh.clone()).await?;
+    println!("mounting {} at {}", doc, path.display());
+    let fs = IrohFs::new(iroh.clone(), doc).await?;
 
     println!("fs prepared");
     perform_mount_and_wait_for_ctrlc(
@@ -49,14 +52,10 @@ enum FSContents {
     File {
         content_hash: Hash,
         content_len: u64,
-        author: AuthorId,
-        namespace: NamespaceId,
         key: Bytes,
     },
     Directory {
         content: Vec<fileid3>,
-        namespace: NamespaceId,
-        author: AuthorId,
     },
 }
 #[allow(dead_code)]
@@ -83,8 +82,6 @@ fn make_file(
     parent: fileid3,
     content_hash: Hash,
     content_len: u64,
-    author: AuthorId,
-    namespace: NamespaceId,
     key: Bytes,
 ) -> FSEntry {
     let attr = fattr3 {
@@ -110,21 +107,12 @@ fn make_file(
         contents: FSContents::File {
             content_hash,
             content_len,
-            namespace,
-            author,
             key,
         },
     }
 }
 
-fn make_dir(
-    name: &str,
-    id: fileid3,
-    parent: fileid3,
-    content: Vec<fileid3>,
-    namespace: NamespaceId,
-    author: AuthorId,
-) -> FSEntry {
+fn make_dir(name: &str, id: fileid3, parent: fileid3, content: Vec<fileid3>) -> FSEntry {
     let attr = fattr3 {
         ftype: ftype3::NF3DIR,
         mode: 0o777,
@@ -145,11 +133,7 @@ fn make_dir(
         attr,
         name: name.as_bytes().into(),
         parent,
-        contents: FSContents::Directory {
-            content,
-            namespace,
-            author,
-        },
+        contents: FSContents::Directory { content },
     }
 }
 
@@ -159,91 +143,67 @@ where
     C: ServiceConnection<ProviderService>,
 {
     iroh: Iroh<C>,
+    doc: Doc<C>,
     fs: RwLock<Vec<FSEntry>>,
     rootdir: fileid3,
+    author: AuthorId,
 }
 
 impl<C> IrohFs<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    async fn new(iroh: Iroh<C>) -> Result<Self> {
+    async fn new(iroh: Iroh<C>, doc_id: NamespaceId) -> Result<Self> {
+        let doc = iroh
+            .docs
+            .open(doc_id)
+            .await?
+            .ok_or_else(|| anyhow!("unknown document"))?;
+
         // TODO: better
         let author = iroh.authors.create().await?;
-        let none_author = AuthorId::default();
-        let none_ns = NamespaceId::default();
+
         let mut entries = vec![
-            make_file(
-                "",
-                0,
-                0,
-                Hash::EMPTY,
-                0,
-                none_author,
-                none_ns,
-                Bytes::default(),
-            ), // fileid 0 is special
+            make_file("", 0, 0, Hash::EMPTY, 0, Bytes::default()), // fileid 0 is special
         ];
 
-        let mut docs = iroh.docs.list().await?;
-        let mut current_id = 2;
         let mut root_children = Vec::new();
-        while let Some(item) = docs.next().await {
-            let (doc_id, cap) = item?;
-            let dir_id = current_id;
+
+        let dir_id = 1;
+        let mut keys = doc.get_many(Query::all()).await?;
+
+        let mut current_id = 2;
+
+        while let Some(entry) = keys.next().await {
+            let entry = entry?;
+            let name = String::from_utf8_lossy(&entry.key()).replace("/", "-");
+            let id = current_id;
             current_id += 1;
-
-            let mut children = Vec::new();
-            let mut files = Vec::new();
-
-            let doc = iroh.docs.open(doc_id).await?.unwrap();
-
-            let mut keys = doc.get_many(Query::all()).await?;
-            while let Some(entry) = keys.next().await {
-                let entry = entry?;
-                let name = String::from_utf8_lossy(&entry.key()).replace("/", "-");
-                let id = current_id;
-                current_id += 1;
-                children.push(id);
-                files.push(make_file(
-                    &name,
-                    id,
-                    dir_id,
-                    entry.content_hash(),
-                    entry.content_len(),
-                    entry.author(),
-                    entry.namespace(),
-                    entry.key().to_vec().into(),
-                ));
-            }
-
-            // TODO: store cap to indicate read/write
-            entries.push(make_dir(
-                &format!("doc:{}", doc_id),
-                dir_id, // current id
-                1,      // parent id
-                children,
-                doc_id,
-                author,
+            root_children.push(id);
+            entries.push(make_file(
+                &name,
+                id,
+                dir_id,
+                entry.content_hash(),
+                entry.content_len(),
+                entry.key().to_vec().into(),
             ));
-            entries.extend(files);
-            root_children.push(dir_id);
         }
 
         let root_dir = make_dir(
             "/",
-            1, // current id. Must match position in entries
-            1, // parent id
+            dir_id, // current id. Must match position in entries
+            0,      // parent id
             root_children,
-            none_ns,
-            none_author,
         );
         entries.insert(1, root_dir);
 
         Ok(Self {
             fs: RwLock::new(entries),
+            doc,
             rootdir: 1,
             iroh,
+            author,
         })
     }
 }
@@ -274,8 +234,6 @@ where
         if let FSContents::File {
             content_hash,
             content_len,
-            author,
-            namespace,
             key,
         } = &mut file.contents
         {
@@ -291,13 +249,19 @@ where
                 offset,
             );
             // get the full content
-            let mut bytes = self
-                .iroh
-                .blobs
-                .read_to_bytes(*content_hash)
-                .await
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-                .to_vec();
+            let mut bytes = if *content_hash == Hash::EMPTY {
+                Vec::new()
+            } else {
+                self.iroh
+                    .blobs
+                    .read_to_bytes(*content_hash)
+                    .await
+                    .map_err(|e| {
+                        error!("failed to read {}: {:?}", content_hash, e);
+                        nfsstat3::NFS3ERR_SERVERFAULT
+                    })?
+                    .to_vec()
+            };
 
             let start = offset as usize;
             let end = start + data.len();
@@ -311,18 +275,18 @@ where
             fssize = bytes.len() as u64;
 
             // store back
-            let doc = self
-                .iroh
-                .docs
-                .open(*namespace)
+            let hash = self
+                .doc
+                .set_bytes(self.author, key.clone(), bytes)
                 .await
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-                .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
-            let hash = doc
-                .set_bytes(*author, key.clone(), bytes)
-                .await
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+                .map_err(|e| {
+                    error!(
+                        "failed to set bytes {:?}: {:?}",
+                        std::str::from_utf8(key),
+                        e
+                    );
+                    nfsstat3::NFS3ERR_SERVERFAULT
+                })?;
             *content_hash = hash;
             *content_len = fssize;
             info!(
@@ -352,23 +316,7 @@ where
             let dir = fs
                 .get_mut(dirid as usize)
                 .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
-            let file = if let FSContents::Directory {
-                content,
-                namespace,
-                author,
-            } = &mut dir.contents
-            {
-                let _doc = self
-                    .iroh
-                    .docs
-                    .open(*namespace)
-                    .await
-                    .map_err(|err| {
-                        error!("open {}: {:?}", namespace, err);
-                        nfsstat3::NFS3ERR_SERVERFAULT
-                    })?
-                    .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
+            let file = if let FSContents::Directory { content } = &mut dir.contents {
                 let key: Bytes = filename.as_ref().to_vec().into();
 
                 // Not writing, as we are not storing empty entries
@@ -381,8 +329,6 @@ where
                     dirid,
                     hash,
                     0,
-                    *author,
-                    *namespace,
                     key,
                 ))
             } else {
@@ -408,27 +354,12 @@ where
             let dir = fs
                 .get_mut(dirid as usize)
                 .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
-            let file = if let FSContents::Directory {
-                content,
-                namespace,
-                author,
-            } = &mut dir.contents
-            {
-                let doc = self
-                    .iroh
-                    .docs
-                    .open(*namespace)
-                    .await
-                    .map_err(|err| {
-                        error!("open {}: {:?}", namespace, err);
-                        nfsstat3::NFS3ERR_SERVERFAULT
-                    })?
-                    .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
+            let file = if let FSContents::Directory { content } = &mut dir.contents {
                 let key: Bytes = filename.as_ref().to_vec().into();
 
-                let old_entry = doc
-                    .get_exact(*author, &key, false)
+                let old_entry = self
+                    .doc
+                    .get_exact(self.author, &key, false)
                     .await
                     .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
@@ -447,8 +378,6 @@ where
                     dirid,
                     hash,
                     0,
-                    *author,
-                    *namespace,
                     key,
                 ))
             } else {
@@ -543,8 +472,6 @@ where
                 if let FSContents::File {
                     content_hash,
                     content_len,
-                    author,
-                    namespace,
                     key,
                 } = &mut entry.contents
                 {
@@ -555,7 +482,7 @@ where
                         .read_to_bytes(*content_hash)
                         .await
                         .map_err(|err| {
-                            error!("read_to_bytes {}: {:?} {:?}", namespace, key, err);
+                            error!("read_to_bytes: {:?} {:?}", key, err);
                             nfsstat3::NFS3ERR_SERVERFAULT
                         })?
                         .to_vec();
@@ -563,24 +490,14 @@ where
                     bytes.resize(s as usize, 0);
 
                     // store back
-                    let doc = self
-                        .iroh
-                        .docs
-                        .open(*namespace)
-                        .await
-                        .map_err(|err| {
-                            error!("open {}: {:?}", namespace, err);
-                            nfsstat3::NFS3ERR_SERVERFAULT
-                        })?
-                        .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
                     let hash = if bytes.is_empty() {
                         Hash::EMPTY
                     } else {
-                        doc.set_bytes(*author, key.clone(), bytes)
+                        self.doc
+                            .set_bytes(self.author, key.clone(), bytes)
                             .await
                             .map_err(|err| {
-                                error!("set_bytes {}: {:?} {:?}", namespace, key, err);
+                                error!("set_bytes: {:?} {:?}", key, err);
                                 nfsstat3::NFS3ERR_SERVERFAULT
                             })?
                     };
@@ -678,25 +595,14 @@ where
             .iter()
             .position(|e| e.name.as_ref() == filename.as_ref())
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        if let FSContents::File {
-            author,
-            namespace,
-            key,
-            ..
-        } = &mut fs[fid as usize].contents
-        {
-            let doc = self
-                .iroh
-                .docs
-                .open(*namespace)
+        if let FSContents::File { key, .. } = &mut fs[fid as usize].contents {
+            self.doc
+                .del(self.author, key.clone())
                 .await
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-                .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
-            doc.del(*author, key.clone()).await.map_err(|err| {
-                error!("delete {:?}: {:?}", key, err);
-                nfsstat3::NFS3ERR_SERVERFAULT
-            })?;
+                .map_err(|err| {
+                    error!("delete {:?}: {:?}", key, err);
+                    nfsstat3::NFS3ERR_SERVERFAULT
+                })?;
         } else {
             return Err(nfsstat3::NFS3ERR_ISDIR);
         }
@@ -735,8 +641,6 @@ where
 
         let FSContents::File {
             content_hash,
-            namespace,
-            author,
             content_len,
             ..
         } = &entry.contents
@@ -745,15 +649,8 @@ where
         };
 
         let new_key: Bytes = to_filename.as_ref().to_vec().into();
-        let doc = self
-            .iroh
-            .docs
-            .open(*namespace)
-            .await
-            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-            .ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
-
-        doc.set_hash(*author, new_key, *content_hash, *content_len)
+        self.doc
+            .set_hash(self.author, new_key, *content_hash, *content_len)
             .await
             .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
@@ -793,7 +690,7 @@ where
     async fn symlink(
         &self,
         _dirid: fileid3,
-        linkname: &filename3,
+        _linkname: &filename3,
         _symlink: &nfspath3,
         _attr: &sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {

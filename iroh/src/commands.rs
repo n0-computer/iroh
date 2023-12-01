@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
+use iroh_sync::NamespaceId;
 use tokio_util::task::LocalPoolHandle;
 
 use crate::config::{iroh_data_root, ConsoleEnv, NodeConfig};
@@ -83,6 +84,9 @@ pub enum Commands {
         path: PathBuf,
     },
     Mount {
+        /// The document to mount.
+        #[clap(long)]
+        doc: NamespaceId,
         /// Mount target.
         path: PathBuf,
     },
@@ -168,7 +172,7 @@ impl Cli {
                     // runtime_exec(&iroh, path).await
                 }
             }
-            Commands::Mount { path } => {
+            Commands::Mount { doc, path } => {
                 let _env = ConsoleEnv::for_cli()?;
                 if self.start {
                     let config = NodeConfig::from_env(self.config.as_deref())?;
@@ -176,12 +180,12 @@ impl Cli {
                         &rt,
                         &config,
                         RunType::SingleCommand,
-                        |iroh| async move { self::mount::exec(&iroh, path).await },
+                        move |iroh| async move { self::mount::exec(&iroh, doc, path).await },
                     )
                     .await
                 } else {
                     let iroh = iroh_quic_connect().await.context("rpc connect")?;
-                    self::mount::exec(&iroh, path).await
+                    self::mount::exec(&iroh, doc, path).await
                 }
             }
         }
