@@ -15,8 +15,8 @@ use nfsserve::{
     vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities},
 };
 use quic_rpc::ServiceConnection;
-use tokio::sync::Mutex;
-use tracing::error;
+use tokio::sync::RwLock;
+use tracing::{error, info};
 
 use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 
@@ -159,7 +159,7 @@ where
     C: ServiceConnection<ProviderService>,
 {
     iroh: Iroh<C>,
-    fs: Mutex<Vec<FSEntry>>,
+    fs: RwLock<Vec<FSEntry>>,
     rootdir: fileid3,
 }
 
@@ -241,7 +241,7 @@ where
         entries.insert(1, root_dir);
 
         Ok(Self {
-            fs: Mutex::new(entries),
+            fs: RwLock::new(entries),
             rootdir: 1,
             iroh,
         })
@@ -264,15 +264,20 @@ where
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
-        let mut fs = self.fs.lock().await;
-        let mut fssize = fs[id as usize].attr.size;
+        let mut fs = self.fs.write().await;
+        info!("write to {:?}", id);
+        let file = fs
+            .get_mut(id as usize)
+            .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
+
+        let mut fssize = file.attr.size;
         if let FSContents::File {
             content_hash,
             content_len,
             author,
             namespace,
             key,
-        } = &mut fs[id as usize].contents
+        } = &mut file.contents
         {
             // get the full content
             let mut bytes = self
@@ -304,17 +309,17 @@ where
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
             *content_hash = hash;
             *content_len = fssize;
-            tracing::info!(
+            info!(
                 "written {} bytes at offset {}: final size: {}",
                 data.len(),
                 offset,
                 fssize
             );
         }
-        fs[id as usize].attr.size = fssize;
-        fs[id as usize].attr.used = fssize;
+        file.attr.size = fssize;
+        file.attr.used = fssize;
 
-        self.getattr(id).await
+        Ok(file.attr)
     }
 
     async fn create(
@@ -325,13 +330,16 @@ where
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let newid: fileid3;
         {
-            let mut fs = self.fs.lock().await;
+            let mut fs = self.fs.write().await;
             newid = fs.len() as fileid3;
+            let dir = fs
+                .get_mut(dirid as usize)
+                .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
             let file = if let FSContents::Directory {
                 content,
                 namespace,
                 author,
-            } = &mut fs[dirid as usize].contents
+            } = &mut dir.contents
             {
                 let _doc = self
                     .iroh
@@ -378,13 +386,16 @@ where
     ) -> Result<fileid3, nfsstat3> {
         let newid: fileid3;
         {
-            let mut fs = self.fs.lock().await;
+            let mut fs = self.fs.write().await;
             newid = fs.len() as fileid3;
+            let dir = fs
+                .get_mut(dirid as usize)
+                .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
             let file = if let FSContents::Directory {
                 content,
                 namespace,
                 author,
-            } = &mut fs[dirid as usize].contents
+            } = &mut dir.contents
             {
                 let doc = self
                     .iroh
@@ -435,7 +446,7 @@ where
     }
 
     async fn lookup(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3> {
-        let fs = self.fs.lock().await;
+        let fs = self.fs.read().await;
         let entry = fs.get(dirid as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         if let FSContents::File { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
@@ -460,13 +471,14 @@ where
     }
 
     async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3> {
-        let fs = self.fs.lock().await;
+        info!("getattr {:?}", id);
+        let fs = self.fs.read().await;
         let entry = fs.get(id as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         Ok(entry.attr)
     }
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
-        let mut fs = self.fs.lock().await;
+        let mut fs = self.fs.write().await;
         let entry = fs.get_mut(id as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         match setattr.atime {
             nfs::set_atime::DONT_CHANGE => {}
@@ -570,7 +582,7 @@ where
         offset: u64,
         count: u32,
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
-        let fs = self.fs.lock().await;
+        let fs = self.fs.read().await;
         let entry = fs.get(id as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         if let FSContents::Directory { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_ISDIR);
@@ -603,7 +615,7 @@ where
         start_after: fileid3,
         max_entries: usize,
     ) -> Result<ReadDirResult, nfsstat3> {
-        let fs = self.fs.lock().await;
+        let fs = self.fs.read().await;
         let entry = fs.get(dirid as usize).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         if let FSContents::File { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
@@ -644,7 +656,7 @@ where
     /// If not supported dur to readonly file system
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
     async fn remove(&self, dirid: fileid3, filename: &filename3) -> Result<(), nfsstat3> {
-        let mut fs = self.fs.lock().await;
+        let mut fs = self.fs.write().await;
         let fid = fs
             .iter()
             .position(|e| e.name.as_ref() == filename.as_ref())
@@ -695,7 +707,7 @@ where
         to_dirid: fileid3,
         to_filename: &filename3,
     ) -> Result<(), nfsstat3> {
-        let mut fs = self.fs.lock().await;
+        let mut fs = self.fs.write().await;
 
         // read new entry
         let fid = fs
@@ -731,7 +743,9 @@ where
         // update dir entrires
 
         // remove from old
-        let FSContents::Directory { content, .. } = &mut fs[from_dirid as usize].contents else {
+        let Some(FSContents::Directory { content, .. }) =
+            fs.get_mut(from_dirid as usize).map(|e| &mut e.contents)
+        else {
             return Err(nfsstat3::NFS3ERR_NOENT);
         };
         let Some(pos) = content.iter().position(|v| *v as usize == fid) else {
@@ -740,7 +754,9 @@ where
         content.remove(pos);
 
         // insert into new dir
-        let FSContents::Directory { content, .. } = &mut fs[to_dirid as usize].contents else {
+        let Some(FSContents::Directory { content, .. }) =
+            fs.get_mut(to_dirid as usize).map(|e| &mut e.contents)
+        else {
             return Err(nfsstat3::NFS3ERR_NOENT);
         };
         content.push(fid as u64);
