@@ -553,6 +553,7 @@ impl MagicEndpoint {
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
+        self.endpoint.wait_idle().await;
         self.msock.close().await?;
         Ok(())
     }
