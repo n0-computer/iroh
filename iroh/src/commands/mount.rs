@@ -227,7 +227,16 @@ where
                                 let mut fs = sub_fs.write().await;
                                 let name = String::from_utf8_lossy(&entry.key()).replace("/", "-");
 
-                                if let Some(fs_entry) =
+                                if entry.content_len() == 0 {
+                                    // deletion
+                                    if let Some(k) = fs
+                                        .iter()
+                                        .find(|(_, e)| e.name.as_ref() == name.as_bytes())
+                                        .map(|(k, _)| *k)
+                                    {
+                                        fs.remove(&k);
+                                    }
+                                } else if let Some(fs_entry) =
                                     fs.values_mut().find(|e| e.name.as_ref() == name.as_bytes())
                                 {
                                     // existing entry, update
@@ -259,7 +268,7 @@ where
                                 // update mtime of parent
                                 fs.get_mut(&1).unwrap().attr.mtime = now();
 
-                                info!("inserted {}", name);
+                                info!("inserted {}: {:?}", name, entry);
                             }
                             _ => {}
                         }
@@ -593,8 +602,10 @@ where
         offset: u64,
         count: u32,
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
+        info!("reading {}: {} bytes at {}", id, count, offset);
         let fs = self.fs.read().await;
         let entry = fs.get(&id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+
         if let FSContents::Directory { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_ISDIR);
         } else if let FSContents::File { key, author } = &entry.contents {
@@ -674,11 +685,11 @@ where
     async fn remove(&self, dirid: fileid3, filename: &filename3) -> Result<(), nfsstat3> {
         info!("remove {:?} from {}", std::str::from_utf8(filename), dirid);
         let mut fs = self.fs.write().await;
-        let fid = fs
-            .values()
-            .position(|e| e.name.as_ref() == filename.as_ref())
-            .ok_or(nfsstat3::NFS3ERR_NOENT)? as u64;
-
+        let (fid, _) = fs
+            .iter()
+            .find(|(_, e)| e.name.as_ref() == filename.as_ref())
+            .ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        let fid = *fid;
         // Remove entry from the cache
         let entry = fs.remove(&fid);
 
@@ -716,13 +727,30 @@ where
         );
         let mut fs = self.fs.write().await;
 
-        // read entry
-        let fid = fs
-            .values()
-            .position(|e| e.name.as_ref() == from_filename.as_ref())
-            .ok_or(nfsstat3::NFS3ERR_NOENT)? as u64;
-        let entry = fs.get(&fid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        if !fs.contains_key(&from_dirid) {
+            warn!("missing from: {}", from_dirid);
+            return Err(nfsstat3::NFS3ERR_NOENT);
+        }
 
+        if !fs.contains_key(&to_dirid) {
+            warn!("missing to: {}", to_dirid);
+            return Err(nfsstat3::NFS3ERR_NOENT);
+        }
+
+        // read entry
+        let (fid, _) = fs
+            .iter()
+            .find(|(_, e)| e.name.as_ref() == from_filename.as_ref())
+            .ok_or_else(|| {
+                warn!(
+                    "no entry found for {:?}",
+                    std::str::from_utf8(from_filename)
+                );
+                nfsstat3::NFS3ERR_NOENT
+            })?;
+        let fid = *fid;
+
+        let entry = fs.get(&fid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let FSContents::File { key, author } = &entry.contents else {
             return Err(nfsstat3::NFS3ERR_ISDIR);
         };
@@ -748,25 +776,29 @@ where
         }
 
         // update dir entrires
-
-        // remove from old
-        {
+        if from_dirid == to_dirid {
             let entry = fs.get_mut(&from_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-            let FSContents::Directory { content, .. } = &mut entry.contents else {
-                return Err(nfsstat3::NFS3ERR_NOENT);
-            };
-            content.retain(|v| *v != fid);
             entry.attr.mtime = now();
-        }
+        } else {
+            // remove from old
+            {
+                let entry = fs.get_mut(&from_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+                let FSContents::Directory { content, .. } = &mut entry.contents else {
+                    return Err(nfsstat3::NFS3ERR_NOENT);
+                };
+                content.retain(|v| *v != fid);
+                entry.attr.mtime = now();
+            }
 
-        // insert into new dir
-        {
-            let entry = fs.get_mut(&to_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-            let FSContents::Directory { content, .. } = &mut entry.contents else {
-                return Err(nfsstat3::NFS3ERR_NOENT);
-            };
-            content.push(fid);
-            entry.attr.mtime = now();
+            // insert into new dir
+            {
+                let entry = fs.get_mut(&to_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+                let FSContents::Directory { content, .. } = &mut entry.contents else {
+                    return Err(nfsstat3::NFS3ERR_NOENT);
+                };
+                content.push(fid);
+                entry.attr.mtime = now();
+            }
         }
 
         Ok(())
