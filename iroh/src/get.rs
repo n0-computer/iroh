@@ -257,7 +257,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
 /// Given a sequence of hashes, figure out what is missing
 pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
     db: &D,
-    hash_seq: &Vec<Hash>,
+    hash_seq: &[Hash],
 ) -> io::Result<Vec<BlobInfo<D>>> {
     let items = hash_seq.iter().map(|hash| async move {
         io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
