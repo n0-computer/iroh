@@ -39,7 +39,7 @@ async fn handler(_req: Request<hyper::body::Incoming>) -> Result<Response<BytesB
     })
 }
 
-/// Creates a new [`BytesBody`] with given contents.
+/// Creates a new [`BytesBody`] with given content.
 fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
     http_body_util::Full::new(content.into())
 }

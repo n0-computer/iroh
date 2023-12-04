@@ -779,10 +779,10 @@ impl Actor {
         Ok((derp_client, receiver))
     }
 
-    /// Sends the upgrade request to the derper.
+    /// Sends the HTTP upgrade request to the derper.
     async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, hyper::Error>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
         let io = hyper_util::rt::TokioIo::new(io);
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()

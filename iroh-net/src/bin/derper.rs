@@ -38,6 +38,11 @@ type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
 
+/// Creates a new [`BytesBody`] with no content.
+fn body_empty() -> BytesBody {
+    http_body_util::Full::new(hyper::body::Bytes::new())
+}
+
 /// A simple DERP server.
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -572,12 +577,12 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
 #[derive(Clone)]
 struct CaptivePortalService;
 
-impl hyper::service::Service<Request<hyper::body::Incoming>> for CaptivePortalService {
-    type Response = Response<http_body_util::Full<hyper::body::Bytes>>;
+impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
+    type Response = Response<BytesBody>;
     type Error = HyperError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn call(&self, req: Request<hyper::body::Incoming>) -> Self::Future {
+    fn call(&self, req: Request<Incoming>) -> Self::Future {
         match (req.method(), req.uri().path()) {
             // Captive Portal checker
             (&Method::GET, "/generate_204") => {
@@ -596,9 +601,9 @@ impl hyper::service::Service<Request<hyper::body::Incoming>> for CaptivePortalSe
 }
 
 fn derp_disabled_handler(
-    _r: Request<hyper::body::Incoming>,
+    _r: Request<Incoming>,
     response: ResponseBuilder,
-) -> HyperResult<Response<http_body_util::Full<hyper::body::Bytes>>> {
+) -> HyperResult<Response<BytesBody>> {
     Ok(response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
@@ -608,7 +613,7 @@ fn derp_disabled_handler(
 fn root_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
-) -> HyperResult<Response<http_body_util::Full<hyper::body::Bytes>>> {
+) -> HyperResult<Response<BytesBody>> {
     let response = response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
@@ -620,22 +625,22 @@ fn root_handler(
 
 /// HTTP latency queries
 fn probe_handler(
-    _r: Request<hyper::body::Incoming>,
+    _r: Request<Incoming>,
     response: ResponseBuilder,
-) -> HyperResult<Response<http_body_util::Full<hyper::body::Bytes>>> {
+) -> HyperResult<Response<BytesBody>> {
     let response = response
         .status(StatusCode::OK)
         .header("Access-Control-Allow-Origin", "*")
-        .body(http_body_util::Full::new(hyper::body::Bytes::new()))
+        .body(body_empty())
         .unwrap();
 
     Ok(response)
 }
 
 fn robots_handler(
-    _r: Request<hyper::body::Incoming>,
+    _r: Request<Incoming>,
     response: ResponseBuilder,
-) -> HyperResult<Response<http_body_util::Full<hyper::body::Bytes>>> {
+) -> HyperResult<Response<BytesBody>> {
     Ok(response
         .status(StatusCode::OK)
         .body(ROBOTS_TXT.into())
@@ -898,16 +903,12 @@ mod tests {
     use iroh_net::derp::ReceivedMessage;
     use iroh_net::key::SecretKey;
 
-    fn empty_body() -> http_body_util::Full<hyper::body::Bytes> {
-        http_body_util::Full::new(hyper::body::Bytes::new())
-    }
-
     #[tokio::test]
     async fn test_serve_no_content_handler() {
         let challenge = "123az__.";
         let req = Request::builder()
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
-            .body(http_body_util::Full::new(hyper::body::Bytes::new()))
+            .body(body_empty())
             .unwrap();
 
         let res = serve_no_content_handler(req, Response::builder()).unwrap();
