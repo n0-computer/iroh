@@ -9,6 +9,7 @@ use crate::config::{iroh_data_root, ConsoleEnv, NodeConfig};
 
 use self::blob::{BlobAddOptions, BlobSource};
 use self::rpc::{RpcCommands, RpcStatus};
+use self::runtime::IrohWrapper;
 use self::start::RunType;
 
 pub mod author;
@@ -163,29 +164,31 @@ impl Cli {
                         &rt,
                         &config,
                         RunType::SingleCommand,
-                        |iroh| async move { self::runtime::exec(&iroh, path).await },
+                        |iroh| async move {
+                            self::runtime::exec(IrohWrapper::Mem(iroh.clone()), path).await
+                        },
                     )
                     .await
                 } else {
-                    todo!();
-                    // let iroh = iroh_quic_connect().await.context("rpc connect")?;
-                    // runtime_exec(&iroh, path).await
+                    let iroh = iroh_quic_connect().await.context("rpc connect")?;
+                    self::runtime::exec(IrohWrapper::Quic(iroh), path).await
                 }
             }
             Commands::Mount { doc, path } => {
                 let _env = ConsoleEnv::for_cli()?;
                 if self.start {
                     let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let lt = rt.clone();
                     start::run_with_command(
                         &rt,
                         &config,
                         RunType::SingleCommand,
-                        move |iroh| async move { self::mount::exec(&iroh, doc, path).await },
+                        move |iroh| async move { self::mount::exec(&iroh, doc, path, lt).await },
                     )
                     .await
                 } else {
                     let iroh = iroh_quic_connect().await.context("rpc connect")?;
-                    self::mount::exec(&iroh, doc, path).await
+                    self::mount::exec(&iroh, doc, path, rt).await
                 }
             }
         }

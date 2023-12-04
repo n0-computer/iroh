@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
+use iroh::client;
 use iroh::{
     client::{Doc, Iroh},
     rpc_protocol::ProviderService,
@@ -23,29 +24,40 @@ use nfsserve::{
     vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities},
 };
 use quic_rpc::ServiceConnection;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
+use tokio_util::task::LocalPoolHandle;
 use tracing::{error, info, warn};
 
 use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 
+use super::runtime::{self, IrohWrapper};
+
 const HOSTPORT: u32 = 11111;
 
-pub async fn exec<C>(iroh: &Iroh<C>, doc: NamespaceId, path: PathBuf) -> Result<()>
+pub async fn exec<C>(
+    iroh: &Iroh<C>,
+    doc: NamespaceId,
+    path: PathBuf,
+    rt: LocalPoolHandle,
+) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let path = path.canonicalize()?;
     println!("mounting {} at {}", doc, path.display());
-    let fs = IrohFs::new(iroh.clone(), doc).await?;
+    let fs = IrohFs::new(iroh.clone(), doc, path.clone(), rt).await?;
 
     println!("fs prepared");
+    let s = fs.ready();
     perform_mount_and_wait_for_ctrlc(
         &path,
         fs,
         true,
         true,
         format!("127.0.0.1:{HOSTPORT}"),
-        || {},
+        move || {
+            s.try_send(()).ok();
+        },
     )
     .await?;
 
@@ -143,7 +155,7 @@ fn make_dir(name: &str, id: fileid3, parent: fileid3, content: Vec<fileid3>) -> 
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IrohFs<C>
 where
     C: ServiceConnection<ProviderService>,
@@ -154,13 +166,22 @@ where
     next_id: Arc<AtomicU64>,
     rootdir: fileid3,
     author: AuthorId,
+    mount_path: PathBuf,
+    looper: mpsc::Sender<()>,
 }
+
+const MAIN_FILE: &str = "main.js";
 
 impl<C> IrohFs<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    async fn new(iroh: Iroh<C>, doc_id: NamespaceId) -> Result<Self> {
+    async fn new(
+        iroh: Iroh<C>,
+        doc_id: NamespaceId,
+        mount_path: PathBuf,
+        rt: LocalPoolHandle,
+    ) -> Result<Self> {
         let doc = iroh
             .docs
             .open(doc_id)
@@ -215,6 +236,9 @@ where
         let next_id = Arc::new(AtomicU64::new(current_id));
         let sub_next_id = next_id.clone();
 
+        let (looper_s, mut looper_r) = mpsc::channel(64);
+
+        let looper = looper_s.clone();
         tokio::task::spawn(async move {
             while let Some(item) = sub.next().await {
                 match item {
@@ -226,8 +250,9 @@ where
                                 let id = sub_next_id.fetch_add(1, Ordering::Relaxed);
                                 let mut fs = sub_fs.write().await;
                                 let name = String::from_utf8_lossy(&entry.key()).replace("/", "-");
+                                let is_deletion = entry.content_len() == 0;
 
-                                if entry.content_len() == 0 {
+                                if is_deletion {
                                     // deletion
                                     if let Some(k) = fs
                                         .iter()
@@ -268,6 +293,10 @@ where
                                 // update mtime of parent
                                 fs.get_mut(&1).unwrap().attr.mtime = now();
 
+                                if !is_deletion {
+                                    looper_s.try_send(()).ok();
+                                }
+
                                 info!("inserted {}: {:?}", name, entry);
                             }
                             _ => {}
@@ -280,14 +309,62 @@ where
             }
         });
 
-        Ok(Self {
+        let res = Self {
             fs,
             doc,
             rootdir: 1,
             next_id,
             iroh,
             author,
-        })
+            mount_path,
+            looper,
+        };
+        let this = res.clone();
+        tokio::task::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = looper_r.recv() => {
+                        let fs = this.fs.read().await;
+
+                        if fs
+                            .values()
+                            .find(|v| v.name.as_ref() == MAIN_FILE.as_bytes())
+                            .is_some()
+                        {
+                            let p = this.mount_path.join(MAIN_FILE);
+                            let iroh = this.iroh_wrapper();
+                            rt.spawn_pinned(|| async move {
+                                if let Err(err) = runtime::exec(iroh, p.clone()).await {
+                                    error!("runtime execution failed of {}: {:?}", p.display(), err);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(res)
+    }
+}
+
+impl<C> IrohFs<C>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    fn ready(&self) -> mpsc::Sender<()> {
+        self.looper.clone()
+    }
+
+    fn iroh_wrapper(&self) -> IrohWrapper {
+        let any_iroh = (&self.iroh) as &dyn std::any::Any;
+        if let Some(iroh) = any_iroh.downcast_ref::<client::mem::Iroh>() {
+            return IrohWrapper::Mem(iroh.clone());
+        }
+        if let Some(iroh) = any_iroh.downcast_ref::<client::quic::Iroh>() {
+            return IrohWrapper::Quic(iroh.clone());
+        }
+        panic!("unsupported iroh client");
     }
 }
 

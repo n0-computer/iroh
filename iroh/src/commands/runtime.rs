@@ -17,17 +17,18 @@ use deno_runtime::{
     BootstrapOptions,
 };
 use iroh_bytes::Hash;
+use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 
 use futures::{stream::BoxStream, StreamExt};
 use iroh::{
-    client::mem::{Doc, Iroh},
-    rpc_protocol::NodeStatusResponse,
+    client,
+    rpc_protocol::{NodeStatusResponse, ProviderService},
     sync_engine::LiveEvent,
 };
 use iroh_sync::NamespaceId;
 
-pub(crate) async fn exec(iroh: &Iroh, js_path: PathBuf) -> Result<()> {
+pub(crate) async fn exec(iroh: IrohWrapper, js_path: PathBuf) -> Result<()> {
     let js_path = js_path.canonicalize()?;
     println!("Loading {}", js_path.display());
 
@@ -79,7 +80,7 @@ struct Shared {
     stdio: Stdio,
     feature_checker: Arc<FeatureChecker>,
     location: Option<ModuleSpecifier>,
-    iroh: Iroh,
+    iroh: IrohWrapper,
 }
 
 impl Shared {
@@ -129,26 +130,38 @@ fn create_web_worker_callback(shared: Shared) -> Arc<CreateWebWorkerCb> {
     })
 }
 
+trait SC: ServiceConnection<ProviderService> {}
+impl<S: ServiceConnection<ProviderService>> SC for S {}
+
 deno_core::extension!(
     iroh_runtime,
     ops = [op_node_status, op_doc_subscribe, op_next_doc_event, op_doc_create, op_doc_set, op_blob_get],
     esm_entry_point = "ext:iroh_runtime/bootstrap.js",
     esm = [dir "src", "bootstrap.js"],
-    options = { iroh: Iroh },
+    options = { iroh: IrohWrapper },
     state = move |state, options| {
-        state.put::<Iroh>(options.iroh);
+        state.put::<IrohWrapper>(options.iroh);
     },
 );
+
+#[derive(Debug, Clone)]
+pub enum IrohWrapper {
+    Mem(client::mem::Iroh),
+    Quic(client::quic::Iroh),
+}
 
 #[op2(async)]
 #[serde]
 async fn op_node_status(state: Rc<RefCell<OpState>>) -> Result<NodeStatusResponse, AnyError> {
     let iroh = {
         let state = state.borrow();
-        state.borrow::<Iroh>().clone()
+        state.borrow::<IrohWrapper>().clone()
     };
 
-    let status = iroh.node.status().await?;
+    let status = match iroh {
+        IrohWrapper::Mem(iroh) => iroh.node.status().await?,
+        IrohWrapper::Quic(iroh) => iroh.node.status().await?,
+    };
     Ok(status)
 }
 
@@ -178,25 +191,45 @@ async fn op_doc_subscribe(
             .get::<DocWrapper>(doc_js_wrapper.rid)?;
         println!("fast path");
         // fast path, same thread
-        let doc = RcRef::map(&doc_wrapper, |d| &d.0);
-        doc.subscribe().await?
+        // RcRef::map(&doc_wrapper, |d| &d.0);
+        match &*doc_wrapper {
+            DocWrapper::Mem(d) => DocSub {
+                sub: AsyncRefCell::new(d.subscribe().await?.boxed()),
+            },
+            DocWrapper::Quic(d) => DocSub {
+                sub: AsyncRefCell::new(d.subscribe().await?.boxed()),
+            },
+        }
     } else {
         println!("slow path: fetching iroh");
         let iroh = {
             let state = state.borrow();
-            state.borrow::<Iroh>().clone()
+            state.borrow::<IrohWrapper>().clone()
         };
 
         // slow path, different worker thread
-        let doc = iroh
-            .docs
-            .open(doc_js_wrapper.id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown doc"))?;
-        doc.subscribe().await?
-    };
-    let sub = DocSub {
-        sub: AsyncRefCell::new(sub.boxed()),
+        match iroh {
+            IrohWrapper::Mem(ref i) => {
+                let d = i
+                    .docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?;
+                DocSub {
+                    sub: AsyncRefCell::new(d.subscribe().await?.boxed()),
+                }
+            }
+            IrohWrapper::Quic(ref i) => {
+                let d = i
+                    .docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?;
+                DocSub {
+                    sub: AsyncRefCell::new(d.subscribe().await?.boxed()),
+                }
+            }
+        }
     };
     println!("created sub");
 
@@ -215,11 +248,14 @@ async fn op_doc_set(
 ) -> Result<String, AnyError> {
     let iroh = {
         let state = state.borrow();
-        state.borrow::<Iroh>().clone()
+        state.borrow::<IrohWrapper>().clone()
     };
 
     // TODO: pass author
-    let author = iroh.authors.create().await?;
+    let author = match iroh {
+        IrohWrapper::Mem(ref iroh) => iroh.authors.create().await?,
+        IrohWrapper::Quic(ref iroh) => iroh.authors.create().await?,
+    };
 
     let hash = if state.borrow().resource_table.has(doc_js_wrapper.rid) {
         // fast path, same thread
@@ -227,16 +263,31 @@ async fn op_doc_set(
             .borrow_mut()
             .resource_table
             .get::<DocWrapper>(doc_js_wrapper.rid)?;
-        let doc = RcRef::map(&doc_wrapper, |d| &d.0);
-        doc.set_bytes(author, key, value).await?
+        // let doc = RcRef::map(&doc_wrapper, |d| &d.0);
+        match &*doc_wrapper {
+            DocWrapper::Mem(d) => d.set_bytes(author, key, value).await?,
+            DocWrapper::Quic(d) => d.set_bytes(author, key, value).await?,
+        }
     } else {
         // slow path, different worker thread
-        let doc = iroh
-            .docs
-            .open(doc_js_wrapper.id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown doc"))?;
-        doc.set_bytes(author, key, value).await?
+        match iroh {
+            IrohWrapper::Mem(ref iroh) => {
+                iroh.docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
+                    .set_bytes(author, key, value)
+                    .await?
+            }
+            IrohWrapper::Quic(ref iroh) => {
+                iroh.docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
+                    .set_bytes(author, key, value)
+                    .await?
+            }
+        }
     };
 
     Ok(hash.to_string())
@@ -252,10 +303,13 @@ async fn op_blob_get(
 
     let iroh = {
         let state = state.borrow();
-        state.borrow::<Iroh>().clone()
+        state.borrow::<IrohWrapper>().clone()
     };
 
-    let res = iroh.blobs.read_to_bytes(hash).await?;
+    let res = match iroh {
+        IrohWrapper::Mem(ref i) => i.blobs.read_to_bytes(hash).await?,
+        IrohWrapper::Quic(ref i) => i.blobs.read_to_bytes(hash).await?,
+    };
     let res = std::str::from_utf8(&res)?.to_owned();
 
     Ok(res)
@@ -266,12 +320,18 @@ async fn op_blob_get(
 async fn op_doc_create(state: Rc<RefCell<OpState>>) -> Result<DocJsWrapper, AnyError> {
     let iroh = {
         let state = state.borrow();
-        state.borrow::<Iroh>().clone()
+        state.borrow::<IrohWrapper>().clone()
     };
 
-    let doc = iroh.docs.create().await?;
-    let id = doc.id();
-    let rid = state.borrow_mut().resource_table.add(DocWrapper(doc));
+    let doc = match iroh {
+        IrohWrapper::Mem(ref i) => DocWrapper::Mem(i.docs.create().await?),
+        IrohWrapper::Quic(ref i) => DocWrapper::Quic(i.docs.create().await?),
+    };
+    let id = match doc {
+        DocWrapper::Mem(ref d) => d.id(),
+        DocWrapper::Quic(ref d) => d.id(),
+    };
+    let rid = state.borrow_mut().resource_table.add(doc);
 
     Ok(DocJsWrapper { rid, id })
 }
@@ -282,7 +342,10 @@ struct DocJsWrapper {
     id: NamespaceId,
 }
 
-struct DocWrapper(Doc);
+enum DocWrapper {
+    Mem(client::mem::Doc),
+    Quic(client::quic::Doc),
+}
 impl Resource for DocWrapper {}
 
 struct DocSub {
