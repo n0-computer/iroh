@@ -17,6 +17,7 @@ use iroh::{
     sync_engine::LiveEvent,
 };
 use iroh_sync::{store::Query, AuthorId, NamespaceId};
+use nfsserve::nfs::mode3;
 use nfsserve::{
     nfs::{
         self, fattr3, fileid3, filename3, ftype3, nfspath3, nfsstat3, nfstime3, sattr3, specdata3,
@@ -33,6 +34,115 @@ use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 use super::runtime::{self, IrohWrapper};
 
 const HOSTPORT: u32 = 11111;
+
+// schema
+//
+// Root
+// - .fs.iroh
+//   - next_id: u64
+//
+// Directory
+// - .dir.iroh
+//   - fattr3
+//
+// File
+// - file
+// - .file.iroh
+//   - fattr3
+
+#[derive(Debug, Clone)]
+struct Attrs {
+    /// The id of the file
+    fileid: fileid3,
+    /// Last access time
+    atime: nfstime3,
+    /// Last modification time
+    mtime: nfstime3,
+    /// Creation time
+    ctime: nfstime3,
+    /// size
+    size: u64,
+    /// Mode
+    mode: mode3,
+    ftype: FileType,
+    /// The name
+    name: filename3,
+}
+
+#[derive(Debug, Clone)]
+enum FileType {
+    File,
+    Directory,
+}
+
+impl From<FileType> for ftype3 {
+    fn from(value: FileType) -> Self {
+        match value {
+            FileType::File => ftype3::NF3REG,
+            FileType::Directory => ftype3::NF3DIR,
+        }
+    }
+}
+
+impl TryFrom<ftype3> for FileType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ftype3) -> std::result::Result<Self, Self::Error> {
+        match value {
+            ftype3::NF3REG => Ok(Self::File),
+            ftype3::NF3DIR => Ok(Self::Directory),
+            _ => Err(anyhow!("invalid ftype3: {:?}", value)),
+        }
+    }
+}
+
+impl From<Attrs> for fattr3 {
+    fn from(value: Attrs) -> Self {
+        fattr3 {
+            ftype: value.ftype.into(),
+            mode: value.mode,
+            nlink: 1,
+            uid: 507,
+            gid: 507,
+            size: value.size,
+            used: value.size,
+            rdev: specdata3::default(),
+            fsid: 0,
+            fileid: value.fileid,
+            atime: value.atime,
+            mtime: value.mtime,
+            ctime: value.ctime,
+        }
+    }
+}
+
+impl Attrs {
+    fn new_file(name: filename3, fileid: fileid3) -> Self {
+        Attrs {
+            fileid,
+            atime: now(),
+            mtime: now(),
+            ctime: now(),
+            size: 0,
+            mode: 0o755,
+            ftype: FileType::File,
+            name,
+        }
+    }
+
+    fn new_dir(name: filename3, fileid: fileid3) -> Self {
+        Attrs {
+            fileid,
+            atime: now(),
+            mtime: now(),
+            ctime: now(),
+            size: 0,
+            mode: 0o777,
+            ftype: FileType::Directory,
+            name,
+        }
+    }
+}
 
 pub async fn exec<C>(
     iroh: &Iroh<C>,
@@ -65,19 +175,49 @@ where
 }
 
 #[derive(Debug, Clone)]
-enum FSContents {
+enum FsContents {
     File { key: Bytes, author: AuthorId },
     Directory { content: Vec<fileid3> },
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct FSEntry {
-    id: fileid3,
-    attr: fattr3,
-    name: filename3,
+struct FsEntry {
+    attr: Attrs,
     parent: fileid3,
-    contents: FSContents,
+    contents: FsContents,
+}
+
+impl FsEntry {
+    fn new_file(
+        name: &str,
+        id: fileid3,
+        parent: fileid3,
+        content_len: u64,
+        key: Bytes,
+        author: AuthorId,
+        ts: Option<nfstime3>,
+    ) -> Self {
+        let mut attr = Attrs::new_file(name.as_bytes().into(), id);
+        if let Some(ts) = ts {
+            attr.ctime = ts;
+            attr.mtime = ts;
+        }
+        attr.size = content_len;
+        Self {
+            attr,
+            parent,
+            contents: FsContents::File { key, author },
+        }
+    }
+
+    fn new_dir(name: &str, id: fileid3, parent: fileid3, content: Vec<fileid3>) -> Self {
+        Self {
+            attr: Attrs::new_dir(name.as_bytes().into(), id),
+            parent,
+            contents: FsContents::Directory { content },
+        }
+    }
 }
 
 fn now() -> nfstime3 {
@@ -97,64 +237,6 @@ fn ts_to_nfstime(ts: u64) -> nfstime3 {
     }
 }
 
-fn make_file(
-    name: &str,
-    id: fileid3,
-    parent: fileid3,
-    content_len: u64,
-    key: Bytes,
-    author: AuthorId,
-    ts: nfstime3,
-) -> FSEntry {
-    let attr = fattr3 {
-        ftype: ftype3::NF3REG,
-        mode: 0o755,
-        nlink: 1,
-        uid: 507,
-        gid: 507,
-        size: content_len,
-        used: content_len,
-        rdev: specdata3::default(),
-        fsid: 0,
-        fileid: id,
-        atime: nfstime3::default(),
-        mtime: ts,
-        ctime: ts,
-    };
-    FSEntry {
-        id,
-        attr,
-        name: name.as_bytes().into(),
-        parent,
-        contents: FSContents::File { key, author },
-    }
-}
-
-fn make_dir(name: &str, id: fileid3, parent: fileid3, content: Vec<fileid3>) -> FSEntry {
-    let attr = fattr3 {
-        ftype: ftype3::NF3DIR,
-        mode: 0o777,
-        nlink: 1,
-        uid: 507,
-        gid: 507,
-        size: 0,
-        used: 0,
-        rdev: specdata3::default(),
-        fsid: 0,
-        fileid: id,
-        atime: nfstime3::default(),
-        mtime: now(),
-        ctime: nfstime3::default(),
-    };
-    FSEntry {
-        id,
-        attr,
-        name: name.as_bytes().into(),
-        parent,
-        contents: FSContents::Directory { content },
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct IrohFs<C>
 where
@@ -162,7 +244,7 @@ where
 {
     iroh: Iroh<C>,
     doc: Doc<C>,
-    fs: Arc<RwLock<BTreeMap<u64, FSEntry>>>,
+    fs: Arc<RwLock<BTreeMap<u64, FsEntry>>>,
     next_id: Arc<AtomicU64>,
     rootdir: fileid3,
     author: AuthorId,
@@ -192,7 +274,10 @@ where
         let author = iroh.authors.create().await?;
 
         let mut entries = BTreeMap::new();
-        entries.insert(0, make_file("", 0, 0, 0, Bytes::default(), author, now())); // fileid 0 is special
+        entries.insert(
+            0,
+            FsEntry::new_file("", 0, 0, 0, Bytes::default(), author, None),
+        ); // fileid 0 is special
 
         let mut root_children = Vec::new();
 
@@ -210,19 +295,19 @@ where
             info!("inserting /{}", name);
             entries.insert(
                 id,
-                make_file(
+                FsEntry::new_file(
                     &name,
                     id,
                     dir_id,
                     entry.content_len(),
                     entry.key().to_vec().into(),
                     entry.author(),
-                    ts_to_nfstime(entry.timestamp()),
+                    Some(ts_to_nfstime(entry.timestamp())),
                 ),
             );
         }
 
-        let root_dir = make_dir(
+        let root_dir = FsEntry::new_dir(
             "/",
             dir_id, // current id. Must match position in entries
             0,      // parent id
@@ -256,34 +341,34 @@ where
                                     // deletion
                                     if let Some(k) = fs
                                         .iter()
-                                        .find(|(_, e)| e.name.as_ref() == name.as_bytes())
+                                        .find(|(_, e)| e.attr.name.as_ref() == name.as_bytes())
                                         .map(|(k, _)| *k)
                                     {
                                         fs.remove(&k);
                                     }
-                                } else if let Some(fs_entry) =
-                                    fs.values_mut().find(|e| e.name.as_ref() == name.as_bytes())
+                                } else if let Some(fs_entry) = fs
+                                    .values_mut()
+                                    .find(|e| e.attr.name.as_ref() == name.as_bytes())
                                 {
                                     // existing entry, update
                                     fs_entry.attr.mtime = now();
                                     fs_entry.attr.size = entry.content_len();
-                                    fs_entry.attr.used = entry.content_len();
                                 } else {
                                     fs.insert(
                                         id,
-                                        make_file(
+                                        FsEntry::new_file(
                                             &name,
                                             id,
                                             dir_id,
                                             entry.content_len(),
                                             entry.key().to_vec().into(),
                                             entry.author(),
-                                            ts_to_nfstime(entry.timestamp()),
+                                            Some(ts_to_nfstime(entry.timestamp())),
                                         ),
                                     );
 
                                     // update root dir
-                                    let FSContents::Directory { content } =
+                                    let FsContents::Directory { content } =
                                         &mut fs.get_mut(&1).unwrap().contents
                                     else {
                                         panic!("1 must be the root dir");
@@ -328,7 +413,7 @@ where
 
                         if fs
                             .values()
-                            .find(|v| v.name.as_ref() == MAIN_FILE.as_bytes())
+                            .find(|v| v.attr.name.as_ref() == MAIN_FILE.as_bytes())
                             .is_some()
                         {
                             let p = this.mount_path.join(MAIN_FILE);
@@ -387,10 +472,13 @@ where
         let mut fs = self.fs.write().await;
         info!("write to {:?}", id);
         let attr = {
-            let file = fs.get_mut(&id).ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
+            let file = fs.get_mut(&id).ok_or_else(|| {
+                error!("missing entry {}", id);
+                nfsstat3::NFS3ERR_NOENT
+            })?;
 
             let mut fssize = file.attr.size;
-            if let FSContents::File { key, author } = &mut file.contents {
+            if let FsContents::File { key, author } = &mut file.contents {
                 info!(
                     "writing to {:?} - {} bytes at {}",
                     std::str::from_utf8(key),
@@ -451,15 +539,14 @@ where
             }
             file.attr.mtime = now();
             file.attr.size = fssize;
-            file.attr.used = fssize;
 
-            file.attr
+            file.attr.clone()
         };
 
         // update mtime of the parent
         fs.get_mut(&1).unwrap().attr.mtime = now();
 
-        Ok(attr)
+        Ok(attr.into())
     }
 
     async fn create(
@@ -473,7 +560,7 @@ where
             let mut fs = self.fs.write().await;
             newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
             let dir = fs.get_mut(&dirid).ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
-            let FSContents::Directory { content } = &mut dir.contents else {
+            let FsContents::Directory { content } = &mut dir.contents else {
                 warn!("found file, expected directory");
                 return Err(nfsstat3::NFS3ERR_NOENT);
             };
@@ -487,12 +574,12 @@ where
             info!("inserting {}: {:?}", newid, name);
             fs.insert(
                 newid,
-                make_file(&name, newid, dirid, 0, key, self.author, now()),
+                FsEntry::new_file(&name, newid, dirid, 0, key, self.author, None),
             );
-            fs[&newid].attr
+            fs[&newid].attr.clone()
         };
 
-        Ok((newid, attr))
+        Ok((newid, attr.into()))
     }
 
     async fn create_exclusive(
@@ -505,7 +592,7 @@ where
             let mut fs = self.fs.write().await;
             newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
             let dir = fs.get_mut(&dirid).ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
-            let FSContents::Directory { content } = &mut dir.contents else {
+            let FsContents::Directory { content } = &mut dir.contents else {
                 return Err(nfsstat3::NFS3ERR_NOENT);
             };
             let key: Bytes = filename.as_ref().to_vec().into();
@@ -529,7 +616,7 @@ where
             info!("inserting {}: {:?}", newid, name);
             fs.insert(
                 newid,
-                make_file(&name, newid, dirid, 0, key, self.author, now()),
+                FsEntry::new_file(&name, newid, dirid, 0, key, self.author, None),
             );
         }
         Ok(newid)
@@ -538,9 +625,9 @@ where
     async fn lookup(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3> {
         let fs = self.fs.read().await;
         let entry = fs.get(&dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        if let FSContents::File { .. } = entry.contents {
+        if let FsContents::File { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
-        } else if let FSContents::Directory { content, .. } = &entry.contents {
+        } else if let FsContents::Directory { content, .. } = &entry.contents {
             // if looking for dir/. its the current directory
             if filename[..] == [b'.'] {
                 return Ok(dirid);
@@ -551,7 +638,7 @@ where
             }
             for i in content {
                 if let Some(f) = fs.get(i) {
-                    if f.name[..] == filename[..] {
+                    if f.attr.name[..] == filename[..] {
                         return Ok(*i);
                     }
                 }
@@ -563,17 +650,23 @@ where
     async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3> {
         info!("getattr {:?}", id);
         let fs = self.fs.read().await;
-        let entry = fs.get(&id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        let entry = fs.get(&id).ok_or_else(|| {
+            error!("missing entry {}", id);
+            nfsstat3::NFS3ERR_NOENT
+        })?;
 
         // update attrs if needed
 
-        if let FSContents::File { author, key } = &entry.contents {
+        if let FsContents::File { author, key } = &entry.contents {
             let author = author.clone();
             let key = key.clone();
             drop(fs);
 
             let mut fs = self.fs.write().await;
-            let fs_entry = fs.get_mut(&id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+            let fs_entry = fs.get_mut(&id).ok_or_else(|| {
+                error!("missing entry {}", id);
+                nfsstat3::NFS3ERR_NOENT
+            })?;
             if let Some(entry) = self
                 .doc
                 .get_exact(author, key, true)
@@ -582,15 +675,22 @@ where
             {
                 fs_entry.attr.mtime = ts_to_nfstime(entry.timestamp());
             }
-            Ok(fs_entry.attr)
+            Ok(fs_entry.attr.clone().into())
         } else {
-            Ok(entry.attr)
+            Ok(entry.attr.clone().into())
         }
     }
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
         let mut fs = self.fs.write().await;
         let entry = fs.get_mut(&id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        info!(
+            "setattr {}:{:?}: {:?}",
+            id,
+            std::str::from_utf8(entry.attr.name.as_ref()),
+            setattr,
+        );
+
         match setattr.atime {
             nfs::set_atime::DONT_CHANGE => {}
             nfs::set_atime::SET_TO_CLIENT_TIME(c) => {
@@ -619,45 +719,51 @@ where
         };
         match setattr.uid {
             nfs::set_uid3::uid(u) => {
-                entry.attr.uid = u;
+                // TODO:
+                // entry.attr.uid = u;
             }
             nfs::set_uid3::Void => {}
         }
         match setattr.gid {
             nfs::set_gid3::gid(u) => {
-                entry.attr.gid = u;
+                // TODO:
+                // entry.attr.gid = u;
             }
             nfs::set_gid3::Void => {}
         }
         match setattr.size {
             nfs::set_size3::size(s) => {
                 entry.attr.size = s;
-                entry.attr.used = s;
 
-                if let FSContents::File { key, author } = &mut entry.contents {
-                    let entry = self
-                        .doc
-                        .get_exact(*author, &key, true)
-                        .await
-                        .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-                        .ok_or(nfsstat3::NFS3ERR_NOENT)?;
+                if let FsContents::File { key, author } = &mut entry.contents {
+                    if s == 0 {
+                        self.doc
+                            .del(*author, key.clone())
+                            .await
+                            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+                    } else {
+                        let entry = self
+                            .doc
+                            .get_exact(*author, &key, true)
+                            .await
+                            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+                            .ok_or(nfsstat3::NFS3ERR_NOENT)?;
 
-                    // get the full content
-                    let mut bytes = self
-                        .iroh
-                        .blobs
-                        .read_to_bytes(entry.content_hash())
-                        .await
-                        .map_err(|err| {
-                            error!("read_to_bytes: {:?} {:?}", key, err);
-                            nfsstat3::NFS3ERR_SERVERFAULT
-                        })?
-                        .to_vec();
+                        // get the full content
+                        let mut bytes = self
+                            .iroh
+                            .blobs
+                            .read_to_bytes(entry.content_hash())
+                            .await
+                            .map_err(|err| {
+                                error!("read_to_bytes: {:?} {:?}", key, err);
+                                nfsstat3::NFS3ERR_SERVERFAULT
+                            })?
+                            .to_vec();
 
-                    bytes.resize(s as usize, 0);
+                        bytes.resize(s as usize, 0);
 
-                    // store back
-                    if !bytes.is_empty() {
+                        // store back
                         self.doc
                             .set_bytes(self.author, key.clone(), bytes)
                             .await
@@ -670,7 +776,7 @@ where
             }
             nfs::set_size3::Void => {}
         }
-        Ok(entry.attr)
+        Ok(entry.attr.clone().into())
     }
 
     async fn read(
@@ -683,9 +789,9 @@ where
         let fs = self.fs.read().await;
         let entry = fs.get(&id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
 
-        if let FSContents::Directory { .. } = entry.contents {
+        if let FsContents::Directory { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_ISDIR);
-        } else if let FSContents::File { key, author } = &entry.contents {
+        } else if let FsContents::File { key, author } = &entry.contents {
             let mut start = offset as usize;
             let mut end = offset as usize + count as usize;
 
@@ -723,9 +829,9 @@ where
     ) -> Result<ReadDirResult, nfsstat3> {
         let fs = self.fs.read().await;
         let entry = fs.get(&dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        if let FSContents::File { .. } = entry.contents {
+        if let FsContents::File { .. } = entry.contents {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
-        } else if let FSContents::Directory { content, .. } = &entry.contents {
+        } else if let FsContents::Directory { content, .. } = &entry.contents {
             let mut ret = ReadDirResult {
                 entries: Vec::new(),
                 end: false,
@@ -744,8 +850,8 @@ where
                 let entry = fs.get(i).ok_or(nfsstat3::NFS3ERR_IO)?;
                 ret.entries.push(DirEntry {
                     fileid: *i,
-                    name: entry.name.clone(),
-                    attr: entry.attr,
+                    name: entry.attr.name.clone(),
+                    attr: entry.attr.clone().into(),
                 });
                 if ret.entries.len() >= max_entries {
                     break;
@@ -764,14 +870,14 @@ where
         let mut fs = self.fs.write().await;
         let (fid, _) = fs
             .iter()
-            .find(|(_, e)| e.name.as_ref() == filename.as_ref())
+            .find(|(_, e)| e.attr.name.as_ref() == filename.as_ref())
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let fid = *fid;
         // Remove entry from the cache
         let entry = fs.remove(&fid);
 
         // Remove from doc
-        if let Some(FSContents::File { key, author }) = entry.map(|e| e.contents) {
+        if let Some(FsContents::File { key, author }) = entry.map(|e| e.contents) {
             self.doc.del(author, key.clone()).await.map_err(|err| {
                 error!("delete {:?}: {:?}", key, err);
                 nfsstat3::NFS3ERR_SERVERFAULT
@@ -781,7 +887,7 @@ where
         // Update dir
         {
             let entry = fs.get_mut(&dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-            if let FSContents::Directory { content, .. } = &mut entry.contents {
+            if let FsContents::Directory { content, .. } = &mut entry.contents {
                 content.retain(|r| *r != fid);
             }
             entry.attr.mtime = now();
@@ -817,7 +923,7 @@ where
         // read entry
         let (fid, _) = fs
             .iter()
-            .find(|(_, e)| e.name.as_ref() == from_filename.as_ref())
+            .find(|(_, e)| e.attr.name.as_ref() == from_filename.as_ref())
             .ok_or_else(|| {
                 warn!(
                     "no entry found for {:?}",
@@ -828,7 +934,7 @@ where
         let fid = *fid;
 
         let entry = fs.get(&fid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let FSContents::File { key, author } = &entry.contents else {
+        let FsContents::File { key, author } = &entry.contents else {
             return Err(nfsstat3::NFS3ERR_ISDIR);
         };
 
@@ -860,7 +966,7 @@ where
             // remove from old
             {
                 let entry = fs.get_mut(&from_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-                let FSContents::Directory { content, .. } = &mut entry.contents else {
+                let FsContents::Directory { content, .. } = &mut entry.contents else {
                     return Err(nfsstat3::NFS3ERR_NOENT);
                 };
                 content.retain(|v| *v != fid);
@@ -870,7 +976,7 @@ where
             // insert into new dir
             {
                 let entry = fs.get_mut(&to_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-                let FSContents::Directory { content, .. } = &mut entry.contents else {
+                let FsContents::Directory { content, .. } = &mut entry.contents else {
                     return Err(nfsstat3::NFS3ERR_NOENT);
                 };
                 content.push(fid);
