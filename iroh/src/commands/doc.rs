@@ -20,7 +20,7 @@ use iroh::{
     client::{Doc, Iroh},
     rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
     sync_engine::{LiveEvent, Origin},
-    util::fs::{path_content_info, PathContent},
+    util::fs::{path_content_info, path_to_key, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
 use iroh_sync::{
@@ -182,6 +182,9 @@ pub enum DocCommands {
         /// Moving a file imported with `in-place` will result in data corruption
         #[clap(short, long)]
         in_place: bool,
+        /// When true, you will not get a prompt to confirm you want to import the files
+        #[clap(long, default_value_t = false)]
+        no_prompt: bool,
     },
     /// Export the most recent data for a key from a document
     Export {
@@ -392,6 +395,7 @@ impl DocCommands {
                 prefix,
                 path,
                 in_place,
+                no_prompt,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
@@ -409,16 +413,18 @@ impl DocCommands {
                 // and confirm with the user that they still want to import the file
                 let PathContent { size, files } =
                     tokio::task::spawn_blocking(|| path_content_info(root0)).await??;
-                let prompt = format!("Import {files} files totaling {}?", HumanBytes(size));
-                if !Confirm::new()
-                    .with_prompt(prompt)
-                    .interact()
-                    .unwrap_or(false)
-                {
-                    println!("Aborted.");
-                    return Ok(());
-                } else {
-                    print!("\r");
+                if !no_prompt {
+                    let prompt = format!("Import {files} files totaling {}?", HumanBytes(size));
+                    if !Confirm::new()
+                        .with_prompt(prompt)
+                        .interact()
+                        .unwrap_or(false)
+                    {
+                        println!("Aborted.");
+                        return Ok(());
+                    } else {
+                        print!("\r");
+                    }
                 }
 
                 let stream = iroh
@@ -725,20 +731,21 @@ where
                         Some((path_str, size, ref mut h, last_val)) => {
                             imp.add_progress(*size - *last_val);
                             imp.import_found(path_str.clone());
+                            let path = PathBuf::from(path_str.clone());
                             *h = Some(hash);
-                            let key = match key_from_path_str(
-                                root.clone(),
-                                prefix.clone(),
-                                path_str.clone(),
-                            ) {
-                                Ok(k) => k,
-                                Err(e) => {
-                                    tracing::info!("error getting key from {}, id {id}", path_str);
-                                    return Some(Err(anyhow::anyhow!(
-                                        "Issue creating a key for entry {hash:?}: {e}"
-                                    )));
-                                }
-                            };
+                            let key =
+                                match path_to_key(path, Some(prefix.clone()), Some(root.clone())) {
+                                    Ok(k) => k.to_vec(),
+                                    Err(e) => {
+                                        tracing::info!(
+                                            "error getting key from {}, id {id}",
+                                            path_str
+                                        );
+                                        return Some(Err(anyhow::anyhow!(
+                                            "Issue creating a key for entry {hash:?}: {e}"
+                                        )));
+                                    }
+                                };
                             // send update to doc
                             tracing::info!(
                                 "setting entry {} (id: {id}) to doc",
@@ -786,20 +793,6 @@ where
 
     task_imp.all_done();
     Ok(())
-}
-
-/// Creates a document key from the path, removing the full canonicalized path, and adding
-/// whatever prefix the user requests.
-fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
-    let suffix = PathBuf::from(path_str)
-        .strip_prefix(root)?
-        .to_str()
-        .map(|p| p.as_bytes())
-        .ok_or(anyhow!("could not convert path to bytes"))?
-        .to_vec();
-    let mut key = prefix.into_bytes().to_vec();
-    key.extend(suffix);
-    Ok(key)
 }
 
 #[derive(Debug, Clone)]
@@ -852,5 +845,64 @@ impl ImportProgressBar {
 
     fn all_done(self) {
         self.mp.clear().ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_doc_import() -> Result<()> {
+        let temp_dir = tempfile::tempdir().context("tempdir")?;
+
+        tokio::fs::create_dir_all(temp_dir.path())
+            .await
+            .context("create dir all")?;
+
+        let foobar = temp_dir.path().join("foobar");
+        tokio::fs::write(foobar, "foobar")
+            .await
+            .context("write foobar")?;
+        let foo = temp_dir.path().join("foo");
+        tokio::fs::write(foo, "foo").await.context("write foo")?;
+
+        let data_dir = tempfile::tempdir()?;
+
+        // run iroh node in the background, as if running `iroh start`
+        std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
+        let lp = tokio_util::task::LocalPoolHandle::new(1);
+        let node = crate::commands::start::start_node(&lp, None).await?;
+        let client = node.client();
+        let doc = client.docs.create().await.context("doc create")?;
+        let author = client.authors.create().await.context("author create")?;
+
+        // set up command, getting iroh node
+        let cli = ConsoleEnv::for_console().context("ConsoleEnv")?;
+        let iroh = crate::commands::iroh_quic_connect()
+            .await
+            .context("rpc connect")?;
+
+        let command = DocCommands::Import {
+            doc: Some(doc.id()),
+            author: Some(author),
+            prefix: None,
+            path: temp_dir.path().to_string_lossy().into(),
+            in_place: false,
+            no_prompt: true,
+        };
+
+        command.run(&iroh, &cli).await.context("DocCommands run")?;
+
+        let keys: Vec<_> = doc
+            .get_many(Query::all())
+            .await
+            .context("doc get many")?
+            .try_collect()
+            .await?;
+        assert_eq!(2, keys.len());
+
+        iroh.node.shutdown(false).await?;
+        Ok(())
     }
 }

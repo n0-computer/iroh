@@ -240,10 +240,11 @@ pub fn key_to_path(
         key
     };
 
-    let mut path = PathBuf::new();
-    if key[0] == b'/' {
-        path = path.join("/");
-    }
+    let mut path = if key[0] == b'/' {
+        PathBuf::from("/")
+    } else {
+        PathBuf::new()
+    };
     for component in key
         .split(|c| c == &b'/')
         .map(|c| String::from_utf8(c.into()).context("key contains invalid data"))
@@ -389,11 +390,7 @@ mod tests {
             canonicalized_path_to_string("/foo/bar", false).unwrap(),
             "/foo/bar"
         );
-        let path = PathBuf::new()
-            .join("/")
-            .join("Ü")
-            .join("⁰€™■･�")
-            .join("東京");
+        let path = PathBuf::from("/").join("Ü").join("⁰€™■･�").join("東京");
         assert_eq!(
             canonicalized_path_to_string(path, false).unwrap(),
             "/Ü/⁰€™■･�/東京"
