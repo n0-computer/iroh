@@ -1,7 +1,11 @@
+use anyhow::Error;
 use erased_set::ErasedSyncSet;
 use once_cell::sync::OnceCell;
 #[cfg(feature = "metrics")]
 use prometheus_client::{encoding::text::encode, registry::Registry};
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use tracing::trace;
 #[cfg(not(feature = "metrics"))]
 type Registry = ();
 
@@ -15,6 +19,8 @@ pub struct Core {
     #[cfg(feature = "metrics")]
     registry: Registry,
     metrics_map: ErasedSyncSet,
+    #[cfg(feature = "metrics")]
+    usage_reporter: UsageReporter,
 }
 /// Open Metrics [`Counter`] to measure discrete events.
 ///
@@ -131,10 +137,15 @@ impl Core {
         let mut metrics_map = ErasedSyncSet::new();
         f(&mut registry, &mut metrics_map);
 
+        #[cfg(feature = "metrics")]
+        let usage_reporter = UsageReporter::new();
+
         CORE.set(Core {
             metrics_map,
             #[cfg(feature = "metrics")]
             registry,
+            #[cfg(feature = "metrics")]
+            usage_reporter,
         })
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "already set"))
     }
@@ -161,6 +172,11 @@ impl Core {
         encode(&mut buf, &self.registry)?;
         Ok(buf)
     }
+
+    #[cfg(feature = "metrics")]
+    pub(crate) fn usage_reporter(&self) -> &UsageReporter {
+        &self.usage_reporter
+    }
 }
 
 /// Interface for all single value based metrics.
@@ -173,4 +189,84 @@ pub trait MetricType {
 pub trait HistogramType {
     /// Returns the name of the metric
     fn name(&self) -> &'static str;
+}
+
+/// Exposes a simple API to report usage statistics.
+#[derive(Debug, Default)]
+pub struct UsageReporter {
+    pub(crate) report_endpoint: Option<String>,
+    pub(crate) report_token: Option<String>,
+}
+
+impl UsageReporter {
+    /// Creates a new usage reporter.
+    pub fn new() -> Self {
+        let report_endpoint = std::env::var("IROH_METRICS_USAGE_STATS_ENDPOINT").ok();
+        let report_token = std::env::var("IROH_METRICS_USAGE_STATS_TOKEN").ok();
+        UsageReporter {
+            report_endpoint,
+            report_token,
+        }
+    }
+
+    /// Reports usage statistics to the configured endpoint.
+    pub async fn report_usage_stats(&self, report: &UsageStatsReport) -> Result<(), Error> {
+        if let Some(report_endpoint) = &self.report_endpoint {
+            trace!("reporting usage stats to {}", report_endpoint);
+            let mut client = reqwest::Client::new().post(report_endpoint);
+
+            if let Some(report_token) = &self.report_token {
+                let mut headers = reqwest::header::HeaderMap::new();
+                headers.insert(
+                    reqwest::header::COOKIE,
+                    format!("token={}", report_token).parse().unwrap(),
+                );
+                client = client.headers(headers);
+            }
+            let _ = client.json(report).send().await?;
+        }
+        Ok(())
+    }
+}
+
+/// Usage statistics report.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UsageStatsReport {
+    /// The timestamp of the report.
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+    /// The resource being consumed.
+    pub resource: String,
+    /// Reference to the resource reporter.
+    pub resource_ref: String,
+    /// The value of the resource being consumed.
+    pub value: i64,
+    /// Identifier of the user consuming the resource.
+    pub attribution_id: Option<String>,
+    /// Public key of the user consuming the resource.
+    pub attribution_key: Option<String>,
+}
+
+/// Type alias for a metered resource.
+pub type UsageResource = String;
+
+impl UsageStatsReport {
+    /// Creates a new usage stats report.
+    pub fn new(
+        resource: UsageResource,
+        resource_ref: String,
+        value: i64,
+        attribution_id: Option<String>,
+        attribution_key: Option<String>,
+    ) -> Self {
+        let timestamp = OffsetDateTime::now_utc();
+        UsageStatsReport {
+            timestamp,
+            resource,
+            resource_ref,
+            value,
+            attribution_id,
+            attribution_key,
+        }
+    }
 }
