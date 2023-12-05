@@ -36,12 +36,16 @@ macro_rules! inc_by {
 
 /// Report usage statistics to the configured endpoint.
 #[allow(unused_variables)]
-pub async fn report_usage_stats(report: &UsageStatsReport) -> Result<(), Error> {
+pub async fn report_usage_stats(report: &UsageStatsReport) {
     #[cfg(feature = "metrics")]
     {
-        let core = core::Core::get()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
-        core.usage_reporter().report_usage_stats(report).await?;
+        if let Some(core) = core::Core::get() {
+            core.usage_reporter()
+                .report_usage_stats(report)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to report usage stats: {}", e);
+                });
+        }
     }
-    Ok(())
 }

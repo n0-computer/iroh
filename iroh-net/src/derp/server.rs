@@ -511,7 +511,7 @@ where
                                 1,
                                 None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
                                 Some(key.to_string()),
-                            )).await.unwrap_or_else(|e| tracing::warn!("error reporting usage stats: {:?}", e));
+                            )).await;
 
                            // add client to mesh
                            // `None` means its a local client (so it doesn't need a packet forwarder)
