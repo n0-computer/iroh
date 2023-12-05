@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use iroh::client;
-use iroh::util::fs::{key_to_path, path_to_key};
+use iroh::util::fs::path_to_key;
 use iroh::{
     client::{Doc, Iroh},
     rpc_protocol::ProviderService,
@@ -28,7 +28,7 @@ use nfsserve::{
 use quic_rpc::ServiceConnection;
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::task::LocalPoolHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 
@@ -311,6 +311,7 @@ impl InnerFs {
         self.by_id.insert(id, entry);
 
         let parent = self.by_id.get_mut(&parent_id).expect("unknown parent");
+        debug!("updating parent {}", parent_id);
         parent.contents.children_mut().push(id);
         parent.attr.mtime = now();
     }
@@ -407,6 +408,9 @@ impl InnerFs {
         let mut current_parent = self.by_id.get(&id);
         while let Some(p) = current_parent {
             cb(p);
+            if p.parent == 0 {
+                break;
+            }
             current_parent = self.by_id.get(&p.parent);
         }
     }
@@ -482,6 +486,10 @@ fn fs_entry_name_from_path(path: impl AsRef<Path>) -> Result<String> {
     Ok(res)
 }
 
+fn key_to_path(key: impl AsRef<[u8]>) -> Result<PathBuf> {
+    iroh::util::fs::key_to_path(key, None, Some(PathBuf::from("/")))
+}
+
 impl<C> IrohFs<C>
 where
     C: ServiceConnection<ProviderService>,
@@ -509,7 +517,19 @@ where
         };
 
         let mut fs = InnerFs::default();
-        let _base_entry = FsEntry::new_file("", get_next_id(), 0, 0, author, None);
+        {
+            let id = get_next_id();
+            let base_entry = FsEntry::new_file("", id, 0, 0, author, None);
+            fs.by_id.insert(id, base_entry);
+            fs.by_path.insert(PathBuf::new(), id);
+        }
+        {
+            let id = get_next_id();
+            let path = PathBuf::from("/");
+            let root_dir = FsEntry::new_dir("/", id, 0, author, Vec::new());
+            fs.by_id.insert(id, root_dir);
+            fs.by_path.insert(path, id);
+        }
 
         let mut keys = doc
             .get_many(
@@ -520,7 +540,8 @@ where
         while let Some(entry) = keys.next().await {
             let entry = entry?;
 
-            let Ok(path) = key_to_path(entry.key(), None, None) else {
+            let Ok(path) = key_to_path(entry.key()) else {
+                warn!("ignoring invalid path: {:?}", entry.key());
                 continue;
             };
             let is_dir = path.to_str().expect("already checked").ends_with("/");
@@ -536,6 +557,13 @@ where
             if fs.contains_by_path(&path) {
                 bail!("duplicate entry: {}", path.display());
             }
+
+            info!(
+                "inserting {}: {} (is_dir: {})",
+                name,
+                path.display(),
+                is_dir
+            );
 
             let id = get_next_id();
             let entry = if is_dir {
@@ -573,7 +601,7 @@ where
                             | LiveEvent::InsertRemote { entry, .. } => {
                                 // insert into fs
                                 let mut fs = sub_fs.0.write().await;
-                                let path = match key_to_path(entry.key(), None, None) {
+                                let path = match key_to_path(entry.key()) {
                                     Err(err) => {
                                         warn!("ignoring key: {:?}: {:?}", entry.key(), err);
                                         continue;
@@ -878,32 +906,33 @@ where
             error!("missing entry {}", id);
             nfsstat3::NFS3ERR_NOENT
         })?;
+        debug!("got entry: {:?}", entry);
 
         // update attrs if needed
-        if let FsContents::File { author } = &entry.contents {
-            let author = author.clone();
-            let path = fs.get_path_for_id(id).unwrap();
-            let key = path_to_key(&path, None, None).unwrap();
-            drop(fs);
+        let author = *entry.contents.author();
+        let path = fs.get_path_for_id(id).unwrap();
+        let key = path_to_key(&path, None, None).unwrap();
+        drop(fs);
 
-            let mut fs = self.fs.0.write().await;
-            let fs_entry = fs.get_by_id_mut(id).ok_or_else(|| {
-                error!("missing entry {}", id);
-                nfsstat3::NFS3ERR_NOENT
-            })?;
+        debug!("updating entry: {}: {}", id, path.display());
+        let mut fs = self.fs.0.write().await;
+        let fs_entry = fs.get_by_id_mut(id).ok_or_else(|| {
+            error!("missing entry {}", id);
+            nfsstat3::NFS3ERR_NOENT
+        })?;
 
-            if let Some(entry) = self
-                .doc
-                .get_exact(author, key, true)
-                .await
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
-            {
-                fs_entry.attr.mtime = ts_to_nfstime(entry.timestamp());
-            }
-            Ok(fs_entry.attr.clone().into())
-        } else {
-            Ok(entry.attr.clone().into())
+        if let Some(entry) = self
+            .doc
+            .get_exact(author, key, true)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
+        {
+            fs_entry.attr.mtime = ts_to_nfstime(entry.timestamp());
         }
+        let attrs = fs_entry.attr.clone();
+
+        debug!("got attrs {:?}", attrs);
+        Ok(attrs.into())
     }
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
