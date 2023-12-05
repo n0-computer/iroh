@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use anyhow::{ensure, Result};
-use iroh_bytes::{protocol::RequestToken, BlobFormat, Hash};
+use iroh_bytes::{BlobFormat, Hash};
 use iroh_net::{derp::DerpMap, key::SecretKey, NodeAddr};
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +23,6 @@ pub struct Ticket {
     format: BlobFormat,
     /// The hash to retrieve.
     hash: Hash,
-    /// Optional Request token.
-    token: Option<RequestToken>,
 }
 
 impl IrohTicket for Ticket {
@@ -48,19 +46,9 @@ impl FromStr for Ticket {
 
 impl Ticket {
     /// Creates a new ticket.
-    pub fn new(
-        peer: NodeAddr,
-        hash: Hash,
-        format: BlobFormat,
-        token: Option<RequestToken>,
-    ) -> Result<Self> {
-        ensure!(!peer.info.is_empty(), "addressing info cannot be empty");
-        Ok(Self {
-            hash,
-            format,
-            node: peer,
-            token,
-        })
+    pub fn new(node: NodeAddr, hash: Hash, format: BlobFormat) -> Result<Self> {
+        ensure!(!node.info.is_empty(), "addressing info cannot be empty");
+        Ok(Self { hash, format, node })
     }
 
     /// The hash of the item this ticket can retrieve.
@@ -73,19 +61,9 @@ impl Ticket {
         &self.node
     }
 
-    /// The [`RequestToken`] for this ticket.
-    pub fn token(&self) -> Option<&RequestToken> {
-        self.token.as_ref()
-    }
-
     /// The [`BlobFormat`] for this ticket.
     pub fn format(&self) -> BlobFormat {
         self.format
-    }
-
-    /// Set the [`RequestToken`] for this ticket.
-    pub fn with_token(self, token: Option<RequestToken>) -> Self {
-        Self { token, ..self }
     }
 
     /// True if the ticket is for a collection and should retrieve all blobs in it.
@@ -94,14 +72,9 @@ impl Ticket {
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (NodeAddr, Hash, BlobFormat, Option<RequestToken>) {
-        let Ticket {
-            node: peer,
-            hash,
-            format,
-            token,
-        } = self;
-        (peer, hash, format, token)
+    pub fn into_parts(self) -> (NodeAddr, Hash, BlobFormat) {
+        let Ticket { node, hash, format } = self;
+        (node, hash, format)
     }
 
     /// Convert this ticket into a [`Options`], adding the given secret key.
@@ -120,13 +93,8 @@ impl Serialize for Ticket {
         if serializer.is_human_readable() {
             serializer.serialize_str(&self.to_string())
         } else {
-            let Ticket {
-                node,
-                format,
-                hash,
-                token,
-            } = self;
-            (node, format, hash, token).serialize(serializer)
+            let Ticket { node, format, hash } = self;
+            (node, format, hash).serialize(serializer)
         }
     }
 }
@@ -137,8 +105,8 @@ impl<'de> Deserialize<'de> for Ticket {
             let s = String::deserialize(deserializer)?;
             Self::from_str(&s).map_err(serde::de::Error::custom)
         } else {
-            let (peer, format, hash, token) = Deserialize::deserialize(deserializer)?;
-            Self::new(peer, hash, format, token).map_err(serde::de::Error::custom)
+            let (peer, format, hash) = Deserialize::deserialize(deserializer)?;
+            Self::new(peer, hash, format).map_err(serde::de::Error::custom)
         }
     }
 }
@@ -156,12 +124,10 @@ mod tests {
         let hash = Hash::from(hash);
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let derp_region = Some(0);
         Ticket {
             hash,
             node: NodeAddr::from_parts(peer, derp_region, vec![addr]),
-            token: Some(token),
             format: BlobFormat::HashSeq,
         }
     }

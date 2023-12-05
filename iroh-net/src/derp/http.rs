@@ -54,11 +54,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = iroh_test::logging::setup();
 
         let server_key = SecretKey::generate();
         let a_key = SecretKey::generate();
@@ -100,11 +96,17 @@ mod tests {
 
         // create clients
         let derp_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
-        let (a_key, mut a_recv, client_a_task, client_a) =
-            create_test_client(a_key, region.clone(), Some(derp_addr.clone()));
+        let (a_key, mut a_recv, client_a_task, client_a) = {
+            let span = info_span!("client-a");
+            let _guard = span.enter();
+            create_test_client(a_key, region.clone(), Some(derp_addr.clone()))
+        };
         info!("created client {a_key:?}");
-        let (b_key, mut b_recv, client_b_task, client_b) =
-            create_test_client(b_key, region, Some(derp_addr));
+        let (b_key, mut b_recv, client_b_task, client_b) = {
+            let span = info_span!("client-b");
+            let _guard = span.enter();
+            create_test_client(b_key, region, Some(derp_addr))
+        };
         info!("created client {b_key:?}");
 
         info!("ping a");
@@ -129,11 +131,12 @@ mod tests {
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
-        server.shutdown().await;
         client_a.close().await?;
         client_a_task.abort();
         client_b.close().await?;
         client_b_task.abort();
+        server.shutdown().await;
+
         Ok(())
     }
 
@@ -191,7 +194,7 @@ mod tests {
                     }
                 }
             }
-            .instrument(info_span!("test.client.reader")),
+            .instrument(info_span!("test-client-reader")),
         );
         (public_key, received_msg_r, client_reader_task, client)
     }

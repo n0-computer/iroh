@@ -18,7 +18,6 @@ use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
 // use iroh_bytes::util::progress::FlumeProgressSender;
-use iroh_bytes::util::runtime;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
@@ -72,14 +71,11 @@ where
     C: ServiceConnection<ProviderService>,
 {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
-    pub fn new(rpc: RpcClient<ProviderService, C>, rt: runtime::Handle) -> Self {
+    pub fn new(rpc: RpcClient<ProviderService, C>) -> Self {
         Self {
             node: NodeClient { rpc: rpc.clone() },
             blobs: BlobsClient { rpc: rpc.clone() },
-            docs: DocsClient {
-                rpc: rpc.clone(),
-                rt,
-            },
+            docs: DocsClient { rpc: rpc.clone() },
             authors: AuthorsClient { rpc: rpc.clone() },
             tags: TagsClient { rpc },
         }
@@ -137,7 +133,6 @@ where
 #[derive(Debug, Clone)]
 pub struct DocsClient<C> {
     rpc: RpcClient<ProviderService, C>,
-    rt: runtime::Handle,
 }
 
 impl<C> DocsClient<C>
@@ -147,7 +142,7 @@ where
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocCreateRequest {}).await??;
-        let doc = Doc::new(self.rt.clone(), self.rpc.clone(), res.id);
+        let doc = Doc::new(self.rpc.clone(), res.id);
         Ok(doc)
     }
 
@@ -164,7 +159,7 @@ where
     /// Import a document from a ticket and join all peers in the ticket.
     pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
-        let doc = Doc::new(self.rt.clone(), self.rpc.clone(), res.doc_id);
+        let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
     }
 
@@ -177,7 +172,7 @@ where
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
     pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
         self.rpc.rpc(DocOpenRequest { doc_id: id }).await??;
-        let doc = Doc::new(self.rt.clone(), self.rpc.clone(), id);
+        let doc = Doc::new(self.rpc.clone(), id);
         Ok(Some(doc))
     }
 }
@@ -289,9 +284,17 @@ where
         tag: SetTagOption,
     ) -> anyhow::Result<BlobAddProgress> {
         const CAP: usize = 1024 * 64; // send 64KB per request by default
-        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
-
         let input = ReaderStream::with_capacity(reader, CAP);
+        self.add_stream(input, tag).await
+    }
+
+    /// Write a blob by passing a stream of bytes.
+    pub async fn add_stream(
+        &self,
+        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        tag: SetTagOption,
+    ) -> anyhow::Result<BlobAddProgress> {
+        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
         let mut input = input.map(|chunk| match chunk {
             Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
             Err(err) => {
@@ -299,7 +302,6 @@ where
                 Ok(BlobAddStreamUpdate::Abort)
             }
         });
-
         tokio::spawn(async move {
             // TODO: Is it important to catch this error? It should also result in an error on the
             // response stream. If we deem it important, we could one-shot send it into the
@@ -532,7 +534,7 @@ struct DocInner<C: ServiceConnection<ProviderService>> {
     id: NamespaceId,
     rpc: RpcClient<ProviderService, C>,
     closed: AtomicBool,
-    rt: runtime::Handle,
+    rt: tokio::runtime::Handle,
 }
 
 impl<C> Drop for DocInner<C>
@@ -542,7 +544,7 @@ where
     fn drop(&mut self) {
         let doc_id = self.id;
         let rpc = self.rpc.clone();
-        self.rt.main().spawn(async move {
+        self.rt.spawn(async move {
             rpc.rpc(DocCloseRequest { doc_id }).await.ok();
         });
     }
@@ -552,12 +554,12 @@ impl<C> Doc<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    fn new(rt: runtime::Handle, rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
+    fn new(rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
         Self(Arc::new(DocInner {
             rpc,
             id,
             closed: AtomicBool::new(false),
-            rt,
+            rt: tokio::runtime::Handle::current(),
         }))
     }
 
@@ -971,17 +973,17 @@ where
 mod tests {
     use super::*;
 
-    use iroh_bytes::util::runtime;
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
+    use tokio_util::task::LocalPoolHandle;
 
     #[tokio::test]
     async fn test_drop_doc_client_sync() -> Result<()> {
         let db = iroh_bytes::store::readonly_mem::Store::default();
         let doc_store = iroh_sync::store::memory::Store::default();
-        let rt = runtime::Handle::from_current(1)?;
+        let lp = LocalPoolHandle::new(1);
         let node = crate::node::Node::builder(db, doc_store)
-            .runtime(&rt)
+            .local_pool(&lp)
             .spawn()
             .await?;
 
@@ -1003,12 +1005,8 @@ mod tests {
     #[tokio::test]
     async fn test_doc_import_export() -> Result<()> {
         let doc_store = iroh_sync::store::memory::Store::default();
-        let rt = runtime::Handle::from_current(1)?;
-        let db = iroh_bytes::store::mem::Store::new(rt.clone());
-        let node = crate::node::Node::builder(db, doc_store)
-            .runtime(&rt)
-            .spawn()
-            .await?;
+        let db = iroh_bytes::store::mem::Store::new();
+        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;

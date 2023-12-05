@@ -8,30 +8,25 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
-use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
+use hyper::body::Incoming;
+use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
-use iroh_net::{
-    defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME},
-    derp::{
-        self,
-        http::{
-            MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
-        },
-    },
-    key::SecretKey,
-    stun,
+use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
+use iroh_net::derp;
+use iroh_net::derp::http::{
+    MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
 };
-use serde_with::{serde_as, DisplayFromStr};
-
+use iroh_net::key::SecretKey;
+use iroh_net::stun;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
@@ -39,8 +34,14 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 
 use metrics::StunMetrics;
 
+type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
+
+/// Creates a new [`BytesBody`] with no content.
+fn body_empty() -> BytesBody {
+    http_body_util::Full::new(hyper::body::Bytes::new())
+}
 
 /// A simple DERP server.
 #[derive(Parser, Debug, Clone)]
@@ -545,11 +546,10 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
                         let handler = CaptivePortalService;
 
                         tokio::task::spawn(async move {
-                            if let Err(err) = Http::new()
-                                .serve_connection(
-                                    derp::MaybeTlsStreamServer::Plain(stream),
-                                    handler,
-                                )
+                            let stream = derp::MaybeTlsStreamServer::Plain(stream);
+                            let stream = hyper_util::rt::TokioIo::new(stream);
+                            if let Err(err) = hyper::server::conn::http1::Builder::new()
+                                .serve_connection(stream, handler)
                                 .with_upgrades()
                                 .await
                             {
@@ -577,16 +577,12 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
 #[derive(Clone)]
 struct CaptivePortalService;
 
-impl hyper::service::Service<Request<Body>> for CaptivePortalService {
-    type Response = Response<Body>;
+impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
+    type Response = Response<BytesBody>;
     type Error = HyperError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&self, req: Request<Incoming>) -> Self::Future {
         match (req.method(), req.uri().path()) {
             // Captive Portal checker
             (&Method::GET, "/generate_204") => {
@@ -605,16 +601,19 @@ impl hyper::service::Service<Request<Body>> for CaptivePortalService {
 }
 
 fn derp_disabled_handler(
-    _r: Request<Body>,
+    _r: Request<Incoming>,
     response: ResponseBuilder,
-) -> HyperResult<Response<Body>> {
+) -> HyperResult<Response<BytesBody>> {
     Ok(response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
         .unwrap())
 }
 
-fn root_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn root_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
     let response = response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
@@ -625,17 +624,23 @@ fn root_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Res
 }
 
 /// HTTP latency queries
-fn probe_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn probe_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
     let response = response
         .status(StatusCode::OK)
         .header("Access-Control-Allow-Origin", "*")
-        .body(Body::empty())
+        .body(body_empty())
         .unwrap();
 
     Ok(response)
 }
 
-fn robots_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn robots_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
     Ok(response
         .status(StatusCode::OK)
         .body(ROBOTS_TXT.into())
@@ -643,10 +648,10 @@ fn robots_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<R
 }
 
 /// For captive portal detection.
-fn serve_no_content_handler(
-    r: Request<Body>,
+fn serve_no_content_handler<B: hyper::body::Body>(
+    r: Request<B>,
     mut response: ResponseBuilder,
-) -> HyperResult<Response<Body>> {
+) -> HyperResult<Response<BytesBody>> {
     if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
         if !challenge.is_empty()
             && challenge.len() < 64
@@ -664,7 +669,7 @@ fn serve_no_content_handler(
 
     Ok(response
         .status(StatusCode::NO_CONTENT)
-        .body(Body::empty())
+        .body(http_body_util::Full::new(hyper::body::Bytes::new()))
         .unwrap())
 }
 
@@ -893,17 +898,17 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use iroh_net::{
-        derp::{http::ClientBuilder, ReceivedMessage},
-        key::SecretKey,
-    };
+    use http_body_util::BodyExt;
+    use iroh_net::derp::http::ClientBuilder;
+    use iroh_net::derp::ReceivedMessage;
+    use iroh_net::key::SecretKey;
 
     #[tokio::test]
     async fn test_serve_no_content_handler() {
         let challenge = "123az__.";
         let req = Request::builder()
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
-            .body(Body::empty())
+            .body(body_empty())
             .unwrap();
 
         let res = serve_no_content_handler(req, Response::builder()).unwrap();
@@ -916,9 +921,12 @@ mod tests {
             .to_str()
             .unwrap();
         assert_eq!(header, format!("response {challenge}"));
-        assert!(hyper::body::to_bytes(res.into_body())
+        assert!(res
+            .into_body()
+            .collect()
             .await
             .unwrap()
+            .to_bytes()
             .is_empty());
     }
 
@@ -989,7 +997,7 @@ mod tests {
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
         let (client_b, mut client_b_receiver) = ClientBuilder::new()
-            .server_url(derper_url)
+            .server_url(derper_url.clone())
             .build(b_secret_key)?;
         client_b.connect().await?;
 
@@ -1044,46 +1052,27 @@ mod tests {
 
         // get 200 home page response
         tracing::info!("send request for homepage");
-        let req = hyper::Request::builder()
-            .method(hyper::Method::GET)
-            .uri(derper_str_url.clone())
-            .body(Body::empty())
-            .unwrap();
-
-        let client = hyper::Client::new();
-        let res = client.request(req).await?;
-        assert_eq!(StatusCode::OK, res.status());
+        let res = reqwest::get(derper_str_url).await?;
+        assert!(res.status().is_success());
         tracing::info!("got OK");
-
-        assert!(!hyper::body::to_bytes(res.into_body())
-            .await
-            .unwrap()
-            .is_empty());
 
         // test captive portal
         tracing::info!("test captive portal response");
+
+        let url = derper_url.join("/generate_204")?;
         let challenge = "123az__.";
-        let req = hyper::Request::builder()
-            .method(hyper::Method::GET)
-            .uri(format!("{derper_str_url}/generate_204"))
+        let client = reqwest::Client::new();
+        let res = client
+            .get(url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
-            .body(Body::empty())
-            .unwrap();
+            .send()
+            .await?;
+        assert_eq!(StatusCode::NO_CONTENT.as_u16(), res.status().as_u16());
+        let header = res.headers().get(NO_CONTENT_RESPONSE_HEADER).unwrap();
+        assert_eq!(header.to_str().unwrap(), format!("response {challenge}"));
+        let body = res.bytes().await?;
+        assert!(body.is_empty());
 
-        let res = client.request(req).await?;
-        assert_eq!(StatusCode::NO_CONTENT, res.status());
-
-        let header = res
-            .headers()
-            .get(NO_CONTENT_RESPONSE_HEADER)
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert_eq!(header, format!("response {challenge}"));
-        assert!(hyper::body::to_bytes(res.into_body())
-            .await
-            .unwrap()
-            .is_empty());
         tracing::info!("got successful captive portal response");
 
         derper_task.abort();

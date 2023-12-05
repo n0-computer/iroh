@@ -2,8 +2,9 @@ use anyhow::Result;
 use bytes::Bytes;
 use clap::Subcommand;
 use futures::StreamExt;
-use iroh::client::quic::Iroh;
+use iroh::{client::Iroh, rpc_protocol::ProviderService};
 use iroh_bytes::Tag;
+use quic_rpc::ServiceConnection;
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -19,7 +20,10 @@ pub enum TagCommands {
 }
 
 impl TagCommands {
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::List => {
                 let mut response = iroh.tags.list().await?;

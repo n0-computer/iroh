@@ -44,13 +44,12 @@
 //! inc!(Metrics, things_added);
 //! ```
 
-#[cfg(feature = "metrics")]
-use hyper::Error;
+// TODO: move cfg to lib.rs
 #[cfg(feature = "metrics")]
 use std::net::SocketAddr;
 
 /// Start a server to serve the OpenMetrics endpoint.
 #[cfg(feature = "metrics")]
-pub async fn start_metrics_server(addr: SocketAddr) -> Result<(), Error> {
+pub async fn start_metrics_server(addr: SocketAddr) -> anyhow::Result<()> {
     crate::service::run(addr).await
 }

@@ -47,7 +47,7 @@ impl SyncEngine {
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
-        self.rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_authors(tx).await {
                 tx2.send_async(Err(err)).await.ok();
@@ -79,7 +79,7 @@ impl SyncEngine {
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
-        self.rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.list_replicas(tx).await {
                 tx2.send_async(Err(err)).await.ok();
@@ -216,7 +216,7 @@ impl SyncEngine {
         let sync = self.sync.clone();
         // we need to spawn a task to send our request to the sync handle, because the method
         // itself must be sync.
-        self.rt.main().spawn(async move {
+        tokio::task::spawn(async move {
             let tx2 = tx.clone();
             if let Err(err) = sync.get_many(doc_id, query, tx).await {
                 tx2.send_async(Err(err)).await.ok();

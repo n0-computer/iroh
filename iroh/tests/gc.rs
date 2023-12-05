@@ -9,15 +9,10 @@ use rand::RngCore;
 use iroh_bytes::{
     hashseq::HashSeq,
     store::{EntryStatus, Map, Store},
-    util::{runtime, Tag},
+    util::Tag,
     BlobFormat, HashAndFormat,
 };
-
-/// Pick up the tokio runtime from the thread local and add a
-/// thread per core runtime.
-fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_current(1).unwrap()
-}
+use tokio_util::task::LocalPoolHandle;
 
 fn create_test_data(n: usize) -> Bytes {
     let mut rng = rand::thread_rng();
@@ -27,18 +22,14 @@ fn create_test_data(n: usize) -> Bytes {
 }
 
 /// Wrap a bao store in a node that has gc enabled.
-async fn wrap_in_node<S>(
-    bao_store: S,
-    rt: iroh_bytes::util::runtime::Handle,
-    gc_period: Duration,
-) -> Node<S>
+async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> Node<S>
 where
     S: iroh_bytes::store::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
     Node::builder(bao_store, doc_store)
-        .runtime(&rt)
         .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
+        .local_pool(&LocalPoolHandle::new(1))
         .spawn()
         .await
         .unwrap()
@@ -67,9 +58,8 @@ async fn gc_test_node() -> (
     iroh_bytes::store::mem::Store,
     flume::Receiver<iroh_bytes::store::Event>,
 ) {
-    let rt = test_runtime();
-    let bao_store = iroh_bytes::store::mem::Store::new(rt.clone());
-    let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(50)).await;
+    let bao_store = iroh_bytes::store::mem::Store::new();
+    let node = wrap_in_node(bao_store.clone(), Duration::from_millis(50)).await;
     let db_recv = attach_db_events(&node).await;
     (node, bao_store, db_recv)
 }
@@ -220,11 +210,13 @@ mod flat {
     }
 
     fn data_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
-        path(root, "data")
+        // this assumes knowledge of the internal directory structure of the flat store
+        path(root.join("complete"), "data")
     }
 
     fn outboard_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
-        path(root, "obao4")
+        // this assumes knowledge of the internal directory structure of the flat store
+        path(root.join("complete"), "obao4")
     }
 
     async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
@@ -261,29 +253,26 @@ mod flat {
 
     /// count the number of partial data files for a hash
     fn count_partial_data(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root, "data")
+        count_partial(root.join("partial"), "data")
     }
 
     /// count the number of partial outboard files for a hash
     fn count_partial_outboard(
         root: PathBuf,
     ) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root, "obao4")
+        count_partial(root.join("partial"), "obao4")
     }
 
     /// Test gc for sequences of hashes that protect their children from deletion.
     #[tokio::test]
     async fn gc_flat_basics() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
-        let rt = test_runtime();
         let dir = testdir!();
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
-                .await?;
-        let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
+        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(123456);
         let tt1 = bao_store
@@ -433,15 +422,12 @@ mod flat {
     #[tokio::test]
     async fn gc_flat_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
-        let rt = test_runtime();
         let dir = testdir!();
         let count_partial_data = count_partial_data(dir.clone());
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
-                .await?;
-        let node = wrap_in_node(bao_store.clone(), rt, Duration::from_millis(0)).await;
+        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
 
         let data1: Bytes = create_test_data(123456);
@@ -475,15 +461,12 @@ mod flat {
     #[tokio::test]
     async fn gc_flat_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
-        let rt = test_runtime();
         let dir = testdir!();
         let count_partial_data = count_partial_data(dir.clone());
         let count_partial_outboard = count_partial_outboard(dir.clone());
 
-        let bao_store =
-            iroh_bytes::store::flat::Store::load(dir.clone(), dir.clone(), dir.clone(), &rt)
-                .await?;
-        let node = wrap_in_node(bao_store.clone(), rt, Duration::from_secs(1)).await;
+        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 
         let mut deleted = Vec::new();
