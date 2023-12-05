@@ -8,8 +8,10 @@ use std::time::Duration;
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use hyper::body::Incoming;
+use hyper::header::UPGRADE;
 use hyper::upgrade::{Parts, Upgraded};
-use hyper::{header::UPGRADE, Body, Request};
+use hyper::Request;
 use iroh_metrics::inc;
 use rand::Rng;
 use rustls::client::Resumption;
@@ -18,7 +20,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
-use tracing::{debug, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
@@ -721,81 +723,35 @@ impl Actor {
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let req = Request::builder()
-            .uri("/derp")
-            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
-            .body(Body::empty())
-            .unwrap();
-
-        let res = if self.use_https(derp_node.as_deref()) {
+        let response = if self.use_https(derp_node.as_deref()) {
             debug!("Starting TLS handshake");
-
             let hostname = self
                 .tls_servername(derp_node.as_deref())
-                .ok_or_else(|| ClientError::InvalidUrl("no tls servername".into()))?;
+                .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
-            let (mut request_sender, connection) = hyper::client::conn::Builder::new()
-                .handshake(tls_stream)
-                .await
-                .map_err(ClientError::Hyper)?;
-            tokio::spawn(
-                async move {
-                    // polling `connection` drives the HTTP exchange
-                    // this will poll until we upgrade the connection, but not shutdown the underlying
-                    // stream
-                    debug!("waiting for connection");
-                    if let Err(err) = connection.await {
-                        warn!("client connection error: {:?}", err);
-                    }
-                    debug!("connection done");
-                }
-                .instrument(info_span!("http.conn")),
-            );
-            debug!("sending upgrade request");
-            request_sender
-                .send_request(req)
-                .await
-                .map_err(ClientError::Hyper)?
+            Self::start_upgrade(tls_stream).await?
         } else {
             debug!("Starting handshake");
-            let (mut request_sender, connection) = hyper::client::conn::Builder::new()
-                .handshake(tcp_stream)
-                .await
-                .map_err(ClientError::Hyper)?;
-            tokio::spawn(
-                async move {
-                    // polling `connection` drives the HTTP exchange
-                    // this will poll until we upgrade the connection, but not shutdown the underlying
-                    // stream
-                    debug!("waiting for connection");
-                    if let Err(err) = connection.await {
-                        warn!("client connection error: {:?}", err);
-                    }
-                    debug!("connection done");
-                }
-                .instrument(info_span!("http.conn")),
-            );
-            debug!("sending upgrade request");
-            request_sender
-                .send_request(req)
-                .await
-                .map_err(ClientError::Hyper)?
+            Self::start_upgrade(tcp_stream).await?
         };
 
-        if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            warn!("invalid status received: {:?}", res.status());
+        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            error!(
+                "expected status 101 SWITCHING_PROTOCOLS, got: {}",
+                response.status()
+            );
             return Err(ClientError::UnexpectedStatusCode(
                 hyper::StatusCode::SWITCHING_PROTOCOLS,
-                res.status(),
+                response.status(),
             ));
         }
 
         debug!("starting upgrade");
-        let upgraded = match hyper::upgrade::on(res).await {
+        let upgraded = match hyper::upgrade::on(response).await {
             Ok(upgraded) => upgraded,
             Err(err) => {
-                warn!("upgrade failed: {:?}", err);
+                warn!("upgrade failed: {:#}", err);
                 return Err(ClientError::Hyper(err));
             }
         };
@@ -821,6 +777,35 @@ impl Actor {
 
         trace!("connect_0 done");
         Ok((derp_client, receiver))
+    }
+
+    /// Sends the HTTP upgrade request to the derper.
+    async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, hyper::Error>
+    where
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        let io = hyper_util::rt::TokioIo::new(io);
+        let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
+            .handshake(io)
+            .await?;
+        tokio::spawn(
+            // This task drives the HTTP exchange, completes once connection is upgraded.
+            async move {
+                debug!("HTTP upgrade driver started");
+                if let Err(err) = connection.with_upgrades().await {
+                    error!("HTTP upgrade error: {err:#}");
+                }
+                debug!("HTTP upgrade driver finished");
+            }
+            .instrument(info_span!("http-driver")),
+        );
+        debug!("Sending upgrade request");
+        let req = Request::builder()
+            .uri("/derp")
+            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
+            .body(http_body_util::Empty::<hyper::body::Bytes>::new())
+            .unwrap();
+        request_sender.send_request(req).await
     }
 
     async fn note_preferred(&mut self, is_preferred: bool) {
@@ -1369,9 +1354,9 @@ fn downcast_upgrade(
     Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
     Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
 )> {
-    match upgraded.downcast::<tokio::net::TcpStream>() {
+    match upgraded.downcast::<hyper_util::rt::TokioIo<tokio::net::TcpStream>>() {
         Ok(Parts { read_buf, io, .. }) => {
-            let (reader, writer) = tokio::io::split(io);
+            let (reader, writer) = tokio::io::split(io.into_inner());
             // Prepend data to the reader to avoid data loss
             let reader = std::io::Cursor::new(read_buf).chain(reader);
 
@@ -1379,9 +1364,9 @@ fn downcast_upgrade(
         }
         Err(upgraded) => {
             if let Ok(Parts { read_buf, io, .. }) =
-                upgraded.downcast::<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>()
+                upgraded.downcast::<hyper_util::rt::TokioIo<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>>()
             {
-                let (reader, writer) = tokio::io::split(io);
+                let (reader, writer) = tokio::io::split(io.into_inner());
                 // Prepend data to the reader to avoid data loss
                 let reader = std::io::Cursor::new(read_buf).chain(reader);
 
