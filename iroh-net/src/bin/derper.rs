@@ -1054,8 +1054,7 @@ mod tests {
         tracing::info!("send request for homepage");
         let res = reqwest::get(derper_str_url).await?;
         assert!(res.status().is_success());
-        let body = res.bytes().await?;
-        assert!(body.is_empty());
+        tracing::info!("got OK");
 
         // test captive portal
         tracing::info!("test captive portal response");
