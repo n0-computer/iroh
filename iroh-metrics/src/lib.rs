@@ -11,10 +11,7 @@ pub mod core;
 mod service;
 
 use core::UsageStatsReport;
-#[cfg(feature = "metrics")]
-use std::io;
 
-use anyhow::Error;
 /// Reexport to make matching versions easier.
 pub use struct_iterable;
 
