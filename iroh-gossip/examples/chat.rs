@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt, str::FromStr, sync::Arc};
 
-use anyhow::{bail, Context};
+use anyhow::bail;
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::Signature;
@@ -12,12 +12,9 @@ use iroh_gossip::{
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
-    magic_endpoint::accept_conn,
     MagicEndpoint, NodeAddr,
 };
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
 use url::Url;
 
 /// Chat over iroh-gossip
@@ -103,55 +100,36 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
 
-    // init a cell that will hold our gossip handle to be used in endpoint callbacks
-    let gossip_cell: OnceCell<Gossip> = OnceCell::new();
-
-    // setup a notification to emit once the initial endpoints of our local node are discovered
-    let notify = Arc::new(Notify::new());
+    let gossip_config = Default::default();
 
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .derp_mode(derp_mode)
-        .on_endpoints({
-            let gossip_cell = gossip_cell.clone();
-            let notify = notify.clone();
-            Box::new(move |endpoints| {
-                if endpoints.is_empty() {
-                    return;
-                }
-                // send our updated endpoints to the gossip protocol to be sent as NodeAddr to peers
-                if let Some(gossip) = gossip_cell.get() {
-                    gossip.update_endpoints(endpoints).ok();
-                }
-                // notify the outer task of the initial endpoint update (later updates are not interesting)
-                notify.notify_one();
-            })
+        .register_protocol(Gossip::ALPN, move |_alpn, ep, addr| {
+            Arc::new(Gossip::new(ep, addr, gossip_config))
         })
         .bind(args.bind_port)
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
-    // wait for a first endpoint update so that we know about our endpoint addresses
-    notify.notified().await;
+    let gossip = endpoint.get_protocol::<Gossip>(Gossip::ALPN)?;
+    let gossip = gossip.as_ref().clone();
 
-    let my_addr = endpoint.my_addr().await?;
-    // create the gossip protocol
-    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
-    // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
-    gossip_cell.set(gossip.clone()).unwrap();
+    endpoint.my_addr_available().await?;
 
     // print a ticket that includes our own node id and endpoint addresses
     let ticket = {
         let me = endpoint.my_addr().await?;
+        println!("my addr {me:?}");
         let peers = peers.iter().cloned().chain([me]).collect();
         Ticket { topic, peers }
     };
     println!("> ticket to join us: {ticket}");
 
     // spawn our endpoint loop that forwards incoming connections to the gossiper
-    tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
+    tokio::spawn(endpoint_loop(endpoint.clone()));
 
     // join the gossip topic by connecting to known peers, if any
     let peer_ids = peers.iter().map(|p| p.node_id).collect();
@@ -161,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         println!("> trying to connect to {} peers...", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
         for peer in peers.into_iter() {
+            println!(" - {peer:?}");
             endpoint.add_node_addr(peer)?;
         }
     };
@@ -219,26 +198,10 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
     }
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
+async fn endpoint_loop(endpoint: MagicEndpoint) {
     while let Some(conn) = endpoint.accept().await {
-        let gossip = gossip.clone();
-        tokio::spawn(async move {
-            if let Err(err) = handle_connection(conn, gossip).await {
-                println!("> connection closed: {err}");
-            }
-        });
+        tokio::task::spawn(endpoint.handle_connection(conn));
     }
-}
-async fn handle_connection(conn: quinn::Connecting, gossip: Gossip) -> anyhow::Result<()> {
-    let (peer_id, alpn, conn) = accept_conn(conn).await?;
-    match alpn.as_bytes() {
-        GOSSIP_ALPN => gossip
-            .handle_connection(conn)
-            .await
-            .context(format!("connection to {peer_id} with ALPN {alpn} failed"))?,
-        _ => println!("> ignoring connection from {peer_id}: unsupported ALPN protocol"),
-    }
-    Ok(())
 }
 
 fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> {

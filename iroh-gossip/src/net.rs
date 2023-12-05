@@ -5,11 +5,13 @@ use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
-    key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint, NodeAddr,
+    key::PublicKey,
+    magic_endpoint::{get_remote_node_id, Protocol},
+    AddrInfo, MagicEndpoint, NodeAddr,
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll, time::Instant};
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
@@ -50,6 +52,20 @@ type OutEvent = proto::OutEvent<PublicKey>;
 type Timer = proto::Timer<PublicKey>;
 type ProtoMessage = proto::Message<PublicKey>;
 
+impl Protocol for Gossip {
+    fn handle_connection(
+        &self,
+        conn: quinn::Connection,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>> {
+        let this = self.clone();
+        async move { this.handle_connection(conn).await }.boxed()
+    }
+
+    fn on_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) {
+        let _ = self.update_endpoints(endpoints);
+    }
+}
+
 /// Publish and subscribe on gossiping topics.
 ///
 /// Each topic is a separate broadcast tree with separate memberships.
@@ -76,6 +92,12 @@ pub struct Gossip {
 }
 
 impl Gossip {
+    ///
+    pub const ALPN: &'static [u8] = GOSSIP_ALPN;
+    ///
+    pub fn new(endpoint: MagicEndpoint, my_addr: NodeAddr, config: proto::Config) -> Self {
+        Self::from_endpoint(endpoint, config, &my_addr.info)
+    }
     /// Spawn a gossip actor and get a handle for it
     pub fn from_endpoint(
         endpoint: MagicEndpoint,
