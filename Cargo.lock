@@ -2245,11 +2245,15 @@ dependencies = [
 name = "iroh-metrics"
 version = "0.11.0"
 dependencies = [
+ "anyhow",
  "erased_set",
  "hyper",
  "once_cell",
  "prometheus-client",
+ "reqwest",
+ "serde",
  "struct_iterable",
+ "time",
  "tokio",
  "tracing",
 ]

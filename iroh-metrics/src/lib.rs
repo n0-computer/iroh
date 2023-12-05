@@ -10,6 +10,10 @@ pub mod core;
 #[cfg(feature = "metrics")]
 mod service;
 
+use core::UsageStatsReport;
+use std::io;
+
+use anyhow::Error;
 /// Reexport to make matching versions easier.
 pub use struct_iterable;
 
@@ -27,4 +31,12 @@ macro_rules! inc_by {
     ($m:ty, $f:ident, $n:expr) => {
         <$m as $crate::core::Metric>::with_metric(|m| m.$f.inc_by($n));
     };
+}
+
+/// Report usage statistics to the configured endpoint.
+pub async fn report_usage_stats(report: &UsageStatsReport) -> Result<(), Error> {
+    let core = core::Core::get()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
+    core.usage_reporter().report_usage_stats(report).await?;
+    Ok(())
 }

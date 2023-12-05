@@ -9,7 +9,8 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use futures::SinkExt;
 use hyper::HeaderMap;
-use iroh_metrics::inc;
+use iroh_metrics::core::UsageStatsReport;
+use iroh_metrics::{inc, report_usage_stats};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -500,8 +501,18 @@ where
                        }
                        ServerMessage::CreateClient(client_builder) => {
                            inc!(Metrics, accepts);
+
                            tracing::trace!("create client: {:?}", client_builder.key);
                            let key = client_builder.key;
+
+                           report_usage_stats(&UsageStatsReport::new(
+                                "derp_accepts".to_string(),
+                                self.key.to_string(),
+                                1,
+                                None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
+                                Some(key.to_string()),
+                            )).await.unwrap_or_else(|e| tracing::warn!("error reporting usage stats: {:?}", e));
+
                            // add client to mesh
                            // `None` means its a local client (so it doesn't need a packet forwarder)
                            self.client_mesh.entry(key).or_insert(None);
