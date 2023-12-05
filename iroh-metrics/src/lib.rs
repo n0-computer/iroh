@@ -35,8 +35,11 @@ macro_rules! inc_by {
 
 /// Report usage statistics to the configured endpoint.
 pub async fn report_usage_stats(report: &UsageStatsReport) -> Result<(), Error> {
-    let core = core::Core::get()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
-    core.usage_reporter().report_usage_stats(report).await?;
+    #[cfg(feature = "metrics")]
+    {
+        let core = core::Core::get()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
+        core.usage_reporter().report_usage_stats(report).await?;
+    }
     Ok(())
 }

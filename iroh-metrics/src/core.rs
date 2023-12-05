@@ -137,12 +137,14 @@ impl Core {
         let mut metrics_map = ErasedSyncSet::new();
         f(&mut registry, &mut metrics_map);
 
+        #[cfg(feature = "metrics")]
         let usage_reporter = UsageReporter::new();
 
         CORE.set(Core {
             metrics_map,
             #[cfg(feature = "metrics")]
             registry,
+            #[cfg(feature = "metrics")]
             usage_reporter,
         })
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "already set"))
@@ -171,6 +173,7 @@ impl Core {
         Ok(buf)
     }
 
+    #[cfg(feature = "metrics")]
     pub(crate) fn usage_reporter(&self) -> &UsageReporter {
         &self.usage_reporter
     }
