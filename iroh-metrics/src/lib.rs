@@ -11,6 +11,7 @@ pub mod core;
 mod service;
 
 use core::UsageStatsReport;
+#[cfg(feature = "metrics")]
 use std::io;
 
 use anyhow::Error;
@@ -34,6 +35,7 @@ macro_rules! inc_by {
 }
 
 /// Report usage statistics to the configured endpoint.
+#[allow(unused_variables)]
 pub async fn report_usage_stats(report: &UsageStatsReport) -> Result<(), Error> {
     #[cfg(feature = "metrics")]
     {
