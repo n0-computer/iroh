@@ -54,6 +54,9 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@nextest
     
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
@@ -89,22 +92,22 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
+      run: cargo nextest run --workspace --all-features --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
     - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
+      run: cargo nextest run --workspace --no-default-features --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
+      run: cargo nextest run --workspace --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
-      run: cargo test --workspace --all-features --doc
+      run: cargo nextest run --workspace --all-features --doc
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
@@ -141,6 +144,9 @@ jobs:
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
 
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@nextest
+
     # TODO: disabled while we do not have Powershell 7+ on the runner
     # as default shell. See https://github.com/actions/toolkit/issues/1179
     # - name: Install sccache
@@ -149,17 +155,17 @@ jobs:
     - uses: msys2/setup-msys2@v2
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo nextest run --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo nextest run --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
       
     - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo nextest run --workspace --lib --bins --tests --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
