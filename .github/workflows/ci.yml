@@ -123,11 +123,11 @@ jobs:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      # TODO: disabled, see below.
-      # RUSTC_WRAPPER: "sccache"
+    # TODO: disabled, see below.
+    # env:
+    #   # Using self-hosted runners so use local cache for sccache and
+    #   # not SCCACHE_GHA_ENABLED.
+    #   RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
