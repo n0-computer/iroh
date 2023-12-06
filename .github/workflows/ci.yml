@@ -142,8 +142,8 @@ jobs:
 
     # TODO: disabled while we do not have Powershell 7+ on the runner.
     # See https://github.com/actions/toolkit/issues/1179
-    # - name: Install sccache
-    #   uses: mozilla-actions/sccache-action@v0.0.3
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - uses: msys2/setup-msys2@v2
 
