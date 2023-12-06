@@ -9,9 +9,9 @@ use std::{
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::StreamExt;
 use iroh::client;
-use iroh::util::fs::path_to_key;
 use iroh::{
     client::{Doc, Iroh},
     rpc_protocol::ProviderService,
@@ -305,15 +305,19 @@ struct InnerFs {
 }
 
 impl InnerFs {
-    fn push(&mut self, path: PathBuf, entry: FsEntry, parent_id: fileid3) {
+    fn push(&mut self, path: PathBuf, entry: FsEntry, parent_id: fileid3) -> Result<()> {
         let id = entry.attr.fileid;
         self.by_path.insert(path, id);
         self.by_id.insert(id, entry);
 
-        let parent = self.by_id.get_mut(&parent_id).expect("unknown parent");
+        let parent = self
+            .by_id
+            .get_mut(&parent_id)
+            .ok_or_else(|| anyhow!("unknown parent {}", parent_id))?;
         debug!("updating parent {}", parent_id);
         parent.contents.children_mut().push(id);
         parent.attr.mtime = now();
+        Ok(())
     }
 
     fn get_by_path(&self, path: impl AsRef<Path>) -> Option<&FsEntry> {
@@ -434,26 +438,23 @@ impl InnerFs {
     fn get_path_for_id(&self, id: fileid3) -> Option<PathBuf> {
         let entry = self.by_id.get(&id)?;
         let name = if entry.is_dir() {
-            format!(
-                "{}/",
-                std::str::from_utf8(entry.attr.name.as_ref()).unwrap()
-            )
+            format!("{}/", safe_name(entry.attr.name.as_ref()))
         } else {
-            std::str::from_utf8(entry.attr.name.as_ref())
-                .unwrap()
-                .to_string()
+            safe_name(entry.attr.name.as_ref())
         };
         let mut parts = vec![name];
-        self.for_each_parent(entry.parent, |_p| {
-            let name = std::str::from_utf8(entry.attr.name.as_ref())
-                .unwrap()
-                .to_string();
+        self.for_each_parent(entry.parent, |p| {
+            let name = safe_name(p.attr.name.as_ref());
             parts.push(name);
         });
 
         let path = PathBuf::from_iter(parts.into_iter().rev());
         Some(path)
     }
+}
+
+fn safe_name(name: impl AsRef<[u8]>) -> String {
+    std::string::String::from_utf8_lossy(name.as_ref()).into_owned()
 }
 
 #[derive(Debug, Clone)]
@@ -488,6 +489,10 @@ fn fs_entry_name_from_path(path: impl AsRef<Path>) -> Result<String> {
 
 fn key_to_path(key: impl AsRef<[u8]>) -> Result<PathBuf> {
     iroh::util::fs::key_to_path(key, None, Some(PathBuf::from("/")))
+}
+
+fn path_to_key(path: impl AsRef<Path>) -> std::result::Result<Bytes, nfsstat3> {
+    iroh::util::fs::path_to_key(path, None, None).map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)
 }
 
 impl<C> IrohFs<C>
@@ -579,7 +584,7 @@ where
                     Some(ts_to_nfstime(entry.timestamp())),
                 )
             };
-            fs.push(path, entry, parent_id);
+            fs.push(path, entry, parent_id)?;
         }
 
         let mut sub = doc.subscribe().await?;
@@ -637,7 +642,9 @@ where
                                         entry.author(),
                                         Some(ts_to_nfstime(entry.timestamp())),
                                     );
-                                    fs.push(path.clone(), entry, parent_id);
+                                    if let Err(err) = fs.push(path.clone(), entry, parent_id) {
+                                        error!("failed to insert: {}: {:?}", path.display(), err);
+                                    }
 
                                     info!("inserted {}: {}", name, path.display());
                                 }
@@ -740,8 +747,8 @@ where
                 return Err(nfsstat3::NFS3ERR_NOENT);
             }
             let author = *file.contents.author();
-            let path = fs.get_path_for_id(id).unwrap();
-            let key = path_to_key(&path, None, None).unwrap();
+            let path = fs.get_path_for_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+            let key = path_to_key(&path)?;
 
             info!("writing to {:?} - {} bytes at {}", path, data.len(), offset,);
 
@@ -792,7 +799,10 @@ where
                 fssize
             );
             fs.update_by_id(id, author, fssize);
-            fs.get_by_id(id).unwrap().attr.clone()
+            fs.get_by_id(id)
+                .ok_or(nfsstat3::NFS3ERR_NOENT)?
+                .attr
+                .clone()
         };
 
         Ok(attr.into())
@@ -807,11 +817,11 @@ where
         let fileid = {
             let mut fs = self.fs.0.write().await;
             let newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
-            let name = std::str::from_utf8(filename.as_ref()).unwrap();
+            let name = safe_name(filename.as_ref());
             let path = fs
                 .get_path_for_id(dirid)
                 .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?
-                .join(name);
+                .join(&name);
             info!("inserting {}: {:?} as {}", newid, name, path.display());
             let dir = fs
                 .get_by_id_mut(dirid)
@@ -819,7 +829,7 @@ where
 
             if !dir.is_dir() {
                 warn!("found file, expected directory");
-                return Err(nfsstat3::NFS3ERR_NOENT);
+                return Err(nfsstat3::NFS3ERR_NOTDIR);
             };
 
             // remove old
@@ -827,7 +837,8 @@ where
 
             // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path, file, dirid);
+            fs.push(path, file, dirid)
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
             newid
         };
 
@@ -844,11 +855,11 @@ where
         let fileid = {
             let mut fs = self.fs.0.write().await;
             let newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
-            let name = std::str::from_utf8(filename.as_ref()).unwrap();
+            let name = safe_name(filename.as_ref());
             let path = fs
                 .get_path_for_id(dirid)
                 .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?
-                .join(name);
+                .join(&name);
             info!("inserting {}: {:?} as {}", newid, name, path.display());
 
             if fs.contains_by_path(&path) {
@@ -861,12 +872,13 @@ where
 
             if !dir.is_dir() {
                 warn!("found file, expected directory");
-                return Err(nfsstat3::NFS3ERR_NOENT);
+                return Err(nfsstat3::NFS3ERR_NOTDIR);
             };
 
             // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path, file, dirid);
+            fs.push(path, file, dirid)
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
             newid
         };
 
@@ -910,8 +922,8 @@ where
 
         // update attrs if needed
         let author = *entry.contents.author();
-        let path = fs.get_path_for_id(id).unwrap();
-        let key = path_to_key(&path, None, None).unwrap();
+        let path = fs.get_path_for_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        let key = path_to_key(&path)?;
         drop(fs);
 
         debug!("updating entry: {}: {}", id, path.display());
@@ -938,7 +950,7 @@ where
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
         let mut fs = self.fs.0.write().await;
         let path = fs.get_path_for_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let key = path_to_key(&path, None, None).unwrap();
+        let key = path_to_key(&path)?;
         let entry = fs.get_by_id_mut(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
 
         info!(
@@ -1046,7 +1058,7 @@ where
         let fs = self.fs.0.read().await;
         let file = fs.get_by_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let path = fs.get_path_for_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let key = path_to_key(&path, None, None).unwrap();
+        let key = path_to_key(&path)?;
 
         if !file.is_file() {
             return Err(nfsstat3::NFS3ERR_ISDIR);
@@ -1055,6 +1067,7 @@ where
         let mut start = offset as usize;
         let mut end = offset as usize + count as usize;
 
+        debug!("reading from {}: {}", path.display(), safe_name(&key),);
         let entry = self
             .doc
             .get_exact(*file.contents.author(), key, true)
@@ -1086,6 +1099,8 @@ where
         start_after: fileid3,
         max_entries: usize,
     ) -> Result<ReadDirResult, nfsstat3> {
+        info!("readdir {}: {}-{}", dirid, start_after, max_entries);
+
         let fs = self.fs.0.read().await;
         let dir = fs.get_by_id(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
 
@@ -1110,6 +1125,7 @@ where
 
         for i in content[start_index..].iter() {
             let entry = fs.get_by_id(*i).ok_or(nfsstat3::NFS3ERR_IO)?;
+            debug!("read entry {}: {}", i, safe_name(entry.attr.name.as_ref()));
             ret.entries.push(DirEntry {
                 fileid: *i,
                 name: entry.attr.name.clone(),
@@ -1131,7 +1147,7 @@ where
         let path = fs
             .get_path_for_file_in_dir(dirid, filename)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let key = path_to_key(&path, None, None).unwrap();
+        let key = path_to_key(&path)?;
         let author = *fs
             .get_by_path(&path)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?
@@ -1178,7 +1194,7 @@ where
         let old_path = fs
             .get_path_for_file_in_dir(from_dirid, from_filename)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let old_key = path_to_key(&old_path, None, None).unwrap();
+        let old_key = path_to_key(&old_path)?;
 
         let file = fs.get_by_path(&old_path).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let FsContents::File { author } = &file.contents else {
@@ -1188,7 +1204,7 @@ where
         let new_path = fs
             .get_path_for_file_in_dir(to_dirid, to_filename)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let new_key = path_to_key(&new_path, None, None).unwrap();
+        let new_key = path_to_key(&new_path)?;
 
         if let Some(entry) = self
             .doc
@@ -1277,10 +1293,11 @@ where
         let path = fs
             .get_path_for_file_in_dir(parent_dirid, &name)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let key = path_to_key(&path, None, None).unwrap();
+        let key = path_to_key(&path)?;
         let dir = FsEntry::new_dir(&name, newid, parent_dirid, self.author, Vec::new());
         let attr = dir.attr.clone();
-        fs.push(path, dir, parent_dirid);
+        fs.push(path, dir, parent_dirid)
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
         // write metadata to document
 
