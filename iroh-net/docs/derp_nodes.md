@@ -1,13 +1,12 @@
-# Derp Nodes
+# DERP nodes, or DERPers
 
-When an Iroh peer starts up, it does a latency test to see which known DERP node it is “closest to”. That derp is considered the Iroh peer’s home node.
+When an Iroh node starts up, it does a latency test to see which known DERP node it is “closest to”. That DERPer (as we sometimes call a DERP node) is considered the Iroh node's home DERPer.
 
-A peer may be connected to multiple derp nodes, but it will advertise its home node as the one best used to hole-punch or relay packets through.
+A node may be connected to multiple DERPers, but it will advertise its home DERP node as the one best used to hole-punch or relay packets through.
 
-You do not need to know a peer's DERP node in order to connect to them directly, if there are no firewalls or NATs between the two peers trying to connect. However, to have any hole punching, you must have that peer's DERP node.
+You do not need to know a node's DERPer in order to connect to them directly, if there are no firewalls or NATs between the two nodes trying to connect. However, to have any hole punching, you must know at least one DERPer to which that node is connected.
 
-We currently have 2 DERP nodes.
-
+We currently run 2 DERP nodes.
 ## North America
 
 ```rust
