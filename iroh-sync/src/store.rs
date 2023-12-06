@@ -205,6 +205,79 @@ pub enum DownloadPolicy {
     Query(Query),
 }
 
+/// Filter strategy used in download policies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FilterKind {
+    /// Matches if the contained bytes are a prefix of the key.
+    Prefix(Bytes),
+    /// Matches if the contained bytes and the key are the same.
+    Exact(Bytes),
+}
+
+impl std::fmt::Display for FilterKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // hardly usable but good enough as a poc
+        let (kind, bytes) = match self {
+            FilterKind::Prefix(bytes) => ("prefix", bytes),
+            FilterKind::Exact(bytes) => ("exact", bytes),
+        };
+        let (encoding, repr) = match String::from_utf8(bytes.to_vec()) {
+            Ok(repr) => ("utf8", repr),
+            Err(_) => ("hex", hex::encode(bytes)),
+        };
+        write!(f, "{kind}:{encoding}:{repr}")
+    }
+}
+
+impl std::str::FromStr for FilterKind {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let Some((kind, rest)) = s.split_once(":") else {
+            anyhow::bail!("missing filter kind, either \"prefix:\" or \"exact:\"")
+        };
+        let Some((encoding, rest)) = rest.split_once(":") else {
+            anyhow::bail!("missing encoding: either \"hex:\" or \"utf8:\"")
+        };
+
+        let is_exact = match kind {
+            "exact" => true,
+            "prefix" => false,
+            other => {
+                anyhow::bail!("expected filter kind \"prefix:\" or \"exact:\", found {other}")
+            }
+        };
+
+        let decoded = match encoding {
+            "utf8" => Bytes::from(rest.to_owned()),
+            "hex" => match hex::decode(rest) {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(_) => anyhow::bail!("failed to decode hex"),
+            },
+            other => {
+                anyhow::bail!("expected encoding: either \"hex:\" or \"utf8:\", found {other}")
+            }
+        };
+
+        if is_exact {
+            Ok(FilterKind::Exact(decoded))
+        } else {
+            Ok(FilterKind::Prefix(decoded))
+        }
+    }
+}
+
+/*
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum DownloadPolicy {
+    /// Download all keys unless a prefix matches it.
+    #[default]
+    EverythingExcept(Vec(KeyFilter)),
+    /// Do not download any key unless a prefix matches it.
+    NothingExcept(Vec(KeyFilter)),
+}
+*/
+
 impl DownloadPolicy {
     /// Check if an entry should be downloaded according to this policy.
     pub fn matches(&self, entry: &Entry) -> bool {
@@ -464,5 +537,21 @@ impl AuthorFilter {
 impl From<AuthorId> for AuthorFilter {
     fn from(value: AuthorId) -> Self {
         AuthorFilter::Exact(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_kind_encode_decode() {
+        const REPR: &str = "prefix:utf8:memes/futurama";
+        let filter: FilterKind = REPR.parse().expect("should decode");
+        assert_eq!(
+            filter,
+            FilterKind::Prefix(Bytes::from(String::from("memes/futurama")))
+        );
+        assert_eq!(filter.to_string(), REPR)
     }
 }
