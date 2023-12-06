@@ -17,6 +17,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
+  SCCACHE_CACHE_SIZE: "100G"
 
 jobs:
   build_and_test_nix:
@@ -40,7 +41,8 @@ jobs:
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
     env:
-      SCCACHE_GHA_ENABLED: "true"
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
@@ -53,7 +55,7 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
     
-    - name: Run sccache-cache
+    - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: check all features
@@ -121,6 +123,10 @@ jobs:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
+    env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -133,7 +139,10 @@ jobs:
         rustup toolchain default ${{ matrix.rust }}
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
-    
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
+
     - uses: msys2/setup-msys2@v2
 
     - name: tests (all features)
@@ -190,9 +199,11 @@ jobs:
           #   release-arch: amd64
           #   runner: [windows-latest]
     env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
       RUST_BACKTRACE: full
       RUSTV: ${{ matrix.rust }}
-      SCCACHE_GHA_ENABLED: "true"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -207,6 +218,9 @@ jobs:
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install ${{ matrix.rust }}
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: build release
       run: |
