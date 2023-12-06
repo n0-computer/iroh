@@ -132,7 +132,7 @@ pub struct Pong {
     pub src: SendAddr,
 }
 
-/// Addresses to which to which we can send. This is either a UDP or a derp address.
+/// Addresses to which we can send. This is either a UDP or a derp address.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SendAddr {
     /// UDP, the ip addr.
