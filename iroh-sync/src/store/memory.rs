@@ -515,31 +515,8 @@ impl Iterator for RecordsIter<'_> {
     }
 }
 
-/// Wrapper around [`QueryIterator`]
-#[derive(Debug)]
-pub struct RangerQueryIterator<'a>(QueryIterator<'a>);
-impl<'a> Iterator for RangerQueryIterator<'a> {
-    type Item = Result<SignedEntry, Infallible>;
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(match self.0.next()? {
-            Ok(res) => Ok(res),
-            Err(err) => panic!("Infallible but yielded error {err:?}"),
-        })
-    }
-}
-
 impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     type Error = Infallible;
-
-    type QueryIterator<'a> = RangerQueryIterator<'a>;
-
-    fn query(&self, query: Query) -> std::result::Result<Self::QueryIterator<'_>, Self::Error> {
-        let iter = <Store as super::Store>::get_many(&self.store, self.namespace, query);
-        match iter {
-            Ok(iter) => Ok(RangerQueryIterator(iter)),
-            Err(err) => panic!("Infallible but yielded error {err:?}"),
-        }
-    }
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier, Self::Error> {

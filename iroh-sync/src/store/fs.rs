@@ -470,11 +470,6 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type RangeIterator<'a> =
         Chain<RecordsRange<'a>, Flatten<std::option::IntoIter<RecordsRange<'a>>>>;
     type ParentIterator<'a> = ParentIterator<'a>;
-    type QueryIterator<'a> = QueryIterator<'a>;
-
-    fn query(&self, query: Query) -> std::result::Result<Self::QueryIterator<'_>, Self::Error> {
-        self.store.get_many(self.namespace, query)
-    }
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {

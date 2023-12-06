@@ -12,7 +12,7 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    store::{EntryStatus, MapEntry, PartialMapEntry, Store},
+    store::{MapEntry, PartialMapEntry, Store},
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
@@ -24,7 +24,7 @@ use crate::get::{get_missing_ranges_blob, get_missing_ranges_hash_seq, BlobInfo}
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
 
-use super::{FailureAction, GetFut, Getter, Resource};
+use super::{DownloadKind, FailureAction, GetFut, Getter};
 
 /// [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
 pub(crate) struct IoGetter<S: Store> {
@@ -34,10 +34,10 @@ pub(crate) struct IoGetter<S: Store> {
 impl<S: Store> Getter for IoGetter<S> {
     type Connection = quinn::Connection;
 
-    fn get(&mut self, resource: Resource, conn: Self::Connection) -> GetFut {
+    fn get(&mut self, kind: DownloadKind, conn: Self::Connection) -> GetFut {
         let store = self.store.clone();
         let fut = async move {
-            let res = get(&store, conn, resource.hash_and_format()).await;
+            let res = get(&store, conn, kind.hash_and_format()).await;
             match res {
                 Ok((_stats, tt)) => {
                     #[cfg(feature = "metrics")]
@@ -165,10 +165,10 @@ impl From<iroh_bytes::get::fsm::AtBlobHeaderNextError> for FailureAction {
     fn from(value: iroh_bytes::get::fsm::AtBlobHeaderNextError) -> Self {
         use iroh_bytes::get::fsm::AtBlobHeaderNextError::*;
         match value {
-            NotFound => {
+            e @ NotFound => {
                 // > This indicates that the provider does not have the requested data.
                 // peer might have the data later, simply retry it
-                FailureAction::NotFound
+                FailureAction::RetryLater(e.into())
             }
             Read(e) => e.into(),
             e @ Io(_) => {
@@ -235,9 +235,6 @@ pub async fn get_blob<D: Store>(
     conn: quinn::Connection,
     hash: &Hash,
 ) -> Result<Stats, FailureAction> {
-    if matches!(db.contains(hash), EntryStatus::Complete) {
-        return Ok(Default::default());
-    }
     let end = if let Some(entry) = db.get_partial(hash) {
         trace!("got partial data for {}", hash,);
 

@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, time::SystemTime};
 
+use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
 use iroh_bytes::{store::EntryStatus, Hash};
@@ -21,8 +22,6 @@ use tokio::{
     task::JoinSet,
 };
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
-
-use crate::downloader::{Downloader, Group, NodeHints, Resource, ResourceHints};
 
 use super::gossip::ToGossipActor;
 use super::state::{NamespaceStates, Origin, SyncReason};
@@ -257,8 +256,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             ToLiveActor::NeighborUp { namespace, peer } => {
                 debug!(peer = %peer.fmt_short(), namespace = %namespace.fmt_short(), "neighbor up");
                 self.sync_with_peer(namespace, peer, SyncReason::NewNeighbor);
-                let hints = NodeHints::with_group(Group::Doc(namespace));
-                self.downloader.add_node(peer, hints).await;
                 self.subscribers
                     .send(&namespace, Event::NeighborUp(peer))
                     .await;
@@ -331,22 +328,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         self.running_sync_connect.spawn(fut);
     }
 
-    async fn add_missing_hashes_to_downloader(&mut self, namespace: NamespaceId) -> Result<()> {
-        let (tx, rx) = flume::bounded(128);
-        self.sync.missing_content_hashes(namespace, tx).await?;
-        while let Ok(hash) = rx.recv_async().await {
-            let hash = hash?;
-            let hints = ResourceHints::with_group(Group::Doc(namespace));
-            let handle = self.downloader.queue(Resource::blob(hash), hints).await;
-            tokio::task::spawn({
-                async move {
-                    handle.await.ok();
-                }
-            });
-        }
-        Ok(())
-    }
-
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         // cancel all subscriptions
         self.subscribers.clear();
@@ -394,9 +375,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             }
         }
         self.join_peers(namespace, peers).await?;
-        if let Err(err) = self.add_missing_hashes_to_downloader(namespace).await {
-            warn!(namespace = %namespace.fmt_short(), ?err, "Failed to add missing hashes to downloader")
-        }
         Ok(())
     }
 
@@ -552,15 +530,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             }
         };
 
-        // if result.is_ok()
-        //     && matches!(
-        //         origin,
-        //         Origin::Connect(SyncReason::DirectJoin | SyncReason::NewNeighbor)
-        //     )
-        // {
-        //     self.download_missing_content_from_peer(namespace, peer);
-        // }
-
         let result_for_event = match &result {
             Ok(_) => Ok(()),
             Err(err) => Err(err.to_string()),
@@ -670,13 +639,14 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     && matched_by_download_policy
                 {
                     let from = PublicKey::from_bytes(&from)?;
-                    let hints = ResourceHints::with_group(Group::Doc(namespace));
-                    let hints = if let ContentStatus::Complete = content_status {
-                        hints.add_node(from)
-                    } else {
-                        hints.skip_node(from)
+                    let role = match content_status {
+                        ContentStatus::Complete => Role::Provider,
+                        _ => Role::Candidate,
                     };
-                    let handle = self.downloader.queue(Resource::blob(hash), hints).await;
+                    let handle = self
+                        .downloader
+                        .queue(DownloadKind::Blob { hash }, vec![(from, role).into()])
+                        .await;
 
                     self.pending_downloads.spawn(async move {
                         // NOTE: this ignores the result for now, simply keeping the option
