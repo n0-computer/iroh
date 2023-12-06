@@ -2335,7 +2335,10 @@ dependencies = [
  "hyper-util",
  "once_cell",
  "prometheus-client",
+ "reqwest",
+ "serde",
  "struct_iterable",
+ "time",
  "tokio",
  "tracing",
 ]
