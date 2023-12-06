@@ -317,12 +317,18 @@ jobs:
     timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
 
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -333,6 +339,9 @@ jobs:
   clippy_check:
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
     # Can be switched back once 1.75 lands
@@ -340,6 +349,8 @@ jobs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
           components: clippy
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
@@ -356,11 +367,16 @@ jobs:
     timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
     - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ env.MSRV }}
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Check MSRV all features
       run: |
@@ -383,7 +399,8 @@ jobs:
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
     env:
-      SCCACHE_GHA_ENABLED: "true"
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
@@ -394,7 +411,7 @@ jobs:
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Run sccache-cache
+    - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh
