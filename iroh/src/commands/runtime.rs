@@ -26,7 +26,7 @@ use iroh::{
     rpc_protocol::{NodeStatusResponse, ProviderService},
     sync_engine::LiveEvent,
 };
-use iroh_sync::NamespaceId;
+use iroh_sync::{store::Query, AuthorId, NamespaceId};
 
 pub(crate) async fn exec(iroh: IrohWrapper, js_path: PathBuf) -> Result<()> {
     let js_path = js_path.canonicalize()?;
@@ -135,7 +135,7 @@ impl<S: ServiceConnection<ProviderService>> SC for S {}
 
 deno_core::extension!(
     iroh_runtime,
-    ops = [op_node_status, op_doc_subscribe, op_next_doc_event, op_doc_create, op_doc_set, op_blob_get],
+    ops = [op_node_status, op_doc_subscribe, op_next_doc_event, op_doc_open, op_doc_create, op_doc_set, op_doc_get, op_blob_get, op_blob_add, op_doc_set_hash],
     esm_entry_point = "ext:iroh_runtime/bootstrap.js",
     esm = [dir "src", "bootstrap.js"],
     options = { iroh: IrohWrapper },
@@ -240,6 +240,118 @@ async fn op_doc_subscribe(
 
 #[op2(async)]
 #[string]
+async fn op_doc_get(
+    state: Rc<RefCell<OpState>>,
+    #[serde] doc_js_wrapper: DocJsWrapper,
+    #[string] key: String,
+) -> Result<Option<String>, AnyError> {
+    let iroh = {
+        let state = state.borrow();
+        state.borrow::<IrohWrapper>().clone()
+    };
+    let query = Query::key_exact(key);
+
+    let res = if state.borrow().resource_table.has(doc_js_wrapper.rid) {
+        // fast path, same thread
+        let doc_wrapper = state
+            .borrow()
+            .resource_table
+            .get::<DocWrapper>(doc_js_wrapper.rid)?;
+        match &*doc_wrapper {
+            DocWrapper::Mem(d) => d.get_one(query).await?,
+            DocWrapper::Quic(d) => d.get_one(query).await?,
+        }
+    } else {
+        // slow path, different worker thread
+        match iroh {
+            IrohWrapper::Mem(ref iroh) => {
+                iroh.docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
+                    .get_one(query)
+                    .await?
+            }
+            IrohWrapper::Quic(ref iroh) => {
+                iroh.docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
+                    .get_one(query)
+                    .await?
+            }
+        }
+    };
+
+    match res {
+        Some(res) => Ok(Some(res.content_hash().to_string())),
+        None => Ok(None),
+    }
+}
+
+#[op2(async)]
+#[serde]
+async fn op_blob_add(
+    state: Rc<RefCell<OpState>>,
+    #[string] data: String,
+) -> Result<BlobAddResult, AnyError> {
+    let data = data.into_bytes();
+    let result = {
+        let iroh = {
+            let state = state.borrow();
+            state.borrow::<IrohWrapper>().clone()
+        };
+
+        match iroh {
+            IrohWrapper::Mem(ref i) => {
+                i.blobs
+                    .add_bytes(data.into(), iroh::rpc_protocol::SetTagOption::Auto)
+                    .await?
+            }
+            IrohWrapper::Quic(ref i) => {
+                i.blobs
+                    .add_bytes(data.into(), iroh::rpc_protocol::SetTagOption::Auto)
+                    .await?
+            }
+        }
+    };
+
+    Ok(BlobAddResult {
+        hash: result.hash.to_string(),
+        size: result.size,
+    })
+}
+
+/// shim for a default author, just use the first one.
+pub async fn default_node_author(iroh: IrohWrapper) -> Result<AuthorId> {
+    match iroh {
+        IrohWrapper::Mem(iroh) => {
+            let mut stream = iroh.authors.list().await?;
+            if let Some(author) = stream.next().await {
+                let author = author?;
+                Ok(author)
+            } else {
+                // no author, create one
+                let author = iroh.authors.create().await?;
+                Ok(author)
+            }
+        }
+        IrohWrapper::Quic(iroh) => {
+            let mut stream = iroh.authors.list().await?;
+            if let Some(author) = stream.next().await {
+                let author = author?;
+                Ok(author)
+            } else {
+                // no author, create one
+                let author = iroh.authors.create().await?;
+                Ok(author)
+            }
+        }
+    }
+}
+
+#[op2(async)]
+#[string]
 async fn op_doc_set(
     state: Rc<RefCell<OpState>>,
     #[serde] doc_js_wrapper: DocJsWrapper,
@@ -252,10 +364,7 @@ async fn op_doc_set(
     };
 
     // TODO: pass author
-    let author = match iroh {
-        IrohWrapper::Mem(ref iroh) => iroh.authors.create().await?,
-        IrohWrapper::Quic(ref iroh) => iroh.authors.create().await?,
-    };
+    let author = default_node_author(iroh.clone()).await?;
 
     let hash = if state.borrow().resource_table.has(doc_js_wrapper.rid) {
         // fast path, same thread
@@ -285,6 +394,61 @@ async fn op_doc_set(
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
                     .set_bytes(author, key, value)
+                    .await?
+            }
+        }
+    };
+
+    Ok(hash.to_string())
+}
+
+#[op2(async)]
+#[string]
+async fn op_doc_set_hash(
+    state: Rc<RefCell<OpState>>,
+    #[serde] doc_js_wrapper: DocJsWrapper,
+    #[string] key: String,
+    // #[number] timestamp: u64,
+    #[string] hash: String,
+    #[number] size: u64,
+) -> Result<String, AnyError> {
+    let hash: Hash = hash.parse()?;
+    let iroh = {
+        let state = state.borrow();
+        state.borrow::<IrohWrapper>().clone()
+    };
+
+    // TODO: pass author
+    let author = default_node_author(iroh.clone()).await?;
+
+    if state.borrow().resource_table.has(doc_js_wrapper.rid) {
+        // fast path, same thread
+        let doc_wrapper = state
+            .borrow_mut()
+            .resource_table
+            .get::<DocWrapper>(doc_js_wrapper.rid)?;
+        // let doc = RcRef::map(&doc_wrapper, |d| &d.0);
+        match &*doc_wrapper {
+            DocWrapper::Mem(d) => d.set_hash(author, key, hash, size).await?,
+            DocWrapper::Quic(d) => d.set_hash(author, key, hash, size).await?,
+        }
+    } else {
+        // slow path, different worker thread
+        match iroh {
+            IrohWrapper::Mem(ref iroh) => {
+                iroh.docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
+                    .set_hash(author, key, hash, size)
+                    .await?
+            }
+            IrohWrapper::Quic(ref iroh) => {
+                iroh.docs
+                    .open(doc_js_wrapper.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc"))?
+                    .set_hash(author, key, hash, size)
                     .await?
             }
         }
@@ -334,6 +498,38 @@ async fn op_doc_create(state: Rc<RefCell<OpState>>) -> Result<DocJsWrapper, AnyE
     let rid = state.borrow_mut().resource_table.add(doc);
 
     Ok(DocJsWrapper { rid, id })
+}
+
+#[op2(async)]
+#[serde]
+async fn op_doc_open(
+    state: Rc<RefCell<OpState>>,
+    #[string] id: String,
+) -> Result<DocJsWrapper, AnyError> {
+    let id: NamespaceId = id.parse()?;
+
+    let iroh = {
+        let state = state.borrow();
+        state.borrow::<IrohWrapper>().clone()
+    };
+
+    let doc = match iroh {
+        IrohWrapper::Mem(ref i) => DocWrapper::Mem(i.docs.open(id).await?.unwrap()),
+        IrohWrapper::Quic(ref i) => DocWrapper::Quic(i.docs.open(id).await?.unwrap()),
+    };
+    let id = match doc {
+        DocWrapper::Mem(ref d) => d.id(),
+        DocWrapper::Quic(ref d) => d.id(),
+    };
+    let rid = state.borrow_mut().resource_table.add(doc);
+
+    Ok(DocJsWrapper { rid, id })
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct BlobAddResult {
+    pub hash: String,
+    pub size: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
