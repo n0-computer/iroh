@@ -112,7 +112,7 @@ impl fmt::Display for DerpMap {
 
 /// Information on a specific derp server.
 ///
-/// Includes the Url in where it can be dialed.
+/// Includes the Url where it can be dialed.
 #[derive(derive_more::Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpNode {
     /// The [`Url`] where this derp server can be dialed.
