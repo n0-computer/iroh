@@ -18,6 +18,7 @@ env:
   MSRV: "1.72"
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
   SCCACHE_CACHE_SIZE: "100G"
+  CARGO_TERM_COLOR: "always"
 
 jobs:
   build_and_test_nix:
@@ -56,7 +57,9 @@ jobs:
         toolchain: ${{ matrix.rust }}
 
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
     
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
@@ -145,7 +148,9 @@ jobs:
         rustup set default-host ${{ matrix.target }}
 
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
 
     # TODO: disabled while we do not have Powershell 7+ on the runner
     # as default shell. See https://github.com/actions/toolkit/issues/1179
