@@ -68,6 +68,11 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
+    - name: tests (all features)
+      run: cargo test --workspace --all-features --lib --bins --tests
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+
     - name: check no default features
       run: |
         for i in ${CRATES_LIST//,/ }
@@ -75,6 +80,11 @@ jobs:
           echo "Checking $i"
           cargo check -p $i --no-default-features --lib --bins
         done
+      env:
+        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+      
+    - name: tests (no features)
+      run: cargo test --workspace --no-default-features --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
@@ -88,16 +98,6 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
     - name: tests (default features)
       run: cargo test --workspace --lib --bins --tests
       env:
@@ -107,7 +107,7 @@ jobs:
       run: cargo test --workspace --all-features --doc
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
+
   build_and_test_windows:
     timeout-minutes: 30
     name: Build and test (Windows)
