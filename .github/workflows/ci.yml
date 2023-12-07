@@ -20,15 +20,16 @@ env:
   SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
-  build_and_test_nix_all_features:
+  build_and_test_nix:
     timeout-minutes: 30
-    name: "Tests all feats"
+    name: "Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
+        features: [all, none, default]
         include:
           - name: ubuntu-latest
             os: ubuntu-latest
@@ -58,129 +59,37 @@ jobs:
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
-    - name: check all features
+    - name: Select features
+      run: |
+        case "${{ matrix.features }}"
+            all)
+                echo "FEATURES=--all-features" >> "$GITHUB_ENV"
+            none)
+                echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
+            default)
+                echo "FEATURES=''" >> "$GITHUB_ENV"
+            *)
+                exit 1
+        esac
+
+    - name: check features
       run: |
         for i in ${CRATES_LIST//,/ }
         do
           echo "Checking $i"
-          cargo check -p $i --all-features --lib --bins
+          cargo check -p $i $FEATURES --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
+      run: cargo test --workspace $FEATURES --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
+      if: ${{ matrix.features == 'all' }}
       run: cargo test --workspace --all-features --doc
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-  build_and_test_nix_no_features:
-    timeout-minutes: 30
-    name: "Tests no feats"
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, macOS-arm-latest]
-        rust: [nightly, stable]
-        include:
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-    
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
-
-    - name: check no default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --no-default-features --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-  build_and_test_nix_default_features:
-    timeout-minutes: 30
-    name: "Tests default feats"
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, macOS-arm-latest]
-        rust: [nightly, stable]
-        include:
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-    
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
-
-    - name: check default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
