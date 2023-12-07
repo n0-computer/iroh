@@ -375,7 +375,7 @@ pub enum GcMarkEvent {
 /// An event related to GC
 #[derive(Debug)]
 pub enum GcSweepEvent {
-    /// A custom event (info)
+    /// A custom event (debug)
     CustomDebug(String),
     /// A custom non critical error
     CustomWarning(String, Option<anyhow::Error>),
