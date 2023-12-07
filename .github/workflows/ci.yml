@@ -61,13 +61,16 @@ jobs:
 
     - name: Select features
       run: |
-        case "${{ matrix.features }}"
+        case "${{ matrix.features }}" in
             all)
                 echo "FEATURES=--all-features" >> "$GITHUB_ENV"
+                ;;
             none)
                 echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
+                ;;
             default)
                 echo "FEATURES=''" >> "$GITHUB_ENV"
+                ;;
             *)
                 exit 1
         esac
