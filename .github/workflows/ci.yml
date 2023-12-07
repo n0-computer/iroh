@@ -98,7 +98,7 @@ jobs:
 
   build_and_test_windows:
     timeout-minutes: 30
-    name: "Tests"
+    name: "Testsss"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -120,7 +120,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@master
-      badbadbad:
       with:
         submodules: recursive
 
