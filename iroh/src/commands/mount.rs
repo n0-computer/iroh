@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::SystemTime;
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
+use chrono::{DateTime, TimeZone, Utc};
 use futures::StreamExt;
 use iroh::client;
 use iroh::{
@@ -26,6 +26,8 @@ use nfsserve::{
     vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities},
 };
 use quic_rpc::ServiceConnection;
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, TimestampSecondsWithFrac};
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
@@ -51,26 +53,30 @@ const HOSTPORT: u32 = 11111;
 // - .file.iroh
 //   - fattr3
 
-#[derive(Debug, Clone)]
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Attrs {
     /// The id of the file
     fileid: fileid3,
     /// Last access time
-    atime: nfstime3,
+    #[serde_as(as = "TimestampSecondsWithFrac<String>")]
+    atime: DateTime<Utc>,
     /// Last modification time
-    mtime: nfstime3,
+    #[serde_as(as = "TimestampSecondsWithFrac<String>")]
+    mtime: DateTime<Utc>,
     /// Creation time
-    ctime: nfstime3,
+    #[serde_as(as = "TimestampSecondsWithFrac<String>")]
+    ctime: DateTime<Utc>,
     /// size
     size: u64,
     /// Mode
     mode: mode3,
     ftype: FileType,
     /// The name
-    name: filename3,
+    name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum FileType {
     File,
     Directory,
@@ -110,15 +116,15 @@ impl From<Attrs> for fattr3 {
             rdev: specdata3::default(),
             fsid: 0,
             fileid: value.fileid,
-            atime: value.atime,
-            mtime: value.mtime,
-            ctime: value.ctime,
+            atime: to_nfstime(&value.atime),
+            mtime: to_nfstime(&value.mtime),
+            ctime: to_nfstime(&value.ctime),
         }
     }
 }
 
 impl Attrs {
-    fn new_file(name: filename3, fileid: fileid3) -> Self {
+    fn new_file(name: String, fileid: fileid3) -> Self {
         Attrs {
             fileid,
             atime: now(),
@@ -131,7 +137,7 @@ impl Attrs {
         }
     }
 
-    fn new_dir(name: filename3, fileid: fileid3) -> Self {
+    fn new_dir(name: String, fileid: fileid3) -> Self {
         Attrs {
             fileid,
             atime: now(),
@@ -241,9 +247,9 @@ impl FsEntry {
         parent: fileid3,
         content_len: u64,
         author: AuthorId,
-        ts: Option<nfstime3>,
+        ts: Option<DateTime<Utc>>,
     ) -> Self {
-        let mut attr = Attrs::new_file(name.as_bytes().into(), id);
+        let mut attr = Attrs::new_file(name.into(), id);
         if let Some(ts) = ts {
             attr.ctime = ts;
             attr.mtime = ts;
@@ -264,7 +270,7 @@ impl FsEntry {
         content: Vec<fileid3>,
     ) -> Self {
         Self {
-            attr: Attrs::new_dir(name.as_bytes().into(), id),
+            attr: Attrs::new_dir(name.into(), id),
             parent,
             contents: FsContents::Directory { author, content },
         }
@@ -278,21 +284,22 @@ impl FsEntry {
     }
 }
 
-fn now() -> nfstime3 {
-    let now = filetime::FileTime::now();
-    nfstime3 {
-        seconds: now.seconds() as _,
-        nseconds: now.nanoseconds(),
-    }
+fn now() -> DateTime<Utc> {
+    Utc::now()
 }
 
-/// micros to nfstime3
-fn ts_to_nfstime(ts: u64) -> nfstime3 {
-    let ts = filetime::FileTime::from_unix_time((ts / 1_000_000) as _, (ts * 1000) as _);
-    nfstime3 {
-        seconds: ts.seconds() as _,
-        nseconds: ts.nanoseconds(),
-    }
+fn to_nfstime(ts: &DateTime<Utc>) -> nfstime3 {
+    todo!()
+}
+
+fn ts_to_chrono(micros: u64) -> DateTime<Utc> {
+    todo!()
+    // let secs = micros as i64 / 1_000_000.;
+    // Utc.timestamp_opt(secs, 0).unwrap()
+}
+
+fn nfstime_to_chrono(ts: nfstime3) -> DateTime<Utc> {
+    Utc.timestamp_opt(ts.seconds as i64, ts.nseconds).unwrap()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -438,13 +445,13 @@ impl InnerFs {
     fn get_path_for_id(&self, id: fileid3) -> Option<PathBuf> {
         let entry = self.by_id.get(&id)?;
         let name = if entry.is_dir() {
-            format!("{}/", safe_name(entry.attr.name.as_ref()))
+            format!("{}/", entry.attr.name)
         } else {
-            safe_name(entry.attr.name.as_ref())
+            entry.attr.name.clone()
         };
         let mut parts = vec![name];
         self.for_each_parent(entry.parent, |p| {
-            let name = safe_name(p.attr.name.as_ref());
+            let name = p.attr.name.clone();
             parts.push(name);
         });
 
@@ -474,7 +481,8 @@ where
 
 const MAIN_FILE: &str = "main.js";
 const IROH_DIR: &str = ".dir.iroh";
-const IROH_FILE: &str = ".file.iroh";
+const IROH_FILE: &str = ".fil.iroh";
+const HIDDEN_PREFIX: &str = ".hidden";
 
 fn fs_entry_name_from_path(path: impl AsRef<Path>) -> Result<String> {
     let res = path
@@ -544,13 +552,30 @@ where
 
         while let Some(entry) = keys.next().await {
             let entry = entry?;
+            if entry.key().starts_with(HIDDEN_PREFIX.as_bytes()) {
+                info!("ignoring hidden: {:?}", std::str::from_utf8(entry.key()));
+                continue;
+            }
 
             let Ok(path) = key_to_path(entry.key()) else {
                 warn!("ignoring invalid path: {:?}", entry.key());
                 continue;
             };
-            let is_dir = path.to_str().expect("already checked").ends_with("/");
+
             let name = fs_entry_name_from_path(&path)?;
+
+            let is_iroh_file = name.starts_with(IROH_FILE);
+            let is_iroh_dir = name.starts_with(IROH_DIR);
+
+            if !is_iroh_dir || !is_iroh_file {
+                continue;
+            }
+            let Ok(attr_bytes) = iroh.blobs.read_to_bytes(entry.content_hash()).await else {
+                warn!("skipping {}: content not available", path.display());
+                continue;
+            };
+            let mut attr: Attrs =
+                serde_json::from_slice(&attr_bytes).context("invalid attrs stored")?;
 
             let Some(parent_path) = path.parent() else {
                 bail!("invalid root entry: {}", path.display());
@@ -567,22 +592,25 @@ where
                 "inserting {}: {} (is_dir: {})",
                 name,
                 path.display(),
-                is_dir
+                is_iroh_dir
             );
 
             let id = get_next_id();
-            let entry = if is_dir {
-                // TODO: pass attrs
-                FsEntry::new_dir(&name, id, parent_id, entry.author(), Vec::new())
+            attr.fileid = id;
+            let contents = if is_iroh_dir {
+                FsContents::Directory {
+                    author: entry.author(),
+                    content: Vec::new(),
+                }
             } else {
-                FsEntry::new_file(
-                    &name,
-                    id,
-                    parent_id,
-                    entry.content_len(),
-                    entry.author(),
-                    Some(ts_to_nfstime(entry.timestamp())),
-                )
+                FsContents::File {
+                    author: entry.author(),
+                }
+            };
+            let entry = FsEntry {
+                attr,
+                parent: parent_id,
+                contents,
             };
             fs.push(path, entry, parent_id)?;
         }
@@ -640,7 +668,7 @@ where
                                         parent_id,
                                         entry.content_len(),
                                         entry.author(),
-                                        Some(ts_to_nfstime(entry.timestamp())),
+                                        Some(ts_to_chrono(entry.timestamp())),
                                     );
                                     if let Err(err) = fs.push(path.clone(), entry, parent_id) {
                                         error!("failed to insert: {}: {:?}", path.display(), err);
@@ -717,6 +745,40 @@ where
             return IrohWrapper::Quic(iroh.clone());
         }
         panic!("unsupported iroh client");
+    }
+
+    async fn create_iroh_file(&self, path: impl AsRef<Path>, attrs: &Attrs) -> Result<()> {
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("not a valid file"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid filename"))?;
+        let name = format!("{IROH_FILE}.{name}");
+        let path = path.with_file_name(name);
+        info!("creating iroh file {}", path.display());
+        let key = path_to_key(path).map_err(|_| anyhow!("invalid path"))?;
+        let attrs_bytes = serde_json::ser::to_vec_pretty(attrs)?;
+        self.doc.set_bytes(self.author, key, attrs_bytes).await?;
+
+        Ok(())
+    }
+
+    async fn create_iroh_dir(&self, path: impl AsRef<Path>, attrs: &Attrs) -> Result<()> {
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("not a valid file"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid filename"))?;
+        let name = format!("{IROH_DIR}.{name}");
+        let path = path.with_file_name(name);
+        info!("creating iroh dir {}", path.display());
+        let key = path_to_key(path).map_err(|_| anyhow!("invalid path"))?;
+        let attrs_bytes = serde_json::ser::to_vec_pretty(attrs)?;
+        self.doc.set_bytes(self.author, key, attrs_bytes).await?;
+
+        Ok(())
     }
 }
 
@@ -837,8 +899,14 @@ where
 
             // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path, file, dirid)
+            fs.push(path.clone(), file, dirid)
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+            let file = fs.get_by_id(newid).ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+            self.create_iroh_file(&path, &file.attr)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
             newid
         };
 
@@ -877,8 +945,14 @@ where
 
             // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path, file, dirid)
+            fs.push(path.clone(), file, dirid)
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+            let file = fs.get_by_id(newid).ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+            self.create_iroh_file(&path, &file.attr)
+                .await
+                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
             newid
         };
 
@@ -901,9 +975,10 @@ where
             return Ok(dir.parent);
         }
 
+        let filename = safe_name(filename);
         for fileid in dir.contents.children() {
             if let Some(file) = fs.get_by_id(*fileid) {
-                if file.attr.name[..] == filename[..] {
+                if file.attr.name == filename {
                     return Ok(*fileid);
                 }
             }
@@ -939,7 +1014,7 @@ where
             .await
             .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?
         {
-            fs_entry.attr.mtime = ts_to_nfstime(entry.timestamp());
+            fs_entry.attr.mtime = ts_to_chrono(entry.timestamp());
         }
         let attrs = fs_entry.attr.clone();
 
@@ -953,37 +1028,24 @@ where
         let key = path_to_key(&path)?;
         let entry = fs.get_by_id_mut(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
 
-        info!(
-            "setattr {}:{:?}: {:?}",
-            id,
-            std::str::from_utf8(entry.attr.name.as_ref()),
-            setattr,
-        );
+        info!("setattr {}:{}: {:?}", id, entry.attr.name, setattr,);
 
         match setattr.atime {
             nfs::set_atime::DONT_CHANGE => {}
             nfs::set_atime::SET_TO_CLIENT_TIME(c) => {
-                entry.attr.atime = c;
+                entry.attr.atime = nfstime_to_chrono(c);
             }
             nfs::set_atime::SET_TO_SERVER_TIME => {
-                let d = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap();
-                entry.attr.atime.seconds = d.as_secs() as u32;
-                entry.attr.atime.nseconds = d.subsec_nanos();
+                entry.attr.atime = now();
             }
         };
         match setattr.mtime {
             nfs::set_mtime::DONT_CHANGE => {}
             nfs::set_mtime::SET_TO_CLIENT_TIME(c) => {
-                entry.attr.mtime = c;
+                entry.attr.mtime = nfstime_to_chrono(c);
             }
             nfs::set_mtime::SET_TO_SERVER_TIME => {
-                let d = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap();
-                entry.attr.mtime.seconds = d.as_secs() as u32;
-                entry.attr.mtime.nseconds = d.subsec_nanos();
+                entry.attr.mtime = now();
             }
         };
         match setattr.uid {
@@ -1125,10 +1187,10 @@ where
 
         for i in content[start_index..].iter() {
             let entry = fs.get_by_id(*i).ok_or(nfsstat3::NFS3ERR_IO)?;
-            debug!("read entry {}: {}", i, safe_name(entry.attr.name.as_ref()));
+            debug!("read entry {}: {}", i, entry.attr.name);
             ret.entries.push(DirEntry {
                 fileid: *i,
-                name: entry.attr.name.clone(),
+                name: entry.attr.name.as_bytes().into(),
                 attr: entry.attr.clone().into(),
             });
             if ret.entries.len() >= max_entries {
@@ -1293,13 +1355,16 @@ where
         let path = fs
             .get_path_for_file_in_dir(parent_dirid, &name)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        let key = path_to_key(&path)?;
         let dir = FsEntry::new_dir(&name, newid, parent_dirid, self.author, Vec::new());
         let attr = dir.attr.clone();
-        fs.push(path, dir, parent_dirid)
+        fs.push(path.clone(), dir, parent_dirid)
             .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
         // write metadata to document
+        let dir = fs.get_by_id(newid).ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
+        self.create_iroh_dir(path, &dir.attr)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
         Ok((newid, attr.into()))
     }
