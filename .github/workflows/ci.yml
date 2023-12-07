@@ -17,7 +17,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
-  SCCACHE_CACHE_SIZE: "100G"
+  SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
   build_and_test_nix:
