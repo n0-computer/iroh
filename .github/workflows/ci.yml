@@ -132,7 +132,7 @@ jobs:
 
     - name: Select features
       run: |
-        switch (${{ matrix.features }} {
+        switch (${{ matrix.features }}) {
             "all" {
                 echo "FEATURES=--all-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
             }
