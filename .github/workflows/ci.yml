@@ -69,7 +69,7 @@ jobs:
                 echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
                 ;;
             default)
-                echo "FEATURES=\"\"" >> "$GITHUB_ENV"
+                echo "FEATURES=" >> "$GITHUB_ENV"
                 ;;
             *)
                 exit 1
