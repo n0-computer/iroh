@@ -993,19 +993,14 @@ async fn measure_icmp_latency(
     );
     // Use the unique node.name field as the packet data to reduce the
     // likelihood that we get a mismatched echo response.
-    let id: [u8; 2] = derp_node
-        .url
-        .host_str()
-        .map(|s| s.as_bytes()[..2].try_into().unwrap())
-        .unwrap_or_else(|| [0u8; 2]);
-
-    let latency = pinger.send(derp_addr.ip(), &id).await?;
+    let latency = pinger
+        .send(derp_addr.ip(), derp_node.url.as_ref().as_bytes())
+        .await?;
     debug!(
-        "ICMP ping done {} with latency {}ms - derp {} using id: {:?}",
+        "ICMP ping done {} with latency {}ms - derp {}",
         derp_addr,
         latency.as_millis(),
         derp_node.url,
-        id,
     );
     Ok(latency)
 }
