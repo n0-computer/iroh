@@ -22,7 +22,7 @@ env:
 jobs:
   build_and_test_nix_all_features:
     timeout-minutes: 30
-    name: "Build and test (Nix) - all features + doctests"
+    name: "Tests all feats"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -80,7 +80,7 @@ jobs:
 
   build_and_test_nix_no_features:
     timeout-minutes: 30
-    name: "Build and test (Nix) - no default features"
+    name: "Tests no feats"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -133,7 +133,7 @@ jobs:
 
   build_and_test_nix_default_features:
     timeout-minutes: 30
-    name: "Build and test (Nix) - default features"
+    name: "Tests default feats"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -184,64 +184,9 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-  build_and_test_windows:
-    timeout-minutes: 30
-    name: Build and test (Windows)
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [windows-latest]
-        rust: [nightly, stable]
-        target:
-          - x86_64-pc-windows-msvc
-        include:
-          - name: windows-latest
-            os: windows
-            runner: [self-hosted, windows, x64]
-    # TODO: disabled, see below.
-    # env:
-    #   # Using self-hosted runners so use local cache for sccache and
-    #   # not SCCACHE_GHA_ENABLED.
-    #   RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Install ${{ matrix.rust }}
-      run: |
-        rustup toolchain install ${{ matrix.rust }}
-        rustup toolchain default ${{ matrix.rust }}
-        rustup target add ${{ matrix.target }}
-        rustup set default-host ${{ matrix.target }}
-
-    # TODO: disabled while we do not have Powershell 7+ on the runner
-    # as default shell. See https://github.com/actions/toolkit/issues/1179
-    # - name: Install sccache
-    #   uses: mozilla-actions/sccache-action@v0.0.3
-
-    - uses: msys2/setup-msys2@v2
-
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
   build_and_test_windows_all_featres:
     timeout-minutes: 30
-    name: "Build and test (Windows) - all features"
+    name: "Tests all feats"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -286,7 +231,7 @@ jobs:
 
   build_and_test_windows_no_features:
     timeout-minutes: 30
-    name: "Build and test (Windows) - no default features"
+    name: "Tests no feats"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -331,7 +276,7 @@ jobs:
 
   build_and_test_windows_default_features:
     timeout-minutes: 30
-    name: "Build and test (Windows) - default features"
+    name: "Tests default feats"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
