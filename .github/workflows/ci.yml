@@ -85,7 +85,7 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests (all features)
+    - name: tests
       run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
@@ -96,15 +96,16 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-  build_and_test_windows_all_featres:
+  build_and_test_windows:
     timeout-minutes: 30
-    name: "Tests all feats"
+    name: "Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [windows-latest]
         rust: [nightly, stable]
+        features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc
         include:
@@ -129,50 +130,22 @@ jobs:
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
 
-    # TODO: disabled while we do not have Powershell 7+ on the runner
-    # as default shell. See https://github.com/actions/toolkit/issues/1179
-    # - name: Install sccache
-    #   uses: mozilla-actions/sccache-action@v0.0.3
-
-    - uses: msys2/setup-msys2@v2
-
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-  build_and_test_windows_no_features:
-    timeout-minutes: 30
-    name: "Tests no feats"
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [windows-latest]
-        rust: [nightly, stable]
-        target:
-          - x86_64-pc-windows-msvc
-        include:
-          - name: windows-latest
-            os: windows
-            runner: [self-hosted, windows, x64]
-    # TODO: disabled, see below.
-    # env:
-    #   # Using self-hosted runners so use local cache for sccache and
-    #   # not SCCACHE_GHA_ENABLED.
-    #   RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Install ${{ matrix.rust }}
+    - name: Select features
       run: |
-        rustup toolchain install ${{ matrix.rust }}
-        rustup toolchain default ${{ matrix.rust }}
-        rustup target add ${{ matrix.target }}
-        rustup set default-host ${{ matrix.target }}
+        switch (${{ matrix.features }} {
+            "all" {
+                echo "FEATURES=--all-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "none" {
+                echo "FEATURES=--no-default-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "default" {
+                echo "FEATURES=" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            default {
+                Exit 1
+            }
+        }
 
     # TODO: disabled while we do not have Powershell 7+ on the runner
     # as default shell. See https://github.com/actions/toolkit/issues/1179
@@ -181,53 +154,8 @@ jobs:
 
     - uses: msys2/setup-msys2@v2
 
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-  build_and_test_windows_default_features:
-    timeout-minutes: 30
-    name: "Tests default feats"
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [windows-latest]
-        rust: [nightly, stable]
-        target:
-          - x86_64-pc-windows-msvc
-        include:
-          - name: windows-latest
-            os: windows
-            runner: [self-hosted, windows, x64]
-    # TODO: disabled, see below.
-    # env:
-    #   # Using self-hosted runners so use local cache for sccache and
-    #   # not SCCACHE_GHA_ENABLED.
-    #   RUSTC_WRAPPER: "sccache"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Install ${{ matrix.rust }}
-      run: |
-        rustup toolchain install ${{ matrix.rust }}
-        rustup toolchain default ${{ matrix.rust }}
-        rustup target add ${{ matrix.target }}
-        rustup set default-host ${{ matrix.target }}
-
-    # TODO: disabled while we do not have Powershell 7+ on the runner
-    # as default shell. See https://github.com/actions/toolkit/issues/1179
-    # - name: Install sccache
-    #   uses: mozilla-actions/sccache-action@v0.0.3
-
-    - uses: msys2/setup-msys2@v2
-
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+    - name: tests
+      run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
