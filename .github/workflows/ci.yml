@@ -379,7 +379,7 @@ jobs:
     name: Build release binaries
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
-    needs: build_and_test_nix
+    needs: build_and_test_nix_all_features
     if: ${{ always() && github.ref_name=='main' }}
     strategy:
       fail-fast: false
