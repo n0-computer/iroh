@@ -17,6 +17,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
+  SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
   build_and_test_nix:
@@ -40,7 +41,8 @@ jobs:
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
     env:
-      SCCACHE_GHA_ENABLED: "true"
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
@@ -53,7 +55,7 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
     
-    - name: Run sccache-cache
+    - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: check all features
@@ -121,6 +123,11 @@ jobs:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
+    # TODO: disabled, see below.
+    # env:
+    #   # Using self-hosted runners so use local cache for sccache and
+    #   # not SCCACHE_GHA_ENABLED.
+    #   RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -133,7 +140,12 @@ jobs:
         rustup toolchain default ${{ matrix.rust }}
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
-    
+
+    # TODO: disabled while we do not have Powershell 7+ on the runner
+    # as default shell. See https://github.com/actions/toolkit/issues/1179
+    # - name: Install sccache
+    #   uses: mozilla-actions/sccache-action@v0.0.3
+
     - uses: msys2/setup-msys2@v2
 
     - name: tests (all features)
@@ -190,9 +202,11 @@ jobs:
           #   release-arch: amd64
           #   runner: [windows-latest]
     env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
       RUST_BACKTRACE: full
       RUSTV: ${{ matrix.rust }}
-      SCCACHE_GHA_ENABLED: "true"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -207,6 +221,9 @@ jobs:
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install ${{ matrix.rust }}
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: build release
       run: |
@@ -301,12 +318,18 @@ jobs:
     timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
 
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -317,6 +340,9 @@ jobs:
   clippy_check:
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
     # Can be switched back once 1.75 lands
@@ -324,6 +350,8 @@ jobs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
           components: clippy
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
@@ -340,11 +368,16 @@ jobs:
     timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
     - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ env.MSRV }}
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Check MSRV all features
       run: |
@@ -367,7 +400,8 @@ jobs:
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
     env:
-      SCCACHE_GHA_ENABLED: "true"
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
@@ -378,7 +412,7 @@ jobs:
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Run sccache-cache
+    - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh
