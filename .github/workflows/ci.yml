@@ -69,7 +69,7 @@ jobs:
                 echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
                 ;;
             default)
-                echo "FEATURES=''" >> "$GITHUB_ENV"
+                echo "FEATURES=\"\"" >> "$GITHUB_ENV"
                 ;;
             *)
                 exit 1
@@ -79,14 +79,14 @@ jobs:
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          echo "Checking $i"
+          echo "Checking $i $FEATURES"
           cargo check -p $i $FEATURES --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests (all features)
-      run: cargo test --workspace $FEATURES --lib --bins --tests
+      run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
