@@ -28,13 +28,13 @@ use nfsserve::{
 use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TimestampSecondsWithFrac};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::commands::mount_runner::perform_mount_and_wait_for_ctrlc;
 
-use super::runtime::{self, IrohWrapper};
+use super::runtime::IrohWrapper;
 
 const HOSTPORT: u32 = 11111;
 
@@ -165,16 +165,13 @@ where
     let fs = IrohFs::new(iroh.clone(), doc, path.clone(), rt).await?;
 
     println!("fs prepared");
-    let s = fs.ready();
     perform_mount_and_wait_for_ctrlc(
         &path,
         fs,
         true,
         true,
         format!("127.0.0.1:{HOSTPORT}"),
-        move || {
-            s.try_send(()).ok();
-        },
+        || {},
     )
     .await?;
 
@@ -476,10 +473,8 @@ where
     rootdir: fileid3,
     author: AuthorId,
     mount_path: PathBuf,
-    looper: mpsc::Sender<()>,
 }
 
-const MAIN_FILE: &str = "main.js";
 const IROH_DIR: &str = ".dir.iroh";
 const IROH_FILE: &str = ".fil.iroh";
 const HIDDEN_PREFIX: &str = ".hidden";
@@ -503,6 +498,18 @@ fn path_to_key(path: impl AsRef<Path>) -> std::result::Result<Bytes, nfsstat3> {
     iroh::util::fs::path_to_key(path, None, None).map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)
 }
 
+fn iroh_path_to_path(p: impl AsRef<Path>) -> Result<PathBuf> {
+    let path = p.as_ref();
+    let full_name = fs_entry_name_from_path(&path)?;
+    let actual_name = if full_name.starts_with(IROH_FILE) {
+        full_name.replace(&format!("{IROH_FILE}."), "")
+    } else {
+        full_name.replace(&format!("{IROH_DIR}."), "")
+    };
+
+    Ok(path.with_file_name(actual_name))
+}
+
 impl<C> IrohFs<C>
 where
     C: ServiceConnection<ProviderService>,
@@ -511,7 +518,7 @@ where
         iroh: Iroh<C>,
         doc_id: NamespaceId,
         mount_path: PathBuf,
-        rt: LocalPoolHandle,
+        _rt: LocalPoolHandle,
     ) -> Result<Self> {
         let doc = iroh
             .docs
@@ -621,10 +628,8 @@ where
         let sub_fs = fs.clone();
         let next_id = Arc::new(AtomicU64::new(current_id));
         let sub_next_id = next_id.clone();
+        let sub_iroh = iroh.clone();
 
-        let (looper_s, mut looper_r) = mpsc::channel(64);
-
-        let looper = looper_s.clone();
         tokio::task::spawn(async move {
             while let Some(item) = sub.next().await {
                 match item {
@@ -632,53 +637,119 @@ where
                         match event {
                             LiveEvent::InsertLocal { entry }
                             | LiveEvent::InsertRemote { entry, .. } => {
+                                if entry.key().starts_with(HIDDEN_PREFIX.as_bytes()) {
+                                    info!(
+                                        "ignoring hidden: {:?}",
+                                        std::str::from_utf8(entry.key())
+                                    );
+                                    continue;
+                                }
+
                                 // insert into fs
-                                let mut fs = sub_fs.0.write().await;
                                 let path = match key_to_path(entry.key()) {
                                     Err(err) => {
-                                        warn!("ignoring key: {:?}: {:?}", entry.key(), err);
+                                        warn!("ignoring invalid key: {:?}: {:?}", entry.key(), err);
                                         continue;
                                     }
                                     Ok(path) => path,
                                 };
-                                // TODO: use metadata for this
-                                let is_deletion = entry.content_len() == 0;
 
-                                if is_deletion {
-                                    // deletion
-                                    fs.remove_by_path(&path);
-                                    info!("deleted: {}", path.display());
-                                } else if fs.contains_by_path(&path) {
-                                    fs.update_by_path(&path, entry.author(), entry.content_len());
-                                    info!("update: {}", path.display());
-                                } else {
-                                    let id = sub_next_id.fetch_add(1, Ordering::Relaxed);
-                                    let Ok(name) = fs_entry_name_from_path(&path) else {
-                                        error!("invalid path: {:?}", path.display());
-                                        continue;
-                                    };
-                                    let Some(parent_id) = fs.parent_id_for_path(&path) else {
-                                        error!("no parent directory found for {}", path.display());
+                                let Ok(name) = fs_entry_name_from_path(&path) else {
+                                    continue;
+                                };
+
+                                let is_iroh_file = name.starts_with(IROH_FILE);
+                                let is_iroh_dir = name.starts_with(IROH_DIR);
+
+                                if is_iroh_dir || is_iroh_file {
+                                    // metadata update
+
+                                    let mut fs = sub_fs.0.write().await;
+                                    let is_deletion = entry.content_len() == 0;
+                                    let Ok(fs_path) = iroh_path_to_path(&path) else {
+                                        error!("invalid path: {}", path.display());
                                         continue;
                                     };
 
-                                    let entry = FsEntry::new_file(
-                                        &name,
-                                        id,
-                                        parent_id,
-                                        entry.content_len(),
-                                        entry.author(),
-                                        Some(ts_to_chrono(entry.timestamp())),
-                                    );
-                                    if let Err(err) = fs.push(path.clone(), entry, parent_id) {
-                                        error!("failed to insert: {}: {:?}", path.display(), err);
+                                    if is_deletion {
+                                        info!("deleted: {}", path.display());
+                                        fs.remove_by_path(&fs_path);
+                                    } else {
+                                        let Ok(attr_bytes) = sub_iroh
+                                            .blobs
+                                            .read_to_bytes(entry.content_hash())
+                                            .await
+                                        else {
+                                            warn!(
+                                                "skipping {}: content not available",
+                                                path.display()
+                                            );
+                                            continue;
+                                        };
+                                        let Ok(mut attr) =
+                                            serde_json::from_slice::<Attrs>(&attr_bytes)
+                                        else {
+                                            error!("found invalid attrs {}", path.display());
+                                            continue;
+                                        };
+
+                                        // update attrs for size
+                                        if !fs.contains_by_path(&fs_path) {
+                                            // creation
+                                            let id = sub_next_id.fetch_add(1, Ordering::Relaxed);
+                                            attr.fileid = id;
+                                            let Some(parent_id) = fs.parent_id_for_path(&fs_path)
+                                            else {
+                                                error!(
+                                                    "no parent directory found for {}",
+                                                    fs_path.display()
+                                                );
+                                                continue;
+                                            };
+                                            let contents = if is_iroh_dir {
+                                                FsContents::Directory {
+                                                    author: entry.author(),
+                                                    content: Vec::new(),
+                                                }
+                                            } else {
+                                                FsContents::File {
+                                                    author: entry.author(),
+                                                }
+                                            };
+                                            let entry = FsEntry {
+                                                attr,
+                                                parent: parent_id,
+                                                contents,
+                                            };
+                                            if let Err(err) =
+                                                fs.push(fs_path.clone(), entry, parent_id)
+                                            {
+                                                error!(
+                                                    "failed to insert: {}: {:?}",
+                                                    fs_path.display(),
+                                                    err
+                                                );
+                                            }
+
+                                            info!("inserted {}: {}", name, fs_path.display());
+                                        } else {
+                                            // update
+                                            info!("update: {}", fs_path.display());
+
+                                            let Some(entry) = fs.get_by_path_mut(&fs_path) else {
+                                                warn!(
+                                                    "update for unknown path: {}",
+                                                    fs_path.display()
+                                                );
+                                                continue;
+                                            };
+                                            entry.attr.atime = attr.atime;
+                                            entry.attr.mtime = attr.mtime;
+                                            entry.attr.ctime = attr.ctime;
+                                            entry.attr.size = attr.size;
+                                            entry.attr.mode = attr.mode;
+                                        }
                                     }
-
-                                    info!("inserted {}: {}", name, path.display());
-                                }
-
-                                if !is_deletion {
-                                    looper_s.try_send(()).ok();
                                 }
                             }
                             _ => {}
@@ -699,30 +770,7 @@ where
             iroh,
             author,
             mount_path,
-            looper,
         };
-        let this = res.clone();
-        tokio::task::spawn(async move {
-            let main_file_path = PathBuf::from(format!("/{MAIN_FILE}"));
-
-            loop {
-                tokio::select! {
-                    _ = looper_r.recv() => {
-                        let fs = this.fs.0.read().await;
-
-                        if fs.contains_by_path(&main_file_path) {
-                            let p = this.mount_path.join(MAIN_FILE);
-                            let iroh = this.iroh_wrapper();
-                            rt.spawn_pinned(|| async move {
-                                if let Err(err) = runtime::exec(iroh, p.clone()).await {
-                                    error!("runtime execution failed of {}: {:?}", p.display(), err);
-                                }
-                            });
-                        }
-                    }
-                }
-            }
-        });
 
         Ok(res)
     }
@@ -732,10 +780,6 @@ impl<C> IrohFs<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    fn ready(&self) -> mpsc::Sender<()> {
-        self.looper.clone()
-    }
-
     fn iroh_wrapper(&self) -> IrohWrapper {
         let any_iroh = (&self.iroh) as &dyn std::any::Any;
         if let Some(iroh) = any_iroh.downcast_ref::<client::mem::Iroh>() {
@@ -780,6 +824,42 @@ where
 
         Ok(())
     }
+
+    async fn remove_iroh_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("not a valid file"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid filename"))?;
+        let name = format!("{IROH_FILE}.{name}");
+        let path = path.with_file_name(name);
+        info!("removing iroh file {}", path.display());
+        let key = path_to_key(path).map_err(|_| anyhow!("invalid path"))?;
+        self.doc.del(self.author, key).await?;
+
+        Ok(())
+    }
+
+    async fn update_iroh_attrs(&self, path: impl AsRef<Path>, attrs: &Attrs) -> Result<()> {
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("not a valid file"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid filename"))?;
+        let name = match attrs.ftype {
+            FileType::File => format!("{IROH_FILE}.{name}"),
+            FileType::Directory => format!("{IROH_DIR}.{name}"),
+        };
+        let path = path.with_file_name(name);
+        info!("udpating iroh entry {}", path.display());
+        let key = path_to_key(path).map_err(|_| anyhow!("invalid path"))?;
+        let attrs_bytes = serde_json::ser::to_vec_pretty(attrs)?;
+        self.doc.set_bytes(self.author, key, attrs_bytes).await?;
+
+        Ok(())
+    }
 }
 
 // For this demo file system we let the handle just be the file
@@ -798,10 +878,10 @@ where
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
-        let mut fs = self.fs.0.write().await;
+        let fs = self.fs.0.read().await;
         info!("write to {:?}", id);
         let attr = {
-            let file = fs.get_by_id_mut(id).ok_or_else(|| {
+            let file = fs.get_by_id(id).ok_or_else(|| {
                 error!("missing entry {}", id);
                 nfsstat3::NFS3ERR_NOENT
             })?;
@@ -860,11 +940,10 @@ where
                 offset,
                 fssize
             );
-            fs.update_by_id(id, author, fssize);
-            fs.get_by_id(id)
-                .ok_or(nfsstat3::NFS3ERR_NOENT)?
-                .attr
-                .clone()
+            let mut attr = file.attr.clone();
+            attr.size = fssize;
+            attr.mtime = now();
+            attr
         };
 
         Ok(attr.into())
@@ -877,7 +956,7 @@ where
         setattr: sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let fileid = {
-            let mut fs = self.fs.0.write().await;
+            let fs = self.fs.0.read().await;
             let newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
             let name = safe_name(filename.as_ref());
             let path = fs
@@ -885,24 +964,17 @@ where
                 .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?
                 .join(&name);
             info!("inserting {}: {:?} as {}", newid, name, path.display());
-            let dir = fs
-                .get_by_id_mut(dirid)
-                .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
-
+            let dir = fs.get_by_id(dirid).ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
             if !dir.is_dir() {
                 warn!("found file, expected directory");
                 return Err(nfsstat3::NFS3ERR_NOTDIR);
             };
 
             // remove old
-            fs.remove_by_path(&path);
+            self.remove_iroh_file(&path).await.ok(); // might not exist
 
             // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path.clone(), file, dirid)
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
-
-            let file = fs.get_by_id(newid).ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
             self.create_iroh_file(&path, &file.attr)
                 .await
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
@@ -910,6 +982,7 @@ where
             newid
         };
 
+        // TODO: optimize
         let attr = self.setattr(fileid, setattr).await?;
 
         Ok((attr.fileid, attr))
@@ -921,7 +994,7 @@ where
         filename: &filename3,
     ) -> Result<fileid3, nfsstat3> {
         let fileid = {
-            let mut fs = self.fs.0.write().await;
+            let fs = self.fs.0.read().await;
             let newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
             let name = safe_name(filename.as_ref());
             let path = fs
@@ -934,21 +1007,13 @@ where
                 return Err(nfsstat3::NFS3ERR_EXIST);
             }
 
-            let dir = fs
-                .get_by_id_mut(dirid)
-                .ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
-
+            let dir = fs.get_by_id(dirid).ok_or_else(|| nfsstat3::NFS3ERR_NOENT)?;
             if !dir.is_dir() {
                 warn!("found file, expected directory");
                 return Err(nfsstat3::NFS3ERR_NOTDIR);
             };
 
-            // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path.clone(), file, dirid)
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
-
-            let file = fs.get_by_id(newid).ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
             self.create_iroh_file(&path, &file.attr)
                 .await
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
@@ -1023,29 +1088,31 @@ where
     }
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
-        let mut fs = self.fs.0.write().await;
+        let fs = self.fs.0.read().await;
+
         let path = fs.get_path_for_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let key = path_to_key(&path)?;
-        let entry = fs.get_by_id_mut(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        let entry = fs.get_by_id(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+        let mut attr = entry.attr.clone();
 
         info!("setattr {}:{}: {:?}", id, entry.attr.name, setattr,);
 
         match setattr.atime {
             nfs::set_atime::DONT_CHANGE => {}
             nfs::set_atime::SET_TO_CLIENT_TIME(c) => {
-                entry.attr.atime = nfstime_to_chrono(c);
+                attr.atime = nfstime_to_chrono(c);
             }
             nfs::set_atime::SET_TO_SERVER_TIME => {
-                entry.attr.atime = now();
+                attr.atime = now();
             }
         };
         match setattr.mtime {
             nfs::set_mtime::DONT_CHANGE => {}
             nfs::set_mtime::SET_TO_CLIENT_TIME(c) => {
-                entry.attr.mtime = nfstime_to_chrono(c);
+                attr.mtime = nfstime_to_chrono(c);
             }
             nfs::set_mtime::SET_TO_SERVER_TIME => {
-                entry.attr.mtime = now();
+                attr.mtime = now();
             }
         };
         match setattr.uid {
@@ -1064,9 +1131,9 @@ where
         }
         match setattr.size {
             nfs::set_size3::size(s) => {
-                entry.attr.size = s;
+                attr.size = s;
 
-                if let FsContents::File { author } = &mut entry.contents {
+                if let FsContents::File { author } = &entry.contents {
                     if s == 0 {
                         self.doc
                             .del(*author, key.clone())
@@ -1107,7 +1174,12 @@ where
             }
             nfs::set_size3::Void => {}
         }
-        Ok(entry.attr.clone().into())
+
+        self.update_iroh_attrs(&path, &attr)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
+
+        Ok(attr.into())
     }
 
     async fn read(
@@ -1205,7 +1277,7 @@ where
 
     async fn remove(&self, dirid: fileid3, filename: &filename3) -> Result<(), nfsstat3> {
         info!("remove {:?} from {}", std::str::from_utf8(filename), dirid);
-        let mut fs = self.fs.0.write().await;
+        let fs = self.fs.0.read().await;
         let path = fs
             .get_path_for_file_in_dir(dirid, filename)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
@@ -1222,8 +1294,9 @@ where
             nfsstat3::NFS3ERR_SERVERFAULT
         })?;
 
-        // Remove entry from the cache
-        fs.remove_by_path(&path);
+        self.remove_iroh_file(&path)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
         Ok(())
     }
@@ -1240,7 +1313,7 @@ where
             std::str::from_utf8(from_filename),
             std::str::from_utf8(to_filename)
         );
-        let mut fs = self.fs.0.write().await;
+        let fs = self.fs.0.read().await;
 
         if !fs.contains_by_id(from_dirid) {
             warn!("missing from: {}", from_dirid);
@@ -1268,6 +1341,7 @@ where
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let new_key = path_to_key(&new_path)?;
 
+        // move actual files
         if let Some(entry) = self
             .doc
             .get_exact(*author, old_key.clone(), true)
@@ -1293,39 +1367,14 @@ where
             // assume empty entry, ignore
         }
 
-        let fid = file.attr.fileid;
-        // TODO: update mtime
-        // file.attr.mtime = now();
+        // move iroh files
+        self.remove_iroh_file(&old_path)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
-        // update dir entries
-        if from_dirid == to_dirid {
-            let entry = fs
-                .get_by_id_mut(from_dirid)
-                .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-            entry.attr.mtime = now();
-        } else {
-            // remove from old
-            {
-                let entry = fs
-                    .get_by_id_mut(from_dirid)
-                    .ok_or(nfsstat3::NFS3ERR_NOENT)?;
-                let FsContents::Directory { content, .. } = &mut entry.contents else {
-                    return Err(nfsstat3::NFS3ERR_NOENT);
-                };
-                content.retain(|v| *v != fid);
-                entry.attr.mtime = now();
-            }
-
-            // insert into new dir
-            {
-                let entry = fs.get_by_id_mut(to_dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-                let FsContents::Directory { content, .. } = &mut entry.contents else {
-                    return Err(nfsstat3::NFS3ERR_NOENT);
-                };
-                content.push(fid);
-                entry.attr.mtime = now();
-            }
-        }
+        self.create_iroh_file(&new_path, &file.attr)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
         Ok(())
     }
@@ -1336,7 +1385,7 @@ where
         dirname: &filename3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         info!("mkdir {:?}", std::str::from_utf8(dirname));
-        let mut fs = self.fs.0.write().await;
+        let fs = self.fs.0.read().await;
 
         let parent = fs.get_by_id(parent_dirid).ok_or_else(|| {
             error!("unknown dir {}", parent_dirid);
@@ -1356,17 +1405,13 @@ where
             .get_path_for_file_in_dir(parent_dirid, &name)
             .ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let dir = FsEntry::new_dir(&name, newid, parent_dirid, self.author, Vec::new());
-        let attr = dir.attr.clone();
-        fs.push(path.clone(), dir, parent_dirid)
-            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
         // write metadata to document
-        let dir = fs.get_by_id(newid).ok_or(nfsstat3::NFS3ERR_SERVERFAULT)?;
         self.create_iroh_dir(path, &dir.attr)
             .await
             .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
 
-        Ok((newid, attr.into()))
+        Ok((newid, dir.attr.clone().into()))
     }
 
     async fn symlink(
