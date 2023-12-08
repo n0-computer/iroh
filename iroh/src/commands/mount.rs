@@ -38,12 +38,6 @@ use super::runtime::IrohWrapper;
 
 const HOSTPORT: u32 = 11111;
 
-// schema
-//
-// Root
-// - .fs.iroh
-//   - next_id: u64
-//
 // Directory
 // - .dir.iroh
 //   - fattr3
@@ -443,8 +437,8 @@ impl InnerFs {
 
     fn get_path_for_id(&self, id: fileid3) -> Option<PathBuf> {
         let entry = self.by_id.get(&id)?;
-        let name = format!("/{}", entry.attr.name);
-        let mut parts = vec![name];
+        let name = entry.attr.name.clone();
+        let mut parts = vec![name, "/".into()];
         self.for_each_parent(entry.parent, |p| {
             let name = p.attr.name.clone();
             if name != "/" {
@@ -600,14 +594,18 @@ where
                 continue;
             }
 
-            if fs.contains_by_path(&path) {
-                bail!("duplicate entry: {}", path.display());
+            let Ok(fs_path) = iroh_path_to_path(&path) else {
+                error!("invalid path: {}", path.display());
+                continue;
+            };
+            if fs.contains_by_path(&fs_path) {
+                bail!("duplicate entry: {}", fs_path.display());
             }
 
             info!(
                 "inserting {}: {} (is_dir: {})",
                 name,
-                path.display(),
+                fs_path.display(),
                 is_iroh_dir
             );
 
@@ -628,7 +626,7 @@ where
                 parent: parent_id,
                 contents,
             };
-            fs.push(path, entry, parent_id)?;
+            fs.push(fs_path, entry, parent_id)?;
         }
 
         let fs = Fs(Arc::new(RwLock::new(fs)));
@@ -686,6 +684,7 @@ where
                             let Ok(name) = fs_entry_name_from_path(&path) else {
                                 continue;
                             };
+                            debug!("change detected: {}", name);
 
                             let is_iroh_file = name.starts_with(IROH_FILE);
                             let is_iroh_dir = name.starts_with(IROH_DIR);
@@ -699,6 +698,8 @@ where
                                     error!("invalid path: {}", path.display());
                                     continue;
                                 };
+
+                                debug!("processing {} (is_del?{})", fs_path.display(), is_deletion);
 
                                 if is_deletion {
                                     info!("deleted: {}", path.display());
@@ -944,6 +945,12 @@ where
             let mut attr = file.attr.clone();
             attr.size = fssize;
             attr.mtime = now();
+
+            self.update_iroh_attrs(&path, &attr).await.map_err(|e| {
+                error!("failed to update attrs {:?}: {:?}", path, e);
+                nfsstat3::NFS3ERR_SERVERFAULT
+            })?;
+
             attr
         };
 
@@ -957,7 +964,7 @@ where
         setattr: sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let fileid = {
-            let mut fs = self.fs.0.write().await;
+            let fs = self.fs.0.read().await;
             let newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
             let name = safe_name(filename.as_ref());
             let path = fs
@@ -979,8 +986,6 @@ where
 
             // Not writing to iroh, as we are not storing empty entries
             let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-            fs.push(path.clone(), file.clone(), dirid)
-                .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
             self.create_iroh_file(&path, &file.attr)
                 .await
                 .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
@@ -999,7 +1004,7 @@ where
         dirid: fileid3,
         filename: &filename3,
     ) -> Result<fileid3, nfsstat3> {
-        let mut fs = self.fs.0.write().await;
+        let fs = self.fs.0.read().await;
         let newid = self.next_id.fetch_add(1, Ordering::Relaxed) as fileid3;
         let name = safe_name(filename.as_ref());
         let path = fs
@@ -1027,8 +1032,6 @@ where
         };
 
         let file = FsEntry::new_file(&name, newid, dirid, 0, self.author, None);
-        fs.push(path.clone(), file.clone(), dirid)
-            .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
         self.create_iroh_file(&path, &file.attr)
             .await
             .map_err(|_| nfsstat3::NFS3ERR_SERVERFAULT)?;
