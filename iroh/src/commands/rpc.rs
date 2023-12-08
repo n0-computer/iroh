@@ -66,12 +66,19 @@ impl RpcCommands {
     where
         C: ServiceConnection<ProviderService>,
     {
-        match self {
+        let res = match self {
             Self::Node { command } => command.run(iroh).await,
             Self::Blob { command } => command.run(iroh).await,
             Self::Doc { command } => command.run(iroh, env).await,
             Self::Author { command } => command.run(iroh, env).await,
             Self::Tag { command } => command.run(iroh).await,
+        };
+        match res {
+            Ok(()) => std::process::exit(0),
+            Err(err) => {
+                tracing::error!("{:?}", err);
+                std::process::exit(1)
+            }
         }
     }
 }
