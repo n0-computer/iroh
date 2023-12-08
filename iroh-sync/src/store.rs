@@ -194,15 +194,18 @@ pub enum ImportNamespaceOutcome {
 }
 
 /// Download policy to decide which content blobs shall be downloaded.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadPolicy {
-    /// Do not download any blobs.
-    Nothing,
-    /// Download all blobs.
-    #[default]
-    Everything,
-    /// Download blobs for entries matching a query.
-    Query(Query),
+    /// Do not download any key unless it matches one of the filters.
+    NothingExcept(Vec<FilterKind>),
+    /// Download every key unless it matches one of the filters.
+    EverythingExcept(Vec<FilterKind>),
+}
+
+impl Default for DownloadPolicy {
+    fn default() -> Self {
+        DownloadPolicy::EverythingExcept(Vec::default())
+    }
 }
 
 /// Filter strategy used in download policies.
@@ -267,26 +270,26 @@ impl std::str::FromStr for FilterKind {
     }
 }
 
-/*
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub enum DownloadPolicy {
-    /// Download all keys unless a prefix matches it.
-    #[default]
-    EverythingExcept(Vec(KeyFilter)),
-    /// Do not download any key unless a prefix matches it.
-    NothingExcept(Vec(KeyFilter)),
+impl FilterKind {
+    /// Verifies whether this filter matches a given key
+    pub fn matches(&self, key: impl AsRef<[u8]>) -> bool {
+        match self {
+            FilterKind::Prefix(prefix) => key.as_ref().starts_with(prefix),
+            FilterKind::Exact(expected) => expected == key.as_ref(),
+        }
+    }
 }
-*/
 
 impl DownloadPolicy {
     /// Check if an entry should be downloaded according to this policy.
     pub fn matches(&self, entry: &Entry) -> bool {
+        let key = entry.key();
         match self {
-            DownloadPolicy::Nothing => false,
-            DownloadPolicy::Everything => true,
-            DownloadPolicy::Query(query) => {
-                query.filter_author.matches(&entry.author())
-                    && query.filter_key.matches(entry.key())
+            DownloadPolicy::NothingExcept(patterns) => {
+                patterns.iter().any(|pattern| pattern.matches(key))
+            }
+            DownloadPolicy::EverythingExcept(patterns) => {
+                patterns.iter().all(|pattern| !pattern.matches(key))
             }
         }
     }

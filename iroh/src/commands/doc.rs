@@ -24,7 +24,7 @@ use iroh::{
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
 use iroh_sync::{
-    store::{Query, SortDirection},
+    store::{DownloadPolicy, FilterKind, Query, SortDirection},
     AuthorId, Entry, NamespaceId,
 };
 
@@ -42,6 +42,45 @@ pub enum DisplayContentMode {
     Hash,
     /// Display the shortened hash of the content.
     ShortHash,
+}
+
+/// General download policy for a document.
+#[derive(Debug, Clone, Copy, clap::ValueEnum, derive_more::Display)]
+pub enum FetchKind {
+    /// Download everything in this document.
+    Everything,
+    /// Download nothing in this document.
+    Nothing,
+}
+
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum DlPolicyCmd {
+    Set {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Set the general download policy for this document.
+        kind: FetchKind,
+        /// Add an exception to the download policy.
+        /// An exception must be formated as <matching_kind>:<encoding>:<pattern>.
+        ///
+        /// - <matching_kind> can be either `prefix` or `exact`.
+        ///
+        /// - <encoding> can be either `utf8` or `hex`.
+        #[clap(short, long, value_name = "matching_kind>:<encoding>:<pattern")]
+        except: Vec<FilterKind>,
+    },
+    Get {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -92,6 +131,9 @@ pub enum DocCommands {
         /// Content to store for this entry (parsed as UTF-8 string)
         value: String,
     },
+    /// Set the download policies for a document.
+    #[clap(subcommand)]
+    DlPolicy(DlPolicyCmd),
     /// Get entries in a document.
     ///
     /// Shows the author, content hash and content length for all entries for this key.
@@ -568,6 +610,41 @@ impl DocCommands {
                     println!("Doc {} has been deleted.", fmt_short(doc.id()));
                 } else {
                     println!("Aborted.")
+                }
+            }
+            Self::DlPolicy(DlPolicyCmd::Set { doc, kind, except }) => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let download_policy = match kind {
+                    FetchKind::Everything => DownloadPolicy::EverythingExcept(except),
+                    FetchKind::Nothing => DownloadPolicy::NothingExcept(except),
+                };
+                if doc.set_download_policy(download_policy).await.is_err() {
+                    println!("Could not set the document's download policy")
+                }
+            }
+            Self::DlPolicy(DlPolicyCmd::Get { doc }) => {
+                let doc = get_doc(iroh, env, doc).await?;
+                match doc.get_download_policy().await {
+                    Ok(dl_policy) => {
+                        let (kind, exceptions) = match dl_policy {
+                            DownloadPolicy::NothingExcept(exceptions) => {
+                                (FetchKind::Nothing, exceptions)
+                            }
+                            DownloadPolicy::EverythingExcept(exceptions) => {
+                                (FetchKind::Everything, exceptions)
+                            }
+                        };
+                        println!("Download {kind} in this document.");
+                        if !exceptions.is_empty() {
+                            println!("Exceptions:");
+                            for exception in exceptions {
+                                println!("{exception}")
+                            }
+                        }
+                    }
+                    Err(x) => {
+                        println!("Could not get the document's download policy: {x}")
+                    }
                 }
             }
         }
