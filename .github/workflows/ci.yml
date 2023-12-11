@@ -22,13 +22,14 @@ env:
 jobs:
   build_and_test_nix:
     timeout-minutes: 30
-    name: Build and test (Nix)
+    name: "Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
+        features: [all, none, default]
         include:
           - name: ubuntu-latest
             os: ubuntu-latest
@@ -58,65 +59,53 @@ jobs:
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
-    - name: check all features
+    - name: Select features
+      run: |
+        case "${{ matrix.features }}" in
+            all)
+                echo "FEATURES=--all-features" >> "$GITHUB_ENV"
+                ;;
+            none)
+                echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
+                ;;
+            default)
+                echo "FEATURES=" >> "$GITHUB_ENV"
+                ;;
+            *)
+                exit 1
+        esac
+
+    - name: check features
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          echo "Checking $i"
-          cargo check -p $i --all-features --lib --bins
+          echo "Checking $i $FEATURES"
+          cargo check -p $i $FEATURES --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: check no default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --no-default-features --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: check default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
+    - name: tests
+      run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
+      if: ${{ matrix.features == 'all' }}
       run: cargo test --workspace --all-features --doc
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
+
   build_and_test_windows:
     timeout-minutes: 30
-    name: Build and test (Windows)
+    name: "Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [windows-latest]
         rust: [nightly, stable]
+        features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc
         include:
@@ -141,6 +130,23 @@ jobs:
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
 
+    - name: Select features
+      run: |
+        switch ("${{ matrix.features }}") {
+            "all" {
+                echo "FEATURES=--all-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "none" {
+                echo "FEATURES=--no-default-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "default" {
+                echo "FEATURES=" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            default {
+                Exit 1
+            }
+        }
+
     # TODO: disabled while we do not have Powershell 7+ on the runner
     # as default shell. See https://github.com/actions/toolkit/issues/1179
     # - name: Install sccache
@@ -148,18 +154,8 @@ jobs:
 
     - uses: msys2/setup-msys2@v2
 
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+    - name: tests
+      run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
