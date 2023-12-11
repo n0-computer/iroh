@@ -112,11 +112,10 @@ jobs:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
-    # TODO: disabled, see below.
-    # env:
-    #   # Using self-hosted runners so use local cache for sccache and
-    #   # not SCCACHE_GHA_ENABLED.
-    #   RUSTC_WRAPPER: "sccache"
+    env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -149,8 +148,8 @@ jobs:
 
     # TODO: disabled while we do not have Powershell 7+ on the runner
     # as default shell. See https://github.com/actions/toolkit/issues/1179
-    # - name: Install sccache
-    #   uses: mozilla-actions/sccache-action@v0.0.3
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - uses: msys2/setup-msys2@v2
 
