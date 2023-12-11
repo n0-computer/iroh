@@ -341,10 +341,11 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
-    # Can be switched back once 1.75 lands
+    # Can be switched back to stable once 1.75 lands
     # https://github.com/rust-lang/cargo/issues/12115#issuecomment-1768170381
-    - uses: dtolnay/rust-toolchain@nightly-2023-12-07
+    - uses: dtolnay/rust-toolchain@master
       with:
+          toolchain: nightly-2023-12-06
           components: clippy
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
