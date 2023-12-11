@@ -97,7 +97,7 @@ jobs:
 
     - name: doctests
       if: ${{ matrix.features == 'all' }}
-      run: cargo nextest run --workspace --all-features --doc
+      run: cargo test --workspace --all-features --doc
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
