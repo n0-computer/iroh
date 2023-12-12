@@ -1336,7 +1336,24 @@ impl MagicSock {
         self.inner.endpoints.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
-        tasks.shutdown().await;
+
+        // give the tasks a moment to shutdown cleanly
+        let tasks_ref = &mut tasks;
+        let shutdown_done = time::timeout(Duration::from_millis(100), async move {
+            while let Some(task) = tasks_ref.join_next().await {
+                if let Err(err) = task {
+                    warn!("unexpected error in task shutdown: {:?}", err);
+                }
+            }
+        })
+        .await;
+        if shutdown_done.is_ok() {
+            debug!("tasks shutdown complete");
+        } else {
+            // shutdown all tasks
+            debug!("aborting remaining {}/3 tasks", tasks.len());
+            tasks.shutdown().await;
+        }
 
         Ok(())
     }
