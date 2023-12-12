@@ -1276,8 +1276,14 @@ impl MagicSock {
     /// Will wait until some endpoints are discovered.
     pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         let mut watcher = self.inner.endpoints.watch();
+        {
+            // check if we have some value already
+            let current_value = watcher.read();
+            if !current_value.is_empty() {
+                return Ok(current_value.clone().into_iter().collect());
+            }
+        }
         let eps = watcher.next_value_async().await?;
-
         Ok(eps.into_iter().collect())
     }
 
@@ -2386,6 +2392,10 @@ impl DiscoveredEndpoints {
 
     fn iter(&self) -> impl Iterator<Item = &config::Endpoint> + '_ {
         self.last_endpoints.iter()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.last_endpoints.is_empty()
     }
 
     fn fresh_enough(&self) -> bool {
