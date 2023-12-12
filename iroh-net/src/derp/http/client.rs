@@ -36,6 +36,7 @@ const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
+const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]
@@ -103,6 +104,9 @@ pub enum ClientError {
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
+    /// There was a timeout resolving DNS.
+    #[error("dns timeout")]
+    DnsTimeout,
     /// The inner actor is gone, likely means things are shutdown.
     #[error("actor gone")]
     ActorGone,
@@ -1014,9 +1018,9 @@ async fn resolve_host(url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientErro
     match host {
         url::Host::Domain(domain) => {
             // Need to do a DNS lookup
-            let addrs = DNS_RESOLVER
-                .lookup_ip(domain)
+            let addrs = tokio::time::timeout(DNS_TIMEOUT, DNS_RESOLVER.lookup_ip(domain))
                 .await
+                .map_err(|_| ClientError::DnsTimeout)?
                 .map_err(|e| ClientError::Dns(Some(e)))?;
 
             if prefer_ipv6 {
