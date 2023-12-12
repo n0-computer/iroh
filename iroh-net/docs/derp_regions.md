@@ -22,12 +22,12 @@ Region ID `65535` is reserved for testing and experiments.
                 DerpNode {
                     name: "default-1".into(),
                     region_id: 1,
-                    url: format!("https://derp.iroh.network")
+                    url: format!("https://use1-1.derp.iroh.network")
                         .parse()
                         .unwrap(),
                     stun_only: false,
                     stun_port: 3478,
-                    ipv4: UseIpv4::Some(std::net::Ipv4Addr::new(35, 175, 99, 113)),
+                    ipv4: UseIpv4::Some(std::net::Ipv4Addr::new(34, 207, 161, 128)),
                     ipv6: UseIpv6::TryDns,
                     stun_test_ip: None,
                 }
@@ -47,7 +47,7 @@ Region ID `65535` is reserved for testing and experiments.
                 DerpNode {
                     name: "default-1".into(),
                     region_id: 2,
-                    url: format!("https://eu1.derp.iroh.network")
+                    url: format!("https://euw1-1.derp.iroh.network.")
                         .parse()
                         .unwrap(),
                     stun_only: false,
