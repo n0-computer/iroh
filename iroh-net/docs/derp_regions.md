@@ -52,7 +52,7 @@ Region ID `65535` is reserved for testing and experiments.
                         .unwrap(),
                     stun_only: false,
                     stun_port: 3478,
-                    ipv4: UseIpv4::Some(std::net::Ipv4Addr::new(52, 30, 229, 248)),
+                    ipv4: UseIpv4::Some(std::net::Ipv4Addr::new(35, 253, 75, 5)),
                     ipv6: UseIpv6::TryDns,
                     stun_test_ip: None,
                 }
