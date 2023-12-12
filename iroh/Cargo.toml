@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 default-run = "iroh"
-keyword = ["networking", "p2p", "holepunching", "ipfs"]
+keywords = ["networking", "p2p", "holepunching", "ipfs"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
