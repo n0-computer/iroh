@@ -2766,7 +2766,7 @@ pub(crate) mod tests {
             let m = m.clone();
             let stacks = stacks.clone();
             tasks.spawn(async move {
-                while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints().await {
+                while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints_change().await {
                     debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_eps(&stacks, my_idx, new_eps);
                 }

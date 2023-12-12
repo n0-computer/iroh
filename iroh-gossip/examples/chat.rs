@@ -110,9 +110,6 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
-    // wait for a first endpoint update so that we know about our endpoint addresses
-    let _endpoints = endpoint.local_endpoints().await?;
-
     let my_addr = endpoint.my_addr().await?;
     // create the gossip protocol
     let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);

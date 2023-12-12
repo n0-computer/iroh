@@ -403,10 +403,8 @@ where
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
         if let Ok(local_endpoints) = server.local_endpoints().await {
-            if !local_endpoints.is_empty() {
-                debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
-                gossip.update_endpoints(&local_endpoints).ok();
-            }
+            debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
+            gossip.update_endpoints(&local_endpoints).ok();
         }
 
         loop {
