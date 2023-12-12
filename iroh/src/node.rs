@@ -506,12 +506,12 @@ where
                 continue 'outer;
             }
 
-            tracing::info!("Starting GC mark phase");
+            tracing::debug!("Starting GC mark phase");
             let mut stream = db.gc_mark(None);
             while let Some(item) = stream.next().await {
                 match item {
-                    GcMarkEvent::CustomInfo(text) => {
-                        tracing::info!("{}", text);
+                    GcMarkEvent::CustomDebug(text) => {
+                        tracing::debug!("{}", text);
                     }
                     GcMarkEvent::CustomWarning(text, _) => {
                         tracing::warn!("{}", text);
@@ -523,12 +523,12 @@ where
                 }
             }
 
-            tracing::info!("Starting GC sweep phase");
+            tracing::debug!("Starting GC sweep phase");
             let mut stream = db.gc_sweep();
             while let Some(item) = stream.next().await {
                 match item {
-                    GcSweepEvent::CustomInfo(text) => {
-                        tracing::info!("{}", text);
+                    GcSweepEvent::CustomDebug(text) => {
+                        tracing::debug!("{}", text);
                     }
                     GcSweepEvent::CustomWarning(text, _) => {
                         tracing::warn!("{}", text);
