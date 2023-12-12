@@ -996,7 +996,7 @@ mod tests {
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
         let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(derper_url.clone()).build(b_secret_key)?;
+            ClientBuilder::new(derper_url.clone()).build(b_secret_key);
         client_b.connect().await?;
 
         let msg = Bytes::from("hello, b");
