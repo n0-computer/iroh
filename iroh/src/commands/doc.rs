@@ -17,15 +17,15 @@ use quic_rpc::ServiceConnection;
 use tokio::io::AsyncReadExt;
 
 use iroh::{
-    client::{Doc, Iroh},
+    client::{Doc, Entry, Iroh, LiveEvent},
     rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
-    sync_engine::{LiveEvent, Origin},
+    sync_engine::Origin,
     util::fs::{path_content_info, path_to_key, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
 use iroh_sync::{
     store::{Query, SortDirection},
-    AuthorId, Entry, NamespaceId,
+    AuthorId, NamespaceId,
 };
 
 use crate::config::ConsoleEnv;
@@ -457,7 +457,7 @@ impl DocCommands {
                     }
                     Some(e) => e,
                 };
-                match doc.read(&entry).await {
+                match entry.content_reader(&doc).await {
                     Ok(mut content) => {
                         if let Some(dir) = path.parent() {
                             if let Err(err) = std::fs::create_dir_all(dir) {
@@ -604,13 +604,13 @@ where
 
     match mode {
         DisplayContentMode::Auto => {
-            if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
+            if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
                 // small content: read fully as UTF-8
-                let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+                let bytes = entry.content_bytes(doc).await.map_err(read_failed)?;
                 Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
             } else {
                 // large content: read just the first part as UTF-8
-                let mut blob_reader = doc.read(entry).await.map_err(read_failed)?;
+                let mut blob_reader = entry.content_reader(doc).await.map_err(read_failed)?;
                 let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize + 5);
 
                 blob_reader
@@ -625,15 +625,15 @@ where
         }
         DisplayContentMode::Content => {
             // read fully as UTF-8
-            let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+            let bytes = entry.content_bytes(doc).await.map_err(read_failed)?;
             Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
         DisplayContentMode::ShortHash => {
-            let hash = entry.record().content_hash();
+            let hash = entry.content_hash();
             Ok(fmt_short(hash.as_bytes()))
         }
         DisplayContentMode::Hash => {
-            let hash = entry.record().content_hash();
+            let hash = entry.content_hash();
             Ok(hash.to_string())
         }
     }
@@ -641,7 +641,7 @@ where
 
 /// Human bytes for the contents of this entry.
 fn human_len(entry: &Entry) -> HumanBytes {
-    HumanBytes(entry.record().content_len())
+    HumanBytes(entry.content_len())
 }
 
 #[must_use = "this won't be printed, you need to print it yourself"]
@@ -649,9 +649,10 @@ async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> 
 where
     C: ServiceConnection<ProviderService>,
 {
-    let id = entry.id();
-    let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
-    let author = fmt_short(id.author());
+    let key = std::str::from_utf8(entry.key())
+        .unwrap_or("<bad key>")
+        .bold();
+    let author = fmt_short(entry.author());
     let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
     let len = human_len(entry);
     format!("@{author}: {key} = {content} ({len})")
