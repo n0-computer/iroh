@@ -8,12 +8,14 @@ use std::{
 use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
+use futures::Future;
 use iroh_metrics::{inc, inc_by};
 use tokio::{
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},
     time,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 use url::Url;
 
@@ -43,7 +45,6 @@ pub(super) enum DerpActorMessage {
     },
     NotePreferred(Url),
     MaybeCloseDerpsOnRebind(Vec<IpAddr>),
-    Shutdown,
 }
 
 /// Contains fields for an active DERP connection.
@@ -274,16 +275,23 @@ pub(super) struct DerpActor {
     active_derp: BTreeMap<Url, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
     ping_tasks: JoinSet<(Url, bool)>,
+    cancel_token: CancellationToken,
 }
 
 impl DerpActor {
     pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
+        let cancel_token = CancellationToken::new();
         DerpActor {
             conn,
             active_derp: Default::default(),
             msg_sender,
             ping_tasks: Default::default(),
+            cancel_token,
         }
+    }
+
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
     }
 
     pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<DerpActorMessage>) {
@@ -294,41 +302,55 @@ impl DerpActor {
 
         loop {
             tokio::select! {
+                biased;
+
+                _ = self.cancel_token.cancelled() => {
+                    trace!("shutting down");
+                    break;
+                }
                 Some(Ok((url, ping_success))) = self.ping_tasks.join_next() => {
                     if !ping_success {
-                        self.close_or_reconnect_derp(&url, "rebind-ping-fail")
-                            .await;
+                        with_cancel(
+                            self.cancel_token.child_token(),
+                            self.close_or_reconnect_derp(&url, "rebind-ping-fail")
+                        ).await;
                     }
                 }
                 Some(msg) = receiver.recv() => {
-                    match msg {
-                        DerpActorMessage::Send { url, contents, peer } => {
-                            self.send_derp(&url, contents, peer).await;
-                        }
-                        DerpActorMessage::Connect { url, peer } => {
-                            self.connect_derp(&url, peer.as_ref()).await;
-                        }
-                        DerpActorMessage::NotePreferred(my_derp) => {
-                            self.note_preferred(&my_derp).await;
-                        }
-                        DerpActorMessage::MaybeCloseDerpsOnRebind(ifs) => {
-                            self.maybe_close_derps_on_rebind(&ifs).await;
-                        }
-                        DerpActorMessage::Shutdown => {
-                            debug!("shutting down");
-                            self.close_all_derp("conn-close").await;
-                            break;
-                        }
-                    }
+                    with_cancel(self.cancel_token.child_token(), self.handle_msg(msg)).await;
                 }
                 _ = cleanup_timer.tick() => {
                     trace!("tick: cleanup");
-                    self.clean_stale_derp().await;
+                    with_cancel(self.cancel_token.child_token(), self.clean_stale_derp()).await;
                 }
                 else => {
                     trace!("shutting down derp recv loop");
                     break;
                 }
+            }
+        }
+
+        // try shutdown
+        self.close_all_derp("conn-close").await;
+    }
+
+    async fn handle_msg(&mut self, msg: DerpActorMessage) {
+        match msg {
+            DerpActorMessage::Send {
+                url,
+                contents,
+                peer,
+            } => {
+                self.send_derp(&url, contents, peer).await;
+            }
+            DerpActorMessage::Connect { url, peer } => {
+                self.connect_derp(&url, peer.as_ref()).await;
+            }
+            DerpActorMessage::NotePreferred(my_derp) => {
+                self.note_preferred(&my_derp).await;
+            }
+            DerpActorMessage::MaybeCloseDerpsOnRebind(ifs) => {
+                self.maybe_close_derps_on_rebind(&ifs).await;
             }
         }
     }
@@ -692,6 +714,19 @@ where
             Some(self.buffer.split().freeze())
         } else {
             None
+        }
+    }
+}
+
+async fn with_cancel<F>(token: CancellationToken, f: F)
+where
+    F: Future<Output = ()>,
+{
+    tokio::select! {
+        _ = token.cancelled_owned() => {
+            // abort
+        }
+        _ = f => {
         }
     }
 }

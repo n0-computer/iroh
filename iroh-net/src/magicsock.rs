@@ -41,8 +41,10 @@ use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
 use tokio::{
     sync::{self, mpsc, Mutex},
+    task::JoinSet,
     time,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
 use url::Url;
 use watchable::Watchable;
@@ -56,9 +58,7 @@ use crate::{
     magic_endpoint::NodeAddr,
     magicsock::peer_map::PingRole,
     net::{ip::LocalAddresses, netmon, IpFamily},
-    netcheck, portmapper, stun,
-    util::AbortingJoinHandle,
-    AddrInfo,
+    netcheck, portmapper, stun, AddrInfo,
 };
 
 use self::{
@@ -174,7 +174,7 @@ pub(crate) type DerpContents = SmallVec<[Bytes; 1]>;
 pub struct MagicSock {
     inner: Arc<Inner>,
     // Empty when closed
-    actor_tasks: Arc<Mutex<Vec<AbortingJoinHandle<()>>>>,
+    actor_tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
 /// The actual implementation of `MagicSock`.
@@ -229,6 +229,7 @@ struct Inner {
 
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
+
     /// Our discovered endpoints
     endpoints: Watchable<DiscoveredEndpoints>,
 
@@ -1167,8 +1168,11 @@ impl MagicSock {
             endpoints_update_state: EndpointUpdateState::new(),
         });
 
+        let mut actor_tasks = JoinSet::default();
+
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
-        let derp_actor_task = tokio::task::spawn(
+        let derp_actor_cancel_token = derp_actor.cancel_token();
+        actor_tasks.spawn(
             async move {
                 derp_actor.run(derp_actor_receiver).await;
             }
@@ -1176,7 +1180,7 @@ impl MagicSock {
         );
 
         let inner2 = inner.clone();
-        let udp_disco_sender_task = tokio::task::spawn(async move {
+        actor_tasks.spawn(async move {
             while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
                 if let Err(err) = inner2.send_disco_message_udp(dst, dst_key, &msg).await {
                     warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
@@ -1186,12 +1190,13 @@ impl MagicSock {
 
         let inner2 = inner.clone();
         let network_monitor = netmon::Monitor::new().await?;
-        let main_actor_task = tokio::task::spawn(
+        actor_tasks.spawn(
             async move {
                 let actor = Actor {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
                     derp_actor_sender,
+                    derp_actor_cancel_token,
                     inner: inner2,
                     derp_recv_sender,
                     periodic_re_stun_timer: new_re_stun_timer(false),
@@ -1202,7 +1207,6 @@ impl MagicSock {
                     pconn6,
                     no_v4_send: false,
                     net_checker,
-                    udp_disco_sender_task,
                     network_monitor,
                 };
 
@@ -1215,10 +1219,7 @@ impl MagicSock {
 
         let c = MagicSock {
             inner,
-            actor_tasks: Arc::new(Mutex::new(vec![
-                main_actor_task.into(),
-                derp_actor_task.into(),
-            ])),
+            actor_tasks: Arc::new(Mutex::new(actor_tasks)),
         };
 
         Ok(c)
@@ -1335,13 +1336,7 @@ impl MagicSock {
         self.inner.endpoints.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
-        let task_count = tasks.len();
-        let mut i = 0;
-        while let Some(task) = tasks.pop() {
-            debug!("waiting for task {i}/{task_count}");
-            task.await?;
-            i += 1;
-        }
+        tasks.shutdown().await;
 
         Ok(())
     }
@@ -1517,6 +1512,7 @@ struct Actor {
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    derp_actor_cancel_token: CancellationToken,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<DerpRecvResult>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
@@ -1540,9 +1536,6 @@ struct Actor {
 
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
-
-    /// Task that sends disco messages over UDP.
-    udp_disco_sender_task: tokio::task::JoinHandle<()>,
 
     network_monitor: netmon::Monitor,
 }
@@ -1678,7 +1671,6 @@ impl Actor {
             ActorMessage::Shutdown => {
                 debug!("shutting down");
 
-                self.udp_disco_sender_task.abort();
                 self.inner.node_map.notify_shutdown();
                 if let Some(path) = self.nodes_path.as_ref() {
                     match self.inner.node_map.save_to_file(path).await {
@@ -1689,10 +1681,7 @@ impl Actor {
                     }
                 }
                 self.port_mapper.deactivate();
-                self.derp_actor_sender
-                    .send(DerpActorMessage::Shutdown)
-                    .await
-                    .ok();
+                self.derp_actor_cancel_token.cancel();
 
                 // Ignore errors from pconnN
                 // They will frequently have been closed already by a call to connBind.Close.
